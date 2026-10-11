@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a user-facing improvement
+labels: ["type:feature"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and found no duplicate.
+          required: true
+        - label: I understand that this proposal requires product review before implementation.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user problem and affected workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      options:
+        - Application behavior
+        - Build or tooling
+        - Documentation
+        - CI or automation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: scope_non_goals
+    attributes:
+      label: Scope and non-goals
+      description: Define the intended scope and explicitly name what this proposal does not include.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

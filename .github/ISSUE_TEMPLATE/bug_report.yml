@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a reproducible problem
+labels: ["type:bug"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and found no duplicate.
+          required: true
+        - label: I understand that this report enters review before implementation.
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: State the observed behavior and its impact.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, runtime or client version, and relevant configuration.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      options:
+        - Application behavior
+        - Build or tooling
+        - Documentation
+        - CI or automation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: agent_client
+    attributes:
+      label: Agent or client (for MCP or headless incidents)
+      options:
+        - Claude Code
+        - OpenCode
+        - Codex
+        - Other
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Shell (for MCP or headless incidents)
+      options:
+        - bash
+        - zsh
+        - fish
+        - PowerShell
+        - Other
