@@ -9,31 +9,25 @@ pub struct Profile {
 }
 
 pub const STABLE: Profile = Profile { identifier: "es.egdev.quorb", name: "Quorb", home_dir: ".quorb", migrate_legacy: true };
-pub const DEV: Profile = Profile { identifier: "es.egdev.quorb.dev", name: "Quorb Dev", home_dir: ".quorb-dev", migrate_legacy: false };
 
 pub fn current() -> &'static Profile {
     match option_env!("QUORB_IDENTIFIER").unwrap_or(STABLE.identifier) {
         "es.egdev.quorb" => &STABLE,
-        "es.egdev.quorb.dev" => &DEV,
         _ => panic!("Unsupported Quorb build identity"),
     }
 }
 
-pub fn is_dev() -> bool { current().identifier == DEV.identifier }
 pub fn home_root(home: &Path) -> PathBuf { home.join(current().home_dir) }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn stable_identity_is_preserved_and_dev_is_disjoint() {
+    fn stable_identity_is_preserved() {
         assert_eq!(STABLE.identifier, "es.egdev.quorb");
+        assert_eq!(STABLE.name, "Quorb");
         assert_eq!(STABLE.home_dir, ".quorb");
-        assert_eq!(DEV.home_dir, ".quorb-dev");
-        assert_ne!(DEV.identifier, STABLE.identifier);
-        assert_ne!(DEV.name, STABLE.name);
         assert!(STABLE.migrate_legacy);
-        assert!(!DEV.migrate_legacy);
     }
     #[test]
     fn runtime_owned_paths_follow_build_identity() {

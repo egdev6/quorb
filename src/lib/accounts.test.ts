@@ -29,8 +29,9 @@ describe('accounts', () => {
   it('shows the default session folder', () => {
     expect(defaultSessionDir({ id: 'claude:w1', provider: 'claude' })).toBe('%USERPROFILE%\\.quorb\\accounts\\claude-w1');
   });
-  it('shows the isolated Dev session folder', () => {
-    expect(defaultSessionDir({ id: 'claude:w1', provider: 'claude' }, 'Quorb Dev')).toBe('%USERPROFILE%\\.quorb-dev\\accounts\\claude-w1');
+  it('shows the stable session folder and rejects a foreign identity', () => {
+    expect(defaultSessionDir({ id: 'claude:w1', provider: 'claude' }, 'Quorb')).toBe('%USERPROFILE%\\.quorb\\accounts\\claude-w1');
+    expect(defaultSessionDir({ id: 'claude:w1', provider: 'claude' }, 'Otra App')).toBe('%USERPROFILE%\\…\\accounts\\claude-w1');
   });
   it('numbers the circles of providers with several accounts', () => {
     const acc = (id: string) => ({ id, provider: id.split(':')[0] }) as AppConfig['accounts'][number];

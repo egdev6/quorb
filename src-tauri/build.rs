@@ -9,14 +9,7 @@ fn main() {
         .unwrap_or(serde_json::Value::Null);
     let identifier = overlay.get("identifier").unwrap_or(&base["identifier"])
         .as_str().expect("Tauri identifier");
-    match identifier {
-        "es.egdev.quorb" => {},
-        "es.egdev.quorb.dev" => {
-            assert_eq!(overlay["productName"], "Quorb Dev", "Dev must have a separate installer");
-            assert_eq!(overlay["mainBinaryName"], "quorb-dev", "Dev must have a separate executable");
-        },
-        _ => panic!("Unsupported Quorb build identity"),
-    }
+    assert_eq!(identifier, "es.egdev.quorb", "Unsupported Quorb build identity");
     println!("cargo:rustc-env=QUORB_IDENTIFIER={identifier}");
     tauri_build::build()
 }

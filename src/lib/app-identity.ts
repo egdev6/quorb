@@ -12,7 +12,7 @@ export function useAppName(): string | null {
   return name;
 }
 
-/** Unknown identity must not advertise the stable folder as a Dev default. */
+/** Unknown identity must not advertise a home folder that is not the stable one. */
 export function ownedHomeDir(name: string | null): string {
-  return name === 'Quorb Dev' ? '.quorb-dev' : name === 'Quorb' ? '.quorb' : '…';
+  return name === 'Quorb' ? '.quorb' : '…';
 }

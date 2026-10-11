@@ -201,12 +201,12 @@ impl Default for AppConfig {
             hidden_providers: vec![],
             alerts: AlertsConfig::default(),
             claude: SubscriptionConfig {
-                enabled: !crate::channel::is_dev(),
+                enabled: true,
                 credentials_path: None,
                 login_command: "claude".into(),
             },
             codex: SubscriptionConfig {
-                enabled: !crate::channel::is_dev(),
+                enabled: true,
                 credentials_path: None,
                 login_command: "codex login".into(),
             },
@@ -247,7 +247,7 @@ pub struct ShortcutsConfig {
 impl Default for ShortcutsConfig {
     fn default() -> Self {
         Self {
-            enabled: !crate::channel::is_dev(),
+            enabled: true,
             toggle: "Ctrl+Alt+U".into(),
             open_peak: "Ctrl+Alt+I".into(),
             refresh: "Ctrl+Alt+R".into(),
@@ -531,9 +531,9 @@ mod tests {
         assert!(!cfg.gemini.enabled && !cfg.cursor.enabled && !cfg.copilot.enabled && !cfg.openrouter.enabled);
         assert_eq!(cfg.gemini.login_command, "gemini");
         assert_eq!(cfg.shortcuts.toggle, "Ctrl+Alt+U");
-        assert_eq!(cfg.shortcuts.enabled, !crate::channel::is_dev());
-        assert_eq!(cfg.claude.enabled, !crate::channel::is_dev());
-        assert_eq!(cfg.codex.enabled, !crate::channel::is_dev());
+        assert!(cfg.shortcuts.enabled);
+        assert!(cfg.claude.enabled);
+        assert!(cfg.codex.enabled);
         let c: AppConfig = serde_json::from_str(r#"{"copilot": {"username": " @egdev6 "}}"#).unwrap();
         assert_eq!(c.sanitized().copilot.username, "egdev6");
     }
