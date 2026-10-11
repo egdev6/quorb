@@ -117,6 +117,31 @@ function baseDeps(overrides = {}) {
   };
 }
 
+test('restrictPrivateKey endurece permisos laxos sin relajar permisos estrictos', async () => {
+  const { restrictPrivateKey } = await load();
+  const keyPath = 'fixture.key';
+  for (const mode of [0o100644, 0o100666]) {
+    const calls = [];
+    restrictPrivateKey({
+      keyPath,
+      fsImpl: {
+        statSync: (file) => { assert.equal(file, keyPath); return { mode }; },
+        chmodSync: (file, permissions) => calls.push([file, permissions]),
+      },
+    });
+    assert.deepEqual(calls, [[keyPath, 0o600]]);
+  }
+  for (const mode of [0o100600, 0o100400, 0o100000]) {
+    restrictPrivateKey({
+      keyPath,
+      fsImpl: {
+        statSync: () => ({ mode }),
+        chmodSync: () => assert.fail('no debe relajar permisos ya estrictos'),
+      },
+    });
+  }
+});
+
 test('regresión estática: el helper no conserva los patrones inseguros del script antiguo', () => {
   for (const token of ['--ci', "'-p'", '--password', '--force', '--body', "'auth'", 'mover-a-.github', 'renameSync', 'cpSync']) {
     assert.ok(!SOURCE.includes(token), `el helper no debe contener ${JSON.stringify(token)}`);
@@ -326,7 +351,11 @@ test('runSetup genera, escribe pub canónica y sube el secreto canónico por std
   assert.equal(sets.find((s) => s.args[2] === SECRET_KEY).input, WRAPPED_KEY, 'secreto base64 canónico');
   assert.equal(sets.find((s) => s.args[2] === SECRET_PASSWORD).input, 'clave-de-prueba');
   assert.equal(fs.existsSync(path.join(cwd, 'docs', 'mover-a-.github', 'workflows', 'release.yml')), true, 'no mueve docs');
-  assert.equal(fs.statSync(keys(home).keyPath).mode & 0o077, 0, 'clave privada sin permisos de grupo/otros');
+  // Los bits POSIX no representan las ACL de Windows; el contrato de chmod
+  // se comprueba en todos los sistemas con fsImpl simulado en la prueba anterior.
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(keys(home).keyPath).mode & 0o077, 0, 'clave privada sin permisos de grupo/otros (POSIX)');
+  }
 });
 
 test('runSetup sube base64 canónico aunque el fichero nativo sea crudo', async () => {
