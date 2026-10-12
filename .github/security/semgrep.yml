@@ -1,0 +1,24 @@
+# DRAFT: contextual alerts only; validate patterns against the pinned CE engine before use.
+rules:
+  - id: decoded-text-execution
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Decoded text passed to eval; inspect execution context. Not a malware verdict.
+    pattern-either:
+      - pattern: eval(atob($PAYLOAD))
+      - pattern: eval(Buffer.from($PAYLOAD, 'base64').toString(...))
+  - id: dynamic-function-construction
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Dynamic function construction requires contextual review; legitimate uses exist.
+    pattern: new Function(...)
+  - id: shell-command-execution
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Shell execution surface; inspect input origin. Fixed execFile/spawn arguments are not blanket-blocked.
+    pattern-either:
+      - pattern: exec($COMMAND, ...)
+      - pattern: execSync($COMMAND, ...)
+# Deliberately no Rust rule until the selected CE version is tested.
+# These rules do not yet cover download-to-execution or exfiltration dataflow.
+# No autofix, remote registry, inline suppression, or automatic maliciousness gate.

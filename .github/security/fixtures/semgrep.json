@@ -1,0 +1,34 @@
+{
+  "description": "Inert source strings for scanner tests. Write to a disposable Git snapshot; never import or execute these sources. Findings are contextual alerts, not malware verdicts.",
+  "cases": [
+    {
+      "path": "positive.js",
+      "source": "eval(atob(payload));\neval(Buffer.from(payload, 'base64').toString());\nnew Function(source);\nexec(command);\nexecSync(command);\n",
+      "expected": [["decoded-text-execution", 1], ["decoded-text-execution", 2], ["dynamic-function-construction", 3], ["shell-command-execution", 4], ["shell-command-execution", 5]]
+    },
+    {
+      "path": "positive.ts",
+      "source": "eval(atob(payload));\neval(Buffer.from(payload, 'base64').toString());\nnew Function(source);\nexec(command);\nexecSync(command);\n",
+      "expected": [["decoded-text-execution", 1], ["decoded-text-execution", 2], ["dynamic-function-construction", 3], ["shell-command-execution", 4], ["shell-command-execution", 5]]
+    },
+    {
+      "path": "negative.js",
+      "source": "const text = atob(payload);\nconst buffer = Buffer.from(payload, 'base64').toString();\nexecFileSync('git', ['status']);\nspawnSync('gh', ['secret', 'set'], { input: data });\nfunction regular() { return 1; }\n",
+      "expected": []
+    },
+    {
+      "path": "negative.ts",
+      "source": "const text = atob(payload);\nconst buffer = Buffer.from(payload, 'base64').toString();\nexecFileSync('git', ['status']);\nspawnSync('gh', ['secret', 'set'], { input: data });\nfunction regular() { return 1; }\n",
+      "expected": []
+    },
+    {
+      "path": ".hidden/suppressed.js",
+      "source": "eval(atob(payload)); // nosemgrep\n",
+      "expected": [["decoded-text-execution", 1]]
+    }
+  ],
+  "repositoryFiles": { ".semgrepignore": "**\n" },
+  "expectedTargetCount": 5,
+  "expectedFindingCount": 11,
+  "validationStatus": "offline-runner-validated-5-targets-11-exact-findings"
+}
