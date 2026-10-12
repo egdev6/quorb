@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "upstreamCommit": "a35fe8306115b3e55274969098cc46f8451d6b4d",
+  "image": "docker.io/library/python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d",
+  "semgrepVersion": "1.180.0",
+  "wheelSha256": "16db2e2706ab814a975eeec25debfad49abba846b7c513d88e041447152f8447",
+  "budget": {
+    "indexQueries": 1,
+    "sourceFiles": 5,
+    "sourceLines": 1466,
+    "offlineJobs": 1,
+    "scannerInvocations": 6,
+    "totalSeconds": 10.817
+  },
+  "sources": [
+    {
+      "path": "src/parsing/Parse_target.ml",
+      "gitBlob": "3f5a0065400f97621fef22395b65ac5d7330d35d",
+      "sha256": "d2017a6466e0a2cf510b31b5560d1fa705c8aefec5dfd1f454be7a862c4438fa",
+      "lines": 298
+    },
+    {
+      "path": "src/parsing/Parsing_result2.ml",
+      "gitBlob": "6ce1ab563defa0ec9266b03731ffa8eb62336e35",
+      "sha256": "aa9d47699faf6480ff4967c74c765cc9fbf8e05943e25de507496b109ef017bb",
+      "lines": 73
+    },
+    {
+      "path": "src/osemgrep/cli_show/Show_subcommand.ml",
+      "gitBlob": "70f50b0d92e7a6a111bdd85e96e7833ed84f74df",
+      "sha256": "4fb300aad77f0143bcfbf7f0039558790893657c825c4ab2431671ad25b354db",
+      "lines": 289
+    },
+    {
+      "path": "src/osemgrep/cli_show/Show_CLI.ml",
+      "gitBlob": "cdca81803ee4928ec3d564c3ec37ef6ed67bac05",
+      "sha256": "641907d58f563729d1b5b5b5c923d4a9803bc7f1091675a022d49d3b52772af8",
+      "lines": 482
+    },
+    {
+      "path": "src/parsing/Pfff_or_tree_sitter.ml",
+      "gitBlob": "d68d64a605825d19b9f9a9d870932b1dabf4b50c",
+      "sha256": "0bf05c67ac0aeb20ba26931bcd116093ba90a3e7645f86e06428412c35a2c7fb",
+      "lines": 324
+    }
+  ],
+  "commandTemplate": [
+    "/tmp/venv/bin/semgrep",
+    "show",
+    "dump-ast",
+    "/inputs/{file}"
+  ],
+  "probePlanSha256": "cd9919200dba92d551cff4340ef14082f84371baf0841d476f1bda76deea1045",
+  "cases": [
+    {
+      "file": "valid.js",
+      "source": "const x = 1;\n",
+      "sourceSha256": "95befdd6e691d4d89031a2a2901cc74fc6242109980b060e08ddf87829924483",
+      "expected": "zero",
+      "exit": 0,
+      "matchesExpectation": true
+    },
+    {
+      "file": "valid.ts",
+      "source": "const x: number = 1;\n",
+      "sourceSha256": "7a2482aadd2c36da040c3506a49738d20cdc6db01980a89a8bb0fdd897745337",
+      "expected": "zero",
+      "exit": 0,
+      "matchesExpectation": true
+    },
+    {
+      "file": "missing.js",
+      "source": "const x = ;\n",
+      "sourceSha256": "ad2c2013447045c4c3bce94975043cf6f968b07886931786e8d70217ba2958e1",
+      "expected": "nonzero",
+      "exit": 3,
+      "matchesExpectation": true
+    },
+    {
+      "file": "missing.ts",
+      "source": "const y: number = ;\n",
+      "sourceSha256": "d63de91b04f7ac66134e293904a273f49bc6d5339d6f223eee215baad84a89a2",
+      "expected": "nonzero",
+      "exit": 3,
+      "matchesExpectation": true
+    },
+    {
+      "file": "partial.js",
+      "source": "class {\n",
+      "sourceSha256": "0c518ac0efcd168989c45c044ddef9eba6886c8c029f48342c93d19a7da18650",
+      "expected": "nonzero",
+      "exit": 3,
+      "matchesExpectation": true
+    },
+    {
+      "file": "partial.ts",
+      "source": "class {\n",
+      "sourceSha256": "0c518ac0efcd168989c45c044ddef9eba6886c8c029f48342c93d19a7da18650",
+      "expected": "nonzero",
+      "exit": 3,
+      "matchesExpectation": true
+    }
+  ],
+  "cleanup": {
+    "containerRemoved": true,
+    "hostTemporaryDirectoriesRemoved": true
+  },
+  "disclosure": {
+    "rawAstPersisted": false,
+    "rawStderrPersisted": false
+  },
+  "limits": [
+    "Finite .js/.ts fixtures, not universal grammar coverage",
+    "Source tag not a build attestation for wheel",
+    "No runner implementation or CI authorization"
+  ]
+}
