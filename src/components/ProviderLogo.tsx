@@ -25,7 +25,7 @@ const VIEWBOX: Record<string, string> = {};
 function prepareSvg(name: string, svg: string): string {
   let out = svg
     .replace(/<\?xml[\s\S]*?\?>/g, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\x3c!--[\s\S]*?-->/g, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<title>[\s\S]*?<\/title>/gi, '')
     // El tamaño lo decide el CSS
