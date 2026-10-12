@@ -1,0 +1,11 @@
+{
+  "account": "egdev6",
+  "repository": "egdev6/quorb",
+  "requiredScopes": ["repo"],
+  "files": {
+    ".github/workflows/code-safety.yml": {
+      "source": ".github/security-drafts/code-safety.yml",
+      "mode": "ensure"
+    }
+  }
+}

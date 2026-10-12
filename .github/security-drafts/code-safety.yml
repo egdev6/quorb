@@ -1,0 +1,80 @@
+# INACTIVE SOURCE: bootstrap must not install this without a separate exact approval.
+# Publish/review the trusted baseline first, then replace the literal below and re-plan.
+name: Code safety
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: code-safety-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # Never use a PR input, branch, tag or repository variable as the trust anchor.
+  TRUSTED_BASELINE: UNPUBLISHED_REVIEW_REQUIRED
+  TARGET_COMMIT: ${{ github.sha }}
+jobs:
+  static-review:
+    name: Static code safety
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Adoption hold until immutable baseline is reviewed
+        shell: bash
+        run: |
+          if [[ ! "$TRUSTED_BASELINE" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Inactive draft: publish and review the baseline before adoption.'
+            exit 2
+          fi
+          [[ "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+      - name: Fetch reviewed tools and policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: egdev6/quorb
+          ref: ${{ env.TRUSTED_BASELINE }}
+          path: trusted
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Fetch target as data only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.TARGET_COMMIT }}
+          path: target
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Prepare trusted Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - name: Verify target identity and objective repository policy
+        shell: bash
+        run: |
+          test "$(git -C target rev-parse HEAD)" = "$TARGET_COMMIT"
+          node trusted/scripts/security/check-repository.mjs \
+            --repo "$GITHUB_WORKSPACE/target" \
+            --policy "$GITHUB_WORKSPACE/trusted/.github/security/policy.json"
+      - name: Provision exact verified wheels and runtime
+        shell: bash
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/quorb-code-safety"
+          node trusted/scripts/security/code-safety.mjs provision "$RUNNER_TEMP/quorb-code-safety/wheels"
+          docker --host unix:///var/run/docker.sock pull --platform linux/amd64 \
+            docker.io/library/python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d
+      - name: Analyze inert Git blobs offline
+        shell: bash
+        run: |
+          node trusted/scripts/security/code-safety.mjs scan \
+            "$GITHUB_WORKSPACE/target" "$TARGET_COMMIT" \
+            "$RUNNER_TEMP/quorb-code-safety/wheels" "$RUNNER_TEMP/quorb-code-safety"
+      - name: Remove temporary downloaded tools
+        if: always()
+        shell: bash
+        run: rm -rf -- "$RUNNER_TEMP/quorb-code-safety"
+# No target package scripts, installs, builds, local actions, login, autofix or uploads.
+# Findings are advisory. Policy violations, errors and unknown coverage fail closed.
+# GitHub-hosted runner and Node major are platform dependencies, not hermetic pins.
+# A PR can change its workflow; enforced review/protection remains a separate requirement.
