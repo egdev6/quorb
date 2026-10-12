@@ -92,3 +92,87 @@ def read_targets(path=None):
         return entries
     except Exception:
         fail()
+
+
+def parse_findings(data):
+    """Accept stdout only as a JSON array of raw findings."""
+    try:
+        findings = json.loads(bytes(data).decode("utf-8"))
+    except Exception:
+        fail()
+    if not isinstance(findings, list):
+        fail()
+    return findings
+
+
+def scan(entries, *, runner=subprocess.run, clock=time.monotonic,
+         verify=verify_snapshot, env=None, budget_seconds=GLOBAL_BUDGET):
+    """Return the trusted envelope after one bounded zizmor call per workflow.
+
+    `verify` runs before the commands and again before the envelope is returned,
+    so bytes mutated during a call are detected. The remaining budget is
+    recomputed per call from the monotonic start and every failure, timeout or
+    budget exhaustion fails closed.
+    """
+    try:
+        if isinstance(budget_seconds, bool) or not isinstance(budget_seconds, (int, float)):
+            fail()
+        budget = float(budget_seconds)
+        if not math.isfinite(budget) or budget <= 0:
+            fail()
+        scan_env = child_environment() if env is None else env
+        zizmor = str(VENV / "bin" / "zizmor")
+        start = clock()
+        paths = verify(entries, workflow=True)
+        if budget - (clock() - start) <= 0:
+            fail()
+        reports = []
+        total = 0
+        for path in paths:
+            remaining = budget - (clock() - start)
+            if remaining <= 0:
+                fail()
+            result = invoke([zizmor, *SCAN_FLAGS, path], runner=runner,
+                            timeout=min(PER_CALL_TIMEOUT, remaining), env=scan_env)
+            data = getattr(result, "stdout", None)
+            if not isinstance(data, (bytes, bytearray)) or len(data) > MAX_REPORT_BYTES:
+                fail()
+            total += len(data)
+            if total > MAX_TOTAL_BYTES:
+                fail()
+            reports.append({"path": path, "findings": parse_findings(data)})
+            if budget - (clock() - start) <= 0:
+                fail()
+        verify(entries, workflow=True)
+        if budget - (clock() - start) <= 0:
+            fail()
+        return {"version": VERSION, "reports": reports}
+    except Exception:
+        fail()
+
+
+def emit(envelope, stream=None):
+    """Write the JSON envelope and nothing else to stdout."""
+    try:
+        payload = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+    except Exception:
+        fail()
+    if len(payload) > MAX_TOTAL_BYTES:
+        fail()
+    out = sys.stdout if stream is None else stream
+    out.buffer.write(payload)
+    out.buffer.flush()
+
+
+def main():
+    try:
+        check_interpreter(sys.version_info)
+        do_setup()
+        entries = read_targets()
+        emit(scan(entries))
+    except Exception:
+        fail()
+
+
+if __name__ == "__main__":
+    main()
