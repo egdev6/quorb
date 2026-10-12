@@ -21,6 +21,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exportSnapshot as defaultExportSnapshot } from './export-snapshot.mjs';
 import { normalizeSnapshotReport } from './snapshot-report.mjs';
+import { normalizeZizmor } from './zizmor-report.mjs';
 
 const IMAGE = 'docker.io/library/python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d';
 const LOCK_SHA = '5dee77d1a53b22acae3c3429f2c3adef01e7bc5994ae80146fa1f03078da211f';
@@ -122,15 +123,16 @@ function removeContainer(execute, name) {
 }
 
 // Profiles are trusted constants selected by these wrappers, never by target data.
-export const runSemgrep = (input, deps) => runScanner(input, deps);
+export const runSemgrep = (input, deps) => runScanner(input, deps, false);
+export const runZizmor = (input, deps) => runScanner(input, deps, true);
 
-function runScanner(input, deps = {}) {
+function runScanner(input, deps = {}, workflow = false) {
   const exportSnapshot = deps.exportSnapshot ?? defaultExportSnapshot;
   const execute = deps.execute ?? spawnSync;
   const rulesPath = deps.rulesPath ?? TRUSTED.rules;
-  const lockPath = deps.lockPath ?? TRUSTED.lock;
-  const entryPath = deps.entrypointPath ?? TRUSTED.entry;
-  const lockHash = LOCK_SHA;
+  const lockPath = deps.lockPath ?? (workflow ? resolve(HERE, '../../.github/security-drafts/zizmor-linux.lock') : TRUSTED.lock);
+  const entryPath = deps.entrypointPath ?? (workflow ? join(HERE, 'zizmor-entry.py') : TRUSTED.entry);
+  const lockHash = workflow ? '9a7af0da1fbe8051c089ce05ab456f81d8db7b5e55ff713161b71ba0a6e15297' : LOCK_SHA;
   const platform = deps.platform ?? process.platform;
   const uid = deps.uid ?? (typeof process.getuid === 'function' ? process.getuid() : undefined);
   const gid = deps.gid ?? (typeof process.getgid === 'function' ? process.getgid() : undefined);
@@ -157,7 +159,7 @@ function runScanner(input, deps = {}) {
     if (rules.length === 0 || entry.length === 0 || gate.length === 0) fail('trusted-files');
     if (sha256(lock) !== lockHash) fail('trusted-lock');
 
-    try { inventory = exportSnapshot({ repo, commit, parent, scope: 'js-ts' }); } catch { fail('snapshot'); }
+    try { inventory = exportSnapshot({ repo, commit, parent, scope: workflow ? 'workflows' : 'js-ts' }); } catch { fail('snapshot'); }
     try { control = mkdtempSync(join(resolve(parent), 'semgrep-control-')); } catch { fail('control'); }
 
     // Copy trusted rules/lock/entrypoint into a fresh control dir mounted read-only.
@@ -185,7 +187,7 @@ function runScanner(input, deps = {}) {
 
     let parsed;
     try { parsed = JSON.parse(start.stdout); } catch { fail('report'); }
-    try { report = normalizeSnapshotReport(parsed, inventory); } catch { fail('report'); }
+    try { report = workflow ? normalizeZizmor(parsed, inventory) : normalizeSnapshotReport(parsed, inventory); } catch { fail('report'); }
   } catch (error) {
     failure = error;
   } finally {
