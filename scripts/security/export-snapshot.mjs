@@ -10,6 +10,9 @@ const EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts'
 const MAX_SOURCE = 1024 * 1024;
 const MAX_TOTAL = 32 * 1024 * 1024;
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+// Git for Windows rejects node's os.devNull (\\.\nul) as a config path, so use
+// the Git-aware null device on that platform while still suppressing globals.
+const GIT_NULL_CONFIG = process.platform === 'win32' ? 'NUL' : devNull;
 const fail = () => { throw new Error('snapshot-export-failed'); };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -25,7 +28,7 @@ export function exportSnapshot({ repo, commit, parent, scope = 'js-ts' }) {
     if (typeof repo !== 'string' || typeof parent !== 'string' || typeof commit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit)) fail();
     // Do not inherit Git overrides, replacement objects, global config or lazy network fetches.
     const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
-      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' };
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_NULL_CONFIG, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' };
     const git = args => execFileSync('git', args, { cwd: repo, env,
       stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024, timeout: 10000 });
     if (git(['cat-file', '-t', commit]).toString().trim() !== 'commit') fail();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { normalizeZizmor } from './zizmor-report.mjs';
 
 const root = resolve('inert-zizmor');
@@ -207,4 +207,16 @@ test('rejects malformed or unsafe inventory mappings', () => {
   traversal.excluded[0].path = '../escape.md';
   cases.push(traversal);
   for (const inv of cases) throws(report(), inv);
+});
+
+test('rejects control and format characters in the host root of remapped targets', () => {
+  for (const evil of ['\u0000', '\u202e']) {
+    const inv = inventory();
+    const mounts = inv.targets.map(target => target.path.split(sep).at(-1));
+    inv.root = `${root}${evil}`;
+    inv.targets = inv.targets.map((target, index) => ({ ...target, path: join(inv.root, mounts[index]) }));
+    const before = JSON.stringify(inv);
+    assert.throws(() => normalizeZizmor(report(), inv), { message: 'invalid-zizmor-report' });
+    assert.equal(JSON.stringify(inv), before);
+  }
 });

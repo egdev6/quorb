@@ -1,0 +1,3 @@
+# Keep trusted lock bytes exactly LF so their pinned SHA-256 hashes hold on
+# every platform. core.autocrlf must never rewrite these files.
+.github/security-drafts/*.lock text eol=lf

@@ -136,7 +136,8 @@ def run_entry(*, runner, events=None, version=(3, 12, 0), targets=None):
         return [entry["path"] for entry in entries]
 
     def read_text(self, *args, **kwargs):
-        if str(self) == "/control/targets.json":
+        # Native path comparison: pathlib string form differs across platforms.
+        if self == MODULE.CONTROL / "targets.json":
             return targets
         return original_read_text(self, *args, **kwargs)
 
@@ -309,7 +310,7 @@ class ZizmorEntryTest(unittest.TestCase):
         self.assertEqual(argvs[0], [sys.executable, "-m", "venv", str(MODULE.VENV)])
         self.assertEqual(argvs[1], [python, "-m", "pip", "--isolated", "install", "--no-index",
                                     "--find-links=/wheels", "--only-binary=:all:", "--require-hashes",
-                                    "--no-deps", "-r", "/control/requirements.lock"])
+                                    "--no-deps", "-r", str(MODULE.CONTROL / "requirements.lock")])
         self.assertEqual(argvs[2], [python, "-m", "pip", "check"])
         self.assertEqual(argvs[3], [str(MODULE.VENV / "bin" / "zizmor"), "--version"])
 

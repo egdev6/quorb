@@ -13,6 +13,9 @@ const MOUNTED = /^\d{6}\.(?:yml|yaml)$/;
 const MAX_REPORTS = 10000;
 const MAX_FINDINGS = 10000;
 const UNSAFE = /[\p{Cc}\p{Cf}\\:]/u;
+// Native host paths keep drive colons and backslashes, but must still be free of
+// any control/format bytes anywhere, including a hostile inventory root.
+const CONTROL_BYTES = /[\p{Cc}\p{Cf}]/u;
 
 const fail = () => { throw new Error('invalid-zizmor-report'); };
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -45,10 +48,14 @@ function inventoryOf(inventory) {
   for (const target of targets) {
     if (!isObject(target)) fail();
     const { path, originalPath, sha256 } = target;
-    if (typeof path !== 'string' || !isAbsolute(path) || UNSAFE.test(path)) fail();
+    // The absolute path is the native host path, which legitimately contains
+    // backslashes and a drive colon on Windows. Control/format bytes are still
+    // rejected (including in the root), while separators are rejected on the
+    // derived mounted name; containment is proven by the roundtrip below.
+    if (typeof path !== 'string' || !isAbsolute(path) || CONTROL_BYTES.test(path)) fail();
     if (typeof sha256 !== 'string' || !SHA256.test(sha256)) fail();
     const name = relative(root, path);
-    if (!MOUNTED.test(name) || join(root, name) !== path) fail();
+    if (UNSAFE.test(name) || !MOUNTED.test(name) || join(root, name) !== path) fail();
     const original = workflowOriginal(originalPath);
     const mounted = `/inputs/${name}`;
     if (byMounted.has(mounted) || originals.has(original)) fail();
