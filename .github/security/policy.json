@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "maxTextBytes": 1048576,
+  "allowedSymlinks": [],
+  "allowedRootLifecycleHooks": [],
+  "bidiExceptions": [],
+  "approvedBinaryImages": [
+    { "path": ".github/assets/01-cuotas.png", "sha256": "faeecc4a72ced1cb8fdb766d74602e72b412cbcc6ed5abde37efee08e743cf0a" },
+    { "path": ".github/assets/02-detalle.png", "sha256": "24e60026bbcadc43ab4352330a41c01d6be5e706d6dd93487ba3dee4534edb33" },
+    { "path": ".github/assets/03-ritmo.png", "sha256": "8657e2a5f8539b77f6aed0b54bf4e252eaa73158024fddb8461a6d405717b384" },
+    { "path": ".github/assets/04-vertical.png", "sha256": "8a5f9034237c81adbe392af44345df579aa65bfd4a5e73d3551bb330f941c92e" },
+    { "path": ".github/assets/05-colores.png", "sha256": "a3489a762847f7d3398a97a8992299f564687de97624d4f04c6631d6a5232744" },
+    { "path": ".github/assets/06-atajos.png", "sha256": "890f939ec38c7ceb996d680cb484242d19d968789581e88afc7beac394319b1b" },
+    { "path": ".github/assets/09-apariencia.png", "sha256": "b06c39a30591f461062be68638d75009ca73e6d9530e03f02f083c0976e50301" },
+    { "path": ".github/assets/10-proveedores.png", "sha256": "fd2452f2df89d0c17f461c6a83ac4ac194eeb15a3bbacb587ac85f377352a709" },
+    { "path": ".github/assets/banner.png", "sha256": "4d757f5e25cad77979c73a228c9580b12a10fb3965b2632e67a8ec6956138464" },
+    { "path": ".github/assets/logo.png", "sha256": "e166759b87c38620404a5d27601efdf856b517ea8d3c6a94d0d34f6950483289" },
+    { "path": ".github/assets/project-image.png", "sha256": "faeecc4a72ced1cb8fdb766d74602e72b412cbcc6ed5abde37efee08e743cf0a" },
+    { "path": ".github/assets/quorb-configura-avisos.png", "sha256": "a284744d3af853a6f234a54edb425ce554bfb3012d2ebb19ef9d9b7ded79733d" },
+    { "path": "src-tauri/icons/128x128.png", "sha256": "3959818bda86d10f9fcbe49619ee51579cf414f4a166328e4d13ccd47f7f518e" },
+    { "path": "src-tauri/icons/128x128@2x.png", "sha256": "22fbc66d8a71abc906c4d7354e91b3816ad340cc30c42a1a79f265564ce9e00e" },
+    { "path": "src-tauri/icons/32x32.png", "sha256": "543c979e70bdfd5e64c0fea20ca652c82bb9598153f30cd2119e42a08096894b" },
+    { "path": "src-tauri/icons/icon.ico", "sha256": "784ee2a9faed89c2c43037ff0e3e62dd1080fff5abb861cdfa0848075185bf9d" },
+    { "path": "src-tauri/icons/icon.png", "sha256": "a5e96c616381d1798a3ea7a6fe7fc724b602c75df66c728dec4bf3ba9f23dfdb" },
+    { "path": "src/assets/quorb-logo.png", "sha256": "ea090d8c53c7d660b02ecb33e745781ca7d38b3a90ca6f7d960a86c07ca407d9" }
+  ]
+}
