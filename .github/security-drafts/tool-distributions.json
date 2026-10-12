@@ -1,0 +1,75 @@
+{
+  "status": "zizmor-workflows-and-semgrep-fixtures-completed-offline",
+  "downloaded": true,
+  "extracted": true,
+  "installed": true,
+  "executed": true,
+  "humanPinApproval": false,
+  "approvalExplanation": "Temporary runs approved: zizmor workflow audit and Semgrep offline fixtures. CI adoption and publication remain unapproved.",
+  "sources": [
+    "https://pypi.org/pypi/zizmor/1.30.1/json",
+    "https://pypi.org/pypi/semgrep/1.180.0/json"
+  ],
+  "candidates": [
+    {
+      "name": "zizmor",
+      "version": "1.30.1",
+      "distributions": [
+        {
+          "filename": "zizmor-1.30.1-py3-none-manylinux_2_28_x86_64.whl",
+          "sha256": "eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e",
+          "computedSha256": "eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e",
+          "hashMatches": true,
+          "metadataNameVersionMatch": true,
+          "url": "https://files.pythonhosted.org/packages/63/55/1900b53d34dcebc207cf3ceb7957b3748e8bb40958f062e3853ab72f2395/zizmor-1.30.1-py3-none-manylinux_2_28_x86_64.whl",
+          "size": 9467893,
+          "requires_python": ">=3.10"
+        }
+      ],
+      "declaredDependencyCount": 0,
+      "temporaryOfflineRunApproved": true,
+      "installedTemporarily": true,
+      "executedOffline": true,
+      "scannerExit": 0,
+      "workflowFilesScanned": 3,
+      "findingsCount": 0
+    },
+    {
+      "name": "semgrep",
+      "version": "1.180.0",
+      "distributions": [
+        {
+          "filename": "semgrep-1.180.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+          "sha256": "16db2e2706ab814a975eeec25debfad49abba846b7c513d88e041447152f8447",
+          "computedSha256": "16db2e2706ab814a975eeec25debfad49abba846b7c513d88e041447152f8447",
+          "hashMatches": true,
+          "metadataNameVersionMatch": true,
+          "url": "https://files.pythonhosted.org/packages/7c/1f/f4af9cc92651f04ab973eac214a62ed23260da9e0696c105b4b9734da453/semgrep-1.180.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+          "size": 70564254,
+          "requires_python": ">=3.10"
+        }
+      ],
+      "declaredDependencyCount": 27,
+      "candidateRequirementsLock": "semgrep-linux-py312.lock",
+      "resolutionSummary": "semgrep-resolution.json",
+      "resolvedRuntimePackageCount": 66,
+      "dependencyHashesRecomputed": true,
+      "verifiedDependencyWheelCount": 65,
+      "temporaryOfflineRunApproved": true,
+      "installedTemporarily": true,
+      "executedOffline": true,
+      "executionScope": "four-inert-fixtures-only",
+      "fixtureExpectedMatches": 10,
+      "fixtureActualMatches": 10,
+      "fixtureNegativeMatches": 0
+    }
+  ],
+  "limitations": [
+    "Both downloaded wheel SHA-256 hashes match the publisher metadata; this proves integrity comparison, not benignness.",
+    "Wheel metadata name/version match; no archive symlinks, unsafe paths or .pth files were observed.",
+    "Semgrep lock has 66 byte-verified wheels and 115 active dependency constraints checked for CPython 3.12/Linux x86_64/glibc >= 2.34; temporary offline installation and four fixture tests passed; CI adoption remains unapproved.",
+    "zizmor native payload worked locally on Linux x86_64; no cross-platform or CI runtime verification.",
+    "Only zizmor audited three workflow definitions offline; offline excludes remote audits and does not inspect referenced project scripts.",
+    "No finding is not a malware certificate. Semgrep fixture validation does not audit repository source; no CI workflow was activated."
+  ]
+}
