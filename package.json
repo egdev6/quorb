@@ -1,7 +1,7 @@
 {
   "name": "quorb",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Edge-docked usage rings for Claude, Codex, Gemini, Cursor, Copilot, OpenRouter and NaN Builders on Windows.",
   "license": "MIT",
   "type": "module",
