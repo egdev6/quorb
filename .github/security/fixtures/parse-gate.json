@@ -1,0 +1,17 @@
+{
+  "description": "Inert fixtures for the per-target parse gate. Never import or execute source strings. The single matching analyzer must succeed for acceptance; failures are operational, not malware findings. Module TypeScript .mts/.cts is exported as .ts without changing bytes.",
+  "validationStatus": "eight-extension-matrix-passed-job-79-baseline-regexp-adjustment-passed-job-86",
+  "valid": [
+    { "path": "plain.js", "source": "const x = 1;\n" },
+    { "path": "view.jsx", "source": "const view = <div>Hello</div>;\n" },
+    { "path": "module.mjs", "source": "export const x = 1;\n" },
+    { "path": "common.cjs", "source": "module.exports = { x: 1 };\n" },
+    { "path": "typed.ts", "source": "const x: number = 1;\n" },
+    { "path": "view.tsx", "source": "const view = <div>Hello</div>;\n" },
+    { "path": "module.mts", "source": "export const x: number = 1;\n" },
+    { "path": "common.cts", "source": "const x: number = 1;\n" }
+  ],
+  "invalidSource": "const x = ;\n",
+  "invalidExtensions": ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"],
+  "expectation": "Observed in job 79: all eight valid targets pass, each malformed extension blocks before scan, and all eight extensions produce expected positive advisories. The full pinned baseline initially failed on an HTML-comment regexp; job 86 passed all 66 sources after the separately authorized equivalent regexp adjustment. This does not certify arbitrary grammar coverage."
+}
