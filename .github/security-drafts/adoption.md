@@ -1,6 +1,6 @@
 # Adopción del análisis estático
 
-Estado: **workflow materializado localmente con plan autorizado; no publicado ni ejecutado en GitHub**.
+Estado: **publicado en la PR #101; pendiente de integración, sin cambios de protecciones**.
 
 ## Ancla de confianza
 
@@ -19,7 +19,7 @@ Estado: **workflow materializado localmente con plan autorizado; no publicado ni
 | Recurso | Estado | Operación | Autorización |
 | --- | --- | --- | --- |
 | `.github/security-drafts/code-safety.yml` | Fuente preparada | Fijar baseline completa | Preparación local autorizada |
-| `.github/workflows/code-safety.yml` | Creado localmente | `files` / `ensure` aplicado | Plan exacto aprobado por el mantenedor |
+| `.github/workflows/code-safety.yml` | Publicado en PR #101, aún no integrado | `files` / `ensure` aplicado | Plan y publicación aprobados por el mantenedor |
 | CI Windows y Secrets scan | Existentes | Conservar | Ninguna modificación |
 | Protecciones y rulesets | API: main sin protección; lista de rulesets vacía | No modificar | Fuera del permiso actual |
 
@@ -58,7 +58,13 @@ El plan no incorpora labels, milestones, templates, Projects, secretos, firma, v
 - Materialización: executor `apply` terminó correctamente, creó solo el workflow autorizado y no
   modificó recursos remotos. Fuente y destino son byte-idénticos (SHA256
   `697c5cce1e0fd2486daeee80b119495a7d08e430e9b2dd46ff20f03aedb84708`).
-- GitHub Actions de este workflow: **no ejecutado**. No se activa un check requerido por crear el archivo local.
+- Primera ejecución GitHub Actions de `Code safety`: run `38335575489`, SUCCESS;
+  analizó el merge candidato `30833e0d55c6679b1172ec4d6ee23fd96df8dbbf`, 88 fuentes y 4 workflows,
+  sin avisos. Secrets scan también pasó. Esta evidencia no corresponde al posterior commit correctivo.
+- Windows falló inicialmente por una regexp LF-only del nuevo test. La regresión se reproduce con
+  LF/CRLF sin modificar archivos del objetivo: RED → GREEN (7 tests), suite de seguridad 95 correctos.
+  Solo se amplía la tolerancia al separador CRLF, no los permisos ni la baseline; nueva CI pendiente.
+- Abrir la PR o pasar el scanner no integra el workflow ni lo convierte en check requerido.
 
 ## Límites y siguiente aprobación
 

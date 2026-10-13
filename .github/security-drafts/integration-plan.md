@@ -167,7 +167,9 @@ Las unidades se publicaron y la PR #86 se integró en `main` mediante
 Los apartados anteriores conservan evidencia histórica de la preparación y sus decisiones.
 La adopción actual se prepara por separado en [adoption.md](adoption.md): el borrador fija esa baseline,
 y `.github/workflows/code-safety.yml` se materializó localmente tras aprobar el plan exacto.
-El workflow aún no se ha publicado ni ejecutado en GitHub.
+El workflow está publicado en la PR #101, todavía sin integrar. Su primera ejecución de Code safety
+pasó en GitHub; el fallo inicial Windows del nuevo test se corrigió para LF/CRLF, pendiente de nueva CI.
+Protecciones y merge siguen fuera del permiso de publicación.
 La ejecución de `bootstrap --mode plan` no autoriza `apply`; se requiere aprobación del valor exacto
 emitido tras validar el candidato. Protecciones, publicación y ejecución remota son decisiones separadas.
 Ni la integración ni los resultados de los scanners certifican ausencia general de malware.
