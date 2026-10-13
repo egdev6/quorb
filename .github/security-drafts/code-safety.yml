@@ -1,5 +1,5 @@
-# INACTIVE SOURCE: bootstrap must not install this without a separate exact approval.
-# Publish/review the trusted baseline first, then replace the literal below and re-plan.
+# PREPARED SOURCE: materialization still requires the exact bootstrap plan approval.
+# Trusted baseline: reviewed PR #86, integrated in main; never follow a moving ref.
 name: Code safety
 on:
   pull_request:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 env:
   # Never use a PR input, branch, tag or repository variable as the trust anchor.
-  TRUSTED_BASELINE: UNPUBLISHED_REVIEW_REQUIRED
+  TRUSTED_BASELINE: 176ae636fdd80ce60d6fffec188ce558c5f6692b
   TARGET_COMMIT: ${{ github.sha }}
 jobs:
   static-review:
@@ -21,11 +21,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Adoption hold until immutable baseline is reviewed
+      - name: Validate immutable baseline and target identifiers
         shell: bash
         run: |
           if [[ ! "$TRUSTED_BASELINE" =~ ^[0-9a-f]{40}$ ]]; then
-            echo 'Inactive draft: publish and review the baseline before adoption.'
+            echo 'Invalid trust anchor: expected the reviewed full baseline commit.'
             exit 2
           fi
           [[ "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]

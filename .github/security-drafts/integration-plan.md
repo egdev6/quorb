@@ -162,8 +162,12 @@ Rust/dataflow/exfiltraciones y ausencia general de malware no quedan certificado
 
 ## Estado de entrega
 
-Ninguna unidad publicada; no hay SHA de baseline nuevo ni plan final de activación aprobado.
-Checker, inventarios, runtimes, provisionador, normalizadores, auditor zizmor completo y hosts cuentan
-con commits locales y revisiones nativas reconocidas. El cierre local exige revisar también integración
-y documentación y comprobar el conjunto; no equivale a adopción. El workflow sigue siendo un borrador con hold.
-La revisión no autoriza publicación y no certifica ausencia general de malware.
+Las unidades se publicaron y la PR #86 se integró en `main` mediante
+`176ae636fdd80ce60d6fffec188ce558c5f6692b`, baseline revisada candidata para la adopción.
+Los apartados anteriores conservan evidencia histórica de la preparación y sus decisiones.
+La adopción actual se prepara por separado en [adoption.md](adoption.md): el borrador fija esa baseline,
+y `.github/workflows/code-safety.yml` se materializó localmente tras aprobar el plan exacto.
+El workflow aún no se ha publicado ni ejecutado en GitHub.
+La ejecución de `bootstrap --mode plan` no autoriza `apply`; se requiere aprobación del valor exacto
+emitido tras validar el candidato. Protecciones, publicación y ejecución remota son decisiones separadas.
+Ni la integración ni los resultados de los scanners certifican ausencia general de malware.

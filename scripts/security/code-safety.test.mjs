@@ -104,6 +104,16 @@ test('CLI child fails closed with a generic label, exit 2, empty stdout and no l
   }
 });
 
+test('workflow adoption pins the reviewed integrated baseline and keeps target execution separate', () => {
+  const workflow = readFileSync(new URL('../../.github/security-drafts/code-safety.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /^  TRUSTED_BASELINE: 176ae636fdd80ce60d6fffec188ce558c5f6692b$/m);
+  assert.match(workflow, /ref: \$\{\{ env\.TRUSTED_BASELINE \}\}/);
+  assert.match(workflow, /ref: \$\{\{ env\.TARGET_COMMIT \}\}/);
+  assert.match(workflow, /node trusted\/scripts\/security\/code-safety\.mjs scan/);
+  assert.match(workflow, /permissions:\n  contents: read/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write/);
+});
+
 test('importing the module performs no work and no CLI call', () => {
   const result = spawnSync(process.execPath,
     ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(MODULE).href)});`],
