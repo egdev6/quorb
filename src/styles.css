@@ -83,7 +83,8 @@ html[data-window='detail'], html[data-window='detail'] body { background: transp
 .dock[data-edge='bottom'] .strip { border-bottom: 0; border-radius: var(--r) var(--r) 0 0; padding-bottom: calc(6px * var(--k)); }
 .dock[data-edge='left'] .strip { border-left: 0; border-radius: 0 var(--r) var(--r) 0; padding-left: calc(6px * var(--k)); }
 .dock[data-edge='right'] .strip { border-right: 0; border-radius: var(--r) 0 0 var(--r); padding-right: calc(6px * var(--k)); }
-.dock[data-dragging] .strip { border: 1px solid color-mix(in srgb, var(--ring-1) 50%, transparent); border-radius: var(--r); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring-1) 15%, transparent), 0 8px 24px rgb(0 0 0 / 0.5); }
+/* The native window keeps its docked size while dragging: paint the full outline inward. */
+.dock[data-dragging] .strip { border-color: color-mix(in srgb, var(--ring-1) 50%, transparent); border-radius: var(--r); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring-1) 50%, transparent), var(--shadow-edge-strong); }
 
 .strip[data-vertical] { flex-direction: column; padding: calc(6px * var(--k)) calc(8px * var(--k)); }
 .strip[data-vertical] .strip__orbs { flex-direction: column; padding: calc(6px * var(--k)) 0; }
@@ -110,7 +111,7 @@ html[data-window='detail'], html[data-window='detail'] body { background: transp
 .strip[data-small] .strip__orbs { gap: calc(11px * var(--k)); }
 
 .strip__tools { display: flex; flex-direction: column; gap: 2px; margin-right: 2px; }
-.strip__tools .icon-btn { width: max(16px, calc(22px * var(--k))); height: max(16px, calc(22px * var(--k))); opacity: 0.55; }
+.strip__tools .icon-btn { width: max(16px, calc(22px * var(--k))); height: max(16px, calc(22px * var(--k))); padding: 0; opacity: 0.55; }
 .strip__tools .icon-btn svg { width: max(10px, calc(13px * var(--k))); height: max(10px, calc(13px * var(--k))); }
 .strip:hover .strip__tools .icon-btn { opacity: 1; }
 
