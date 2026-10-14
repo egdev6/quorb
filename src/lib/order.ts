@@ -26,7 +26,7 @@ export function dropIndex(centers: number[], pointer: number): number {
 
 export const OFFICIAL_USAGE_URL: Record<string, string> = {
   claude: 'https://claude.ai/settings/usage',
-  codex: 'https://chatgpt.com/codex/settings/usage',
+  codex: 'https://chatgpt.com/settings/usage?tab=overview',
   nan: 'https://cloud.nan.builders/dashboard',
   anthropic_api: 'https://console.anthropic.com/usage',
   openai_api: 'https://platform.openai.com/usage',

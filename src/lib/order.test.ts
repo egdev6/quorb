@@ -27,6 +27,7 @@ describe('order', () => {
     expect(officialUsageUrl('openrouter')).toBe(OFFICIAL_USAGE_URL.openrouter);
     expect(officialUsageUrl('openrouter:abc123')).toBe(OFFICIAL_USAGE_URL.openrouter);
     expect(officialUsageUrl('claude:trabajo')).toBe(OFFICIAL_USAGE_URL.claude);
+    expect(officialUsageUrl('codex')).toBe('https://chatgpt.com/settings/usage?tab=overview');
     expect(officialUsageUrl('desconocido')).toBeUndefined();
     expect(officialUsageUrl('desconocido:abc')).toBeUndefined();
   });
