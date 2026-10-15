@@ -8,6 +8,7 @@ mod login;
 mod model;
 mod providers;
 mod secrets;
+mod wm_compat;
 
 use config::AppConfig;
 use model::UsageReport;
@@ -790,6 +791,7 @@ pub fn run() {
             play_effect,
             overlay_done,
             shortcut_errors,
+            wm_compat::get_wm_info,
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar Quorb");
