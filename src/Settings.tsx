@@ -68,10 +68,21 @@ function Section({ title, kicker, id, children }: { title: string; kicker?: stri
 function UpdatesSection({ auto, onAuto }: { auto: boolean; onAuto: (v: boolean) => void }) {
   const appName = useAppName();
   const [version, setVersion] = useState<string>('');
-  const { state, check, install } = useUpdater(auto);
+  const { mode, state, check, install } = useUpdater(auto);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion('?'));
   }, []);
+
+  if (mode !== 'native') return (
+    <Section title="Versión actual">
+      <p className="q-note">{appName ?? '…'} <b>{version ? `v${version}` : ''}</b></p>
+      <p className="q-note" role="status">
+        {mode === 'manual' ? 'Actualización manual en macOS. No se buscan ni se instalan actualizaciones desde la app.'
+          : mode === 'error' ? 'No se pudo determinar el modo de actualización. Reinicia Quorb para reintentar.'
+          : 'Consultando el modo de actualización…'}
+      </p>
+    </Section>
+  );
 
   return (
     <Section title="Versión instalada">
@@ -300,7 +311,7 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
       )}
       <small className="eg-field__hint">
         {msg ??
-          'Igual que «nan auth login --email»: NaN te manda un enlace de un solo uso. No lo abras en el navegador (se gastaría): cópialo y pégalo aquí. La sesión se guarda en el Administrador de credenciales de Windows y da los mismos datos que tu dashboard.'}
+          'Igual que «nan auth login --email»: NaN te manda un enlace de un solo uso. No lo abras en el navegador (se gastaría): cópialo y pégalo aquí. La sesión se guarda en el almacén de credenciales del sistema y da los mismos datos que tu dashboard.'}
       </small>
     </div>
   );
@@ -1572,14 +1583,14 @@ export function Settings() {
                 disabled={autostartState.busy || autostartState.confirmed === null}
                 onChange={(e) => setAutostartDraft(e.target.checked)}
               />{' '}
-              Arrancar con Windows
+              Arrancar al iniciar sesión
             </label>
           </header>
 
           {autostartState.error && (
             <div className="eg-notice eg-notice--warning eg-notice--sm" role="alert">
               <span className="eg-notice__text">
-                {autostartState.confirmed === null ? 'No se pudo leer «Arrancar con Windows»: ' : ''}
+                {autostartState.confirmed === null ? 'No se pudo leer «Arrancar al iniciar sesión»: ' : ''}
                 {autostartState.error}
               </span>
               {autostartState.confirmed === null && (
@@ -2115,7 +2126,7 @@ export function Settings() {
               <Section title="Cuándo avisar">
                 <Rows>
                   <Toggle label="Activar avisos" checked={cfg.alerts.enabled} onChange={(v) => set('alerts', { enabled: v })} />
-                  <Toggle label="Notificación de Windows" hint="Además del efecto en pantalla." checked={cfg.alerts.native} onChange={(v) => set('alerts', { native: v })} />
+                  <Toggle label="Notificación del sistema" hint="Además del efecto en pantalla." checked={cfg.alerts.native} onChange={(v) => set('alerts', { native: v })} />
                 </Rows>
                 <div className="q-moment">
                   <h3>1 · Al superar el límite</h3>

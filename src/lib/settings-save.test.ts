@@ -214,13 +214,13 @@ describe('mixedSaveMessage', () => {
   it('names the saved config and the failed Windows part in a mixed result', () => {
     const message = mixedSaveMessage(result(cfgSaved, osFailed));
     expect(message).toMatch(/Configuración guardada/);
-    expect(message).toMatch(/Inicio con Windows no guardado: denied/);
+    expect(message).toMatch(/Inicio al iniciar sesión no guardado: denied/);
     expect(message).not.toContain('Guardado ✓');
   });
 
   it('names the saved Windows part and the failed config in a mixed result', () => {
     const message = mixedSaveMessage(result(cfgFailed, osConfirmed));
-    expect(message).toMatch(/Inicio con Windows guardado/);
+    expect(message).toMatch(/Inicio al iniciar sesión guardado/);
     expect(message).toMatch(/Configuración no guardada: write failed/);
     expect(message).not.toContain('Guardado ✓');
   });
@@ -228,15 +228,15 @@ describe('mixedSaveMessage', () => {
   it('names both errors when both parts fail', () => {
     const message = mixedSaveMessage(result(cfgFailed, osFailed));
     expect(message).toMatch(/Configuración no guardada: write failed/);
-    expect(message).toMatch(/Inicio con Windows no guardado: denied/);
+    expect(message).toMatch(/Inicio al iniciar sesión no guardado: denied/);
   });
 
   it('never claims a skipped part was saved', () => {
     const cfgOnly = mixedSaveMessage(result(cfgFailed, skipped));
     expect(cfgOnly).toMatch(/Configuración no guardada: write failed/);
-    expect(cfgOnly).not.toMatch(/Inicio con Windows/);
+    expect(cfgOnly).not.toMatch(/Inicio al iniciar sesión/);
     const osOnly = mixedSaveMessage(result(skipped, osFailed));
-    expect(osOnly).toMatch(/Inicio con Windows no guardado: denied/);
+    expect(osOnly).toMatch(/Inicio al iniciar sesión no guardado: denied/);
     expect(osOnly).not.toMatch(/Configuración guardada/);
   });
 

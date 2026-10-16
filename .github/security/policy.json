@@ -20,6 +20,7 @@
     { "path": "src-tauri/icons/128x128.png", "sha256": "3959818bda86d10f9fcbe49619ee51579cf414f4a166328e4d13ccd47f7f518e" },
     { "path": "src-tauri/icons/128x128@2x.png", "sha256": "22fbc66d8a71abc906c4d7354e91b3816ad340cc30c42a1a79f265564ce9e00e" },
     { "path": "src-tauri/icons/32x32.png", "sha256": "543c979e70bdfd5e64c0fea20ca652c82bb9598153f30cd2119e42a08096894b" },
+    { "path": "src-tauri/icons/icon.icns", "sha256": "da545af8c619e13615caa7c57541b45dae94c43e92d2a2641eff74d00909fc0b" },
     { "path": "src-tauri/icons/icon.ico", "sha256": "784ee2a9faed89c2c43037ff0e3e62dd1080fff5abb861cdfa0848075185bf9d" },
     { "path": "src-tauri/icons/icon.png", "sha256": "a5e96c616381d1798a3ea7a6fe7fc724b602c75df66c728dec4bf3ba9f23dfdb" },
     { "path": "src/assets/quorb-logo.png", "sha256": "ea090d8c53c7d660b02ecb33e745781ca7d38b3a90ca6f7d960a86c07ca407d9" }

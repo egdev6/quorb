@@ -1,5 +1,5 @@
 /**
- * Controlador del check «Arrancar con Windows». La base confirmada la da
+ * Controlador del check «Arrancar al iniciar sesión». La base confirmada la da
  * siempre una lectura real del sistema operativo: aplicar no basta, hay que
  * leer de vuelta y comprobar que coincide antes de dar el valor por bueno.
  */
@@ -90,7 +90,7 @@ export function createAutostartController(deps: AutostartControllerDeps): Autost
   const apply = async (desired: boolean): Promise<AutostartApplyOutcome> => {
     if (!active || inFlight) return { ok: false, stage: 'busy', message: 'Hay una operación en curso.' };
     if (state.confirmed === null) {
-      return { ok: false, stage: 'unknown', message: 'No se conoce el estado de inicio con Windows. Reintenta la lectura.' };
+      return { ok: false, stage: 'unknown', message: 'No se conoce el estado de inicio al iniciar sesión. Reintenta la lectura.' };
     }
     // Sin cambios reales no se llama al sistema.
     if (state.confirmed === desired) return { ok: true, confirmed: desired, skipped: true };

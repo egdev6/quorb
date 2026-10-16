@@ -26,7 +26,23 @@ describe('shortcuts', () => {
   });
 
   it('pretty prints', () => {
-    expect(prettyCombo('Ctrl+Alt+U')).toBe('Ctrl + Alt + U');
-    expect(prettyCombo('Alt+Super+I')).toBe('Alt + Win + I');
+    expect(prettyCombo('Ctrl+Alt+U', false)).toBe('Ctrl + Alt + U');
+    expect(prettyCombo('Alt+Super+I', false)).toBe('Alt + Win + I');
+  });
+
+  describe('prettyCombo en macOS', () => {
+    it('usa símbolos de macOS y sin separadores', () => {
+      expect(prettyCombo('Ctrl+Alt+U', true)).toBe('⌃⌥U');
+      expect(prettyCombo('Ctrl+Alt+U', false)).toBe('Ctrl + Alt + U');
+    });
+
+    it('mapea Super a ⌘ y Shift a ⇧ en macOS', () => {
+      expect(prettyCombo('Super+Shift+R', true)).toBe('⌘⇧R');
+    });
+
+    it('deja la tecla normal intacta (incluye F y números)', () => {
+      expect(prettyCombo('Ctrl+Alt+F5', true)).toBe('⌃⌥F5');
+      expect(prettyCombo('Alt+Super+9', true)).toBe('⌥⌘9');
+    });
   });
 });

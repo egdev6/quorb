@@ -10,7 +10,8 @@ import { detectAlerts, effectFor, nativeAlertsEnabled, notificationText, type Al
 import { applyOrder, dropIndex, moveTo, officialUsageUrl } from './lib/order';
 import { contains, isEdge, isVertical, nearestEdge, panelHeightLimit, stripRect, type Edge, type Rect } from './lib/dock';
 import { ORB_SIZE, type AppConfig, type UsageReport } from './lib/types';
-import { checkForUpdate, emitUpdateAvailable, installUpdate, shouldNotifyUpdate, updateErrorText, UPDATE_EVERY_MS, UPDATE_FIRST_DELAY_MS, type UpdatePhase } from './lib/updater';
+import { checkForUpdate, emitUpdateAvailable, installUpdate, shouldNotifyUpdate, startUpdatePolling, updateErrorText, type UpdatePhase } from './lib/updater';
+import { useUpdaterMode } from './lib/useUpdater';
 import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
@@ -153,6 +154,7 @@ export function Widget() {
   // reordenar círculos
   const [reorder, setReorder] = useState<{ id: string; order: string[] } | null>(null);
   const [update, setUpdate] = useState<UpdatePhase>({ phase: 'idle' });
+  const updaterMode = useUpdaterMode();
 
   const stripRef = useRef<HTMLDivElement>(null);
   const orbsRef = useRef<HTMLDivElement>(null);
@@ -381,17 +383,15 @@ export function Widget() {
         /* sin red o sin releases: se reintenta en la siguiente vuelta */
       }
     };
-    const first = window.setTimeout(run, UPDATE_FIRST_DELAY_MS);
-    const every = window.setInterval(run, UPDATE_EVERY_MS);
+    const stopPolling = startUpdatePolling(updaterMode, run);
     return () => {
       stopped = true;
-      window.clearTimeout(first);
-      window.clearInterval(every);
+      stopPolling();
     };
-  }, [autoUpdate]);
+  }, [autoUpdate, updaterMode]);
 
   const startUpdate = async () => {
-    if (update.phase !== 'available') return;
+    if (updaterMode !== 'native' || update.phase !== 'available') return;
     const info = update.info;
     setUpdate({ phase: 'installing', info, progress: null });
     try {
@@ -794,7 +794,7 @@ export function Widget() {
         </div>
 
         <div className="strip__tools">
-          {(update.phase === 'available' || update.phase === 'installing') && (
+          {updaterMode === 'native' && (update.phase === 'available' || update.phase === 'installing') && (
             <button
               className="icon-btn icon-btn--update"
               data-spin={update.phase === 'installing' || undefined}

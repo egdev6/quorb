@@ -106,9 +106,11 @@ test('CLI child fails closed with a generic label, exit 2, empty stdout and no l
 
 test('workflow adoption pins the reviewed integrated baseline and keeps target execution separate', () => {
   const source = readFileSync(new URL('../../.github/security-drafts/code-safety.yml', import.meta.url), 'utf8');
+  const active = readFileSync(new URL('../../.github/workflows/code-safety.yml', import.meta.url), 'utf8');
+  assert.equal(active.replace(/\r\n/g, '\n'), source.replace(/\r\n/g, '\n'), 'active workflow must match the reviewed source');
   for (const eol of ['\n', '\r\n']) {
     const workflow = source.replace(/\r?\n/g, eol);
-    assert.match(workflow, /^  TRUSTED_BASELINE: 176ae636fdd80ce60d6fffec188ce558c5f6692b$/m);
+    assert.match(workflow, /^  TRUSTED_BASELINE: 587fc3a1806b58217881d4c94d8aa2df75ab57e1$/m);
     assert.match(workflow, /ref: \$\{\{ env\.TRUSTED_BASELINE \}\}/);
     assert.match(workflow, /ref: \$\{\{ env\.TARGET_COMMIT \}\}/);
     assert.match(workflow, /node trusted\/scripts\/security\/code-safety\.mjs scan/);

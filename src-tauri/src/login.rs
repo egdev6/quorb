@@ -154,6 +154,12 @@ fn known_dirs() -> Vec<PathBuf> {
     dirs.push(home.join(".npm-global").join("bin"));
     // `codex.exe` nativo que instala Quorb, sin depender de Node ni del PATH.
     dirs.extend(crate::codex_setup::managed_native_dirs(&home));
+    // Una app GUI en macOS no hereda el PATH de la shell: sin esto, un CLI
+    // instalado con Homebrew sería invisible para la detección y el login.
+    if cfg!(target_os = "macos") {
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+    }
     dirs
 }
 
@@ -172,6 +178,9 @@ type SessionEnv = Option<(&'static str, std::path::PathBuf)>;
 
 /// Antepone al PATH la carpeta donde se encontró el CLI (si no estaba en el PATH),
 /// incluyendo el PATH fresco del registro para que la terminal nueva lo vea.
+/// Solo la consumen las ramas Windows/Linux: en macOS el PATH viaja dentro del
+/// texto del script de Terminal, no por herencia del entorno.
+#[cfg(any(test, not(target_os = "macos")))]
 fn path_with(extra: Option<PathBuf>) -> Option<std::ffi::OsString> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     dirs.extend(fresh_path_dirs());
@@ -179,6 +188,7 @@ fn path_with(extra: Option<PathBuf>) -> Option<std::ffi::OsString> {
 }
 
 /// Antepone `extra` a `current` (el PATH actual) sin tocar el entorno real.
+#[cfg(any(test, not(target_os = "macos")))]
 fn path_with_current(extra: Option<PathBuf>, current: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
     let dir = extra?;
     let mut all = vec![dir];
@@ -209,7 +219,66 @@ fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) ->
         .map_err(|e| format!("No pude abrir la terminal: {e}"))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<(), String> {
+    let script = macos_terminal_script(command, env, extra_dir)?;
+    let mut cmd = std::process::Command::new("osascript");
+    cmd.arg("-e")
+        .arg(script)
+        .current_dir(dirs::home_dir().unwrap_or_else(|| ".".into()))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("No pude abrir la terminal: {e}"))
+}
+
+/// Comando AppleScript que abre Terminal.app ejecutando el login.
+///
+/// La ventana de Terminal no hereda el entorno de Quorb (la lanza launchd, no
+/// este proceso), así que el PATH extra y las variables de sesión se inyectan
+/// como parte del texto del script. El texto completo se incrusta entre comillas
+/// dobles de AppleScript con el escaping correspondiente.
+///
+/// El comando de login es configurable por el usuario: los caracteres de
+/// control se rechazan (un `\n` rompe el quoting de `do script` y puede
+/// ejecutar líneas fuera de la intención); y la integridad del script queda
+/// protegida por el doble escaping shell+AppleScript. Ojo: los metacaracteres
+/// de shell del comando (p. ej. `;`, `$()`) NO quedan inertes — el comando
+/// configurable se ejecuta como código de shell por diseño; el escaping
+/// protege el contenedor AppleScript, no neutraliza el shell.
+///
+/// Los helpers puros de quoting también compilan en los builds de test de
+/// Windows y Linux: su contracto de escaping es parte de la superficie probada
+/// del port y las plataformas sin Terminal deben validarlos igual.
+#[cfg(any(test, target_os = "macos"))]
+fn macos_terminal_script(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<String, String> {
+    if command.chars().any(char::is_control) {
+        return Err("El comando de login contiene caracteres de control (revísalo en Ajustes)".into());
+    }
+    let mut sh = String::new();
+    if let Some(dir) = &extra_dir {
+        sh.push_str(&format!("export PATH={}:\"$PATH\"; ", sh_quote(&dir.to_string_lossy())));
+    }
+    if let Some((var, dir)) = &env {
+        sh.push_str(&format!("export {var}={}; ", sh_quote(&dir.to_string_lossy())));
+    }
+    sh.push_str(command);
+    sh.push_str("; exec $SHELL");
+    Ok(format!("tell application \"Terminal\" to do script \"{}\"", apple_script_quote(&sh)))
+}
+
+/// Escapa un texto para insertarlo entre comillas simples de shell.
+#[cfg(any(test, target_os = "macos"))]
+fn sh_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// Escapa un texto para insertarlo entre comillas dobles de AppleScript.
+#[cfg(any(test, target_os = "macos"))]
+fn apple_script_quote(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<(), String> {
     let mut cmd = std::process::Command::new("x-terminal-emulator");
     if let Some(path) = path_with(extra_dir) {
@@ -354,5 +423,77 @@ mod tests {
         let parts: Vec<PathBuf> = std::env::split_paths(&joined).collect();
         assert_eq!(parts, vec![extra, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
         assert!(path_with_current(None, None).is_none());
+    }
+
+    #[test]
+    fn sh_quote_wraps_and_escapes_single_quotes() {
+        assert_eq!(sh_quote("codex"), "'codex'");
+        assert_eq!(sh_quote("/opt/mis herramientas/bin"), "'/opt/mis herramientas/bin'");
+        assert_eq!(sh_quote("mi'ruta"), "'mi'\\''ruta'");
+    }
+
+    #[test]
+    fn apple_script_quote_escapes_backslashes_and_double_quotes() {
+        assert_eq!(apple_script_quote("simple"), "simple");
+        // cada barra invertida se duplica
+        assert_eq!(apple_script_quote("con \\\\ barra"), "con \\\\\\\\ barra");
+        // cada comilla doble se escapa
+        assert_eq!(apple_script_quote("decir \"hola\""), "decir \\\"hola\\\"");
+    }
+
+    #[test]
+    fn macos_script_runs_the_command_and_then_the_users_shell() {
+        let script = macos_terminal_script("codex login", None, None).unwrap();
+        assert!(script.starts_with("tell application \"Terminal\" to do script \""));
+        assert!(script.contains("codex login"));
+        assert!(script.contains("exec $SHELL"));
+    }
+
+    #[test]
+    fn macos_script_exports_the_session_env_with_spaces_and_non_ascii() {
+        let dir = PathBuf::from("/Users/ju/ Mi Carpeta Ñ");
+        let script = macos_terminal_script("claude login", Some(("CODEX_HOME", dir.clone())), None).unwrap();
+        assert!(script.contains("export CODEX_HOME='/Users/ju/ Mi Carpeta Ñ'"));
+        assert!(script.contains("codex") || script.contains("claude"));
+    }
+
+    #[test]
+    fn macos_script_prepends_the_extra_dir_to_the_path() {
+        let extra = PathBuf::from("/opt/mis herramientas/bin");
+        let script = macos_terminal_script("codex login", None, Some(extra)).unwrap();
+        // las comillas de "$PATH" quedan escapadas en la capa AppleScript
+        assert!(script.contains("export PATH='/opt/mis herramientas/bin':\\\"$PATH\\\""));
+    }
+
+    /// Entrada hostil pero imprimible (comillas, backticks, $(…), punto y coma):
+    /// el contrato que acredita este test es de la CAPA APPLESCRIPT — el
+    /// payload no rompe el quoting del script y queda en una sola línea. Los
+    /// metacaracteres de shell NO quedan inertes: el comando configurable se
+    /// ejecuta como código de shell por diseño (es lo que el usuario pidió);
+    /// lo único protegido es la integridad del script que lo contiene.
+    #[test]
+    fn macos_script_keeps_hostile_printable_input_quoted_and_on_one_line() {
+        let script = macos_terminal_script("echo 'co\"de'; rm -rf $(x) `y`; ls", None, None).unwrap();
+        assert!(!script.contains('\n'), "el payload no debe contener saltos de línea");
+        assert!(script.contains("\\\""), "las comillas dobles quedan escapadas en AppleScript");
+    }
+
+    /// Caracteres de control (newlines, tabs, etc.) en el comando configurable:
+    /// se rechazan antes de construir el script. Un `\n` dentro del argumento de
+    /// `do script` rompe el quoting de AppleScript y puede ejecutar líneas
+    /// adicionales fuera de la intención del usuario.
+    #[test]
+    fn macos_script_rejects_control_characters_in_the_command() {
+        assert!(macos_terminal_script("codex login\nrm -rf ~", None, None).is_err());
+        assert!(macos_terminal_script("codex\tlogin", None, None).is_err());
+        assert!(macos_terminal_script("\u{1b}[31mrojo", None, None).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn known_dirs_include_homebrew_locations_on_macos() {
+        let dirs = known_dirs();
+        assert!(dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
+        assert!(dirs.contains(&PathBuf::from("/usr/local/bin")));
     }
 }

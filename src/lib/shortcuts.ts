@@ -52,8 +52,26 @@ export function comboFromEvent(e: KeyLike): string | null {
   return [...mods, key].join('+');
 }
 
-/** Para mostrarlo bonito: «Ctrl + Alt + U», «Win» en vez de «Super». */
-export function prettyCombo(combo: string): string {
+/** ¿Estamos en macOS? Para la visualización de atajos con símbolos del sistema. */
+export function isMacLike(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mac|iPhone|iPad/.test(navigator.platform || '') || /Macintosh/.test(navigator.userAgent || '');
+}
+
+const MAC_SYMBOLS: Record<string, string> = { Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Super: '⌘' };
+
+/**
+ * Para mostrarlo bonito: «Ctrl + Alt + U», «Win» en vez de «Super».
+ * En macOS usa los símbolos del sistema y sin separadores: «⌃⌥U», «⌘⇧R».
+ * El valor guardado no cambia: es solo la capa de visualización.
+ */
+export function prettyCombo(combo: string, mac: boolean = isMacLike()): string {
+  if (mac) {
+    return combo
+      .split('+')
+      .map((k) => MAC_SYMBOLS[k] ?? k)
+      .join('');
+  }
   return combo
     .split('+')
     .map((k) => (k === 'Super' ? 'Win' : k))

@@ -2,6 +2,7 @@
 // Cases use constructed escape sequences / short literals; no executable payloads.
 import test from 'node:test';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { analyze, validatePolicy, OperationalError } from './check-repository.mjs';
 
@@ -19,6 +20,34 @@ test('approved image requires exact path and SHA, reports explicit exclusion', (
   assert.deepEqual(r.approvedExclusions, [imageApproval]);
   assert.equal(analyze([{ ...image, path: 'assets/other.png' }], policy).ok, false);
   assert.equal(analyze([{ ...image, bytes: Buffer.from([0, 1]) }], policy).ok, false);
+});
+
+test('ICNS approval requires exact path, hash and regular non-executable mode', () => {
+  const icon = raw('src-tauri/icons/icon.icns', [105, 99, 110, 115, 0, 0, 0, 8]);
+  const approval = { path: icon.path, sha256: createHash('sha256').update(icon.bytes).digest('hex') };
+  const policy = pol({ approvedBinaryImages: [approval] });
+  const report = analyze([icon], policy);
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.approvedExclusions, [approval]);
+  for (const changed of [
+    { ...icon, path: 'src-tauri/icons/other.icns' },
+    { ...icon, bytes: Buffer.concat([icon.bytes, Buffer.from([0])]) },
+    { ...icon, mode: '100755' },
+    { ...icon, mode: '120000' },
+    { ...icon, bytes: null },
+  ]) {
+    const rejected = analyze([changed], policy);
+    assert.equal(rejected.ok, false);
+    assert.deepEqual(rejected.approvedExclusions, []);
+  }
+  assert.equal(analyze([icon], pol()).ok, false, 'ICNS is not approved by extension alone');
+});
+
+test('repository policy pins the statically reviewed macOS icon', () => {
+  const policy = validatePolicy(JSON.parse(readFileSync(new URL('../../.github/security/policy.json', import.meta.url), 'utf8')));
+  assert.deepEqual(policy.approvedBinaryImages.filter(image => image.path.endsWith('.icns')), [
+    { path: 'src-tauri/icons/icon.icns', sha256: 'da545af8c619e13615caa7c57541b45dae94c43e92d2a2641eff74d00909fc0b' },
+  ]);
 });
 
 test('image approval never exempts links, executable modes or bidi paths', () => {

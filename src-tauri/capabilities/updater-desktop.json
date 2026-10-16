@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater-desktop",
+  "description": "Actualizaciones nativas solo en Windows y Linux",
+  "platforms": ["windows", "linux"],
+  "windows": ["widget", "settings", "overlay"],
+  "permissions": ["updater:default"]
+}

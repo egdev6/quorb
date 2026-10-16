@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
 
-import { createUpdaterController, type UpdaterControllerDeps } from './updater-controller';
+import { createUpdaterController, startUpdaterSession, type UpdaterControllerDeps } from './updater-controller';
 import type { UpdateInfo, UpdatePhase } from './updater';
 
 const info = (version = '0.2.0'): UpdateInfo => ({ version, notes: null, date: null });
@@ -31,6 +31,30 @@ function setup(overrides: Partial<UpdaterControllerDeps> = {}) {
 }
 
 describe('updater controller', () => {
+  it.each(['unknown', 'manual', 'error', 'native'] as const)('gates the Settings lifecycle on backend mode: %s', async (mode) => {
+    const { controller, deps } = setup({ check: vi.fn(async () => info()) });
+    const stop = startUpdaterSession(controller, mode, true);
+    await flush();
+    await controller.check();
+    await controller.install();
+    const native = mode === 'native';
+    expect(deps.listen).toHaveBeenCalledTimes(native ? 1 : 0);
+    expect(deps.check).toHaveBeenCalledTimes(native ? 2 : 0);
+    expect(deps.install).toHaveBeenCalledTimes(native ? 1 : 0);
+    stop();
+    await controller.check();
+    expect(deps.check).toHaveBeenCalledTimes(native ? 2 : 0);
+  });
+
+  it('allows native manual actions with automatic checks disabled', async () => {
+    const { controller, deps } = setup({ check: vi.fn(async () => info()) });
+    const stop = startUpdaterSession(controller, 'native', false);
+    expect(deps.check).not.toHaveBeenCalled();
+    await controller.check();
+    expect(controller.getState()).toEqual({ phase: 'available', info: info() });
+    stop();
+  });
+
   it('shows none after a manual check that finds nothing', async () => {
     const { controller } = setup();
     controller.start();
