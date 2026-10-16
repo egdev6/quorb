@@ -7,6 +7,15 @@ El workflow está en `.github/workflows/macos-ci.yml`, materializado desde
 Las pruebas exigen igualdad exacta entre esa fuente revisada y el workflow.
 No cambia CI de Windows, Rust, los iconos ni la configuración de Tauri.
 
+## Actualizaciones en macOS
+
+Todos los builds actuales de macOS usan actualización manual: Ajustes muestra la
+versión actual, sin buscar, instalar ni sondear actualizaciones. La política viene
+del binario; el plugin updater no se registra y sus permisos solo se conceden en
+Windows/Linux. Windows conserva su updater nativo. Si la política no se puede
+resolver, las acciones quedan bloqueadas hasta reiniciar.
+Esto no publica una preview descargable ni acredita funcionamiento de la GUI.
+
 ## Ejecución prevista
 
 - PR (incluidos forks), push a `main` y ejecución manual; permiso `contents: read`.

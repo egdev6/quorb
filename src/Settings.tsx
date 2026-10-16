@@ -68,10 +68,21 @@ function Section({ title, kicker, id, children }: { title: string; kicker?: stri
 function UpdatesSection({ auto, onAuto }: { auto: boolean; onAuto: (v: boolean) => void }) {
   const appName = useAppName();
   const [version, setVersion] = useState<string>('');
-  const { state, check, install } = useUpdater(auto);
+  const { mode, state, check, install } = useUpdater(auto);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion('?'));
   }, []);
+
+  if (mode !== 'native') return (
+    <Section title="Versión actual">
+      <p className="q-note">{appName ?? '…'} <b>{version ? `v${version}` : ''}</b></p>
+      <p className="q-note" role="status">
+        {mode === 'manual' ? 'Actualización manual en macOS. No se buscan ni se instalan actualizaciones desde la app.'
+          : mode === 'error' ? 'No se pudo determinar el modo de actualización. Reinicia Quorb para reintentar.'
+          : 'Consultando el modo de actualización…'}
+      </p>
+    </Section>
+  );
 
   return (
     <Section title="Versión instalada">
