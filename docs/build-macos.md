@@ -42,6 +42,17 @@ Devuelve únicamente JSON con `sourceSha` y `version`, o error saneado con salid
 Las pruebas usan Git/API inyectados, sin red real: esta sesión no acredita una consulta GitHub real.
 No habilita workflows ni entrega una preview operativa; no crea tokens, artifacts, manifiestos ni uploads.
 
+## Staging y readback local: CLI preparatoria
+
+`node scripts/macos-preview-artifact.mjs stage` prepara solo un bundle ya compilado y verificado; no construye ni sube nada.
+El modo `readback` solo lee una descarga ya existente: no descarga artifacts ni consulta GitHub.
+Ambos exigen las variables de fuente del preflight (sin `GH_TOKEN`), HEAD real y versión exacta de `package.json`.
+Productor fijo: `src-tauri/target/macos-preview-upload`; descarga separada: `src-tauri/target/macos-preview-download`.
+Exigen DMG, `manifest.json` y `README.md` sin extras/symlinks; staging exclusivo, sin sobrescribir ni limpiar fallos parciales.
+El README fuente `docs/macos-preview-README.md` queda para la unidad 3: sin él la CLI falla cerrada; los tests lo inyectan.
+Readback compara manifiesto canónico, bytes/hash DMG y README con la fuente; devuelve solo SHA y versión validados.
+Estas pruebas de filesystem simulado no acreditan uploads, descargas reales, GUI ni una preview operativa.
+
 ## Ejecución prevista
 
 - PR (incluidos forks), push a `main` y ejecución manual; permiso `contents: read`.
