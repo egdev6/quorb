@@ -7,7 +7,6 @@ import { ProviderCard } from './components/ProviderCard';
 import { ProviderDetails } from './components/ProviderDetails';
 import { api } from './lib/api';
 import { reportSummary } from './lib/format';
-import { officialUsageUrl } from './lib/order';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, samePhysical, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
 
 function readDetailsPreference(): boolean {
@@ -136,7 +135,7 @@ export function DetailPanel() {
   }, [toast]);
 
   if (!data) return null;
-  const usageUrl = officialUsageUrl(data.report.id);
+  const usageUrl = data.usageUrl;
   // El panel se diseña a la medida del DS (círculo de 56 px) y se escala entero con el tamaño de los círculos.
   const base = basePanelZoom(data.orbSize);
   const scale = fit?.zoom ?? base;

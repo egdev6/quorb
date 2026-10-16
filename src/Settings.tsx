@@ -6,12 +6,15 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
 import { useAppName } from './lib/app-identity';
 import { api } from './lib/api';
-import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AppConfig, type Effect, type MediaSize, type ScopedSecretKey, type SecretKey, type SecretStatus, type UsageReport } from './lib/types';
+import { configKeyFor, isAccountVisible, setAccountVisibility } from './lib/settings-visibility';
+import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AppConfig, type Effect, type MediaSize, type NineRouterPeriod, type ScopedSecretKey, type SecretKey, type SecretStatus, type UsageReport } from './lib/types';
 import { ACCOUNT_SECRETS, CLI_INSTALL, SESSION_DIR, accountReady, accountsOf, defaultSessionDir, newAccount, secretKey } from './lib/accounts';
 import { ACCENT_PRESETS, DEFAULT_ACCENT, derivePalette, normalizeHex } from './lib/palette';
-import { isDirty, isSettingsDirty, liveSaveConfig, reconcileSaved } from './lib/settings-dirty';
+import { isDirty, isSettingsDirty, reconcileLive, reconcileSaved, withCanonicalLive } from './lib/settings-dirty';
+import { createLiveCloseHandler, createLiveSaver, type LiveSaver, type LiveState } from './lib/settings-live';
 import { createAutostartController } from './lib/autostart-controller';
-import { configPersistedAfterSave, runMixedSave, mixedSaveMessage, reloadSecretsAfterSave } from './lib/settings-save';
+import { configPersistedAfterSave, createWriteQueue, enqueueCanonicalConfig, runMixedSave, mixedSaveMessage, reloadSecretsAfterSave, type WriteQueue } from './lib/settings-save';
+import { hiddenNineRouterIds, nineRouterSubName, revealIds } from './lib/visibility';
 import { openAccountLogin } from './lib/account-login';
 import { createPresencePoller, effectivePersisted, isConnectionDirty } from './lib/account-health';
 import { createCodexInstallController, type CodexInstallController } from './lib/codex-install';
@@ -326,6 +329,64 @@ function NanProbe() {
       >
         {busy ? 'Consultando…' : 'Ver respuestas de /v1/models y /v1/usage'}
       </button>
+      {out && <pre className="q-pre">{out}</pre>}
+    </details>
+  );
+}
+
+/** Contraseña del dashboard de 9Router: se guarda y se prueba el login a la vez. */
+function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolean; baseUrl: string; onChange: () => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [out, setOut] = useState<string | null>(null);
+
+  const save = async (value: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      if (!value.trim()) {
+        await api.nineRouterLogout();
+        setMsg('9Router desconectado');
+      } else {
+        // Prueba contra la URL del borrador: si el usuario cambió «Base URL» sin
+        // guardar, el login debe ir a esa, no a la persistida (regresión punto 4).
+        setOut(await api.nineRouterLogin(value, baseUrl));
+        setMsg('Conectado');
+      }
+      setPassword('');
+      onChange();
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <details className="q-details" open={!connected}>
+      <summary>{connected ? '9Router conectado · volver a conectar' : 'Conectar con el dashboard'}</summary>
+      <div className="q-inline">
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={connected ? '•••••••• (configurada)' : 'Contraseña del dashboard'}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <button className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
+          Guardar y probar
+        </button>
+        {connected && (
+          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title="Desconectar 9Router">
+            Quitar
+          </button>
+        )}
+      </div>
+      <small className="eg-field__hint">
+        {msg ?? 'La contraseña del dashboard de 9Router (por defecto «123456» hasta que la cambies). Se guarda en el Administrador de credenciales de Windows.'}
+      </small>
       {out && <pre className="q-pre">{out}</pre>}
     </details>
   );
@@ -742,6 +803,8 @@ function CliConnect({
 /** Configuración de una cuenta adicional: nombre, si se muestra y cómo se conecta, en pasos. */
 function AccountEditor({
   account: a,
+  visible,
+  onVisibility,
   persisted,
   secrets,
   onChange,
@@ -754,6 +817,8 @@ function AccountEditor({
   onCodexRecheck,
 }: {
   account: Account;
+  visible: boolean;
+  onVisibility: (enabled: boolean) => void;
   /** Ya está guardada tal cual en el backend (necesario para abrir su login y comprobarla). */
   persisted: boolean;
   /** Comando de login del proveedor (el de la cuenta principal). */
@@ -794,7 +859,7 @@ function AccountEditor({
           <input type="text" value={a.label} onChange={(e) => onChange({ label: e.target.value })} />
         </Field>
       </div>
-      <Toggle label="Mostrar en el widget" checked={a.enabled} onChange={(v) => onChange({ enabled: v })} />
+      <Toggle label="Mostrar en el widget" checked={visible} onChange={onVisibility} />
 
       <ol className="q-steps" aria-label="Cómo conectar esta cuenta">
         <li data-done={a.label.trim() !== '' || undefined}>
@@ -939,19 +1004,6 @@ function AccountEditor({
   );
 }
 
-/** Clave de la config de la cuenta principal de cada proveedor. */
-const CONFIG_KEY: Record<string, keyof AppConfig> = {
-  claude: 'claude',
-  codex: 'codex',
-  gemini: 'gemini',
-  cursor: 'cursor',
-  copilot: 'copilot',
-  nan: 'nan',
-  openrouter: 'openrouter',
-  anthropic_api: 'anthropicApi',
-  openai_api: 'openaiApi',
-};
-
 const PROVIDER_TABS = [
   { id: 'claude', name: 'Claude', group: 'sub', desc: 'Pro / Max · sesión de 5 h, semanal y por modelo' },
   { id: 'codex', name: 'ChatGPT y Codex', group: 'sub', desc: 'Plus / Pro · sesión y semanal de Codex' },
@@ -962,8 +1014,10 @@ const PROVIDER_TABS = [
   { id: 'openrouter', name: 'OpenRouter', group: 'api', desc: 'Saldo y gasto por clave' },
   { id: 'anthropic_api', name: 'Anthropic API', group: 'api', desc: 'Gasto del mes con clave de admin' },
   { id: 'openai_api', name: 'OpenAI API', group: 'api', desc: 'Gasto del mes con clave de admin' },
-] as const;
 
+  { id: 'nine_router', name: '9Router', group: 'api', desc: 'Pasarela local · uso y gasto agregados' },
+
+] as const;
 /** Secciones de Ajustes, una por responsabilidad (rediseño de Quorb en Claude Design). */
 const PAGES = [
   { id: 'providers', label: 'Proveedores', title: 'Suscripciones y APIs', desc: 'Qué se consulta y cómo se conecta cada proveedor.', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z' },
@@ -1031,6 +1085,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.anthropicApi.enabled, !!s.anthropic_admin_key);
     case 'openai_api':
       return on(cfg.openaiApi.enabled, !!s.openai_admin_key);
+    case 'nine_router':
+      return on(cfg.nineRouter.enabled, !!s.nine_router_password);
   }
 }
 
@@ -1170,27 +1226,25 @@ export function Settings() {
     document.querySelector('.q-settings__main')?.scrollTo({ top: 0 });
   };
   const [shortcutErrors, setShortcutErrors] = useState<string[]>([]);
-  const sizeTimer = useRef<number | undefined>(undefined);
   const savedTimer = useRef<number | undefined>(undefined);
-  const pendingLive = useRef<Partial<AppConfig>>({});
-  const writeChain = useRef<Promise<unknown>>(Promise.resolve());
   // Ciclo de vida: en `false` no se actualiza la UI ni se recrean timers.
   const aliveRef = useRef(true);
+  const [liveState, setLiveState] = useState<LiveState>({ saving: false, error: null, pending: false });
+  const liveRef = useRef<LiveSaver | null>(null);
+  // Cola única de escrituras de Ajustes: guardado manual, patch vivo y
+  // relecturas se serializan para no pisarse (B5).
+  const queueRef = useRef<WriteQueue | null>(null);
+  if (!queueRef.current) queueRef.current = createWriteQueue();
 
   // Cola de escrituras de config de Ajustes: el guardado inmediato y el completo
   // no se pisan a medias y la base solo avanza con lo que confirma el backend.
   const enqueueSave = useCallback((build: () => AppConfig | Promise<AppConfig>): Promise<AppConfig> => {
-    const run = writeChain.current.then(async () => {
+    return queueRef.current!.run(async () => {
       const savedCfg = await api.saveConfig(await build());
       // Si el componente ya no está, no se actualiza la base ni se notifica nada.
       if (aliveRef.current) setBaseline(savedCfg);
       return savedCfg;
     });
-    writeChain.current = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
   }, []);
 
   // La prueba de un efecto guarda antes los avisos del formulario: pasa por la
@@ -1228,14 +1282,61 @@ export function Settings() {
     };
   }, [autostartController]);
 
-  // Ciclo de vida del componente: al desmontar se marca inactivo y se limpian
-  // los timers. Simétrico para StrictMode (setup/cleanup/setup).
+  // Ciclo de vida del componente: al desmontar se marca inactivo y se limpia el
+  // timer de mensajes. Simétrico para StrictMode (setup/cleanup/setup).
   useEffect(() => {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
-      window.clearTimeout(sizeTimer.current);
       window.clearTimeout(savedTimer.current);
+    };
+  }, []);
+
+  // El autosave vivo se crea en un efecto (no en render) para que la simetría de
+  // StrictMode cree una instancia nueva tras cada cleanup en vez de revivir una
+  // desechada, que ignoraría los pushes siguientes (B3).
+  useEffect(() => {
+    const queue = queueRef.current!;
+    let self: LiveSaver | null = null;
+    const saver = createLiveSaver({
+      delay: 120,
+      // Patch atómico por la misma cola que el guardado manual: sin carreras (B5).
+      save: (patch) => queue.run(() => api.patchLiveConfig(patch)),
+      onSaved: (config, patch) => {
+        // Descarta resultados de una instancia ya reemplazada o desmontada.
+        if (liveRef.current !== self || !aliveRef.current) return;
+        setCfg((c) => (c ? reconcileLive(c, patch, config) : c));
+      },
+    });
+    self = saver;
+    liveRef.current = saver;
+    setLiveState(saver.getState());
+    const off = saver.subscribe(setLiveState);
+    return () => {
+      off();
+      if (liveRef.current === saver) liveRef.current = null;
+      saver.dispose();
+    };
+  }, []);
+
+  // Cerrar la ventana (la X o el botón «Cerrar») no debe perder el último cambio
+  // vivo ni cerrarse con un fallo sin resolver: se frena el cierre, se envía lo
+  // pendiente y, si algo queda sin resolver, la ventana sigue abierta con su
+  // error y reintento visibles (B4).
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    win
+      .onCloseRequested(createLiveCloseHandler(() => liveRef.current, () => win.close()))
+      .then((u) => {
+        if (disposed) u();
+        else unlisten = u;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
     };
   }, []);
 
@@ -1253,24 +1354,19 @@ export function Settings() {
         : c,
     );
 
-  // Tamaño y colores se aplican al momento para ver el resultado en la tira mientras los cambias.
-  // Solo se guardan esos campos: el resto del formulario sigue esperando a «Guardar cambios».
-  const liveSave = (patch: Partial<AppConfig>) => {
-    setCfg((c) => (c ? { ...c, ...patch } : c));
-    pendingLive.current = { ...pendingLive.current, ...patch };
-    window.clearTimeout(sizeTimer.current);
-    sizeTimer.current = window.setTimeout(() => {
-      const toSave = pendingLive.current;
-      pendingLive.current = {};
-      // Parte de la config persistida, no del borrador: así no arrastra otros
-      // cambios sin guardar ni pierde escrituras anteriores encadenadas.
-      enqueueSave(() => api.getConfig().then((current) => liveSaveConfig(current, toSave))).catch((e) => {
-        if (aliveRef.current) setSaved(String(e));
-      });
-    }, 120);
+  const setVisibility = (id: string, enabled: boolean) =>
+    setCfg((c) => c ? setAccountVisibility(c, id, enabled) : c);
+
+  // Personalización inmediata (#97): tamaño, color y los seis controles de la
+  // tira se aplican ya y se persisten por patch atómico del backend. No cuentan
+  // como cambios manuales, así «Guardar cambios» sigue gobernando solo el resto
+  // del formulario (y el autostart, que es otro flujo).
+  const liveChange = (patch: Partial<AppConfig>) => {
+    setCfg((c) => (c ? { ...c, ...patch } : c)); // optimista, para verlo ya
+    liveRef.current?.push(patch);
   };
-  const changeOrbSize = (v: number) => liveSave({ orbSize: v });
-  const changeAccent = (hex: string) => liveSave({ accentColor: normalizeHex(hex) });
+  const changeOrbSize = (v: number) => liveChange({ orbSize: v });
+  const changeAccent = (hex: string) => liveChange({ accentColor: normalizeHex(hex) });
 
   const save = async (): Promise<boolean> => {
     // Un guardado ya en marcha no confirma nada: quien espere para abrir un
@@ -1278,7 +1374,7 @@ export function Settings() {
     if (savingRef.current) return false;
     savingRef.current = true;
     setSaving(true);
-    const snapshot = cfg; // lo que se envía; puede quedar obsoleto durante el await
+    const snapshot = withCanonicalLive(cfg, liveRef.current?.latestLive() ?? {}); // los campos vivos toman el canónico, no el borrador viejo
     const desired = autostartDraft; // instantánea del borrador al pulsar Guardar
     const cfgDirtyNow = isDirty(baseline, snapshot);
     const autostartDirtyNow = autostartState.confirmed !== null && desired !== null && desired !== autostartState.confirmed;
@@ -1293,7 +1389,7 @@ export function Settings() {
           autostartDesired: desired ?? autostartState.confirmed ?? false,
         },
         {
-          saveConfig: (s) => enqueueSave(() => s),
+          saveConfig: (s) => enqueueCanonicalConfig(enqueueSave, s, () => liveRef.current?.latestLive() ?? {}),
           applyAutostart: (d) => autostartController.apply(d),
         },
       );
@@ -1343,7 +1439,7 @@ export function Settings() {
   const secretsSig = JSON.stringify(secrets);
   const sectionDirty = (id: string) => {
     const acc = cfg.accounts.find((a) => a.id === id);
-    const k = CONFIG_KEY[acc?.provider ?? id];
+    const k = configKeyFor(acc?.provider ?? id);
     return isConnectionDirty(acc, baseline?.accounts.find((a) => a.id === id), k ? cfg[k] : undefined, k ? baseline?.[k] : undefined);
   };
   const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save });
@@ -1373,12 +1469,6 @@ export function Settings() {
         .catch(console.error);
     }
   };
-  const providerName = (id: string) => {
-    const acc = cfg.accounts.find((a) => a.id === id);
-    const base = PROVIDER_TABS.find((t) => t.id === (acc?.provider ?? id))?.name;
-    return acc ? `${base ?? acc.provider} · ${acc.label}` : (base ?? id);
-  };
-
   const page = PAGES.find((p) => p.id === section) ?? PAGES[0];
   const pendingProviders = PROVIDER_TABS.filter((t) => providerState(t.id, cfg, secrets) === 'warn').length;
   const palette = derivePalette(cfg.accentColor);
@@ -1571,14 +1661,20 @@ export function Settings() {
             </button>
           ))}
         </div>
-        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={addAccount}>
-          + Añadir cuenta
-        </button>
+        {tab === 'nine_router' ? (
+          <small className="eg-field__hint">Los subproveedores de 9Router se descubren solos desde su historial de uso; no se añaden a mano.</small>
+        ) : (
+          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={addAccount}>
+            + Añadir cuenta
+          </button>
+        )}
       </div>
       {selAccount && (
         <AccountEditor
           key={selAccount.id}
           account={selAccount}
+          visible={isAccountVisible(cfg, selAccount.id, selAccount.enabled)}
+          onVisibility={(v) => setVisibility(selAccount.id, v)}
           persisted={accountPersisted(selAccount)}
           secrets={secrets}
           onChange={(patch) => patchAccount(selAccount.id, patch)}
@@ -1630,7 +1726,7 @@ export function Settings() {
           }[p];
           return (
             <Section kicker={info.kicker} title={info.title}>
-              <Toggle label="Mostrar en el widget" checked={cfg[p].enabled} onChange={(v) => set(p, { enabled: v })} />
+              <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, p, cfg[p].enabled)} onChange={(v) => setVisibility(p, v)} />
               <p className="q-note">{info.note}</p>
               <ol className="q-steps" aria-label="Cómo conectar la cuenta">
                 <CliConnect
@@ -1660,7 +1756,7 @@ export function Settings() {
 
       {tab === 'cursor' && (
         <Section kicker="Suscripción · sesión de la app" title="Cursor">
-          <Toggle label="Mostrar en el widget" checked={cfg.cursor.enabled} onChange={(v) => set('cursor', { enabled: v })} />
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)} onChange={(v) => setVisibility('cursor', v)} />
           <p className="q-note">Uso del plan en el ciclo actual (total, Auto y modelos API) y gasto on-demand. Endpoint no oficial.</p>
           <ol className="q-steps" aria-label="Cómo conectar la cuenta">
             <li>
@@ -1684,7 +1780,7 @@ export function Settings() {
 
       {tab === 'copilot' && (
         <Section kicker="Suscripción · API oficial" title="GitHub Copilot">
-          <Toggle label="Mostrar en el widget" checked={cfg.copilot.enabled} onChange={(v) => set('copilot', { enabled: v })} />
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)} onChange={(v) => setVisibility('copilot', v)} />
           <p className="q-note">Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).</p>
           <ol className="q-steps" aria-label="Cómo conectar la cuenta">
             <li data-done={cfg.copilot.username.trim() !== '' || undefined}>
@@ -1727,7 +1823,7 @@ export function Settings() {
 
       {tab === 'openrouter' && (
         <Section kicker="Pago por uso · API oficial" title="OpenRouter">
-          <Toggle label="Mostrar en el widget" checked={cfg.openrouter.enabled} onChange={(v) => set('openrouter', { enabled: v })} />
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
           <p className="q-note">Gasto del mes y de hoy, límite de la key (si tiene) y saldo de la cuenta.</p>
           <ol className="q-steps" aria-label="Cómo conectar la cuenta">
             <li data-done={!!secrets.openrouter_api_key || undefined}>
@@ -1747,7 +1843,7 @@ export function Settings() {
 
       {tab === 'nan' && (
         <Section kicker="Suscripción · cuenta o API key" title="NaN Builders">
-          <Toggle label="Mostrar en el widget" checked={cfg.nan.enabled} onChange={(v) => set('nan', { enabled: v })} />
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
           <p className="q-note">
             Con la cuenta conectada ves lo mismo que en tu dashboard: tokens usados frente a la cuota de cada modelo, cuándo se reinicia y la serie
             diaria. Sin cuenta, la API key usa <code>/v1/usage</code> y las cuotas publicadas. <Link href={LINKS.nanDocs}>Docs</Link>
@@ -1803,13 +1899,94 @@ export function Settings() {
         </Section>
       )}
 
+      {tab === 'nine_router' && (
+        <Section kicker="Pasarela local · uso agregado" title="9Router">
+            <Toggle
+              label="Mostrar en el widget"
+              checked={cfg.nineRouter.enabled}
+              onChange={(v) => setVisibility('nine_router', v)}
+            />
+          <p className="q-note">
+            Quorb lee el uso y el gasto que <b>9Router</b> ya registra en tu equipo: peticiones, tokens y coste por proveedor del periodo. Además del
+            orbe agregado, cada proveedor que haya visto (Claude, Kiro, GLM…) aparece como su propia cuenta.
+          </p>
+          <ol className="q-steps" aria-label="Cómo conectar 9Router">
+            <li data-done={!!secrets.nine_router_password || undefined}>
+              <b>Conecta tu dashboard local</b>
+              <NineRouterConnect connected={!!secrets.nine_router_password} baseUrl={cfg.nineRouter.baseUrl} onChange={loadSecrets} />
+            </li>
+            <li data-done>
+              <b>Periodo y desglose</b>
+              <Field label="Periodo de uso" hint="Rango que muestra el orbe y su historial.">
+                <select value={cfg.nineRouter.period} onChange={(e) => set('nineRouter', { period: e.target.value as NineRouterPeriod })}>
+                  <option value="today">Hoy</option>
+                  <option value="24h">Últimas 24 h</option>
+                  <option value="7d">Últimos 7 días</option>
+                  <option value="30d">Últimos 30 días</option>
+                  <option value="60d">Últimos 60 días</option>
+                  <option value="all">Todo</option>
+                </select>
+              </Field>
+              <Toggle
+                label="Mostrar cada sub-proveedor como su propia cuenta"
+                checked={cfg.nineRouter.showSubProviders}
+                onChange={(v) => set('nineRouter', { showSubProviders: v })}
+              />
+              <Field label="Gasto mínimo por sub-proveedor (USD)" hint="No muestra un sub-orbe hasta que su gasto en el periodo supere esta cifra. 0 = cualquiera que gaste.">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  value={cfg.nineRouter.minSpendUsd}
+                  onChange={(e) => set('nineRouter', { minSpendUsd: Math.max(0, Number(e.target.value) || 0) })}
+                />
+              </Field>
+              <Field label="Presupuesto (USD)" hint="Opcional: pinta la barra de gasto del periodo frente al tope que pongas.">
+                <input
+                  type="number"
+                  min={0}
+                  step="1"
+                  value={cfg.nineRouter.monthlyBudgetUsd ?? ''}
+                  onChange={(e) => set('nineRouter', { monthlyBudgetUsd: strOrNull(e.target.value) == null ? null : Number(e.target.value) })}
+                />
+              </Field>
+            </li>
+            <HealthStep id="nine_router" {...healthFor('nine_router', !cfg.nineRouter.enabled)} />
+          </ol>
+          <details className="q-details">
+            <summary>Avanzado · dirección del servidor</summary>
+            <Field label="Base URL" hint="Dónde escucha 9Router (por defecto http://localhost:20128).">
+              <input type="text" spellCheck={false} value={cfg.nineRouter.baseUrl} onChange={(e) => set('nineRouter', { baseUrl: e.target.value })} />
+            </Field>
+          </details>
+          {(() => {
+            // Suborbes de 9Router ocultados desde el widget: se pueden recuperar aquí.
+            const hidden = hiddenNineRouterIds(cfg.hiddenProviders);
+            if (hidden.length === 0) return null;
+            return (
+              <div className="eg-field">
+                <span className="eg-field__label">Suborbes ocultos de 9Router</span>
+                <div className="q-chips">
+                  {hidden.map((id) => (
+                    <button key={id} type="button" className="eg-chip" onClick={() => set('hiddenProviders', revealIds(cfg.hiddenProviders, [id]))}>
+                      {nineRouterSubName(id)} · mostrar
+                    </button>
+                  ))}
+                </div>
+                <small className="eg-field__hint">Los ocultaste desde su panel en la tira. Pulsa para volver a mostrarlos.</small>
+              </div>
+            );
+          })()}
+        </Section>
+      )}
+
       {(tab === 'anthropic_api' || tab === 'openai_api') &&
         (() => {
           const k = tab === 'anthropic_api' ? 'anthropicApi' : 'openaiApi';
           const secret: SecretKey = tab === 'anthropic_api' ? 'anthropic_admin_key' : 'openai_admin_key';
           return (
             <Section kicker="Pago por uso · Admin key" title={tab === 'anthropic_api' ? 'Anthropic API' : 'OpenAI API'}>
-              <Toggle label="Mostrar gasto del mes" checked={cfg[k].enabled} onChange={(v) => set(k, { enabled: v })} />
+              <Toggle label="Mostrar gasto del mes" checked={isAccountVisible(cfg, tab, cfg[k].enabled)} onChange={(v) => setVisibility(tab, v)} />
               <ol className="q-steps" aria-label="Cómo conectar la cuenta">
                 <li data-done={!!secrets[secret] || undefined}>
                   <b>Admin key</b>
@@ -1891,15 +2068,15 @@ export function Settings() {
                     ))}
                   </span>
                   <small className="eg-field__hint">
-                    Es el del anillo exterior y la primera barra; los otros dos tonos y los brillos salen solos.{' '}
+                    Es el del anillo exterior y la primera barra; los otros dos tonos salen solos. Los avisos y el exceso conservan sus colores de alerta.{' '}
                     <button type="button" className="q-link" onClick={() => changeAccent(DEFAULT_ACCENT)}>Restablecer rojo egdev</button>
                   </small>
                 </div>
                 <Field label="Opacidad de la tira y el panel" value={`${Math.round(cfg.opacity * 100)} %`}>
-                  <input type="range" min={0.3} max={1} step={0.02} value={cfg.opacity} style={rangeFill(cfg.opacity, 0.3, 1)} onChange={(e) => set('opacity', Number(e.target.value))} />
+                  <input type="range" min={0.3} max={1} step={0.02} value={cfg.opacity} style={rangeFill(cfg.opacity, 0.3, 1)} onChange={(e) => liveChange({ opacity: Number(e.target.value) })} />
                 </Field>
                 <Rows>
-                  <Toggle label="Círculos pequeños" hint="Un solo anillo por suscripción: el límite más cercano." checked={cfg.compact} onChange={(v) => set('compact', v)} />
+                  <Toggle label="Círculos pequeños" hint="Un solo anillo por suscripción: el límite más cercano." checked={cfg.compact} onChange={(v) => liveChange({ compact: v })} />
                 </Rows>
               </Section>
 
@@ -1908,7 +2085,7 @@ export function Settings() {
                   <span className="eg-field__label" id="lb-edge">Borde</span>
                   <div className="q-chips" role="radiogroup" aria-labelledby="lb-edge">
                     {EDGES.map((e) => (
-                      <button key={e.id} type="button" role="radio" aria-checked={cfg.dockEdge === e.id} className={`eg-chip${cfg.dockEdge === e.id ? ' is-active' : ''}`} onClick={() => set('dockEdge', e.id)}>
+                      <button key={e.id} type="button" role="radio" aria-checked={cfg.dockEdge === e.id} className={`eg-chip${cfg.dockEdge === e.id ? ' is-active' : ''}`} onClick={() => liveChange({ dockEdge: e.id })}>
                         {e.label}
                       </button>
                     ))}
@@ -1916,26 +2093,19 @@ export function Settings() {
                   <small className="eg-field__hint">También puedes arrastrarla desde su asa: se pega al borde más cercano.</small>
                 </div>
                 <Field label="Posición en el borde" value={`${Math.round(cfg.dockOffset * 100)} %`}>
-                  <input type="range" min={0} max={1} step={0.01} value={cfg.dockOffset} style={rangeFill(cfg.dockOffset, 0, 1)} onChange={(e) => set('dockOffset', Number(e.target.value))} />
+                  <input type="range" min={0} max={1} step={0.01} value={cfg.dockOffset} style={rangeFill(cfg.dockOffset, 0, 1)} onChange={(e) => liveChange({ dockOffset: Number(e.target.value) })} />
                 </Field>
                 <Rows>
-                  <Toggle label="Ocultar sola" hint="Deja una franja en el borde y vuelve al acercar el ratón o cuando hay un aviso." checked={cfg.autoHide} onChange={(v) => set('autoHide', v)} />
-                  <Toggle label="Siempre encima" hint="Por encima del resto de ventanas." checked={cfg.alwaysOnTop} onChange={(v) => set('alwaysOnTop', v)} />
+                  <Toggle label="Ocultar sola" hint="Deja una franja en el borde y vuelve al acercar el ratón o cuando hay un aviso." checked={cfg.autoHide} onChange={(v) => liveChange({ autoHide: v })} />
+                  <Toggle label="Siempre encima" hint="Por encima del resto de ventanas." checked={cfg.alwaysOnTop} onChange={(v) => liveChange({ alwaysOnTop: v })} />
                 </Rows>
-                <div className="eg-field">
-                  <span className="eg-field__label">Círculos ocultos</span>
-                  {cfg.hiddenProviders.length > 0 ? (
-                    <div className="q-chips">
-                      {cfg.hiddenProviders.map((id) => (
-                        <button key={id} type="button" className="eg-chip" onClick={() => set('hiddenProviders', cfg.hiddenProviders.filter((x) => x !== id))}>
-                          {providerName(id)} · mostrar
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <small className="eg-field__hint">Ninguno. Para ocultar uno, pulsa «Ocultar» en su panel; se sigue consultando y avisando.</small>
-                  )}
-                </div>
+                {liveState.error && (
+                  <div className="eg-field" role="alert">
+                    <span className="eg-field__label">Personalización no aplicada</span>
+                    <small className="eg-field__hint">{liveState.error}</small>
+                    <button type="button" className="q-link" onClick={() => void liveRef.current?.retry()}>Reintentar</button>
+                  </div>
+                )}
               </Section>
             </div>
           )}

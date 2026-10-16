@@ -10,13 +10,35 @@ export interface WidgetPatch {
   dockMonitor?: string | null;
   providerOrder?: string[];
   hiddenProviders?: string[];
+  /** Personalización inmediata (#97): mismo merge atómico del backend. */
+  opacity?: number;
+  compact?: boolean;
+  autoHide?: boolean;
+  alwaysOnTop?: boolean;
+  orbSize?: number;
+  accentColor?: string;
 }
+
+/**
+ * Resultado de un patch atómico. `nativeError` describe un efecto nativo (p. ej.
+ * «siempre encima») que falló **después** de que la config ya quedara persistida:
+ * es un estado parcial recuperable, nunca un éxito total ni un rollback.
+ */
+export interface ConfigPatchOutcome {
+  config: AppConfig;
+  nativeError: string | null;
+}
+
+/** Patch atómico con resultado completo (config + posible fallo nativo). */
+const patchConfigOutcome = (patch: WidgetPatch) => invoke<ConfigPatchOutcome>('patch_config', { patch });
 
 export const api = {
   getConfig: () => invoke<AppConfig>('get_config'),
   saveConfig: (config: AppConfig) => invoke<AppConfig>('save_config', { config }),
   /** Merge atómico de los campos del widget: no toca cuentas ni secretos. */
-  patchConfig: (patch: WidgetPatch) => invoke<AppConfig>('patch_config', { patch }),
+  patchConfig: async (patch: WidgetPatch): Promise<AppConfig> => (await patchConfigOutcome(patch)).config,
+  /** Igual que `patchConfig` pero conserva el fallo nativo para un error recuperable. */
+  patchLiveConfig: patchConfigOutcome,
   secretStatus: () => invoke<SecretStatus>('secret_status'),
   setSecret: (key: ScopedSecretKey, value: string) => invoke<void>('set_secret', { key, value }),
   fetchUsage: () => invoke<UsageReport[]>('fetch_usage'),
@@ -52,6 +74,14 @@ export const api = {
   nanLoginRequest: (email: string) => invoke<void>('nan_login_request', { email }),
   /** Devuelve el usuario conectado. `account`: id de una cuenta adicional de NaN */
   nanLoginComplete: (link: string, account?: string) => invoke<string>('nan_login_complete', { link, account: account ?? null }),
+  /**
+   * 9Router: guarda la contraseña del dashboard local, inicia sesión y devuelve
+   * las stats en crudo. La cookie de sesión la conserva el backend.
+   * `baseUrl` es la del borrador de Ajustes (si el usuario la cambió sin guardar).
+   */
+  nineRouterLogin: (password: string, baseUrl?: string) => invoke<string>('nine_router_login', { password, baseUrl: baseUrl ?? null }),
+  /** 9Router: desconecta borrando contraseña y cookie de sesión guardadas. */
+  nineRouterLogout: () => invoke<void>('nine_router_logout'),
   /** Rectángulo del monitor en píxeles físicos */
   playEffect: (
     kind: Exclude<Effect, 'none'>,

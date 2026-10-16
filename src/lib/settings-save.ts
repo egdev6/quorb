@@ -1,4 +1,5 @@
 import type { AppConfig } from './types';
+import { withCanonicalLive } from './settings-dirty';
 import type { AutostartApplyOutcome } from './autostart-controller';
 
 // Coordinador del guardado mixto de Ajustes. La config se persiste por la cola
@@ -106,4 +107,39 @@ export function mixedSaveMessage(result: MixedSaveResult): string | null {
   if (osError) return cfgSaved ? `Configuración guardada · ${osError}` : osError;
   if (cfgSaved || osConfirmed) return 'Guardado ✓';
   return null;
+}
+
+/** Coordina el snapshot manual con los valores vivos confirmados. */
+export function enqueueCanonicalConfig(
+  enqueue: (build: () => AppConfig) => Promise<AppConfig>,
+  snapshot: AppConfig,
+  latestLive: () => Partial<AppConfig>,
+): Promise<AppConfig> {
+  // Leer dentro de la cola: un patch anterior puede confirmar mientras esperamos.
+  return enqueue(() => withCanonicalLive(snapshot, latestLive()));
+}
+
+export interface WriteQueue {
+  /** Encola una escritura: espera a la anterior y devuelve su propio resultado. */
+  run<T>(fn: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * Cola de escrituras de Ajustes. Unifica el guardado manual, el patch vivo y
+ * cualquier relectura para que no se crucen: sin ella, un `save_config` de
+ * snapshot completo podía pisar un patch atómico más nuevo (B5).
+ */
+export function createWriteQueue(): WriteQueue {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    run<T>(fn: () => Promise<T>): Promise<T> {
+      const run = tail.then(fn);
+      // La cola sobrevive al rechazo; el error viaja a quien espera `run`.
+      tail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    },
+  };
 }

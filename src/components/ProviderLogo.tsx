@@ -55,11 +55,46 @@ const ALIASES: Record<string, string[]> = {
   cursor: ['cursor'],
   copilot: ['copilot', 'github-copilot', 'microsoft-copilot', 'github'],
   openrouter: ['openrouter'],
+  nine_router: ['nine_router', '9router'],
+  // Nombres de nodos personalizados de 9Router → logo del proveedor real.
+  zhipu: ['zhipu', 'z-ai', 'glm', 'glm-cn'],
+  'qwen-alibaba': ['qwen-alibaba', 'qwen'],
+  modelscope: ['modelscope'],
+  replicate: ['replicate'],
 };
 
 export function findLogo(id: string): Logo | undefined {
   for (const key of ALIASES[id] ?? [id]) if (LOGOS[key]) return LOGOS[key];
   return undefined;
+}
+
+/**
+ * Clave de logo de un sub-proveedor de 9Router. El nombre visible (`name`) es
+ * «9Router · <sub>»: si `<sub>` es un nodo personalizado con nombre bonito
+ * («Zhipu», «QWEN - Alibaba») se normaliza a un id de logo (`zhipu`, `qwen-alibaba`);
+ * si no, se usa el id saneado del sub-proveedor (`kiro`, `minimax-cn`).
+ */
+export function subLogoKey(rawId: string, name: string): string {
+  const raw = rawId.split(':')[1] ?? '';
+  const label = name.includes(' · ') ? name.slice(name.indexOf(' · ') + 3) : name;
+  const fromName = normalizeLogoKey(label);
+  // El nombre del nodo solo manda si aporta algo distinto del id técnico.
+  if (fromName && fromName !== normalizeLogoKey(raw) && !looksTechnical(raw)) return fromName;
+  return normalizeLogoKey(fromName || raw);
+}
+
+/** ¿Es un id técnico de nodo (uuid, `openai-compatible-…`), sin nombre legible? */
+function looksTechnical(id: string): boolean {
+  return /[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) || id.includes('compatible');
+}
+
+/** Normaliza un nombre visible a clave de logo: `QWEN - Alibaba` → `qwen-alibaba`. */
+export function normalizeLogoKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 const MONOGRAM: Record<string, { text: string; sub?: string }> = {
@@ -72,6 +107,7 @@ const MONOGRAM: Record<string, { text: string; sub?: string }> = {
   cursor: { text: 'Cu' },
   copilot: { text: 'Co' },
   openrouter: { text: 'OR' },
+  nine_router: { text: '9R' },
 };
 
 /** Las APIs de pago por uso llevan una etiqueta «API» para distinguirlas de la suscripción. */
@@ -80,7 +116,13 @@ const API_TAG = new Set(['anthropic_api', 'openai_api']);
 export function ProviderLogo({ id: rawId, name }: { id: string; name: string }) {
   const [broken, setBroken] = useState(false);
   // Las cuentas adicionales (`claude:trabajo`) llevan el logo de su proveedor.
-  const id = providerOf(rawId);
+  const provider = providerOf(rawId);
+  // Los sub-proveedores de 9Router (`nine_router:minimax-cn`) usan su propio
+  // nombre: si no, todos mostrarían el mismo monograma «9R». Si el nombre visible
+  // es el de un nodo personalizado («Zhipu», «QWEN - Alibaba»), se busca el logo
+  // por él; si no, por el id saneado del sub-proveedor.
+  const sub = rawId.includes(':') && provider === 'nine_router' ? subLogoKey(rawId, name) : null;
+  const id = sub ?? provider;
   const logo = findLogo(id);
 
   if (logo && !broken) {
@@ -101,11 +143,21 @@ export function ProviderLogo({ id: rawId, name }: { id: string; name: string }) 
     );
   }
 
-  const m = MONOGRAM[id] ?? { text: name.slice(0, 2) };
+  const m = MONOGRAM[id] ?? { text: monogramText(id) };
   return (
     <span className="logo__mono" data-len={m.text.length} aria-label={name}>
       {m.text}
       {m.sub && <small>{m.sub}</small>}
     </span>
   );
+}
+/** Monograma breve y legible a partir de un id de proveedor.
+ * `minimax-cn` -> «MC», `codebuddy-intl` -> «CI», `zed` -> «ZE», `github` -> «GH». */
+function monogramText(id: string): string {
+  const parts = id.split(/[^a-z0-9]+/i).filter(Boolean);
+  const letters =
+    parts.length > 1
+      ? parts.map((p) => p[0]).join("")
+      : (parts[0] ?? "").slice(0, 2);
+  return (letters.slice(0, 3) || "??").toUpperCase();
 }

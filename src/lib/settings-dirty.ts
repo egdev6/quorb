@@ -20,11 +20,14 @@ function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Campos que se aplican al momento con `liveSave` (tamaño y color). No cuentan
- * como cambios manuales sin guardar: el botón «Guardar cambios» solo refleja lo
- * que espera confirmación explícita.
+ * Campos que se aplican al momento con el autosave vivo (tamaño, color y los
+ * controles de personalización inmediata #97: opacidad, círculos pequeños,
+ * borde, posición, auto-ocultar y siempre encima). No cuentan como cambios
+ * manuales sin guardar: el botón «Guardar cambios» solo refleja lo que espera
+ * confirmación explícita, ni mientras su autosave está en vuelo ni si falló
+ * (la recuperación del fallo es un reintento del propio campo vivo).
  */
-const LIVE_FIELDS = ['orbSize', 'accentColor'] as const;
+const LIVE_FIELDS = ['orbSize', 'accentColor', 'opacity', 'compact', 'dockEdge', 'dockOffset', 'autoHide', 'alwaysOnTop'] as const;
 
 /** Copia de la config sin los campos vivos, para comparar solo lo manual. */
 function withoutLiveFields(cfg: AppConfig): Omit<AppConfig, (typeof LIVE_FIELDS)[number]> {
@@ -35,9 +38,9 @@ function withoutLiveFields(cfg: AppConfig): Omit<AppConfig, (typeof LIVE_FIELDS)
 
 /**
  * ¿Hay cambios manuales sin guardar? Sin base (aún cargando) no se considera
- * sucio. Los campos vivos (`liveSave`) se ignoran porque se persisten solos:
- * no deben activar «Guardar cambios» ni siquiera mientras su autosave está en
- * vuelo y la base canónica todavía no los refleja.
+ * sucio. Los campos vivos (autosave de personalización) se ignoran porque se
+ * persisten solos: no deben activar «Guardar cambios» ni siquiera mientras su
+ * autosave está en vuelo y la base canónica todavía no los refleja.
  */
 export function isDirty(baseline: AppConfig | null, draft: AppConfig | null): boolean {
   if (!baseline || !draft) return false;
@@ -65,6 +68,25 @@ export function isSettingsDirty(
  */
 export function liveSaveConfig(baseline: AppConfig, patch: Partial<AppConfig>): AppConfig {
   return { ...baseline, ...patch };
+}
+
+/**
+ * Snapshot para un guardado manual: conserva intacto el borrador manual, pero
+ * sobreescribe los campos vivos con su canónico confirmado. Así un `save_config`
+ * de snapshot completo no puede pisar un autosave vivo más reciente (B5).
+ */
+export function withCanonicalLive(snapshot: AppConfig, live: Partial<AppConfig>): AppConfig {
+  return { ...snapshot, ...live };
+}
+
+/** Reconcilia una respuesta viva con el formulario actual. */
+export function reconcileLive(current: AppConfig, patch: Partial<AppConfig>, confirmed: AppConfig): AppConfig {
+  const next = { ...current };
+  for (const key of LIVE_FIELDS) {
+    // Una respuesta antigua no sustituye una edición posterior del mismo campo.
+    if (key in patch && Object.is(current[key], patch[key])) next[key] = confirmed[key] as never;
+  }
+  return next;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

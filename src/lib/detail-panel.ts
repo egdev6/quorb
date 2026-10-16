@@ -45,6 +45,8 @@ export interface DetailState extends DetailPlacement {
   updatedAt: number | null;
   refreshMinutes: number;
   error: string | null;
+  /** URL de uso ya resuelta (p. ej. el dashboard de 9Router con su Base URL). */
+  usageUrl: string | undefined;
 }
 
 export interface DetailInteraction {

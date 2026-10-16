@@ -61,6 +61,23 @@ export interface NanConfig {
   billingDay: number;
 }
 
+/** Periodos de uso que acepta 9Router (`GET /api/usage/stats?period=…`). */
+export type NineRouterPeriod = 'today' | '24h' | '7d' | '30d' | '60d' | 'all';
+
+/** Proveedor agregador local: lee el uso que 9Router ya registra. */
+export interface NineRouterConfig {
+  enabled: boolean;
+  /** Base del servidor local (por defecto http://localhost:20128) */
+  baseUrl: string;
+  period: NineRouterPeriod;
+  /** Presupuesto opcional en USD para pintar la barra de gasto */
+  monthlyBudgetUsd: number | null;
+  /** Mostrar cada sub-proveedor (Claude, Kiro, GLM…) como su propia cuenta */
+  showSubProviders: boolean;
+  /** Gasto mínimo en USD para mostrar un sub-proveedor como orbe (0 = los que gasten) */
+  minSpendUsd: number;
+}
+
 export type Effect = 'confetti' | 'glow' | 'custom' | 'none';
 export type AlertMoment = 'exceeded' | 'reset';
 export type MediaSize = 'small' | 'medium' | 'full';
@@ -124,6 +141,7 @@ export interface AppConfig {
   anthropicApi: ApiCostConfig;
   openaiApi: ApiCostConfig;
   nan: NanConfig;
+  nineRouter: NineRouterConfig;
   /** Cuentas adicionales de un proveedor (la principal es la de su campo) */
   accounts: Account[];
 }
@@ -137,7 +155,8 @@ export type AccountProvider =
   | 'nan'
   | 'openrouter'
   | 'anthropic_api'
-  | 'openai_api';
+  | 'openai_api'
+  | 'nine_router';
 
 /** Cuenta adicional (config.rs › Account). `id` = `<proveedor>:<sufijo>` */
 export interface Account {
@@ -164,7 +183,10 @@ export type SecretKey =
   | 'nan_session'
   | 'openrouter_api_key'
   | 'github_token'
-  | 'cursor_token';
+  | 'cursor_token'
+  | 'nine_router_password'
+  | 'nine_router_session'
+  | 'nine_router_bound_url';
 /** Secreto de la cuenta principal o de una adicional (`<secreto>@<id de cuenta>`) */
 export type ScopedSecretKey = SecretKey | `${SecretKey}@${string}`;
 export type SecretStatus = Partial<Record<ScopedSecretKey, boolean>>;

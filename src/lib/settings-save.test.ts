@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Account, AppConfig, SecretStatus } from './types';
 import type { AutostartApplyOutcome } from './autostart-controller';
 import { accountReady } from './accounts';
-import { configPersistedAfterSave, mixedSaveMessage, reloadSecretsAfterSave, runMixedSave, type MixedSaveDeps, type MixedSaveInput, type MixedSaveResult } from './settings-save';
+import { configPersistedAfterSave, createWriteQueue, enqueueCanonicalConfig, mixedSaveMessage, reloadSecretsAfterSave, runMixedSave, type MixedSaveDeps, type MixedSaveInput, type MixedSaveResult } from './settings-save';
 
 const config = (over: Record<string, unknown> = {}) =>
   ({ refreshMinutes: 5, orbSize: 48, accentColor: '#ff0036', ...over }) as unknown as AppConfig;
@@ -29,7 +29,66 @@ const input = (over: Partial<MixedSaveInput> = {}): MixedSaveInput => ({
 
 const result = (config: MixedSaveResult['config'], autostart: MixedSaveResult['autostart']): MixedSaveResult => ({ config, autostart });
 
-describe('runMixedSave', () => {
+describe('createWriteQueue (B5)', () => {
+  it('serializa las escrituras: un patch vivo no se cruza con un guardado manual en vuelo', async () => {
+    const queue = createWriteQueue();
+    const order: string[] = [];
+    let releaseManual!: () => void;
+    const manual = queue.run(async () => {
+      order.push('manual:start');
+      await new Promise<void>((resolve) => {
+        releaseManual = resolve;
+      });
+      order.push('manual:end');
+      return 'manual';
+    });
+    const live = queue.run(async () => {
+      order.push('live');
+      return 'live';
+    });
+    await Promise.resolve();
+    // El patch vivo no empieza hasta que el guardado manual suelta la cola.
+    expect(order).toEqual(['manual:start']);
+    releaseManual();
+    await Promise.all([manual, live]);
+    expect(order).toEqual(['manual:start', 'manual:end', 'live']);
+  });
+
+  it('sobrevive a un rechazo y sigue encolando lo siguiente', async () => {
+    const queue = createWriteQueue();
+    const failed = queue.run(async () => {
+      throw new Error('boom');
+    });
+    await expect(failed).rejects.toThrow('boom');
+    await expect(queue.run(async () => 'ok')).resolves.toBe('ok');
+  });
+});
+
+describe('enqueueCanonicalConfig', () => {
+  it('reads live values at execution after the older queued write settles', async () => {
+    const queue = createWriteQueue();
+    let canonical: Partial<AppConfig> = { opacity: 0.2 };
+    let release!: () => void;
+    const live = queue.run(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      canonical = { opacity: 0.8 };
+    });
+    await Promise.resolve();
+    const snapshot = config({ opacity: 0.2, refreshMinutes: 30 });
+    const persisted = vi.fn(async (cfg: AppConfig) => cfg);
+    const manual = enqueueCanonicalConfig(
+      (build) => queue.run(() => persisted(build())), snapshot, () => canonical,
+    );
+    expect(persisted).not.toHaveBeenCalled();
+    release();
+    await live;
+    expect(await manual).toEqual(config({ opacity: 0.8, refreshMinutes: 30 }));
+    expect(persisted).toHaveBeenCalledTimes(1);
+    expect(snapshot.opacity).toBe(0.2);
+  });
+});
+
+ describe('runMixedSave', () => {
   it('does nothing when no part is dirty', async () => {
     const deps = setup();
     const result = await runMixedSave(input(), deps);

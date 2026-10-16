@@ -81,6 +81,8 @@ export const ACCOUNT_SECRETS: Record<AccountProvider, SecretKey[]> = {
   openrouter: ['openrouter_api_key'],
   anthropic_api: ['anthropic_admin_key'],
   openai_api: ['openai_admin_key'],
+  // Los sub-proveedores de 9Router comparten la sesión del dashboard (no scoped).
+  nine_router: [],
 };
 
 /**
@@ -103,6 +105,8 @@ export function accountReady(a: Account, s: SecretStatus): boolean {
       return has('anthropic_admin_key');
     case 'openai_api':
       return has('openai_admin_key');
+    case 'nine_router':
+      return has('nine_router_password');
     default:
       return true;
   }

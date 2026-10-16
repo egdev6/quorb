@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountTags, defaultSessionDir, newAccount, providerOf, secretKey } from './accounts';
+import { ACCOUNT_SECRETS, accountTags, defaultSessionDir, newAccount, providerOf, secretKey } from './accounts';
 import type { AppConfig } from './types';
 
 const cfg = (accounts: AppConfig['accounts'] = []) => ({ accounts, nan: { plan: 'premium' } }) as unknown as AppConfig;
@@ -43,5 +43,14 @@ describe('accounts', () => {
       'codex:b': '2',
     });
     expect(accountTags(cfg())).toEqual({});
+  });
+
+  it('treats 9Router sub-providers as accounts of the aggregator', () => {
+    // El sub-proveedor `nine_router:claude` cuelga del proveedor `nine_router`.
+    expect(providerOf('nine_router')).toBe('nine_router');
+    expect(providerOf('nine_router:claude')).toBe('nine_router');
+    // Comparten la sesión del dashboard: no guardan secreto propio por cuenta.
+    expect(ACCOUNT_SECRETS.nine_router).toEqual([]);
+    expect(secretKey('nine_router_password', 'nine_router:claude')).toBe('nine_router_password@nine_router:claude');
   });
 });

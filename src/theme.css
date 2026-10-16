@@ -22,7 +22,8 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 .eg-gauge__key { background: var(--ring-1); }
 .eg-gauge__key--2 { background: var(--ring-2); }
 .eg-gauge__key--3 { background: var(--ring-3); }
-.eg-gauge.is-over { box-shadow: 0 0 22px 4px color-mix(in srgb, var(--ring-1) 65%, transparent), 0 0 55px 8px color-mix(in srgb, var(--ring-1) 28%, transparent); }
+/* El consumo conserva la paleta; el halo de exceso sigue siendo una alarma. */
+.eg-gauge.is-over { box-shadow: 0 0 22px 4px color-mix(in srgb, var(--color-status-danger) 65%, transparent), 0 0 55px 8px color-mix(in srgb, var(--color-status-danger) 28%, transparent); }
 
 .q-meter .eg-progress__bar { background: var(--color-fg-muted); box-shadow: none; }
 .q-meter[data-ring='1'] .eg-progress__bar {
@@ -78,13 +79,19 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
   overflow-x: hidden;
   font-size: 14px;
   background: rgb(35 36 40 / var(--panel-alpha));
+  /* La ventana termina en el panel: la elevación exterior oscurece sus esquinas transparentes. */
+  box-shadow: var(--shadow-edge-strong);
   animation: none;
 }
-.q-panel:hover { transform: none; }
+.q-panel:hover, .q-panel.is-hover { transform: none; box-shadow: var(--shadow-edge-strong); }
 .q-card { display: flex; flex-direction: column; gap: 16px; }
+/* Redondear las bandas, no recortar el contenido/foco ni la medición natural. */
+.q-panel > .q-card { border-radius: inherit; }
 /* Panel en bandas (ModuleCard --glass --banded): cabecera surface-3, cuerpo, pie surface-1. */
 .q-panel > .q-card > :not(.eg-module-card__head), .q-panel > :not(.q-card):not(.panel__foot) { margin-inline: 20px; }
 .q-panel > .q-card > .eg-module-card__head {
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
   padding: 14px 20px;
   background: var(--gradient-sheen), var(--color-surface-3);
   border-bottom: 1px solid var(--color-border-hairline);
@@ -134,6 +141,8 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 .q-panel .panel__actions { margin: 0; gap: 4px; }
 .q-panel .panel__actions .eg-btn--sm { min-height: 34px; padding: 6px 10px; font-size: 13px; }
 .q-panel .panel__foot {
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
   order: 2;
   margin: 0;
   padding: 10px 20px;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from './types';
-import { isDirty, isSettingsDirty, liveSaveConfig, reconcileSaved } from './settings-dirty';
+import { isDirty, isSettingsDirty, liveSaveConfig, reconcileLive, reconcileSaved, withCanonicalLive } from './settings-dirty';
 
 const alerts = (over: Partial<AppConfig['alerts']> = {}): AppConfig['alerts'] => ({
   enabled: true,
@@ -62,6 +62,29 @@ describe('isDirty con campos vivos', () => {
     expect(isDirty(null, { ...base, orbSize: 60 })).toBe(false);
     expect(isDirty({ ...base, orbSize: 60 }, null)).toBe(false);
   });
+
+  it('ignora los seis controles de personalización inmediata (#97)', () => {
+    const lives: Partial<AppConfig>[] = [
+      { opacity: 0.5 },
+      { compact: true },
+      { dockEdge: 'left' },
+      { dockOffset: 0.1 },
+      { autoHide: true },
+      { alwaysOnTop: false },
+    ];
+    for (const patch of lives) {
+      expect(isDirty(base, { ...base, ...patch })).toBe(false);
+    }
+  });
+
+  it('un cambio vivo pendiente o fallido no ensucia: el manual sigue mandando', () => {
+    const draft = { ...base, opacity: 0.4, autoHide: true, refreshMinutes: 30 };
+    expect(isDirty(base, draft)).toBe(true);
+    // Aunque el autosave aún no confirmó el valor vivo, revertir lo manual limpia.
+    expect(isDirty(base, { ...draft, refreshMinutes: base.refreshMinutes })).toBe(false);
+    // La llegada del valor vivo canónico no limpia otra suciedad manual.
+    expect(isDirty({ ...base, opacity: 0.4 }, { ...draft, opacity: 0.4 })).toBe(true);
+  });
 });
 
 describe('liveSaveConfig', () => {
@@ -74,7 +97,35 @@ describe('liveSaveConfig', () => {
   });
 });
 
-describe('isSettingsDirty', () => {
+describe('withCanonicalLive (B5)', () => {
+  it('conserva el borrador manual y adopta el canónico vivo confirmado', () => {
+    const base = config();
+    const draft = { ...base, refreshMinutes: 30, opacity: 0.94, autoHide: false };
+    const out = withCanonicalLive(draft, { opacity: 0.36, autoHide: true });
+    // El borrador manual queda intacto; solo los campos vivos toman el canónico.
+    expect(out.refreshMinutes).toBe(30);
+    expect(out.opacity).toBe(0.36);
+    expect(out.autoHide).toBe(true);
+  });
+});
+
+describe('reconcileLive', () => {
+  it('keeps a newer input and manual edits when an older live response arrives', () => {
+    const draft = config({ opacity: 0.7, refreshMinutes: 30 });
+    const out = reconcileLive(draft, { opacity: 0.3 }, config({ opacity: 0.3 }));
+    expect(out.opacity).toBe(0.7);
+    expect(out.refreshMinutes).toBe(30);
+  });
+
+  it('adopts normalization when the input still matches the submitted patch', () => {
+    const draft = config({ opacity: 0.1, refreshMinutes: 30 });
+    const out = reconcileLive(draft, { opacity: 0.1 }, config({ opacity: 0.3 }));
+    expect(out.opacity).toBe(0.3);
+    expect(out.refreshMinutes).toBe(30);
+  });
+});
+
+ describe('isSettingsDirty', () => {
   const base = config();
 
   it('combines the manual config dirty flag with the autostart draft', () => {

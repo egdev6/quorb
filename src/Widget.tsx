@@ -7,12 +7,13 @@ import { api, type WidgetPatch } from './lib/api';
 import { mergeReports, peakMeter, sessionsLost, trayTooltip } from './lib/format';
 import { derivePalette } from './lib/palette';
 import { detectAlerts, effectFor, nativeAlertsEnabled, notificationText, type AlertMemory } from './lib/alerts';
-import { applyOrder, dropIndex, moveTo } from './lib/order';
+import { applyOrder, dropIndex, moveTo, officialUsageUrl } from './lib/order';
 import { contains, isEdge, isVertical, nearestEdge, panelHeightLimit, stripRect, type Edge, type Rect } from './lib/dock';
 import { ORB_SIZE, type AppConfig, type UsageReport } from './lib/types';
 import { checkForUpdate, emitUpdateAvailable, installUpdate, shouldNotifyUpdate, updateErrorText, UPDATE_EVERY_MS, UPDATE_FIRST_DELAY_MS, type UpdatePhase } from './lib/updater';
 import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
+import { needsRefresh } from './lib/widget-refresh';
 import { DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, type DetailInteraction, type DetailState } from './lib/detail-panel';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
@@ -63,8 +64,6 @@ async function resolveGeo(name: string | null): Promise<Geo | null> {
 }
 
 /** Campos que, si cambian, obligan a volver a pedir datos. */
-const dataKey = (c: AppConfig | null) =>
-  c ? JSON.stringify([c.claude, c.codex, c.gemini, c.cursor, c.copilot, c.openrouter, c.anthropicApi, c.openaiApi, c.nan]) : '';
 
 // Pequeñas preferencias locales del widget (no críticas).
 const local = {
@@ -286,7 +285,7 @@ export function Widget() {
         const next = await api.getConfig();
         applyConfig(next);
         // Mover la tira o cambiar colores no debe disparar peticiones a los proveedores.
-        if (dataKey(prev) !== dataKey(next)) refresh();
+        if (needsRefresh(prev, next)) refresh();
       }),
       listen('refresh-now', () => refresh()),
       listen('open-peak', () => openPeakRef.current()),
@@ -491,14 +490,17 @@ export function Widget() {
       orbSize,
       opacity: config?.opacity ?? 0.94,
       colors: [ring1, ring2, ring3],
-      updatedAt: updatedAt?.getTime() ?? null,
-      refreshMinutes: config?.refreshMinutes ?? 5,
-      error,
-    } : null;
+        updatedAt: updatedAt?.getTime() ?? null,
+        refreshMinutes: config?.refreshMinutes ?? 5,
+        error,
+        // La URL de uso se resuelve aquí, que sí hay config: 9Router apunta a su
+        // Base URL configurada (no a localhost fijo). Al detalle solo cruza la URL.
+        usageUrl: officialUsageUrl(active.id, config?.nineRouter.baseUrl),
+      } : null;
     detailStateRef.current = state;
     if (!state) detailInsideRef.current = false;
     if (detailReadyRef.current) emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, state).catch(console.warn);
-  }, [active, geo, stripSize, edge, offset, vertical, anchorRel, dragging, collapsed, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, ring1, ring2, ring3, updatedAt, error]);
+  }, [active, geo, stripSize, edge, offset, vertical, anchorRel, dragging, collapsed, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
 
   useEffect(() => {
     let disposed = false;

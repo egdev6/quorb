@@ -2,6 +2,7 @@ mod channel;
 mod cli_process;
 mod codex_setup;
 mod config;
+mod config_transaction;
 mod history;
 mod login;
 mod model;
@@ -96,6 +97,44 @@ struct AppState {
     history: history::History,
 }
 
+/// Resultado de un patch atómico. `native_error` describe un efecto nativo que
+/// falló **después** de persistir la config: estado parcial recuperable, nunca
+/// un éxito total ni un rollback prometido.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ConfigPatchOutcome {
+    config: AppConfig,
+    native_error: Option<String>,
+}
+
+/// ¿El patch pide re-aplicar el efecto nativo de «siempre encima»? Decide por
+/// **presencia del campo**, no por cambio de valor: un reintento debe re-aplicar
+/// aunque la config ya tuviera el mismo valor (la persistencia pudo pasar y el
+/// efecto nativo fallar).
+fn patch_touches_always_on_top(patch: &config::WidgetPatch) -> bool {
+    patch.always_on_top.is_some()
+}
+
+/// Aplica «siempre encima» al widget y al detalle. Devuelve el **primer** error
+/// legible en vez de descartarlo: el fallo nativo es visible y recuperable.
+fn apply_always_on_top(app: &AppHandle, value: bool) -> Option<String> {
+    let mut error = None;
+    for label in [WIDGET, DETAIL] {
+        if let Some(w) = app.get_webview_window(label) {
+            if let Err(e) = w.set_always_on_top(value) {
+                if error.is_none() {
+                    error = Some(always_on_top_error(&e.to_string()));
+                }
+            }
+        }
+    }
+    error
+}
+
+fn always_on_top_error(detail: &str) -> String {
+    format!("No se pudo aplicar «siempre encima»: {detail}")
+}
+
 // ───────────────────────── comandos ─────────────────────────
 
 #[tauri::command]
@@ -105,23 +144,34 @@ fn get_config(state: State<'_, AppState>) -> AppConfig {
 
 /// Sustituye la config bajo el lock y la persiste en el mismo paso, para que
 /// `save_config` y `patch_config` no se pisen a medias (merge atómico).
-/// Devuelve (anterior, nueva). Los efectos secundarios van fuera del lock.
+/// Devuelve (anterior, nueva). La invalidación de credenciales y la publicación
+/// comparten el lock; los efectos de UI se aplican después de soltarlo.
 fn update_config(
     state: &AppState,
     mutate: impl FnOnce(&mut AppConfig),
 ) -> Result<(AppConfig, AppConfig), String> {
-    let mut guard = state.config.lock().unwrap();
-    let mut next = guard.clone();
-    mutate(&mut next);
-    let next = next.sanitized();
-    config::save(&state.config_path, &next)?;
-    let old = std::mem::replace(&mut *guard, next.clone());
-    Ok((old, next))
+    config_transaction::update(
+        &state.config,
+        |current| {
+            let mut next = current.clone();
+            mutate(&mut next);
+            next.sanitized()
+        },
+        |old, next| {
+            invalidate_nine_router_before_destination_publish(
+                &old.nine_router.base_url,
+                &next.nine_router.base_url,
+                forget_nine_router_secrets,
+            ).map(|_| ())
+        },
+        |next| config::save(&state.config_path, next),
+    )
 }
 
 #[tauri::command]
 fn save_config(app: AppHandle, state: State<'_, AppState>, config: AppConfig) -> Result<AppConfig, String> {
     let (old, config) = update_config(&state, |current| *current = config)?;
+    // La invalidación de 9Router ya ocurrió dentro de la transacción de config.
     // Las cuentas eliminadas se llevan sus secretos del almacén del sistema.
     for gone in old.accounts.iter().filter(|a| !config.accounts.iter().any(|b| b.id == a.id)) {
         secrets::forget_account(gone);
@@ -130,22 +180,50 @@ fn save_config(app: AppHandle, state: State<'_, AppState>, config: AppConfig) ->
     if old_shortcuts != config.shortcuts {
         apply_shortcuts(&app, &config.shortcuts);
     }
-    for label in [WIDGET, DETAIL] {
-        if let Some(w) = app.get_webview_window(label) {
-            let _ = w.set_always_on_top(config.always_on_top);
-        }
-    }
+    // Contrato legacy de `save_config`: mantiene el efecto nativo de siempre encima.
+    // El resultado del patch vivo (`patch_config`) es el que reporta el fallo.
+    let _ = apply_always_on_top(&app, config.always_on_top);
     let _ = app.emit("config-changed", &config);
     Ok(config)
 }
 
+/// ¿El guardado cambia el destino de 9Router? Compara ignorando la barra final y
+/// los espacios. Cuando cambia, las credenciales guardadas (del destino anterior)
+/// dejan de ser válidas para el nuevo y hay que invalidarlas.
+fn nine_router_destination_changed(old_base: &str, new_base: &str) -> bool {
+    providers::nine_router::normalize_base(old_base) != providers::nine_router::normalize_base(new_base)
+}
+
+/// Orden fail-safe al cambiar destino: invalidar secretos y solo entonces permitir
+/// publicar la URL nueva. Si `forget` falla, el caller no debe persistir B.
+/// Devuelve `true` cuando hubo que invalidar.
+fn invalidate_nine_router_before_destination_publish(
+    old_base: &str,
+    new_base: &str,
+    forget: impl FnOnce() -> Result<(), String>,
+) -> Result<bool, String> {
+    if !nine_router_destination_changed(old_base, new_base) {
+        return Ok(false);
+    }
+    forget()?;
+    Ok(true)
+}
+
+/// Borra contraseña, cookie **y** vínculo al destino. Invalida renovaciones pendientes.
+fn forget_nine_router_secrets() -> Result<(), String> {
+    providers::nine_router_creds::forget_all()
+}
+
 /// Merge atómico de los campos del widget sobre la config actual: nunca toca
 /// cuentas ni secretos, así un snapshot obsoleto no puede borrar una cuenta.
+/// Devuelve la config persistida junto al posible fallo del efecto nativo.
 #[tauri::command]
-fn patch_config(app: AppHandle, state: State<'_, AppState>, patch: config::WidgetPatch) -> Result<AppConfig, String> {
+fn patch_config(app: AppHandle, state: State<'_, AppState>, patch: config::WidgetPatch) -> Result<ConfigPatchOutcome, String> {
+    let apply_top = patch_touches_always_on_top(&patch);
     let (_old, config) = update_config(&state, |current| current.apply_widget_patch(patch))?;
+    let native_error = if apply_top { apply_always_on_top(&app, config.always_on_top) } else { None };
     let _ = app.emit("config-changed", &config);
-    Ok(config)
+    Ok(ConfigPatchOutcome { config, native_error })
 }
 
 #[tauri::command]
@@ -156,6 +234,11 @@ fn secret_status(state: State<'_, AppState>) -> BTreeMap<String, bool> {
 
 #[tauri::command]
 fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> {
+    // P2: las claves de 9Router solo mutan vía el coordinador (login/logout/save URL).
+    // El setter genérico saltaría el lock y la generación.
+    if providers::nine_router_creds::is_managed_key(&key) {
+        return Err("Las credenciales de 9Router solo se gestionan al conectar o desconectar.".into());
+    }
     secrets::set(&key, &value)?;
     let _ = app.emit("config-changed", ());
     Ok(())
@@ -181,6 +264,61 @@ fn get_history(state: State<'_, AppState>, provider: String, hours: u32) -> Vec<
 async fn nan_probe(state: State<'_, AppState>) -> Result<String, String> {
     let cfg = state.config.lock().unwrap().clone();
     providers::nan::probe(&cfg.nan, &state.http).await
+}
+
+/// Guarda la contraseña del dashboard de 9Router y prueba el login; devuelve las
+/// stats en crudo (Ajustes › 9Router › Probar). `base_url` es la del borrador de
+/// Ajustes si el usuario la cambió sin guardar; si no, la persistida.
+///
+/// Las credenciales están vinculadas al servidor. Una prueba contra otro destino
+/// usa una sesión temporal aislada. Para persistir, config y ticket se capturan
+/// bajo el mismo lock que el guardado y logout; tras la red la generación debe
+/// seguir vigente. Ningún lock de configuración se mantiene durante el `.await`.
+#[tauri::command]
+async fn nine_router_login(app: AppHandle, state: State<'_, AppState>, password: String, base_url: Option<String>) -> Result<String, String> {
+    let (cfg, ticket) = config_transaction::snapshot_with_ticket(
+        &state.config,
+        providers::nine_router_creds::begin_write_ticket,
+    );
+    let saved_base = cfg.nine_router.base_url.trim();
+    let draft_base = base_url
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty());
+    let base = draft_base.clone().unwrap_or_else(|| saved_base.to_string());
+    if providers::nine_router::same_destination(saved_base, draft_base.as_deref()) {
+        // Ticket antes del await: si hay logout / otro destino / otra conexión,
+        // la respuesta de A no debe restaurar ni sobrescribir (persist_if_generation).
+        let cookie = providers::nine_router::login(&state.http, &base, &password).await?;
+        match providers::nine_router_creds::persist_if_generation(&base, &password, &cookie, ticket) {
+            Ok(()) => {}
+            Err(providers::nine_router_creds::PersistError::Stale) => {
+                return Err("La sesión de 9Router cambió durante el login. Vuelve a conectar.".into());
+            }
+            Err(providers::nine_router_creds::PersistError::Store(e)) => return Err(e),
+        }
+        let _ = app.emit("config-changed", ());
+        // P2: la conexión no cambia la config, así que `config-changed` no obliga a
+        // refrescar los datos del widget (que se refrescan por `needsRefresh`, que
+        // mira la config, no las credenciales). Se pide el refresco explícito para
+        // que el orbe refleje la sesión recién establecida sin esperar al ciclo.
+        let _ = app.emit("refresh-now", ());
+        providers::nine_router::probe(&state.http, &cfg.nine_router, Some(&base)).await
+    } else {
+        // Destino del borrador ≠ persistido: prueba aislada, sin persistir nada.
+        providers::nine_router::probe_with_password(&state.http, &cfg.nine_router, &base, &password).await
+    }
+}
+
+/// Desconecta 9Router: borra contraseña, cookie y vínculo al destino.
+/// Si el almacén no confirma el borrado, se propaga el error (no se informa éxito).
+#[tauri::command]
+fn nine_router_logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    config_transaction::with_locked(&state.config, forget_nine_router_secrets)?;
+    let _ = app.emit("config-changed", ());
+    // P2: desconectar también debe refrescar el widget al instante (misma razón
+    // que en el login: la config no cambia, solo la sesión).
+    let _ = app.emit("refresh-now", ());
+    Ok(())
 }
 
 /// NaN: envía el enlace de acceso al correo (mismo flujo que `nan auth login --email`).
@@ -630,6 +768,8 @@ pub fn run() {
             nan_probe,
             nan_login_request,
             nan_login_complete,
+            nine_router_login,
+            nine_router_logout,
             play_effect,
             overlay_done,
             shortcut_errors,
@@ -642,6 +782,83 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::config::Account;
+
+    /// P1 (4º feedback): guardar una Base URL de 9Router distinta invalida los
+    /// secretos del destino anterior. Sin esto, el siguiente fetch enviaría la
+    /// cookie de A a B (o al revés), rompiendo la conexión anterior y exponiendo
+    /// credenciales a otro destino. Escenario: conectado a A → cambiar a B →
+    /// «Guardar» → los secretos de A no deben sobrevivir al guardado.
+    #[test]
+    fn saving_a_new_nine_router_base_url_invalidates_old_secrets() {
+        // Mismo destino (con o sin barra final/espacios): los secretos siguen valiendo.
+        assert!(!nine_router_destination_changed("http://localhost:20128", "http://localhost:20128"));
+        assert!(!nine_router_destination_changed("http://localhost:20128/", "http://localhost:20128"));
+        assert!(!nine_router_destination_changed("  http://localhost:20128  ", "http://localhost:20128/"));
+        // Otro destino: hay que invalidar (se borran contraseña y cookie).
+        assert!(nine_router_destination_changed("http://localhost:20128", "http://localhost:3000"));
+        assert!(nine_router_destination_changed("http://localhost:20128", "http://otro-host:20128"));
+        assert!(nine_router_destination_changed("http://localhost:20128", "https://localhost:20128"));
+    }
+
+    /// P1 (5º feedback): si el almacén rechaza el borrado, no se puede publicar B.
+    #[test]
+    fn destination_change_refuses_publish_when_forget_fails() {
+        let err = invalidate_nine_router_before_destination_publish(
+            "http://localhost:20128",
+            "http://localhost:3000",
+            || Err("store locked".into()),
+        )
+        .expect_err("forget fallido debe abortar el guardado de B");
+        assert!(err.contains("store locked"));
+    }
+
+    /// P1 (5º feedback): el borrado ocurre (y debe completarse) antes de que el
+    /// caller publique el destino nuevo — orden fail-safe frente a refrescos.
+    #[test]
+    fn destination_change_forgets_before_caller_may_publish() {
+        let mut forgot = false;
+        let mut published = false;
+        let changed = invalidate_nine_router_before_destination_publish(
+            "http://a:20128",
+            "http://b:20128",
+            || {
+                assert!(!published, "no publicar B antes de invalidar");
+                forgot = true;
+                Ok(())
+            },
+        )
+        .expect("forget ok");
+        assert!(changed);
+        assert!(forgot);
+        // Solo tras Ok el caller puede persistir/publicar B.
+        published = true;
+        assert!(published && forgot);
+    }
+
+    #[test]
+    fn same_destination_skips_forget() {
+        let mut forgot = false;
+        let changed = invalidate_nine_router_before_destination_publish(
+            "http://localhost:20128/",
+            "http://localhost:20128",
+            || {
+                forgot = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!changed);
+        assert!(!forgot);
+    }
+
+    /// P2 (review consolidado): el setter genérico no debe tocar secretos de 9Router.
+    #[test]
+    fn generic_secret_setter_rejects_nine_router_keys() {
+        assert!(providers::nine_router_creds::is_managed_key(secrets::NINE_ROUTER_PASSWORD));
+        assert!(providers::nine_router_creds::is_managed_key(secrets::NINE_ROUTER_SESSION));
+        assert!(providers::nine_router_creds::is_managed_key(secrets::NINE_ROUTER_BOUND_URL));
+        assert!(!providers::nine_router_creds::is_managed_key(secrets::NAN_API_KEY));
+    }
 
     /// Carpeta temporal propia de cada prueba: sin dependencias nuevas y sin
     /// tocar ninguna ruta real del usuario.
@@ -697,5 +914,23 @@ mod tests {
         // OpenRouter no usa sesión de CLI: ni con ficheros en la carpeta hay presencia.
         std::fs::write(dir.join("auth.json"), b"{}").unwrap();
         assert!(!account_session_file_found(&cfg, "openrouter:w1", &home));
+    }
+
+    #[test]
+    fn patch_touches_always_on_top_by_presence_not_change() {
+        // Mismo valor que la base: el reintento debe re-aplicar el efecto igual.
+        let same: config::WidgetPatch = serde_json::from_str(r#"{"alwaysOnTop":true}"#).unwrap();
+        assert!(patch_touches_always_on_top(&same));
+        assert!(patch_touches_always_on_top(&same));
+        // Un patch que no menciona el campo no re-aplica nada.
+        let other: config::WidgetPatch = serde_json::from_str(r#"{"dockEdge":"left"}"#).unwrap();
+        assert!(!patch_touches_always_on_top(&other));
+    }
+
+    #[test]
+    fn always_on_top_error_is_visible() {
+        let msg = always_on_top_error("acceso denegado");
+        assert!(msg.contains("siempre encima"));
+        assert!(msg.contains("acceso denegado"));
     }
 }

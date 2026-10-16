@@ -60,6 +60,7 @@ pub struct AppConfig {
     pub anthropic_api: ApiCostConfig,
     pub openai_api: ApiCostConfig,
     pub nan: NanConfig,
+    pub nine_router: NineRouterConfig,
     /// Cuentas adicionales de un proveedor (la principal es la de arriba).
     pub accounts: Vec<Account>,
 }
@@ -76,6 +77,15 @@ pub struct WidgetPatch {
     pub dock_monitor: Option<Option<String>>,
     pub provider_order: Option<Vec<String>>,
     pub hidden_providers: Option<Vec<String>>,
+    /// Personalización inmediata (#97): se aplica al momento y se persiste por
+    /// este mismo merge atómico. El backend sigue siendo la autoridad que
+    /// normaliza (`sanitized`) y nunca toca cuentas, secretos ni atajos.
+    pub opacity: Option<f32>,
+    pub compact: Option<bool>,
+    pub auto_hide: Option<bool>,
+    pub always_on_top: Option<bool>,
+    pub orb_size: Option<u32>,
+    pub accent_color: Option<String>,
 }
 
 /// Distingue un campo ausente (`None`) de un `null` explícito (`Some(None)`).
@@ -106,19 +116,50 @@ impl AppConfig {
         if let Some(hidden) = patch.hidden_providers {
             self.hidden_providers = hidden;
         }
+        if let Some(opacity) = patch.opacity {
+            self.opacity = opacity;
+        }
+        if let Some(compact) = patch.compact {
+            self.compact = compact;
+        }
+        if let Some(auto_hide) = patch.auto_hide {
+            self.auto_hide = auto_hide;
+        }
+        if let Some(always_on_top) = patch.always_on_top {
+            self.always_on_top = always_on_top;
+        }
+        if let Some(orb_size) = patch.orb_size {
+            self.orb_size = orb_size;
+        }
+        if let Some(accent_color) = patch.accent_color {
+            self.accent_color = accent_color;
+        }
     }
 }
 
 /// Proveedores que admiten cuentas adicionales (todos).
-pub const ACCOUNT_PROVIDERS: [&str; 9] =
-    ["claude", "codex", "gemini", "cursor", "copilot", "nan", "openrouter", "anthropic_api", "openai_api"];
+/// En 9Router las «cuentas» son sus sub-proveedores (`nine_router:claude`…); el
+/// backend las descubre solo, pero el id debe validar como cuenta.
+pub const ACCOUNT_PROVIDERS: [&str; 10] = [
+    "claude",
+    "codex",
+    "gemini",
+    "cursor",
+    "copilot",
+    "nan",
+    "openrouter",
+    "anthropic_api",
+    "openai_api",
+    "nine_router",
+];
 
-/// `<proveedor>:<sufijo>`, con sufijo de 1–32 caracteres `[a-z0-9-]`.
+/// `<proveedor>:<sufijo>`, con sufijo de 1–64 caracteres `[a-z0-9-]`.
+/// El límite cubre los nodos personalizados de 9Router, cuyo id es un UUID.
 pub fn is_account_id(id: &str) -> bool {
     match id.split_once(':') {
         Some((provider, suffix)) => {
             ACCOUNT_PROVIDERS.contains(&provider)
-                && (1..=32).contains(&suffix.len())
+                && (1..=64).contains(&suffix.len())
                 && suffix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         }
         None => false,
@@ -226,6 +267,7 @@ impl Default for AppConfig {
             anthropic_api: ApiCostConfig::default(),
             openai_api: ApiCostConfig::default(),
             nan: NanConfig::default(),
+            nine_router: NineRouterConfig::default(),
             accounts: vec![],
         }
     }
@@ -388,6 +430,41 @@ impl Default for NanConfig {
     }
 }
 
+/// Periodos de uso que acepta 9Router (`GET /api/usage/stats?period=…`).
+pub const NINE_ROUTER_PERIODS: [&str; 6] = ["today", "24h", "7d", "30d", "60d", "all"];
+
+/// 9Router: pasarela local que enruta hacia 40+ proveedores y lleva su propio
+/// registro de uso/coste. Quorb la trata como un proveedor agregador: lee su
+/// uso con la sesión del dashboard y muestra uno o varios sub-proveedores.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NineRouterConfig {
+    pub enabled: bool,
+    /// Base del servidor local de 9Router (sin barra final).
+    pub base_url: String,
+    /// today | 24h | 7d | 30d | 60d | all
+    pub period: String,
+    /// Presupuesto opcional en USD para pintar la barra de gasto.
+    pub monthly_budget_usd: Option<f64>,
+    /// Mostrar cada sub-proveedor (Claude, Kiro, GLM…) como su propia cuenta.
+    pub show_sub_providers: bool,
+    /// Gasto mínimo (USD) para mostrar un sub-proveedor como orbe. 0 = todos los que gasten.
+    pub min_spend_usd: f64,
+}
+
+impl Default for NineRouterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://localhost:20128".into(),
+            period: "7d".into(),
+            monthly_budget_usd: None,
+            show_sub_providers: true,
+            min_spend_usd: 0.0,
+        }
+    }
+}
+
 impl AppConfig {
     /// Corrige valores fuera de rango.
     pub fn sanitized(mut self) -> Self {
@@ -417,6 +494,15 @@ impl AppConfig {
         }
         self.nan.base_url = self.nan.base_url.trim().trim_end_matches('/').to_string();
         self.nan.billing_day = self.nan.billing_day.clamp(1, 28);
+        if self.nine_router.base_url.trim().is_empty() {
+            self.nine_router.base_url = NineRouterConfig::default().base_url;
+        }
+        self.nine_router.base_url = self.nine_router.base_url.trim().trim_end_matches('/').to_string();
+        if !NINE_ROUTER_PERIODS.contains(&self.nine_router.period.as_str()) {
+            self.nine_router.period = NineRouterConfig::default().period;
+        }
+        let min_spend = self.nine_router.min_spend_usd;
+        self.nine_router.min_spend_usd = if min_spend.is_finite() { min_spend.max(0.0) } else { 0.0 };
         let a = &mut self.alerts;
         a.threshold = if a.threshold.is_finite() { a.threshold.clamp(1.0, 100.0) } else { 90.0 };
         for e in [&mut a.exceeded_effect, &mut a.reset_effect] {
@@ -619,5 +705,112 @@ mod tests {
         let cfg = cfg.sanitized();
         assert_eq!(cfg.dock_monitor, None);
         assert!(cfg.hidden_providers.is_empty());
+    }
+
+    #[test]
+    fn widget_patch_applies_all_eight_live_fields_from_serialized_json() {
+        // JSON serializado real con los 8 campos vivos (#97). No construimos un
+        // subconjunto tipado: esto verifica literalmente el contrato camelCase.
+        let base: AppConfig = serde_json::from_str(
+            r##"{"opacity":0.94,"compact":false,"orbSize":48,"accentColor":"#ff0036","alwaysOnTop":true,
+                "dockEdge":"top","dockOffset":0.5,"autoHide":true}"##,
+        )
+        .unwrap();
+        let patch: WidgetPatch = serde_json::from_str(
+            r##"{"opacity":0.36,"compact":true,"orbSize":60,"accentColor":"#00ff00","alwaysOnTop":false,
+                "dockEdge":"bottom","dockOffset":0.25,"autoHide":false}"##,
+        )
+        .unwrap();
+        let mut next = base.clone();
+        next.apply_widget_patch(patch);
+        let next = next.sanitized();
+        assert_eq!(next.opacity, 0.36);
+        assert!(next.compact);
+        assert_eq!(next.orb_size, 60);
+        assert_eq!(next.accent_color, "#00ff00");
+        assert!(!next.always_on_top);
+        assert_eq!(next.dock_edge, "bottom");
+        assert_eq!(next.dock_offset, 0.25);
+        assert!(!next.auto_hide, "autoHide debe viajar por el patch vivo");
+    }
+
+    #[test]
+    fn widget_patch_applies_boolean_transitions_to_false() {
+        let mut base: AppConfig = serde_json::from_str(r#"{"compact":true,"alwaysOnTop":true,"autoHide":true}"#).unwrap();
+        let patch: WidgetPatch = serde_json::from_str(r#"{"compact":false,"alwaysOnTop":false,"autoHide":false}"#).unwrap();
+        base.apply_widget_patch(patch);
+        let next = base.sanitized();
+        assert!(!next.compact);
+        assert!(!next.always_on_top);
+        assert!(!next.auto_hide);
+    }
+
+    #[test]
+    fn widget_patch_applies_live_personalization_and_clamps() {
+        let base: AppConfig = serde_json::from_str(
+            r##"{"opacity":0.94,"compact":false,"orbSize":48,"accentColor":"#ff0036","alwaysOnTop":true,
+                "dockEdge":"top","dockOffset":0.5,"shortcuts":{"toggle":"Ctrl+Alt+U"},
+                "accounts":[{"id":"claude:work","provider":"claude","label":"Trabajo"}]}"##,
+        )
+        .unwrap();
+        // Un patch vivo solo toca campos de personalización; el resto llega fuera de rango
+        // para comprobar que el backend clampea/normaliza al persistir.
+        let patch: WidgetPatch = serde_json::from_str(
+            r#"{"opacity":9.0,"compact":true,"orbSize":500,"accentColor":"0F0","alwaysOnTop":false,"dockEdge":"left","dockOffset":0.2}"#,
+        )
+        .unwrap();
+        let mut next = base.clone();
+        next.apply_widget_patch(patch);
+        let next = next.sanitized();
+        assert_eq!(next.opacity, 1.0);
+        assert!(next.compact);
+        assert_eq!(next.orb_size, ORB_SIZE_MAX);
+        assert_eq!(next.accent_color, "#00ff00");
+        assert!(!next.always_on_top);
+        assert_eq!(next.dock_edge, "left");
+        assert_eq!(next.dock_offset, 0.2);
+        // sin efectos colaterales: cuentas y atajos intactos.
+        assert_eq!(next.accounts.len(), 1);
+        assert_eq!(next.accounts[0].id, "claude:work");
+        assert_eq!(next.shortcuts.toggle, "Ctrl+Alt+U");
+        // Los campos ausentes conservan la base; un patch vacío no toca nada.
+        let mut untouched = base.clone();
+        untouched.apply_widget_patch(WidgetPatch::default());
+        assert_eq!(untouched.sanitized(), base.sanitized());
+    }
+
+    #[test]
+    fn widget_patch_out_of_range_live_values_are_sanitized() {
+        let mut cfg = AppConfig::default();
+        cfg.opacity = 0.94;
+        let patch: WidgetPatch = serde_json::from_str(r#"{"opacity":0.0,"orbSize":4,"accentColor":"rojo"}"#).unwrap();
+        cfg.apply_widget_patch(patch);
+        let cfg = cfg.sanitized();
+        assert_eq!(cfg.opacity, 0.3);
+        assert_eq!(cfg.orb_size, ORB_SIZE_MIN);
+        assert_eq!(cfg.accent_color, ACCENT_DEFAULT);
+    }
+
+    #[test]
+    fn nine_router_config_is_sanitized() {
+        let cfg: AppConfig =
+            serde_json::from_str(r#"{"nineRouter":{"enabled":true,"baseUrl":"http://localhost:20128/","period":"year"}}"#).unwrap();
+        let n = cfg.sanitized().nine_router;
+        assert!(n.enabled);
+        // Barra final eliminada y periodo inválido corregido al de por defecto.
+        assert_eq!(n.base_url, "http://localhost:20128");
+        assert_eq!(n.period, "7d");
+        assert!(n.show_sub_providers);
+        // Base vacía: se restaura la de por defecto.
+        let blank: AppConfig = serde_json::from_str(r#"{"nineRouter":{"baseUrl":"  "}}"#).unwrap();
+        assert_eq!(blank.sanitized().nine_router.base_url, "http://localhost:20128");
+        assert!(!AppConfig::default().nine_router.enabled);
+    }
+
+    #[test]
+    fn nine_router_accounts_are_valid() {
+        assert!(is_account_id("nine_router:claude"));
+        assert!(is_account_id("nine_router:open-code"));
+        assert!(!is_account_id("nine_router:Claude")); // mayúsculas no válidas
     }
 }

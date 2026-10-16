@@ -9,6 +9,8 @@ pub mod cursor;
 pub mod gemini;
 pub mod nan;
 pub mod nan_cloud;
+pub mod nine_router;
+pub mod nine_router_creds;
 pub mod openai_api;
 pub mod openrouter;
 
@@ -59,40 +61,52 @@ impl<'a> Who<'a> {
 }
 
 pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageReport> {
-    let mut jobs: Vec<BoxFuture<'_, UsageReport>> = vec![];
+    let mut jobs: Vec<BoxFuture<'_, Vec<UsageReport>>> = vec![];
     if cfg.claude.enabled {
-        jobs.push(claude::fetch(&cfg.claude, Who::main("claude"), http).boxed());
+        jobs.push(async move { vec![claude::fetch(&cfg.claude, Who::main("claude"), http).await] }.boxed());
     }
     if cfg.codex.enabled {
-        jobs.push(codex::fetch(&cfg.codex, Who::main("codex"), http).boxed());
+        jobs.push(async move { vec![codex::fetch(&cfg.codex, Who::main("codex"), http).await] }.boxed());
     }
     if cfg.gemini.enabled {
-        jobs.push(gemini::fetch(&cfg.gemini, Who::main("gemini"), http).boxed());
+        jobs.push(async move { vec![gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await] }.boxed());
     }
     if cfg.cursor.enabled {
-        jobs.push(cursor::fetch(&cfg.cursor, Who::main("cursor"), http).boxed());
+        jobs.push(async move { vec![cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await] }.boxed());
     }
     if cfg.copilot.enabled {
-        jobs.push(copilot::fetch(&cfg.copilot, Who::main("copilot"), http).boxed());
+        jobs.push(async move { vec![copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await] }.boxed());
     }
     if cfg.nan.enabled {
-        jobs.push(nan::fetch(&cfg.nan, Who::main("nan"), http).boxed());
+        jobs.push(async move { vec![nan::fetch(&cfg.nan, Who::main("nan"), http).await] }.boxed());
     }
     if cfg.openrouter.enabled {
-        jobs.push(openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).boxed());
+        jobs.push(async move { vec![openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await] }.boxed());
+    }
+    if cfg.nine_router.enabled {
+        // 9Router lleva su propio registro de uso; ademas del orbe agregado,
+        // descubrimos sus sub-proveedores y los exponemos como cuentas propias.
+        jobs.push(nine_router_all(cfg, http));
     }
     if cfg.anthropic_api.enabled {
-        jobs.push(anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).boxed());
+        jobs.push(async move { vec![anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await] }.boxed());
     }
     if cfg.openai_api.enabled {
-        jobs.push(openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).boxed());
+        jobs.push(async move { vec![openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await] }.boxed());
     }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
-        jobs.push(fetch_account(cfg, a, http));
+        jobs.push(async move { vec![fetch_account(cfg, a, http).await] }.boxed());
     }
-    futures::future::join_all(jobs).await
+    futures::future::join_all(jobs).await.into_iter().flatten().collect()
 }
 
+/// Orbe de 9Router más un informe por cada sub-proveedor que haya visto
+/// (Claude, Kiro, GLM…). Los sub-proveedores se descubren desde el propio
+/// historial de uso de 9Router: no se configuran a mano.
+fn nine_router_all<'a>(cfg: &'a AppConfig, http: &'a reqwest::Client) -> BoxFuture<'a, Vec<UsageReport>> {
+    // Una sola lectura de stats alimenta el orbe agregado y todos los sub-orbes.
+    async move { nine_router::fetch_all(&cfg.nine_router, http).await }.boxed()
+}
 /// Consulta una sola cuenta (principal o adicional) aunque esté oculta en el widget,
 /// para comprobar la conexión desde Ajustes. `None` si el id no existe.
 pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Option<UsageReport> {
@@ -107,6 +121,7 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         "copilot" => copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await,
         "nan" => nan::fetch(&cfg.nan, Who::main("nan"), http).await,
         "openrouter" => openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await,
+        "nine_router" => nine_router::fetch(&cfg.nine_router, Who::main("nine_router"), http).await,
         "anthropic_api" => anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await,
         "openai_api" => openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await,
         _ => return None,
@@ -163,6 +178,8 @@ fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Clie
             async move { nan::fetch(&c, who, http).await }.boxed()
         }
         "openrouter" => async move { openrouter::fetch(&OpenRouterConfig { enabled: true }, who, http).await }.boxed(),
+        // Sub-proveedor de 9Router (`nine_router:claude`): filtra su uso en las stats.
+        "nine_router" => async move { nine_router::fetch(&cfg.nine_router, who, http).await }.boxed(),
         "anthropic_api" | "openai_api" => {
             let c = ApiCostConfig { enabled: true, monthly_budget_usd: a.monthly_budget_usd };
             if a.provider == "anthropic_api" {

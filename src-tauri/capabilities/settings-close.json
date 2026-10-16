@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings-close",
+  "description": "Allow Settings to finish its SDK close-request handler after flushing live changes",
+  "windows": ["settings"],
+  "permissions": ["core:window:allow-destroy"]
+}
