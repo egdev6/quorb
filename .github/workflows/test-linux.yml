@@ -1,0 +1,171 @@
+name: Linux test (manual)
+
+# Disparador solo manual: este workflow está pensado para validar una rama,
+# tag o SHA concretos en Linux antes de promoverlos (PR day, smoke contra un
+# commit reciente, último commit de feat_native_linux, etc.). No se ejecuta
+# automáticamente con PRs ni pushes — para eso sigue ci.yml (Windows) y, una
+# vez mergeado a main, build-linux.yml en tags v*.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref (rama, tag o SHA) a testear'
+        required: false
+        type: string
+        default: 'main'
+      with_bundle:
+        description: 'Correr solo tests o también bundle + verify'
+        required: false
+        type: choice
+        options: [tests, bundle]
+        default: tests
+      clean_target:
+        description: 'Limpiar node_modules y target antes de tests (rebuild desde cero)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Concurrencia: si lanzas dos runs seguidos con la misma `ref`, el segundo
+# cancela al primero. Evita apilar jobs si estás iterando contra el mismo ref.
+concurrency:
+  group: linux-test-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-test:
+    name: Linux test on ${{ inputs.ref || github.ref }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: ${{ inputs.with_bundle == 'bundle' && 45 || 30 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Tauri 2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsecret-1-dev \
+            libnotify-dev \
+            libfuse2 \
+            xvfb \
+            dbus \
+            dbus-x11
+
+      - name: Clean target (optional)
+        if: ${{ inputs.clean_target == 'true' }}
+        run: |
+          rm -rf node_modules src-tauri/target
+          echo "Caché de build limpiada (node_modules y src-tauri/target)."
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Frontend and script tests
+        run: npm test
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Rust tests with locked dependencies
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      # ---- Solo si with_bundle == bundle ----
+
+      - name: Build Linux bundles (deb + AppImage)
+        if: ${{ inputs.with_bundle == 'bundle' }}
+        env:
+          TAURI_BUNDLER_TOOLS: ${{ runner.temp }}/quorb-bundler-tools
+        run: npm run app:build
+
+      # Lanza el AppImage SIN --appimage-extract-and-run: el runner es una VM
+      # con FUSE real, así que este paso ejercita el camino de montaje completo
+      # (runtime embebido + fusermount + payload squashfs). El testcontainer
+      # (verify-appimage.sh) no puede hacerlo porque Docker no tiene /dev/fuse.
+      # Exige que el proceso siga vivo 60s (exit 124 = timeout = OK).
+      - name: Launch AppImage directly (FUSE mount path)
+        if: ${{ inputs.with_bundle == 'bundle' }}
+        run: |
+          APPIMAGE="$(ls src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -1)"
+          test -n "$APPIMAGE" || { echo "no .AppImage produced" >&2; exit 1; }
+          chmod +x "$APPIMAGE"
+          echo "Lanzando $APPIMAGE directamente (xvfb + dbus, timeout 60s)..."
+          # `timeout` devuelve 124 al matar un proceso que seguía vivo: con
+          # bash -e (default de GitHub Actions) eso aborta el script ANTES de
+          # llegar al `if`. Suspender errexit en este bloque.
+          set +e
+          timeout -k 10 60 dbus-run-session -- xvfb-run -a "$APPIMAGE" >/tmp/appimage-launch.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ]; then
+            echo "✔ AppImage OK: montó vía FUSE y siguió vivo 60s"
+          else
+            echo "✖ AppImage falló (código $code). Log:" >&2
+            tail -40 /tmp/appimage-launch.log >&2
+            exit 1
+          fi
+
+      - name: Build build-verify image
+        if: ${{ inputs.with_bundle == 'bundle' }}
+        run: docker build -t quorb-build-verify .testcontainer
+
+      - name: Stage bundles for runtime verification
+        if: ${{ inputs.with_bundle == 'bundle' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/quorb-bundles"
+          cp src-tauri/target/release/bundle/deb/*.deb "$RUNNER_TEMP/quorb-bundles/" || true
+          cp src-tauri/target/release/bundle/appimage/*.AppImage "$RUNNER_TEMP/quorb-bundles/" || true
+          ls -la "$RUNNER_TEMP/quorb-bundles"
+
+      - name: Verify bundles in clean Ubuntu 22.04
+        if: ${{ inputs.with_bundle == 'bundle' }}
+        env:
+          BUNDLE_DIR: ${{ runner.temp }}/quorb-bundles
+        run: |
+          [ -n "$(ls "$BUNDLE_DIR"/*.deb 2>/dev/null)" ] || { echo "no .deb produced" >&2; exit 1; }
+          [ -n "$(ls "$BUNDLE_DIR"/*.AppImage 2>/dev/null)" ] || { echo "no .AppImage produced" >&2; exit 1; }
+          docker run --rm -v "$BUNDLE_DIR:/artifacts" --platform linux/amd64 quorb-build-verify
+
+      - name: Upload Linux bundles as artifacts
+        if: ${{ inputs.with_bundle == 'bundle' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quorb-linux-manual-${{ inputs.ref || github.ref }}
+          path: ${{ runner.temp }}/quorb-bundles
+          if-no-files-found: error

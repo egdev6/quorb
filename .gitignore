@@ -7,3 +7,13 @@ src-tauri/gen
 .codegraph/
 .atl/
 docs/odd/
+
+# Devcontainer CLI: regenerado por `devcontainer up`, no se versiona.
+.devcontainer/devcontainer-lock.json
+
+# Diagnóstico de portabilidad Linux: caché del binario linuxdeploy descargado
+# por `.devcontainer/diagnose-linuxdeploy.sh`. No se versiona.
+.devcontainer/.diag/
+
+# Estado local de Claude Code (PRDs, planes, memoria de sesión). No versionado.
+.claude/
