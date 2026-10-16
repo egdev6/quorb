@@ -5,10 +5,9 @@ import { readFileSync } from 'node:fs';
 const read = (name) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
 const source = '.github/security-drafts/macos-ci.yml';
 
-test('macOS workflow matches its reviewed source and bounded native ARM64 CI contract', () => {
-  const workflow = read(source);
-  assert.equal(read('.github/workflows/macos-ci.yml'), workflow);
-  const windows = read('.github/workflows/ci.yml');
+function assertWorkflowContract(workflow, active, windows) {
+  [workflow, active, windows] = [workflow, active, windows].map((text) => text.replace(/\r\n/g, '\n'));
+  assert.equal(active, workflow);
   const parts = workflow.split('    steps:\n');
   assert.equal(parts.length, 2);
   assert.equal(parts[0], `name: macOS CI
@@ -64,7 +63,23 @@ jobs:
     'Verify bundle without launching\n        run: node scripts/verify-macos-bundle.mjs',
   ]);
   assert.doesNotMatch(workflow, /secrets\.|pull_request_target|continue-on-error|upload-artifact|keychain|\$\{\{ github.sha/);
+}
+
+const workflowFiles = [source, '.github/workflows/macos-ci.yml', '.github/workflows/ci.yml'];
+test('macOS workflow matches its reviewed source and bounded native ARM64 CI contract', () => {
+  assertWorkflowContract(...workflowFiles.map(read));
 });
+
+for (const [label, endings] of [
+  ['LF', ['\n', '\n', '\n']],
+  ['CRLF', ['\r\n', '\r\n', '\r\n']],
+  ['mixed LF/CRLF', ['\n', '\r\n', '\r\n']],
+]) {
+  test(`macOS workflow contract accepts ${label} in source, active workflow and Windows pins`, () => {
+    const fixtures = workflowFiles.map((name, index) => read(name).replace(/\r?\n/g, endings[index]));
+    assertWorkflowContract(...fixtures);
+  });
+}
 
 test('npm test includes both macOS contracts without changing the macOS build command', () => {
   const pkg = JSON.parse(read('package.json'));
