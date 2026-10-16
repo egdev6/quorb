@@ -1,0 +1,81 @@
+name: macOS preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable package.json version
+        required: true
+        type: string
+      source_sha:
+        description: Full lowercase SHA of current main HEAD
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: macos-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    name: Build unsigned macOS preview
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      PREVIEW_VERSION: ${{ inputs.version }}
+      PREVIEW_SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Preflight exact source and required checks
+        run: node scripts/macos-preview-preflight.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build app and DMG
+        run: npm run app:build:mac
+
+      - name: Stage verified preview
+        run: node scripts/macos-preview-artifact.mjs stage
+
+      - name: Upload immutable preview
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: quorb-macos-preview-${{ github.sha }}
+          path: src-tauri/target/macos-preview-upload
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: false
+          include-hidden-files: false
+
+      - name: Download same-run preview by name
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: quorb-macos-preview-${{ github.sha }}
+          path: src-tauri/target/macos-preview-download
+
+      - name: Verify downloaded preview
+        run: node scripts/macos-preview-artifact.mjs readback
