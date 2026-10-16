@@ -163,14 +163,31 @@ fn known_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Instrucción de instalación específica por plataforma (Windows vs Linux).
+/// Es solo texto: el usuario la copia y la ejecuta, Quorb nunca la interpola.
+fn install_hint(provider: &str, windows: bool) -> &'static str {
+    if windows {
+        match provider {
+            "claude" => "Instala Claude Code (en PowerShell: irm https://claude.ai/install.ps1 | iex)",
+            "codex" => "Instala el CLI de Codex con: npm install -g @openai/codex (necesita Node.js)",
+            "gemini" => "Instala Gemini CLI con: npm install -g @google/gemini-cli (necesita Node.js)",
+            _ => "Instala su CLI o cambia el comando de login en la cuenta principal",
+        }
+    } else {
+        match provider {
+            "claude" => "Instala Claude Code (curl -fsSL https://claude.ai/install.sh | bash) o con tu gestor de paquetes (p. ej. sudo apt install claude-code)",
+            "codex" => "Instala el CLI de Codex con: npm install -g @openai/codex (necesita Node.js)",
+            "gemini" => "Instala Gemini CLI con: npm install -g @google/gemini-cli (necesita Node.js)",
+            _ => "Instala su CLI o cambia el comando de login en la cuenta principal",
+        }
+    }
+}
+
 fn not_installed(provider: &str, program: &str) -> String {
-    let how = match provider {
-        "claude" => "Instala Claude Code (en PowerShell: irm https://claude.ai/install.ps1 | iex)",
-        "codex" => "Instala el CLI de Codex con: npm install -g @openai/codex (necesita Node.js)",
-        "gemini" => "Instala Gemini CLI con: npm install -g @google/gemini-cli (necesita Node.js)",
-        _ => "Instala su CLI o cambia el comando de login en la cuenta principal",
-    };
-    format!("No encuentro «{program}» en este equipo. {how} y vuelve a pulsar «Iniciar sesión».")
+    format!(
+        "No encuentro «{program}» en este equipo. {} y vuelve a pulsar «Iniciar sesión».",
+        install_hint(provider, cfg!(windows))
+    )
 }
 
 /// Variable de entorno con la carpeta de sesión de una cuenta adicional.
@@ -278,19 +295,140 @@ fn apple_script_quote(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Script fijo con el que la terminal lanza el login SIN interpolar el comando:
+/// el login se pasa como argv (`"$@"`) y solo después de que salga se abre el
+/// shell del usuario. La cadena de script es una constante: nada del comando
+/// configurable llega a código de shell.
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
+const SHELL_WRAP: &str = "\"$@\"; exec \"$SHELL\"";
+
+/// Separa un comando de login en (programa, argumentos) sin ejecutar la shell.
+/// Entiende comillas simples/dobles y `\` de escape (semántica de shell_words,
+/// sin dependencias). Comillas sin cerrar devuelven `Err` y el login se aborta
+/// (fail-closed): el texto del usuario nunca se interpola como código.
+fn split_login_command(command: &str) -> Result<(String, Vec<String>), String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut chars = command.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_token = true;
+                let mut closed = false;
+                for c2 in chars.by_ref() {
+                    if c2 == '\'' {
+                        closed = true;
+                        break;
+                    }
+                    current.push(c2);
+                }
+                if !closed {
+                    return Err("Comando de login con comillas simples sin cerrar".into());
+                }
+            }
+            '"' => {
+                in_token = true;
+                let mut closed = false;
+                while let Some(c2) = chars.next() {
+                    if c2 == '"' {
+                        closed = true;
+                        break;
+                    }
+                    if c2 == '\\' {
+                        match chars.next() {
+                            Some(esc) => current.push(esc),
+                            None => current.push('\\'),
+                        }
+                    } else {
+                        current.push(c2);
+                    }
+                }
+                if !closed {
+                    return Err("Comando de login con comillas dobles sin cerrar".into());
+                }
+            }
+            '\\' => {
+                in_token = true;
+                match chars.next() {
+                    Some(esc) => current.push(esc),
+                    None => current.push('\\'),
+                }
+            }
+            c if c.is_whitespace() => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+            }
+            _ => {
+                in_token = true;
+                current.push(c);
+            }
+        }
+    }
+    if in_token {
+        tokens.push(current);
+    }
+    let mut tokens = tokens.into_iter();
+    let program = tokens.next().unwrap_or_default();
+    let args: Vec<String> = tokens.collect();
+    Ok((program, args))
+}
+
+/// Emuladores de terminal por orden de preferencia (X11/Wayland genéricos).
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
+const TERMINALS: [&str; 7] = [
+    "x-terminal-emulator",
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "xterm",
+    "alacritty",
+    "kitty",
+];
+
+/// Primera terminal disponible en el PATH (o carpetas conocidas); `None` si no hay.
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
+fn find_terminal() -> Option<String> {
+    TERMINALS.iter().find(|t| !matches!(find_program(t), Found::Missing)).map(|s| s.to_string())
+}
+
+/// Invocación de la terminal para ejecutar `program args...` sin shell:
+/// `<flag> sh -c <SHELL_WRAP> sh <program> <args...>`. El flag depende del
+/// emulador; la secuencia `sh -c` es fija y recibe el login como argv.
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
+fn terminal_invocation(terminal: &str, program: &str, args: &[String]) -> Vec<String> {
+    let flag = match terminal {
+        "gnome-terminal" => "--".to_string(),
+        "xfce4-terminal" => "-x".to_string(),
+        _ => "-e".to_string(),
+    };
+    let mut v = vec![flag, "sh".into(), "-c".into(), SHELL_WRAP.into(), "sh".into(), program.into()];
+    v.extend(args.iter().cloned());
+    v
+}
+
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("x-terminal-emulator");
+    let (program, args) = split_login_command(command)?;
+    if program.is_empty() {
+        return Err("Comando de login vacío (revísalo en Ajustes).".into());
+    }
+    let terminal = find_terminal().ok_or_else(|| {
+        "No encuentro un emulador de terminal (x-terminal-emulator, gnome-terminal o konsole) en este equipo. Instala uno o ejecuta el login a mano en tu terminal.".to_string()
+    })?;
+    let mut cmd = std::process::Command::new(&terminal);
     if let Some(path) = path_with(extra_dir) {
         cmd.env("PATH", path);
     }
     if let Some((var, dir)) = env {
         cmd.env(var, dir);
     }
-    cmd.args(["-e", "sh", "-c", &format!("{command}; exec $SHELL")])
-        .spawn()
+    cmd.args(terminal_invocation(&terminal, &program, &args));
+    cmd.spawn()
         .map(|_| ())
-        .map_err(|e| format!("No pude abrir la terminal: {e}"))
+        .map_err(|e| format!("No pude abrir la terminal ({terminal}): {e}"))
 }
 
 #[cfg(test)]
@@ -326,6 +464,58 @@ mod tests {
         assert_eq!(program_of("\"/opt/mis herramientas/claude\" login"), "/opt/mis herramientas/claude");
         assert_eq!(program_of("\"C:\\Program Files\\nodejs\\codex.cmd\""), "C:\\Program Files\\nodejs\\codex.cmd");
         assert_eq!(program_of(""), "");
+    }
+
+    #[test]
+    fn split_login_command_keeps_quotes_and_escapes() {
+        assert_eq!(split_login_command("codex login"), Ok(("codex".into(), vec!["login".into()])));
+        assert_eq!(split_login_command("  gemini   --foo"), Ok(("gemini".into(), vec!["--foo".into()])));
+        assert_eq!(
+            split_login_command("\"/opt/mis herramientas/claude\" login"),
+            Ok(("/opt/mis herramientas/claude".into(), vec!["login".into()]))
+        );
+        assert_eq!(
+            split_login_command("claude 'mi sesión' \"otra\" c\\adena"),
+            Ok(("claude".into(), vec!["mi sesión".into(), "otra".into(), "cadena".into()]))
+        );
+        // Los metacaracteres de shell quedan como argumentos literales, no como
+        // código: la cadena NUNCA se interpola en `sh -c`.
+        assert_eq!(
+            split_login_command("claude; rm -rf /"),
+            Ok(("claude;".into(), vec!["rm".into(), "-rf".into(), "/".into()]))
+        );
+    }
+
+    #[test]
+    fn split_login_command_fails_closed_on_unbalanced_quotes() {
+        assert!(split_login_command("\"sin cerrar").is_err());
+        assert!(split_login_command("'sin cerrar").is_err());
+    }
+
+    #[test]
+    fn install_hint_is_specific_per_platform() {
+        assert!(install_hint("claude", false).contains("install.sh"));
+        assert!(install_hint("claude", true).contains("PowerShell"));
+        assert!(install_hint("gemini", false).contains("@google/gemini-cli"));
+        assert!(install_hint("cursor", false).contains("cambia el comando"));
+    }
+
+    #[test]
+    fn terminal_invocation_passes_login_as_argv_not_shell_code() {
+        // gnome-terminal usa `--`; el script de shell es constante y el login
+        // llega como argv, no en el script.
+        assert_eq!(
+            terminal_invocation("gnome-terminal", "codex", &["login".into()]),
+            vec!["--", "sh", "-c", SHELL_WRAP, "sh", "codex", "login"]
+        );
+        assert_eq!(
+            terminal_invocation("xterm", "claude", &["/login".into()]),
+            vec!["-e", "sh", "-c", SHELL_WRAP, "sh", "claude", "/login"]
+        );
+        assert_eq!(
+            terminal_invocation("xfce4-terminal", "gemini", &[]),
+            vec!["-x", "sh", "-c", SHELL_WRAP, "sh", "gemini"]
+        );
     }
 
     #[test]
