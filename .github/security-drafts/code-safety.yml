@@ -1,5 +1,5 @@
 # PREPARED SOURCE: materialization still requires the exact bootstrap plan approval.
-# Trusted baseline: reviewed PR #86, integrated in main; never follow a moving ref.
+# Trusted baseline: reviewed PR #115, integrated in main; never follow a moving ref.
 name: Code safety
 on:
   pull_request:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 env:
   # Never use a PR input, branch, tag or repository variable as the trust anchor.
-  TRUSTED_BASELINE: 176ae636fdd80ce60d6fffec188ce558c5f6692b
+  TRUSTED_BASELINE: 587fc3a1806b58217881d4c94d8aa2df75ab57e1
   TARGET_COMMIT: ${{ github.sha }}
 jobs:
   static-review:
