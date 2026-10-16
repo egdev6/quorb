@@ -8,6 +8,12 @@
 //! Issue ODD #107 (escritorio y widget nativos): este módulo es **solo
 //! informativo**; las decisiones de fallback (saltar always-on-top, ocultar
 //! click-through) las toma el frontend a partir de la `recommendation`.
+//!
+//! La función pública es `detect_wm_info_from_env` (pura) — toma las 4
+//! env vars como `&Env` y devuelve un `WindowManagerInfo`. Los tests la usan
+//! directamente, sin tocar `std::env` global (evita race entre threads en
+//! `cargo test`). `detect_wm_info` la envuelve con `std::env::var` para uso
+//! desde el command Tauri y desde el frontend vía `invoke('get_wm_info')`.
 
 use serde::Serialize;
 
@@ -32,42 +38,94 @@ pub struct WindowManagerInfo {
     pub recommendation: &'static str,
 }
 
-/// Lee las variables de entorno y devuelve un `WindowManagerInfo`.
-///
-/// Pura: sin estado, sin Tauri, sin efectos secundarios. Los tests la invocan
-/// directamente; el `#[tauri::command]` (`get_wm_info`) la envuelve.
-pub fn detect_wm_info() -> WindowManagerInfo {
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok().filter(|s| !s.is_empty());
-    let xdg_session_type = std::env::var("XDG_SESSION_TYPE").ok().filter(|s| !s.is_empty());
-    let desktop_session = std::env::var("DESKTOP_SESSION").ok().filter(|s| !s.is_empty());
-    let xdg_current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok().filter(|s| !s.is_empty());
+/// Las 4 env vars que miramos, normalizadas: `None` si ausentes o vacías.
+#[derive(Debug, Default, Clone)]
+pub struct Env {
+    pub wayland_display: Option<String>,
+    pub xdg_session_type: Option<String>,
+    pub desktop_session: Option<String>,
+    pub xdg_current_desktop: Option<String>,
+}
 
-    // Wayland si cualquiera de las señales dice Wayland.
-    let is_wayland = wayland_display.is_some()
-        || xdg_session_type.as_deref() == Some("wayland")
-        || xdg_current_desktop.as_deref().map(|s| s.eq_ignore_ascii_case("wayland")).unwrap_or(false);
+impl Env {
+    /// Lee las env vars del proceso y las normaliza (vacía → None).
+    pub fn from_process() -> Self {
+        Self {
+            wayland_display: std::env::var("WAYLAND_DISPLAY").ok().filter(|s| !s.is_empty()),
+            xdg_session_type: std::env::var("XDG_SESSION_TYPE").ok().filter(|s| !s.is_empty()),
+            desktop_session: std::env::var("DESKTOP_SESSION").ok().filter(|s| !s.is_empty()),
+            xdg_current_desktop: std::env::var("XDG_CURRENT_DESKTOP").ok().filter(|s| !s.is_empty()),
+        }
+    }
+}
 
-    // Hyprland si DESKTOP_SESSION o XDG_CURRENT_DESKTOP lo mencionan.
-    let is_hyprland = desktop_session
+/// Versión pura: toma un `&Env` y devuelve el resumen. Sin globales, sin
+/// efectos secundarios, **thread-safe** (los tests la llaman directamente
+/// sin tocar `std::env`).
+pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
+    // Normaliza el string vacío como "ausente" para TODOS los checks, igual
+    // que `Env::from_process`: si el caller construye el `Env` a mano y le
+    // pasa `Some("")` (los tests lo hacen), un string vacío no debe contar
+    // como señal de Wayland ni aparecer en el struct.
+    let non_empty = |opt: &Option<String>| opt.clone().filter(|s| !s.is_empty());
+    let env_n = Env {
+        wayland_display: non_empty(&env.wayland_display),
+        xdg_session_type: non_empty(&env.xdg_session_type),
+        desktop_session: non_empty(&env.desktop_session),
+        xdg_current_desktop: non_empty(&env.xdg_current_desktop),
+    };
+
+    let is_wayland = env_n.wayland_display.is_some()
+        || env_n.xdg_session_type.as_deref().map(|s| s.eq_ignore_ascii_case("wayland")).unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(is_wayland_compositor))
+            .unwrap_or(false);
+
+    let is_hyprland = env_n
+        .desktop_session
         .as_deref()
         .map(|s| s.eq_ignore_ascii_case("hyprland"))
         .unwrap_or(false)
-        || xdg_current_desktop
+        || env_n
+            .xdg_current_desktop
             .as_deref()
             .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("Hyprland")))
             .unwrap_or(false);
 
-    let recommendation = recommendation(is_wayland, is_hyprland, desktop_session.as_deref(), xdg_current_desktop.as_deref());
+    let recommendation = recommendation(
+        is_wayland,
+        is_hyprland,
+        env_n.desktop_session.as_deref(),
+        env_n.xdg_current_desktop.as_deref(),
+    );
 
+    // `env_n` ya clonó los `Option<String>` desde el `&Env` input (y filtró
+    // vacíos); se mueven al struct sin clones adicionales.
     WindowManagerInfo {
-        wayland_display,
-        xdg_session_type,
-        desktop_session,
-        xdg_current_desktop,
+        wayland_display: env_n.wayland_display,
+        xdg_session_type: env_n.xdg_session_type,
+        desktop_session: env_n.desktop_session,
+        xdg_current_desktop: env_n.xdg_current_desktop,
         is_wayland,
         is_hyprland,
         recommendation,
     }
+}
+
+/// Wrapper que lee `std::env::var` y delega en `detect_wm_info_from_env`.
+/// El command Tauri usa este; el frontend nunca lo llama directamente.
+pub fn detect_wm_info() -> WindowManagerInfo {
+    detect_wm_info_from_env(&Env::from_process())
+}
+
+/// ¿Es un compositor Wayland? Considera `XDG_CURRENT_DESKTOP` y similares.
+fn is_wayland_compositor(token: &str) -> bool {
+    matches!(
+        token.trim().to_ascii_lowercase().as_str(),
+        "wayland" | "gnome" | "kde" | "kde-plasma" | "plasma" | "hyprland" | "sway" | "wlroots"
+    )
 }
 
 /// Recomendación estática derivada del compositor detectado. Pura: el caller
@@ -111,115 +169,75 @@ pub fn get_wm_info() -> WindowManagerInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
 
-    /// Ejecuta `f` con las env vars deseadas restauradas al final, sin importar
-    /// qué otras env vars estén en el entorno del test.
-    fn with_env<F: FnOnce()>(vars: &[(&str, &str)], f: F) {
-        // Guarda y limpia las vars del scope (solo las que vamos a tocar).
-        let mut saved: Vec<(String, Option<OsString>)> = Vec::new();
-        for (k, _) in vars {
-            saved.push((k.to_string(), std::env::var_os(k)));
-            std::env::remove_var(k);
-        }
-        for (k, v) in vars {
-            std::env::set_var(k, v);
-        }
-        f();
-        // Restaura.
-        for (k, prev) in saved.iter().rev() {
-            match prev {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
+    fn env(wayland_display: Option<&str>, xdg_session_type: Option<&str>, desktop_session: Option<&str>, xdg_current_desktop: Option<&str>) -> Env {
+        Env {
+            wayland_display: wayland_display.map(str::to_string),
+            xdg_session_type: xdg_session_type.map(str::to_string),
+            desktop_session: desktop_session.map(str::to_string),
+            xdg_current_desktop: xdg_current_desktop.map(str::to_string),
         }
     }
 
     #[test]
     fn empty_env_returns_no_wayland() {
-        with_env(&[], || {
-            let info = detect_wm_info();
-            assert_eq!(info.wayland_display, None);
-            assert_eq!(info.xdg_session_type, None);
-            assert!(!info.is_wayland);
-            assert!(!info.is_hyprland);
-            assert!(info.recommendation.contains("X11") || info.recommendation.contains("completa"));
-        });
+        let info = detect_wm_info_from_env(&env(None, None, None, None));
+        assert_eq!(info.wayland_display, None);
+        assert!(!info.is_wayland);
+        assert!(!info.is_hyprland);
+        assert!(info.recommendation.contains("X11") || info.recommendation.contains("completa"));
     }
 
     #[test]
     fn wayland_display_signals_wayland() {
-        with_env(&[("WAYLAND_DISPLAY", "wayland-0")], || {
-            let info = detect_wm_info();
-            assert!(info.is_wayland);
-            assert_eq!(info.wayland_display.as_deref(), Some("wayland-0"));
-            assert!(info.recommendation.contains("Wayland"));
-        });
+        let info = detect_wm_info_from_env(&env(Some("wayland-0"), None, None, None));
+        assert!(info.is_wayland);
+        assert_eq!(info.wayland_display.as_deref(), Some("wayland-0"));
+        assert!(info.recommendation.contains("Wayland"));
     }
 
     #[test]
     fn xdg_session_type_wayland_signals_wayland() {
-        with_env(&[("XDG_SESSION_TYPE", "wayland")], || {
-            let info = detect_wm_info();
-            assert!(info.is_wayland);
-            assert!(!info.is_hyprland);
-        });
+        let info = detect_wm_info_from_env(&env(None, Some("wayland"), None, None));
+        assert!(info.is_wayland);
+        assert!(!info.is_hyprland);
     }
 
     #[test]
     fn xdg_current_desktop_hyprland_signals_hyprland() {
-        with_env(&[("XDG_CURRENT_DESKTOP", "Hyprland")], || {
-            let info = detect_wm_info();
-            assert!(info.is_hyprland);
-            assert!(info.is_wayland);
-            assert!(info.recommendation.contains("Hyprland"));
-        });
+        let info = detect_wm_info_from_env(&env(None, None, None, Some("Hyprland")));
+        assert!(info.is_hyprland);
+        // Hyprland es compositor Wayland-only, así que esperarse `is_wayland=true`.
+        assert!(info.is_wayland);
+        assert!(info.recommendation.contains("Hyprland"));
     }
 
     #[test]
     fn desktop_session_hyprland_signals_hyprland() {
-        with_env(&[("DESKTOP_SESSION", "hyprland")], || {
-            let info = detect_wm_info();
-            assert!(info.is_hyprland);
-        });
+        let info = detect_wm_info_from_env(&env(None, None, Some("hyprland"), None));
+        assert!(info.is_hyprland);
     }
 
     #[test]
     fn empty_strings_are_treated_as_absent() {
-        // Si una var está set pero vacía, la tratamos como ausente.
-        with_env(&[
-            ("WAYLAND_DISPLAY", ""),
-            ("XDG_SESSION_TYPE", ""),
-        ], || {
-            let info = detect_wm_info();
-            assert_eq!(info.wayland_display, None);
-            assert_eq!(info.xdg_session_type, None);
-            assert!(!info.is_wayland);
-        });
+        let info = detect_wm_info_from_env(&env(Some(""), Some(""), None, None));
+        assert_eq!(info.wayland_display, None);
+        assert_eq!(info.xdg_session_type, None);
+        assert!(!info.is_wayland);
     }
 
     #[test]
     fn xdg_current_desktop_can_combine_desktop_sessions() {
-        // `XDG_CURRENT_DESKTOP:GNOME:KDE` debe reconocer Hyprland en la lista.
-        with_env(
-            &[("XDG_CURRENT_DESKTOP", "GNOME:Hyprland")],
-            || {
-                let info = detect_wm_info();
-                assert!(info.is_hyprland);
-                assert!(info.is_wayland);
-            },
-        );
+        // `XDG_CURRENT_DESKTOP:GNOME:Hyprland` debe reconocer Hyprland en la lista.
+        let info = detect_wm_info_from_env(&env(None, None, None, Some("GNOME:Hyprland")));
+        assert!(info.is_hyprland);
+        assert!(info.is_wayland);
     }
 
     #[test]
     fn recommendation_for_gnome_wayland_mentions_mutter() {
-        with_env(
-            &[("XDG_SESSION_TYPE", "wayland"), ("DESKTOP_SESSION", "gnome")],
-            || {
-                let info = detect_wm_info();
-                assert!(info.recommendation.contains("GNOME Wayland"));
-                assert!(info.recommendation.contains("Mutter"));
-            },
-        );
+        let info = detect_wm_info_from_env(&env(None, Some("wayland"), Some("gnome"), None));
+        assert!(info.recommendation.contains("GNOME Wayland"));
+        assert!(info.recommendation.contains("Mutter"));
     }
 }
