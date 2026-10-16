@@ -12,6 +12,8 @@ Thanks for taking the time to improve Quorb. Issues and pull requests are welcom
 
 Quorb currently targets Windows. You need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
+**Linux contributors**: the native port is tracked under [issue #105](https://github.com/egdev6/quorb/issues/105) and its baseline, support matrix and known limits are documented in [docs/build-linux.md](./docs/build-linux.md). The recommended way to build/test on Linux is the devcontainer (`make up` then `make test`), which avoids installing the Tauri GTK dev dependencies on your host. Do not claim support for a distro or compositor that is not marked as measured in the matrix.
+
 ```powershell
 git clone https://github.com/egdev6/quorb
 cd quorb
@@ -123,6 +125,8 @@ Gracias por dedicar tiempo a mejorar Quorb. Se aceptan issues y pull requests, e
 ### Antes de empezar
 
 Quorb está dirigido actualmente a Windows. Necesitáis Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
+
+**Contribuidores de Linux**: el port nativo se sigue en la [issue #105](https://github.com/egdev6/quorb/issues/105) y su baseline, matriz de soporte y límites conocidos están documentados en [docs/build-linux.md](./docs/build-linux.md). La forma recomendada de compilar/probar en Linux es el devcontainer (`make up` y luego `make test`), que evita instalar las dev deps GTK de Tauri en el host. No afirmar soporte de ninguna distro o compositor que no esté marcado como medido en la matriz.
 
 ```powershell
 git clone https://github.com/egdev6/quorb
