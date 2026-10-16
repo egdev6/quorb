@@ -2,11 +2,23 @@
 import { emit } from '@tauri-apps/api/event';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { requireNativeUpdater, type UpdaterMode } from './updater-policy';
 
 /** Cada cuánto se vuelve a mirar si hay versión nueva. */
 export const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
 /** Primera comprobación tras arrancar (no compite con la primera carga de datos). */
 export const UPDATE_FIRST_DELAY_MS = 20_000;
+
+/** No crea temporizadores hasta que el backend autoriza el updater nativo. */
+export function startUpdatePolling(mode: UpdaterMode, run: () => void): () => void {
+  if (mode !== 'native') return () => {};
+  const first = globalThis.setTimeout(run, UPDATE_FIRST_DELAY_MS);
+  const every = globalThis.setInterval(run, UPDATE_EVERY_MS);
+  return () => {
+    globalThis.clearTimeout(first);
+    globalThis.clearInterval(every);
+  };
+}
 
 export interface UpdateInfo {
   version: string;
@@ -40,6 +52,7 @@ let pending: Update | null = null;
 
 /** Devuelve la versión nueva o null si ya estás al día. */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  await requireNativeUpdater();
   const update = await check({ timeout: 30_000 });
   pending = update;
   if (!update) return null;
@@ -51,6 +64,7 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
  * y la vuelve a abrir; en el resto se reinicia aquí.
  */
 export async function installUpdate(onProgress: (pct: number | null) => void): Promise<void> {
+  await requireNativeUpdater();
   const update = pending ?? (await check({ timeout: 30_000 }));
   if (!update) throw new Error('No hay ninguna actualización pendiente.');
   let total = 0;
