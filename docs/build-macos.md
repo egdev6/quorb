@@ -25,12 +25,22 @@ La biblioteca pura `scripts/macos-preview-policy.mjs` valida datos inyectados de
 construye un manifiesto determinista unsigned-preview y compara readback y SHA-256 de bytes del DMG.
 Exige main, versión exacta y SHA fuente = workflow = HEAD; solo autoriza los cuatro checks nombrados,
 completos, únicos, exitosos y de GitHub Actions. No verifica todas las protecciones de GitHub.
-El futuro adaptador deberá obtener HEAD real, `github.sha` y la respuesta REST completa antes de registrar procedencia.
+El adaptador `scripts/macos-preview-preflight.mjs` obtiene HEAD real y checks REST antes de autorizar la fuente.
 El contrato fija ARM64, actualización manual, sin Developer ID ni notarización y retención de 14 días:
 la retención del artifact/manifiesto no implica que la aplicación expire; el digest del ZIP no es el hash del DMG.
 Pruebas sin red ni GUI: `node --test scripts/macos-preview-policy.test.mjs scripts/verify-macos-bundle.test.mjs scripts/macos-ci.test.mjs`.
-Quedan pendientes workflow de preview, adaptador CLI, uploads y readback real de artifacts descargados.
+Quedan pendientes workflow de preview, uploads y readback real de artifacts descargados.
 Estos fundamentos no publican una preview descargable ni una Release, ni acreditan una preview macOS lista.
+
+## Preflight de fuente: CLI preparatoria
+
+`node scripts/macos-preview-preflight.mjs` requiere `GITHUB_REPOSITORY=egdev6/quorb`, `GITHUB_REF=refs/heads/main`,
+`GITHUB_SHA`, `PREVIEW_SOURCE_SHA`, `PREVIEW_VERSION` y `GH_TOKEN` de solo lectura suministrado en runtime al futuro step.
+Exige SHA iguales a HEAD y versión estable exacta de `package.json`; consulta una vez los checks de GitHub, sin redirects.
+La lectura tiene límite de 1 MiB y plazo de 10 segundos; falla cerrada ante respuestas incompletas o checks no válidos.
+Devuelve únicamente JSON con `sourceSha` y `version`, o error saneado con salida no cero; no escribe archivos.
+Las pruebas usan Git/API inyectados, sin red real: esta sesión no acredita una consulta GitHub real.
+No habilita workflows ni entrega una preview operativa; no crea tokens, artifacts, manifiestos ni uploads.
 
 ## Ejecución prevista
 
