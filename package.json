@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --dir src && node --test scripts/bump.test.mjs scripts/release-check.test.mjs scripts/setup-signing.test.mjs scripts/dev-retirement.test.mjs scripts/security/check-repository.test.mjs scripts/security/semgrep-report.test.mjs scripts/security/export-snapshot.test.mjs scripts/security/snapshot-report.test.mjs scripts/security/semgrep-entry.test.mjs scripts/security/run-semgrep.test.mjs scripts/security/semgrep-parse-gate.test.mjs scripts/security/provision-tools.test.mjs scripts/security/zizmor-report.test.mjs scripts/security/zizmor-entry.test.mjs scripts/security/run-zizmor.test.mjs scripts/security/provider-logo-regexp.test.mjs scripts/security/code-safety.test.mjs",
+    "test": "vitest run --dir src && node --test scripts/bump.test.mjs scripts/release-check.test.mjs scripts/setup-signing.test.mjs scripts/dev-retirement.test.mjs scripts/security/check-repository.test.mjs scripts/security/semgrep-report.test.mjs scripts/security/export-snapshot.test.mjs scripts/security/snapshot-report.test.mjs scripts/security/semgrep-entry.test.mjs scripts/security/run-semgrep.test.mjs scripts/security/semgrep-parse-gate.test.mjs scripts/security/provision-tools.test.mjs scripts/security/zizmor-report.test.mjs scripts/security/zizmor-entry.test.mjs scripts/security/run-zizmor.test.mjs scripts/security/provider-logo-regexp.test.mjs scripts/security/code-safety.test.mjs scripts/verify-macos-bundle.test.mjs scripts/macos-ci.test.mjs",
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
