@@ -52,7 +52,9 @@ Its edge-docked widget is compact, transparent and always on top. Hover over a p
 
 ## Quick start
 
-Quorb currently targets Windows. You need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+Quorb currently targets Windows as its main platform. There is also a Linux port in progress (see the [Linux notes](#linux-development-notes)); macOS has been integrated separately for Apple Silicon.
+
+You need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
@@ -163,15 +165,28 @@ Promotional illustrations, not raw screenshots.
 
 ### Privacy and local data
 
-API keys and the NaN session are stored in Windows Credential Manager. Official CLI/app session files are read without writing to them or rotating refresh tokens. Gemini refreshes its short-lived access token in memory. If a CLI login expires, sign in again through the official tool.
+API keys and the NaN session are stored in the system's secure store (Windows Credential Manager; on Linux, Secret Service; on macOS, Keychain). Official CLI/app session files are read without writing to them or rotating refresh tokens. Gemini refreshes its short-lived access token in memory. If a CLI login expires, sign in again through the official tool.
 
-Configuration and history are stored under `%APPDATA%\es.egdev.quorb`. Quorb calls provider endpoints directly; no separate backend is required. History covers up to 30 days.
+Configuration and history are stored under the platform user directory (`%APPDATA%\es.egdev.quorb` on Windows, `~/.config/es.egdev.quorb` on Linux). Quorb calls provider endpoints directly; no separate backend is required. History covers up to 30 days.
 
 For WSL sessions, configure the credential file paths in Settings, for example `\\wsl.localhost\Ubuntu\home\YOUR_USER\.codex\auth.json`, and set the login command to `wsl codex login` or `wsl claude` as appropriate.
 
 ### Roadmap
 
-Code signing and winget distribution, click-through mode, NaN's GLM four-hour window and macOS/Linux builds remain roadmap items, not current capabilities.
+Code signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. macOS/Linux public releases and a Linux updater are not part of this project yet; Linux local development is covered in the section below.
+
+## Linux development notes
+
+A native Linux port is under development (tracking issues #105–#108 of the ODD project `quorb-linux-local-v1`). What works today is local development and testing, not a distributed release:
+
+- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run app:dev`.
+- The bundle formats and the packaging of an installable local build are still being defined in the packaging unit (#108); do not distribute the artifacts.
+- Session and behaviour limits depend on the desktop session, and Settings shows them per surface in the «Sesión de escritorio» block:
+  - X11: complete behaviour of always-on-top, tray icon, global shortcuts and transparency (the last only with a compositing WM).
+  - GNOME on Wayland: AppIndicator extension needed to see the tray icon; always-on-top and click-through are limited by Mutter; global shortcut registration may be denied.
+  - KDE on Wayland: tray and always-on-top supported; the global-shortcut portal may still deny the registration.
+  - WLR-based compositors (Hyprland, sway): very strict always-on-top; no tray if your bar has no StatusNotifier support.
+- Quick diagnostics: `echo $XDG_SESSION_TYPE` (session type), `echo $XDG_CURRENT_DESKTOP` (current desktop), `$ quorb` debug from the terminal, plus Settings › Atajos for the shortcut registration errors.
 
 ## Contributing
 

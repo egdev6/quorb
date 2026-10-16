@@ -7,6 +7,22 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+/** Estado de una superficie de escritorio según la sesión detectada. */
+export interface SurfaceStatus {
+  state: 'ok' | 'limited';
+  note: string;
+}
+
+export interface DesktopSurfaces {
+  alwaysOnTop: SurfaceStatus;
+  clickThrough: SurfaceStatus;
+  trayIcon: SurfaceStatus;
+  globalShortcuts: SurfaceStatus;
+  autostart: SurfaceStatus;
+  notifications: SurfaceStatus;
+  transparency: SurfaceStatus;
+}
+
 export interface WindowManagerInfo {
   waylandDisplay: string | null;
   xdgSessionType: string | null;
@@ -15,6 +31,7 @@ export interface WindowManagerInfo {
   isWayland: boolean;
   isHyprland: boolean;
   recommendation: string;
+  surfaces: DesktopSurfaces;
 }
 
 /** Llama al command Rust `get_wm_info` y devuelve la info del compositor. */
