@@ -43,5 +43,7 @@ describe('desktop-compat', () => {
     expect(showDesktopCompat('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15')).toBe(false);
     // Un Android (UA Linux móvil) tampoco.
     expect(showDesktopCompat('Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36')).toBe(false);
+    // Sin UA (entornos headless/tests): tampoco se muestra.
+    expect(showDesktopCompat('')).toBe(false);
   });
 });

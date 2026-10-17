@@ -235,6 +235,7 @@ fn is_wayland_compositor(token: &str) -> bool {
     matches!(
         token.trim().to_ascii_lowercase().as_str(),
         "wayland" | "gnome" | "kde" | "kde-plasma" | "plasma" | "hyprland" | "sway" | "wlroots"
+            | "niri" | "river" | "wayfire"
     )
 }
 
@@ -342,6 +343,15 @@ mod tests {
         let info = detect_wm_info_from_env(&env(None, None, None, Some("GNOME:Hyprland")));
         assert!(info.is_hyprland);
         assert!(info.is_wayland);
+    }
+
+    #[test]
+    fn xdg_current_desktop_minor_compositors_signal_wayland() {
+        for token in ["niri", "river", "wayfire"] {
+            let info = detect_wm_info_from_env(&env(None, None, None, Some(token)));
+            assert!(info.is_wayland, "{token} debe señalar Wayland");
+            assert!(!info.is_hyprland, "{token} no es Hyprland");
+        }
     }
 
     #[test]
