@@ -257,7 +257,13 @@ html[data-window='settings'] body { background: var(--color-bg-canvas); color: v
 .q-inline > .eg-btn { flex: none; min-height: 44px; }
 .q-note { margin: 0; color: var(--color-fg-secondary); font-size: 14px; line-height: 1.5; }
 .q-link { padding: 0; border: 0; background: none; color: var(--color-fg-brand-hover); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
-.q-details summary { cursor: pointer; color: var(--color-fg-secondary); font-weight: 600; }
+.q-details summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; color: var(--color-fg-secondary); font-weight: 600; }
+.q-details summary::-webkit-details-marker { display: none; }
+.q-details summary::after { content: ''; width: 8px; height: 8px; flex: none; margin-right: 4px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform 200ms ease; }
+.q-details[open] > summary::after { transform: rotate(225deg); }
+.q-details summary:hover { color: var(--color-fg-default); }
+.q-details summary:focus-visible { outline: 2px solid var(--color-fg-brand-hover); outline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) { .q-details summary::after { transition: none; } }
 .q-details[open] { display: flex; flex-direction: column; gap: 12px; }
 .q-pre { margin: 0; max-height: 260px; overflow: auto; padding: 12px; border-radius: var(--radius-md); background: var(--color-surface-0); box-shadow: var(--shadow-well); font: 12px/1.45 var(--font-mono); white-space: pre-wrap; word-break: break-all; color: var(--color-fg-secondary); }
 
