@@ -11,7 +11,9 @@
 - **Estado del port**: el binario compila, se empaqueta (`.deb` + `.AppImage`)
   y arranca en Ubuntu 26.04/GNOME Wayland, con warnings benignos de GTK y
   libayatana. El panic de arranque en Wayland (tao#1204) está resuelto en la
-  rama `feat_native_linux` (commit `53058fa`) y pendiente de integrar a
+  rama `feat_native_linux` ([commit
+  `53058fa4`](https://github.com/sosan/quorb/commit/53058fa46ccd64c65b1ddfee320d562d6e445ca5),
+  evidencia externa del fork) y pendiente de integrar a
   `main` vía #107.
 - **Qué queda fuera del MVP**: distros no-Debian/Arch (Fedora, openSUSE,
   NixOS), arquitectura aarch64, macOS, firma digital (F5), paquete AUR,
@@ -41,8 +43,8 @@
 
 | Entorno | Rol | Evidencia |
 |---|---|---|
-| Devcontainer `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` (`.devcontainer/`) | Build/tests locales sin distro física | `cargo test --locked` verde (§4) |
-| CI runner `ubuntu-22.04` (`build-linux.yml`) | Bundles + verify | Tags `v0.6.6`/`v0.6.8` verdes (§4) |
+| Devcontainer `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` (`.devcontainer/`) | Build/tests locales sin distro física | `cargo test --locked` verde (§4) — **evidencia externa**: infra parked en `chore-linux-build-local-108` (fork, revisión #108), no incluida en este candidato |
+| CI runner `ubuntu-22.04` (`build-linux.yml`) | Bundles + verify | Tags `v0.6.6`/`v0.6.8` verdes (§4, fork externo; workflow no en este candidato) |
 | CI runner `windows-latest` (`ci.yml`) | Regresión Windows | Verde por PR (ver §8) |
 | `.deb` v0.6.6 instalado en host | Arranque en compositor real | §4 |
 
@@ -100,13 +102,22 @@ ramas del repo, releases), no desde logs de sesión ad-hoc.
 
 ### 4.1 Fuentes de evidencia reproducibles
 
-| Fuente | Cubre | Referencia |
-|---|---|---|
-| `ci.yml` (runner `windows-latest`; PR/push a `main`, `workflow_dispatch`) | `npm ci`, `npm test`, `npm run build`, `cargo test --locked` en Windows | `https://github.com/<owner>/quorb/actions/workflows/ci.yml` |
-| `build-linux.yml` (runner `ubuntu-22.04`; tag `v*`, `workflow_dispatch`) | `npm test`, `npm run build`, `cargo test --locked`, `npm run app:build`, `verify-deb.sh`, `verify-appimage.sh`, `Launch AppImage directly` | `https://github.com/<owner>/quorb/actions/workflows/build-linux.yml` |
-| Rama `feat_native_linux` (commits `7627c44`+ wm_compat; `53058fa` fix tao#1204; `74b8be7`–`b491ae3` CI AppImage) | Trabajo Linux aún no integrado en `main`; referencia para #107 | `https://github.com/<owner>/quorb/commits/feat_native_linux` |
-| Tags `v0.6.6` / `v0.6.8` (rama `feat_native_linux`) | Build verde con plugin `continuous` (sin pin) + `Launch AppImage directly` exit 124 | release artifacts |
-| Devcontainer `.devcontainer/` (Ubuntu 22.04) | `npm ci`, `npm test`, `cargo test --locked` reproducibles localmente | `devcontainer up` (Makefile) |
+Dos niveles de evidencia, separados explícitamente:
+
+- **Estado integrado en upstream** (`egdev6/quorb`): `ci.yml` (Windows) es el
+  único workflow CI presente en `main` de este candidato.
+- **Evidencia externa** (fork `sosan/quorb`, ramas de trabajo e infra parked):
+  proveniente de las ramas `feat_native_linux` y `chore-linux-build-local-108`
+  (revisión de #108). No está integrada en `main`; se cita para contrastar las
+  mediciones, no como estado del upstream.
+
+| Fuente | Ámbito | Cubre | Referencia |
+|---|---|---|---|
+| `ci.yml` (runner `windows-latest`; PR/push a `main`, `workflow_dispatch`) | upstream | `npm ci`, `npm test`, `npm run build`, `cargo test --locked` en Windows | https://github.com/egdev6/quorb/actions/workflows/ci.yml |
+| `build-linux.yml` (runner `ubuntu-22.04`; tag `v*`, `workflow_dispatch`) | externa (fork) | `npm test`, `npm run build`, `cargo test --locked`, `npm run app:build`, `verify-deb.sh`, `verify-appimage.sh`, `Launch AppImage directly` | https://github.com/sosan/quorb/actions/workflows/build-linux.yml |
+| Rama `feat_native_linux` | externa (fork) | Commits concretos: [`7627c448`](https://github.com/sosan/quorb/commit/7627c448f49376b3379dbaf688a9e5d64a252134) (wm_compat), [`53058fa4`](https://github.com/sosan/quorb/commit/53058fa46ccd64c65b1ddfee320d562d6e445ca5) (fix tao#1204), [`74b8be72`](https://github.com/sosan/quorb/commit/74b8be72e8a3a57c0b0b1873aa13a08a784b8a14)–[`b491ae32`](https://github.com/sosan/quorb/commit/b491ae32fe81c4d4d99e93b99fb5a6d22e9ad4be) (CI AppImage) | https://github.com/sosan/quorb/commits/feat_native_linux |
+| Tags `v0.6.6` / `v0.6.8` (sobre `feat_native_linux`) | externa (fork) | Build verde con plugin `continuous` (sin pin): run [`38822295271`](https://github.com/sosan/quorb/actions/runs/38822295271) (v0.6.6, 6m50s); `Launch AppImage directly` exit 124 = app viva: run [`38826266889`](https://github.com/sosan/quorb/actions/runs/38826266889) (v0.6.8, 8m20s) | runs del workflow anterior |
+| Devcontainer `.devcontainer/` (Ubuntu 22.04) + Makefile | externa (parked) | `npm ci`, `npm test`, `cargo test --locked` reproducibles localmente | rama `chore-linux-build-local-108` del fork (en revisión en #108); **no está en este candidato** |
 
 ### 4.2 Tabla del baseline
 
@@ -134,8 +145,13 @@ ramas del repo, releases), no desde logs de sesión ad-hoc.
    `fuse: memory allocation failed` / `Cannot mount AppImage`. Workaround
    documentado en §10 (`sudo modprobe fuse` o `linux-modules-extra-$(uname -r)`).
    **Sin impacto en el `.deb`**.
-3. **`keyring` (linux-native) requiere D-Bus** en la sesión — comportamiento
-   exacto sin D-Bus se confirma en F2/#106 (placeholder hasta entonces).
+3. **Backend de secretos: `keyring` 3.6.3 con la feature `linux-native` usa
+   keyutils** (crate `linux-keyutils`, keyring del kernel), **no Secret
+   Service/D-Bus**. Sin sesión de escritorio no se espera un fallo por
+   ausencia de D-Bus; la persistencia y el comportamiento exacto (incluido
+   el fallo explícito del command en entornos sin keyutils) se confirman en
+   F2/#106 (placeholder hasta entonces). La migración a Secret Service
+   queda en #106, sin cambio de dependencias en esta PR.
 4. **Hallazgos de contribuidores** (del comentario de Rafael en #105):
    `connect_map` GTK crash y `startDragging()` nativo vs layer-shell
    pertenecen a F3/#107, no a este baseline.
@@ -151,7 +167,7 @@ Decisiones aceptadas en este baseline (revisables solo con evidencia nueva):
 | Sesión gráfica | GNOME Wayland y KDE Plasma Wayland soportados; Hyprland con degradaciones documentadas; X11 best-effort |
 | Política X11/Wayland | **Wayland-first**: la app arranca y funciona bajo Wayland; en X11 funciona pero sin garantías de always-on-top/click-through estrictos. Degradaciones documentadas en el bloque "Compatibilidad" de Ajustes (F3/#107 lo implementa) |
 | Bandeja | `libayatana-appindicator3` (recomendado); `libappindicator3` legacy como fallback si la distro no provee ayatana |
-| Secretos | Secret Service vía D-Bus (`keyring` feature `linux-native`). Sin D-Bus: fallo explícito del command (F2/#106 confirma el detalle) |
+| Secretos | Backend factual: `keyring` 3.6.3 + feature `linux-native` → **keyutils** (`linux-keyutils`, keyring del kernel), **no** Secret Service/D-Bus. La migración a Secret Service queda para #106, sin cambiar dependencias en esta PR. Fallo explícito del command en entornos sin keyutils: F2/#106 confirma el detalle |
 | Paquete local | `.deb` (Debian/Ubuntu) y `.AppImage` (Arch y resto). AUR fuera del MVP. Firma digital fuera (F5) |
 | Compilación ≠ experiencia | El binario puede compilar y no ser usable en un compositor/distro dado; esto no se considera "soportado" sin la matriz §6 y el smoke real |
 
@@ -183,7 +199,7 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 | AppImage no monta sin módulo `fuse` del kernel (Ubuntu 26.04/kernel 6.17) | Media (host sin auto-load) | Medio (AppImage inusable en ese host) | `sudo modprobe fuse` / `linux-modules-extra-$(uname -r)` (§10); el `.deb` no lo sufre | `lsmod` vacío + `/dev/fuse` presente (host) |
 | WebKit2GTK ≥ 2.40 / GTK ≥ 3.22 (distros antiguas) | Media | Alto (excluye usuarios) | Documentar versión mínima; diferir distros no-Debian/Arch | PRD línea 110; `build-linux.yml` apt |
 | libayatana deprecation warning en runtime | Alta (cosmético) | Bajo | Nada (no impide) | Log de arranque del `.deb` (host) |
-| `keyring` linux-native exige D-Bus; sesión sin D-Bus | Media | Medio | Fallo explícito del command, no degradar a texto plano (F2/#106) | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
+| `keyring` linux-native requiere keyutils disponible (keyring del kernel); entorno sin keyutils | Media | Medio | Fallo explícito del command, no degradar a texto plano (F2/#106) | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
 | `connect_map` GTK crash (Rafael) | Desconocida | Medio | Pertenece a F3/#107 | Comentario de Rafael en #105 |
 | `startDragging()` nativo vs layer-shell (Rafael) | Desconocida | Medio | Decisión de F3/#107 | Comentario de Rafael en #105 |
 | No hay gate de CI Linux para PRs | Alta (confirmado) | Medio (regresiones Linux pasan desapercibidas) | Usar tag `v*`/`workflow_dispatch`; fix en #108 | `ci.yml` vs `build-linux.yml` |
@@ -207,7 +223,7 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 
 | Nivel | Issue | Alcance | Validación |
 |---|---|---|---|
-| L1 | #106 — sesiones, secretos y login CLI nativos | Rutas Linux, Secret Service (keyring), login CLI con cascade `$TERMINAL → ghostty → kitty → alacritty`, fallback `x-terminal-emulator` | Subset en devcontainer (rutas, paths); keyring real requiere escritorio con D-Bus |
+| L1 | #106 — sesiones, secretos y login CLI nativos | Rutas Linux, backend de secretos completo (migración keyutils → Secret Service si procede), login CLI con cascade `$TERMINAL → ghostty → kitty → alacritty`, fallback `x-terminal-emulator` | Subset en devcontainer (rutas, paths); secretos reales se validan con sesiones de escritorio reales (§4.3, §5) |
 | L2 | #107 — escritorio y widget nativos | Bloque "Compatibilidad" en Ajustes con auto-detección de WM (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`, `DESKTOP_SESSION`, `XDG_CURRENT_DESKTOP`); degradaciones always-on-top/click-through/edge-docking; fix tao#1204 (port de `53058fa`) | Smoke en compositores reales (§6) |
 | L3 | #108 — empaquetar y documentar un build local verificable | `.deb` + `.AppImage` reproducibles, docs de dependencias por distro, gate CI Linux para PRs | `npm run app:build` + verify en clean container |
 
@@ -248,7 +264,7 @@ sudo apt install linux-modules-extra-$(uname -r)
 |---|---|---|
 | `src-tauri/tauri.conf.json` | Windows-first (`nsis`/`msi`); Linux targets a añadir en #108 | Confirmado: solo `nsis`/`msi` en `bundle.targets` de main |
 | `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host (`.deb` v0.6.6); panic tao#1204 resuelto en `53058fa` (feat) |
-| `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` | Requiere D-Bus; comportamiento exacto sin D-Bus a verificar en F2/#106 |
+| `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` (keyutils, `linux-keyutils`) | Comportamiento exacto de keyutils (persistencia, fallo sin keyutils) a verificar en F2/#106 |
 | `src-tauri/src/login.rs` | Login CLI con terminal Linux | Cascade `$TERMINAL → ghostty → kitty → alacritty` per Rafael; a verificar en F2/#106 |
 | `src-tauri/src/providers/` (11 módulos: anthropic_api, claude, codex, copilot, cursor, gemini, nan, nan_cloud, openai_api, openrouter) | Puro HTTP (reqwest) | Sin dependencia específica de plataforma; portables |
 | `src/lib/dock.ts` | Geometría de bordes (píxeles lógicos) | Sin dependencia de plataforma; portables |
