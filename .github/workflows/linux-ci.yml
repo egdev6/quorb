@@ -1,10 +1,9 @@
-name: Linux test (manual)
+name: Linux CI
 
-# Disparador solo manual: este workflow está pensado para validar una rama,
-# tag o SHA concretos en Linux antes de promoverlos (PR day, smoke contra un
-# commit reciente, último commit de feat_native_linux, etc.). No se ejecuta
-# automáticamente con PRs ni pushes — para eso sigue ci.yml (Windows) y, una
-# vez mergeado a main, build-linux.yml en tags v*.
+# Único workflow de CI/CD Linux: tests por ref (manual) y, opcionalmente,
+# build de bundles (deb + AppImage) con verificación en contenedor limpio y
+# subida de artefactos. No se dispara con PRs ni pushes — para eso sigue
+# ci.yml (Windows/macOS); las releases de Linux por tag son materia de #108.
 
 on:
   workflow_dispatch:
@@ -110,8 +109,6 @@ jobs:
 
       - name: Build Linux bundles (deb + AppImage)
         if: ${{ inputs.with_bundle == 'bundle' }}
-        env:
-          TAURI_BUNDLER_TOOLS: ${{ runner.temp }}/quorb-bundler-tools
         run: npm run app:build
 
       # Lanza el AppImage SIN --appimage-extract-and-run: el runner es una VM
@@ -162,10 +159,14 @@ jobs:
           [ -n "$(ls "$BUNDLE_DIR"/*.AppImage 2>/dev/null)" ] || { echo "no .AppImage produced" >&2; exit 1; }
           docker run --rm -v "$BUNDLE_DIR:/artifacts" --platform linux/amd64 quorb-build-verify
 
+      - name: Compute artifact name
+        id: artifact
+        run: echo "name=quorb-linux-manual-$(echo "${{ inputs.ref || github.ref }}" | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Upload Linux bundles as artifacts
         if: ${{ inputs.with_bundle == 'bundle' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: quorb-linux-manual-${{ inputs.ref || github.ref }}
+          name: ${{ steps.artifact.outputs.name }}
           path: ${{ runner.temp }}/quorb-bundles
           if-no-files-found: error
