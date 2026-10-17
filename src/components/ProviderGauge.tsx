@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, CSSProperties } from 'react';
-import type { Meter, UsageReport } from '../lib/types';
+import type { UsageReport } from '../lib/types';
 import { peakMeter } from '../lib/format';
-import { providerOf } from '../lib/accounts';
+import { meterColor } from '../lib/meter-colors';
 import { ProviderLogo } from './ProviderLogo';
 
 /** Estado visual del Gauge (EGDEV Foundation): aviso, agotado o sin datos. */
@@ -12,19 +12,6 @@ export function gaugeState(report: UsageReport, threshold = 90): 'over' | 'warni
   if (peak >= 100) return 'over';
   if (peak >= threshold || report.status === 'warning') return 'warning';
   return null;
-}
-
-/** Color by quota period, not by the provider's meter order. Resolve the live palette in CSS. */
-function meterColor(meter: Meter): string {
-  const seconds = meter.windowSeconds;
-  if (seconds != null && seconds > 0) {
-    if (seconds >= 6 * 86400 && seconds <= 8 * 86400) return 'var(--ring-1)';
-    return seconds < 86400 ? 'var(--ring-2)' : 'var(--ring-3)';
-  }
-  // Older reports can omit duration metadata but retain the provider's period label.
-  if (/^semana\b/i.test(meter.label)) return 'var(--ring-1)';
-  if (/^sesión\b/i.test(meter.label)) return 'var(--ring-2)';
-  return 'var(--ring-3)';
 }
 
 /**
@@ -61,13 +48,11 @@ export function ProviderGauge({
   const all = report.meters.filter((m) => m.percent != null);
   // Pequeños: un único anillo con el límite más cercano. Con círculos muy pequeños, máximo dos.
   const rings = small ? (peak ? [peak] : []) : all.slice(0, size < 40 ? 2 : 3);
-  // Claude/Codex expose session and weekly quotas; model-based providers such as NaN
-  // retain the original one-color-per-ring palette, including their compact ring.
-  const provider = providerOf(report.id);
-  const semantic = provider === 'claude' || provider === 'codex';
+  // Claude/Codex share period colors with the card, pace and history.
+  // Model-based providers such as NaN retain ring-order colors, including their compact ring.
   const list = rings.length ? rings.map((meter, index) => ({
     percent: meter.percent ?? 0,
-    color: semantic ? meterColor(meter) : `var(--ring-${index + 1})`,
+    color: meterColor(report, meter, index),
   })) : [{ percent: 0, color: 'var(--ring-1)' }];
   const state = gaugeState(report, threshold);
   // Grosor y separación de los anillos escalan con el círculo (56 px = 4 px + 2 px, como el DS).

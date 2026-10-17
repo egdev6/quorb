@@ -25,13 +25,14 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 /* El consumo conserva la paleta; el halo de exceso sigue siendo una alarma. */
 .eg-gauge.is-over { box-shadow: 0 0 22px 4px color-mix(in srgb, var(--color-status-danger) 65%, transparent), 0 0 55px 8px color-mix(in srgb, var(--color-status-danger) 28%, transparent); }
 
-.q-meter .eg-progress__bar { background: var(--color-fg-muted); box-shadow: none; }
+.q-meter[data-colored] .eg-gauge__key { background: var(--meter-color); }
+.q-meter .eg-progress__bar { background: var(--meter-color, var(--color-fg-muted)); box-shadow: none; }
 .q-meter[data-ring='1'] .eg-progress__bar {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--ring-1) 72%, #fff), var(--ring-1) 60%, color-mix(in srgb, var(--ring-1) 85%, #000));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 12px -2px color-mix(in srgb, var(--ring-1) 65%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--meter-color, var(--ring-1)) 72%, #fff), var(--meter-color, var(--ring-1)) 60%, color-mix(in srgb, var(--meter-color, var(--ring-1)) 85%, #000));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 12px -2px color-mix(in srgb, var(--meter-color, var(--ring-1)) 65%, transparent);
 }
-.q-meter[data-ring='2'] .eg-progress__bar { background: var(--ring-2); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
-.q-meter[data-ring='3'] .eg-progress__bar { background: var(--ring-3); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.q-meter[data-ring='2'] .eg-progress__bar { background: var(--meter-color, var(--ring-2)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.q-meter[data-ring='3'] .eg-progress__bar { background: var(--meter-color, var(--ring-3)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
 
 /* ───────── 2 · tira (GaugeStrip) ───────── */
 .strip {

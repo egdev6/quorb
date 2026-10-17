@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { UsageReport } from '../lib/types';
 import { formatMoney } from '../lib/format';
 import { MeterBar } from './MeterBar';
+import { meterColor } from '../lib/meter-colors';
 import { api } from '../lib/api';
 import { ProviderLogo } from './ProviderLogo';
 
@@ -74,9 +75,17 @@ export function ProviderCard({ report }: { report: UsageReport }) {
       {report.meters.length > 0 && (
         <div className="q-card__meters">
           {report.meters.map((m) => {
-            // Mismo color que su anillo en el círculo.
-            const r = m.percent != null && ring < 3 ? ++ring : null;
-            return <MeterBar key={m.label} meter={m} ring={r} />;
+            // Count only percentage quotas, just like the gauge and detail series.
+            const index = m.percent != null ? ring++ : null;
+            const r = index != null && index < 3 ? index + 1 : null;
+            return (
+              <MeterBar
+                key={m.label}
+                meter={m}
+                ring={r}
+                color={index != null ? meterColor(report, m, index) : undefined}
+              />
+            );
           })}
         </div>
       )}
