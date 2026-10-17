@@ -52,7 +52,9 @@ Su widget se pega al borde de la pantalla: es compacto, transparente y permanece
 
 ## Inicio rápido
 
-Quorb está dirigido actualmente a Windows. Necesitáis Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
+Quorb está dirigido actualmente a Windows como plataforma principal. Existe además un port Linux en marcha (ver [Notas de Linux](#notas-de-desarrollo-linux)); macOS está integrado aparte para Apple Silicon.
+
+Necesitáis Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
@@ -165,15 +167,28 @@ Ilustraciones promocionales, no capturas directas.
 
 ### Privacidad y datos locales
 
-Las API keys y la sesión de NaN se guardan en el Administrador de credenciales de Windows. Los archivos de sesión de las herramientas oficiales se leen sin escribir en ellos ni rotar refresh tokens. Gemini renueva su token de acceso de corta duración en memoria. Si caduca el login de una CLI, iniciad sesión de nuevo con la herramienta oficial.
+Las API keys y la sesión de NaN se guardan en el almacén seguro del sistema (Windows Credential Manager; en Linux, Secret Service; en macOS, Keychain). Los archivos de sesión de las herramientas oficiales se leen sin escribir en ellos ni rotar refresh tokens. Gemini renueva su token de acceso de corta duración en memoria. Si caduca el login de una CLI, iniciad sesión de nuevo con la herramienta oficial.
 
-La configuración y el historial se guardan bajo `%APPDATA%\es.egdev.quorb`. Quorb consulta directamente los endpoints de los proveedores; no requiere un backend separado. El historial cubre hasta 30 días.
+La configuración y el historial se guardan en la carpeta de usuario de cada plataforma (`%APPDATA%\es.egdev.quorb` en Windows, `~/.config/es.egdev.quorb` en Linux). Quorb consulta directamente los endpoints de los proveedores; no requiere un backend separado. El historial cubre hasta 30 días.
 
 Para sesiones en WSL, configurad las rutas de credenciales en Ajustes, por ejemplo `\\wsl.localhost\Ubuntu\home\YOUR_USER\.codex\auth.json`, y el comando de login `wsl codex login` o `wsl claude` según corresponda.
 
 ### Hoja de ruta
 
-La firma de código y distribución por winget, el modo click-through, la ventana de cuatro horas de GLM en NaN y las builds de macOS/Linux siguen siendo objetivos, no funcionalidades actuales.
+La firma de código y distribución por winget, el modo click-through y la ventana de cuatro horas de GLM en NaN siguen siendo objetivos, no funcionalidades actuales. Las releases públicas de macOS/Linux y el updater de Linux no forman parte del proyecto por ahora; el desarrollo local de Linux está recogido en la sección siguiente.
+
+## Notas de desarrollo Linux
+
+Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `quorb-linux-local-v1`). Lo que funciona hoy es desarrollo y pruebas locales, no una release distribuida:
+
+- Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run app:dev`.
+- Los formatos de bundle y el empaquetado de un build local instalable siguen definiéndose en la unidad de paquete (#108); no distribuyáis los artefactos.
+- Las limitaciones de sesión y comportamiento dependen del escritorio, y Ajustes las muestra por superficie en el bloque «Sesión de escritorio»:
+  - X11: comportamiento completo de siempre-encima, icono de bandeja, atajos globales y transparencia (esta última solo con un compositor).
+  - GNOME sobre Wayland: hace falta la extensión AppIndicator para ver el icono de bandeja; siempre-encima y click-through limitados por Mutter; el registro de atajos globales puede denegarse.
+  - KDE sobre Wayland: bandeja y siempre-encima soportados; el portal de atajos puede seguir denegando el registro.
+  - Compositores tipo WLR (Hyprland, sway): siempre-encima muy estricto; sin bandeja si tu barra no soporta StatusNotifier.
+- Diagnóstico rápido: `echo $XDG_SESSION_TYPE` (tipo de sesión), `echo $XDG_CURRENT_DESKTOP` (escritorio actual), `quorb` en consola para ver el debug, además de Ajustes › Atajos para los errores de registro de atajos.
 
 ## Contribuir
 

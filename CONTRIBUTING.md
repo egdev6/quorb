@@ -10,7 +10,7 @@ Thanks for taking the time to improve Quorb. Issues and pull requests are welcom
 
 ### Before you start
 
-Quorb currently targets Windows. You need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+Quorb currently targets Windows as its main platform; a Linux port is in progress (local development only, see the README Linux notes). For Windows you need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
@@ -122,7 +122,7 @@ Gracias por dedicar tiempo a mejorar Quorb. Se aceptan issues y pull requests, e
 
 ### Antes de empezar
 
-Quorb está dirigido actualmente a Windows. Necesitáis Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
+Quorb está dirigido actualmente a Windows como plataforma principal; hay un port Linux en marcha (solo desarrollo local, ver las notas de Linux del README). Para Windows se necesitan Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
