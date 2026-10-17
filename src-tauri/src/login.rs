@@ -297,14 +297,17 @@ fn apple_script_quote(text: &str) -> String {
 
 /// Script fijo con el que la terminal lanza el login SIN interpolar el comando:
 /// el login se pasa como argv (`"$@"`) y solo después de que salga se abre el
-/// shell del usuario. La cadena de script es una constante: nada del comando
-/// configurable llega a código de shell.
+/// shell del usuario (`$SHELL`, con `/bin/sh` de respaldo si el entorno no la
+/// define, p. ej. al lanzar desde un launcher sin login shell). La cadena de
+/// script es una constante: nada del comando configurable llega a código de shell.
 #[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
-const SHELL_WRAP: &str = "\"$@\"; exec \"$SHELL\"";
+const SHELL_WRAP: &str = "\"$@\"; exec \"${SHELL:-/bin/sh}\"";
 
 /// Separa un comando de login en (programa, argumentos) sin ejecutar la shell.
 /// Entiende comillas simples/dobles y `\` de escape (semántica de shell_words,
-/// sin dependencias). Comillas sin cerrar devuelven `Err` y el login se aborta
+/// sin dependencias). No expande variables de entorno (`$VAR` queda como texto
+/// literal): si el CLI necesita variables, deben definirse fuera del comando.
+/// Comillas sin cerrar devuelven `Err` y el login se aborta
 /// (fail-closed): el texto del usuario nunca se interpola como código.
 fn split_login_command(command: &str) -> Result<(String, Vec<String>), String> {
     let mut tokens: Vec<String> = Vec::new();
