@@ -29,7 +29,7 @@ El adaptador `scripts/macos-preview-preflight.mjs` obtiene HEAD real y checks RE
 El contrato fija ARM64, actualización manual, sin Developer ID ni notarización y retención de 14 días:
 la retención del artifact/manifiesto no implica que la aplicación expire; el digest del ZIP no es el hash del DMG.
 Pruebas sin red ni GUI: `node --test scripts/macos-preview-policy.test.mjs scripts/verify-macos-bundle.test.mjs scripts/macos-ci.test.mjs`.
-Quedan pendientes workflow de preview, uploads y readback real de artifacts descargados.
+El workflow de preview solo se materializa tras aprobar su plan; uploads y readback real requieren ejecución autorizada.
 Estos fundamentos no publican una preview descargable ni una Release, ni acreditan una preview macOS lista.
 
 ## Preflight de fuente: CLI preparatoria
@@ -42,7 +42,31 @@ Devuelve únicamente JSON con `sourceSha` y `version`, o error saneado con salid
 Las pruebas usan Git/API inyectados, sin red real: esta sesión no acredita una consulta GitHub real.
 No habilita workflows ni entrega una preview operativa; no crea tokens, artifacts, manifiestos ni uploads.
 
-## Ejecución prevista
+## Staging y readback local: CLI preparatoria
+
+`node scripts/macos-preview-artifact.mjs stage` prepara solo un bundle ya compilado y verificado; no construye ni sube nada.
+El modo `readback` solo lee una descarga ya existente: no descarga artifacts ni consulta GitHub.
+Ambos exigen las variables de fuente del preflight (sin `GH_TOKEN`), HEAD real y versión exacta de `package.json`.
+Productor fijo: `src-tauri/target/macos-preview-upload`; descarga separada: `src-tauri/target/macos-preview-download`.
+Exigen DMG, `manifest.json` y `README.md` sin extras/symlinks; staging exclusivo, sin sobrescribir ni limpiar fallos parciales.
+El README fuente es [la guía bilingüe de preview](macos-preview-README.md); staging copia sus bytes sin alterarlos.
+Readback compara manifiesto canónico, bytes/hash DMG y README con la fuente; devuelve solo SHA y versión validados.
+Estas pruebas de filesystem simulado no acreditan uploads, descargas reales, GUI ni una preview operativa.
+
+## Preview manual: activación controlada por plan
+
+`.github/security-drafts/macos-preview.yml` es la fuente revisable; el destino
+`.github/workflows/macos-preview.yml` solo puede crearse tras aprobar el plan/hash de bootstrap.
+El contrato exige igualdad byte a byte entre fuente y activo, sin omitir la integración.
+Solo ejecución manual en main, versión estable exacta de `package.json` y SHA completo de HEAD main.
+Preflight antes de Rust/instalación/build exige los cuatro checks del SHA exacto; no espera ni repite suites.
+`npm run app:build:mac` usa Tauri; `beforeBuildCommand` ya ejecuta `npm run build` (TypeScript/Vite).
+Después: staging, upload inmutable de tres archivos, download por nombre en el mismo run y readback.
+Solo `contents: read`/`checks: read`; `GH_TOKEN` solo en preflight, checkout sin persistencia y retención de 14 días.
+No se ha ejecutado este workflow ni realizado uploads/descargas, instalación o prueba GUI en Mac real.
+La guía enlazada describe cómo obtener/verificar/informar sin quitar cuarentena; no acredita seguridad.
+
+## Ejecución prevista de CI macOS (sin cambios)
 
 - PR (incluidos forks), push a `main` y ejecución manual; permiso `contents: read`.
 - Runner `macos-15` nativo ARM64, Node 22 y Rust stable; límite de 30 minutos.
