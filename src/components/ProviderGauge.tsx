@@ -3,6 +3,9 @@ import type { Meter, UsageReport } from '../lib/types';
 import { peakMeter } from '../lib/format';
 import { providerOf } from '../lib/accounts';
 import { ProviderLogo } from './ProviderLogo';
+import { ValidityBadge } from './ValidityBadge';
+import { validityInfo } from '../lib/validity';
+import { resetCreditsInfo } from '../lib/reset-credits';
 
 /** Estado visual del Gauge (EGDEV Foundation): aviso, agotado o sin datos. */
 export function gaugeState(report: UsageReport, threshold = 90): 'over' | 'warning' | 'muted' | null {
@@ -37,6 +40,7 @@ export function ProviderGauge({
   size,
   active,
   account,
+  showResets = true,
   threshold,
   dragging = false,
   onHover,
@@ -49,6 +53,8 @@ export function ProviderGauge({
   active: boolean;
   /** Número de cuenta cuando el proveedor tiene varias («1», «2»…) */
   account?: string;
+  /** Ocultar solo el saldo de resets, no la identidad ni las fechas. */
+  showResets?: boolean;
   /** Umbral de aviso (%) */
   threshold?: number;
   onHover: (el: HTMLElement) => void;
@@ -57,6 +63,9 @@ export function ProviderGauge({
   /** Manejadores de puntero para reordenar arrastrando */
   pointer?: Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp'>;
 }) {
+  const validity = validityInfo(report);
+  const resets = showResets ? resetCreditsInfo(report) : null;
+  const accessibleTitle = [report.name, validity?.title, resets?.title].filter(Boolean).join(' · ');
   const peak = peakMeter(report);
   const all = report.meters.filter((m) => m.percent != null);
   // Pequeños: un único anillo con el límite más cercano. Con círculos muy pequeños, máximo dos.
@@ -83,8 +92,8 @@ export function ProviderGauge({
       data-dragging={dragging || undefined}
       data-status={report.status}
       data-account={account}
-      aria-label={report.name}
-      title={account ? report.name : undefined}
+      aria-label={accessibleTitle}
+      title={account || validity || resets ? accessibleTitle : undefined}
       aria-expanded={active}
       style={{ '--size': `${size}px`, '--w': `${w}px`, '--gap': `${gap}px` } as CSSProperties}
       onMouseEnter={(e) => onHover(e.currentTarget)}
@@ -99,6 +108,7 @@ export function ProviderGauge({
       <span className="eg-gauge__logo logo">
         <ProviderLogo id={report.id} name={report.name} />
       </span>
+      <ValidityBadge report={report} compact showResets={showResets} />
       {account && (
         <span className="orb__acct" aria-hidden="true">
           {account}
