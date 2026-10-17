@@ -244,10 +244,11 @@ mod tests {
         assert!(crate::config::is_account_id(key.split_once('@').unwrap().1), "la clave de prueba debe pasar la validación de cuentas");
         assert!(get(&key).is_none(), "la clave única de prueba debería no existir");
         let _guard = CleanupGuard(key.clone());
-        // Valor de prueba de baja entropía y sin credencial: evita que
-        // gitleaks (regla generic-api-key) marque el test como secreto.
-        set(&key, "valor-de-prueba-del-smoke-de-llavero").expect("set en Secret Service");
-        assert_eq!(get(&key).as_deref(), Some("valor-de-prueba-del-smoke-de-llavero"));
+        // Valor de prueba de baja entropía y sin credencial; aun así gitleaks
+        // (regla generic-api-key) dispara por el patrón `set(key, "...")`, así
+        // que anotamos el falso positivo explícitamente:
+        set(&key, "valor-de-prueba-del-smoke-de-llavero").expect("set en Secret Service"); // gitleaks:allow
+        assert_eq!(get(&key).as_deref(), Some("valor-de-prueba-del-smoke-de-llavero")); // gitleaks:allow
         set(&key, "").expect("borrado con set vacío");
         assert!(get(&key).is_none(), "la clave debería quedar eliminada");
     }
