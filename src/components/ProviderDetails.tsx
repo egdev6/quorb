@@ -4,7 +4,7 @@ import { formatCompact, formatMoney, formatResetIn, shortLabel } from '../lib/fo
 import { meterPace, spendPace, type Pace } from '../lib/pace';
 import type { Sample, UsageReport } from '../lib/types';
 import { RING_COLORS } from './RingGauge';
-import { disclosureOpen, saveDisclosure, popupRingStyle } from '../lib/popup-preferences';
+import { disclosureOpen, saveDisclosure } from '../lib/popup-preferences';
 
 const RANGES = [
   { hours: 24, label: '24 h' },
@@ -131,7 +131,7 @@ export function ProviderDetails({ report }: { report: UsageReport }) {
   const risk = paces.find((p) => p.pace?.status === 'over');
 
   return (
-    <div className="details" style={popupRingStyle(report)}>
+    <div className="details">
       {risk?.pace && (
         <div className="eg-notice eg-notice--warning eg-notice--sm" role="status">
           <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">

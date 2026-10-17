@@ -4,7 +4,6 @@ import { formatMoney } from '../lib/format';
 import { MeterBar } from './MeterBar';
 import { api } from '../lib/api';
 import { ProviderLogo } from './ProviderLogo';
-import { popupRingStyle } from '../lib/popup-preferences';
 
 const STATUS: Record<UsageReport['status'], { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }> = {
   ok: { label: 'Al día', tone: 'success' },
@@ -54,7 +53,7 @@ export function ProviderCard({ report }: { report: UsageReport }) {
   const status = STATUS[report.status];
   let ring = 0;
   return (
-    <div className="q-card" data-status={report.status} data-provider={report.id} style={popupRingStyle(report)}>
+    <div className="q-card" data-status={report.status} data-provider={report.id}>
       <div className="eg-module-card__head">
         <span className="q-card__logo logo">
           <ProviderLogo id={report.id} name={report.name} />
