@@ -337,7 +337,17 @@ fn split_login_command(command: &str) -> Result<(String, Vec<String>), String> {
                     }
                     if c2 == '\\' {
                         match chars.next() {
-                            Some(esc) => current.push(esc),
+                            // Escape real dentro de comillas dobles: `\\` → `\`,
+                            // `\"` → `"`.
+                            Some('\\') => current.push('\\'),
+                            Some('"') => current.push('"'),
+                            // Barra ante carácter ordinario: se conserva literal
+                            // (`\p` sigue siendo `\p`, no `p` — rutas tipo
+                            // `"C:\\foo\\bar"` deben quedarse intactas).
+                            Some(other) => {
+                                current.push('\\');
+                                current.push(other);
+                            }
                             None => current.push('\\'),
                         }
                     } else {
@@ -388,10 +398,26 @@ const TERMINALS: [&str; 7] = [
     "kitty",
 ];
 
-/// Primera terminal disponible en el PATH (o carpetas conocidas); `None` si no hay.
+/// Primera terminal disponible; devuelve (nombre, dir si está en una carpeta
+/// conocida fuera del PATH). `Found::In(dir)` indica que la terminal está en
+/// una carpeta custom (p. ej. Kitty en `~/.local/bin`): conservamos `dir` para
+/// lanzar la terminal con su ruta y anteponerla al PATH del proceso hijo.
 #[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
-fn find_terminal() -> Option<String> {
-    TERMINALS.iter().find(|t| !matches!(find_program(t), Found::Missing)).map(|s| s.to_string())
+fn find_terminal_impl(path_dirs: &[PathBuf], known_dirs: &[PathBuf]) -> Option<(String, PathBuf)> {
+    TERMINALS
+        .iter()
+        .find_map(|t| match find_program_tiers(t, path_dirs, &[], known_dirs, false, "") {
+            Found::Missing => None,
+            Found::OnPath => Some((t.to_string(), PathBuf::new())),
+            Found::In(dir) => Some((t.to_string(), dir)),
+        })
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn find_terminal() -> Option<(String, PathBuf)> {
+    let legacy: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    find_terminal_impl(&legacy, &known_dirs())
 }
 
 /// Invocación de la terminal para ejecutar `program args...` sin shell:
@@ -415,11 +441,22 @@ fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) ->
     if program.is_empty() {
         return Err("Comando de login vacío (revísalo en Ajustes).".into());
     }
-    let terminal = find_terminal().ok_or_else(|| {
+    let (terminal, terminal_dir) = find_terminal().ok_or_else(|| {
         "No encuentro un emulador de terminal (x-terminal-emulator, gnome-terminal o konsole) en este equipo. Instala uno o ejecuta el login a mano en tu terminal.".to_string()
     })?;
     let mut cmd = std::process::Command::new(&terminal);
-    if let Some(path) = path_with(extra_dir) {
+    // Directorios que deben quedar en el PATH de la terminal: el de la propia
+    // terminal si está fuera del PATH (p. ej. ~/.local/bin) y el del CLI si su
+    // ejecutable también se encontró fuera del PATH. Si la terminal es un
+    // nombre puro (`Found::OnPath`) no hace falta anteponer nada.
+    let mut extras: Vec<PathBuf> = vec![];
+    if !terminal_dir.as_os_str().is_empty() {
+        extras.push(terminal_dir);
+    }
+    if let Some(dir) = extra_dir {
+        extras.push(dir);
+    }
+    if let Some(path) = path_with_dirs(&extras) {
         cmd.env("PATH", path);
     }
     if let Some((var, dir)) = env {
@@ -429,6 +466,18 @@ fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) ->
     cmd.spawn()
         .map(|_| ())
         .map_err(|e| format!("No pude abrir la terminal ({terminal}): {e}"))
+}
+
+/// Antepone `extras` al PATH actual (en orden) sin tocar el entorno real.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn path_with_dirs(extras: &[PathBuf]) -> Option<std::ffi::OsString> {
+    if extras.is_empty() {
+        return None;
+    }
+    let mut dirs: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    dirs.splice(0..0, extras.iter().cloned());
+    std::env::join_paths(dirs).ok()
 }
 
 #[cfg(test)]
@@ -490,6 +539,39 @@ mod tests {
     fn split_login_command_fails_closed_on_unbalanced_quotes() {
         assert!(split_login_command("\"sin cerrar").is_err());
         assert!(split_login_command("'sin cerrar").is_err());
+    }
+
+    /// P2 owner feedback: dentro de comillas dobles, `\\` y `\"` son escapes
+    /// reales; el resto de barras (`\p`, `\n`, `\ `) **se conservan literales** —
+    /// el parser nuevo no debe alterarlas como hacía el shell previo.
+    #[test]
+    fn split_login_command_preserves_backslash_in_double_quotes() {
+        // Ruta estilo Windows con barras escapadas: cada `\\` → `\` literal.
+        // Un solo token (sin espacios) va como programa, no como arg.
+        // Entrada: "C:\\foo\\bar" (con comillas dobles) → token único `C:\foo\bar`.
+        assert_eq!(
+            split_login_command("\"C:\\\\foo\\\\bar\""),
+            Ok(("C:\\foo\\bar".into(), vec![]))
+        );
+        // Con programa + arg de ruta escapada:
+        // `codex "C:\\foo\\bar"` → programa `codex`, arg `C:\foo\bar`.
+        assert_eq!(
+            split_login_command("codex \"C:\\\\foo\\\\bar\""),
+            Ok(("codex".into(), vec!["C:\\foo\\bar".into()]))
+        );
+        // `\\` aislado dentro de comillas dobles → `\`.
+        assert_eq!(split_login_command("\"\\\\\""), Ok(("\\".into(), vec![])));
+        // Barra literal ante carácter ordinario (`\p`): se conserva tal cual.
+        assert_eq!(split_login_command("\"a\\pb\""), Ok(("a\\pb".into(), vec![])));
+        // `\\` al final de un argumento entre dobles (antes del cierre):
+        // entrada `a\\` → arg `a\`
+        assert_eq!(split_login_command("\"a\\\\\""), Ok(("a\\".into(), vec![])));
+        // Comilla escapada `\"` dentro de dobles → `"` literal.
+        // `codex "hola\"mundo"` → programa `codex`, arg `hola"mundo`.
+        assert_eq!(
+            split_login_command("codex \"hola\\\"mundo\""),
+            Ok(("codex".into(), vec!["hola\"mundo".into()]))
+        );
     }
 
     #[test]
@@ -595,6 +677,45 @@ mod tests {
             ),
             Found::OnPath
         );
+    }
+
+    /// P2 owner feedback: una terminal localizada FUERA del PATH (en una
+    /// `known_dir` como `~/.local/bin`) debe devolverse con su `dir` resuelta,
+    /// para que `spawn_terminal` la lance con su ruta completa.
+    #[test]
+    fn find_terminal_returns_dir_when_terminal_is_outside_path() {
+        // Creamos un kitty "fuera del PATH" en una known_dir.
+        let known = TempDir::new("known");
+        std::fs::write(known.path().join("kitty"), b"#!/bin/sh\n").unwrap();
+        // La cascada TERMINALS empieza por x-terminal-emulator: con un PATH
+        // vacío, ninguno se resuelve por nombre, así que termina en la known_dir
+        // con kitty. (Los otros nombres no existen en known.)
+        let res = find_terminal_impl(&[], &[known.path().to_path_buf()]);
+        let Some((name, dir)) = res else {
+            panic!("con un PATH vacío y kitty en known_dir, find_terminal debe encontrar una terminal");
+        };
+        assert_eq!(name, "kitty", "la cascada debe llegar a kitty cuando no hay otra");
+        assert_eq!(dir, known.path().to_path_buf(), "find_terminal debe conservar la dir de la terminal");
+    }
+
+    /// P2 owner feedback: CLI y terminal en carpetas distintas fuera del PATH.
+    /// `find_terminal_impl` devuelve kitty con su dir; el CLI codex se resuelve
+    /// aparte en su propia carpeta. Propiedad exigida por el owner.
+    #[test]
+    fn find_terminal_resolves_path_outside_path_for_separate_cli_and_terminal() {
+        let terminal_dir = TempDir::new("terminal-dir");
+        let cli_dir = TempDir::new("cli-dir");
+        std::fs::write(terminal_dir.path().join("kitty"), b"").unwrap();
+        std::fs::write(cli_dir.path().join("codex"), b"").unwrap();
+        let res = find_terminal_impl(&[], &[terminal_dir.path().to_path_buf()]);
+        let Some((name, dir)) = res else {
+            panic!("kitty en known_dir y PATH vacío debe localizarse");
+        };
+        assert_eq!(name, "kitty");
+        assert_eq!(dir, terminal_dir.path().to_path_buf());
+        // El CLI codex se resuelve por su lado, en cli_dir.
+        let codex = find_program_tiers("codex", &[], &[], &[cli_dir.path().to_path_buf()], false, "");
+        assert_eq!(codex, Found::In(cli_dir.path().to_path_buf()));
     }
 
     #[test]

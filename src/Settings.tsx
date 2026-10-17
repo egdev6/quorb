@@ -591,6 +591,8 @@ type HealthProps = {
   onSave: () => Promise<boolean>;
   /** Si la cuenta tiene login por CLI, abre el login cuando el report viene con `needsLogin`. */
   onLogin?: () => void;
+  /** `true` mientras `onLogin` está en curso: deshabilita el CTA (single-flight). */
+  loginBusy?: boolean;
 };
 
 type Health = { phase: 'checking' } | { phase: 'done'; report: UsageReport | null } | { phase: 'failed'; error: string };
@@ -610,7 +612,7 @@ function healthSummary(r: UsageReport): string {
  * Último paso de cada proveedor y cuenta: consulta la cuenta con lo guardado y dice si
  * funciona y, si no, por qué (sesión caducada, clave rechazada, falta un dato…).
  */
-function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLogin, refreshKey }: HealthProps & { id: string; refreshKey?: unknown }) {
+function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLogin, loginBusy, refreshKey }: HealthProps & { id: string; refreshKey?: unknown }) {
   const [h, setH] = useState<Health>({ phase: 'checking' });
   const [busy, setBusy] = useState(false);
   const seq = useRef(0);
@@ -703,7 +705,7 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
           <button
             type="button"
             className="eg-btn eg-btn--primary eg-btn--sm"
-            disabled={busy || saving}
+            disabled={busy || saving || loginBusy}
             onClick={onLogin}
           >
             Iniciar sesión
@@ -815,7 +817,7 @@ function CliConnect({
         )}
       </li>
       {persisted ? (
-        <HealthStep id={id} {...health} onLogin={connect} refreshKey={connected} />
+        <HealthStep id={id} {...health} onLogin={connect} loginBusy={busy} refreshKey={connected} />
       ) : (
         <li>
           <b>Comprobación</b>

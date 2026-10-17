@@ -95,6 +95,11 @@ struct AppState {
     config_path: PathBuf,
     http: reqwest::Client,
     history: history::History,
+    /// Single-flight para aperturas de login CLI en curso. Protege contra
+    /// doble clic en «Iniciar sesión» (HealthStep/CliConnect) y contra reenvíos
+    /// duplicados: mientras un `provider` esté en este set, una segunda llamada
+    /// a `open_login` con el mismo id devuelve `Err` sin abrir una segunda terminal.
+    login_in_flight: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Resultado de un patch atómico. `native_error` describe un efecto nativo que
@@ -457,8 +462,17 @@ fn account_session(state: State<'_, AppState>, id: String) -> bool {
 
 #[tauri::command]
 fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+    // Single-flight: si hay una apertura en curso para este id, no abrir
+    // una segunda terminal (doble clic / reenvío del frontend).
+    let mut inflight = state.login_in_flight.lock().unwrap();
+    if !inflight.insert(provider.clone()) {
+        return Err("Ya hay un login abierto para esta cuenta. Espera a que termine o ciérralo.".into());
+    }
+    drop(inflight); // no mantener el lock mientras spawn_terminal corre
     let cfg = state.config.lock().unwrap().clone();
-    login::open(&provider, &cfg)
+    let r = login::open(&provider, &cfg);
+    state.login_in_flight.lock().unwrap().remove(&provider);
+    r
 }
 
 /// Estado de solo lectura de la instalación asistida de Codex (sin procesos).
@@ -750,6 +764,7 @@ pub fn run() {
                 config_path,
                 http,
                 history,
+                login_in_flight: Mutex::new(std::collections::HashSet::new()),
             });
             build_tray(app)?;
             Ok(())
