@@ -8,6 +8,7 @@ mod login;
 mod model;
 mod providers;
 mod secrets;
+mod wm_compat;
 
 use config::AppConfig;
 use model::UsageReport;
@@ -394,8 +395,12 @@ fn play_effect(app: AppHandle, state: State<'_, AppState>, req: EffectRequest) -
     }
     w.set_position(PhysicalPosition::new(req.x, req.y)).map_err(|e| e.to_string())?;
     w.set_size(PhysicalSize::new(req.width.max(1), req.height.max(1))).map_err(|e| e.to_string())?;
-    let _ = w.set_ignore_cursor_events(true);
+    // `show()` primero: tao 0.37.1 hace `window.window().unwrap()` en
+    // `set_ignore_cursor_events`, y hasta que la ventana se mapea (show) no
+    // existe el GdkWindow → panic en Wayland (tao#1204). Si el click-through
+    // no funciona, es un no-op silencioso (recomendación de `wm_compat`).
     w.show().map_err(|e| e.to_string())?;
+    let _ = w.set_ignore_cursor_events(true);
     app.emit_to(
         OVERLAY,
         "play-effect",
@@ -717,7 +722,7 @@ pub fn run() {
                 .build()?;
 
             // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
-            let overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
+            let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
                 .title(format!("{} · efectos", channel::current().name))
                 .decorations(false)
                 .transparent(true)
@@ -729,7 +734,10 @@ pub fn run() {
                 .focusable(false)
                 .visible(false)
                 .build()?;
-            let _ = overlay.set_ignore_cursor_events(true);
+            // Sin `set_ignore_cursor_events` aquí: la ventana aún está oculta
+            // y no tiene GdkWindow → tao 0.37.1 panicea (`window.window()
+            // .unwrap()` en `CursorIgnoreEvents`, bug tao#1204). Se aplica en
+            // `play_effect()` después de `show()`.
 
             // Se aplica tras construir DETAIL y OVERLAY: si corre antes, esos dos
             // get_webview_window devuelven None y quedan clavados a su Space.
@@ -798,6 +806,7 @@ pub fn run() {
             play_effect,
             overlay_done,
             shortcut_errors,
+            wm_compat::get_wm_info,
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar Quorb");
