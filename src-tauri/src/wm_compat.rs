@@ -29,7 +29,10 @@ pub struct WindowManagerInfo {
     pub desktop_session: Option<String>,
     /// `Some` si `XDG_CURRENT_DESKTOP` está set (p. ej. `GNOME`, `KDE`, `Hyprland`).
     pub xdg_current_desktop: Option<String>,
-    /// `true` si detectamos un compositor Wayland por alguna señal.
+    /// `true` si el protocolo de sesión es Wayland: `WAYLAND_DISPLAY` set,
+    /// `XDG_SESSION_TYPE=wayland`, o un compositor solo-Wayland en
+    /// `XDG_CURRENT_DESKTOP`. GNOME/KDE son protocolo-agnóstico (X11/Wayland),
+    /// así que su presencia no prueba Wayland.
     pub is_wayland: bool,
     /// `true` si detectamos Hyprland (siempre-on-top especialmente estricto).
     pub is_hyprland: bool,
@@ -102,12 +105,16 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
         xdg_current_desktop: non_empty(&env.xdg_current_desktop),
     };
 
+    // Protocolo Wayland: solo evidencia de protocolo, no de escritorio.
+    // GNOME/KDE cotidianamente corren sobre Xorg: su token en
+    // XDG_CURRENT_DESKTOP no debe marcar Wayland. Sway/Hyprland/wlroots y
+    // el resto de tokens solo-Wayland no tienen X11, así que sí lo señalan.
     let is_wayland = env_n.wayland_display.is_some()
         || env_n.xdg_session_type.as_deref().map(|s| s.eq_ignore_ascii_case("wayland")).unwrap_or(false)
         || env_n
             .xdg_current_desktop
             .as_deref()
-            .map(|s| s.split(':').any(is_wayland_compositor))
+            .map(|s| s.split(':').any(is_wayland_only_session))
             .unwrap_or(false);
 
     let is_hyprland = env_n
@@ -230,12 +237,12 @@ pub fn detect_wm_info() -> WindowManagerInfo {
     detect_wm_info_from_env(&Env::from_process())
 }
 
-/// ¿Es un compositor Wayland? Considera `XDG_CURRENT_DESKTOP` y similares.
-fn is_wayland_compositor(token: &str) -> bool {
+/// Tokens de `XDG_CURRENT_DESKTOP` que solo existen bajo Wayland. GNOME/KDE
+/// corren sobre X11 o Wayland, así que no pertenecen a esta lista.
+fn is_wayland_only_session(token: &str) -> bool {
     matches!(
         token.trim().to_ascii_lowercase().as_str(),
-        "wayland" | "gnome" | "kde" | "kde-plasma" | "plasma" | "hyprland" | "sway" | "wlroots"
-            | "niri" | "river" | "wayfire"
+        "wayland" | "hyprland" | "sway" | "wlroots" | "niri" | "river" | "wayfire"
     )
 }
 
@@ -262,8 +269,8 @@ fn recommendation(
                  fallar — usa la posición fija como fallback."
             }
             _ => {
-                "Wayland detectado. Si always-on-top o click-through fallan, \
-                 el widget activa auto-hide."
+                "Wayland detectado. Si siempre-encima o clic-a-través fallan, \
+                 activa «Auto-hide» en Ajustes."
             }
         }
     } else {
@@ -352,6 +359,25 @@ mod tests {
             assert!(info.is_wayland, "{token} debe señalar Wayland");
             assert!(!info.is_hyprland, "{token} no es Hyprland");
         }
+    }
+
+    #[test]
+    fn gnome_xorg_is_not_wayland() {
+        let info = detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome"), Some("GNOME")));
+        assert!(!info.is_wayland, "GNOME sobre Xorg no es Wayland");
+        assert!(info.recommendation.contains("completa"), "recomendación X11");
+        // Sesión X11: superficies completas esperadas.
+        let surfaces: Vec<(&'static str, SurfaceStatus)> = info.surfaces.into_iter();
+        for (name, status) in surfaces.iter() {
+            assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
+        }
+    }
+
+    #[test]
+    fn plasma_x11_is_not_wayland() {
+        let info = detect_wm_info_from_env(&env(None, Some("x11"), Some("plasma"), Some("KDE:plasma")));
+        assert!(!info.is_wayland, "Plasma sobre X11 no es Wayland");
+        assert_eq!(info.surfaces.global_shortcuts.state, "ok", "atajos completos en X11");
     }
 
     #[test]
