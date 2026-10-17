@@ -28,6 +28,10 @@ Quorb brings your AI limits into one local desktop utility. Check how much you h
 
 Its edge-docked widget is compact, transparent and always on top. Hover over a provider for its limits, plan, spending, pace and history.
 
+## Linux
+
+A native Linux port is in progress. The current baseline, support matrix (distros, X11/Wayland, tray, secrets, package format) and known limits live in [docs/build-linux.md](./docs/build-linux.md), tracked under [issue #105](https://github.com/egdev6/quorb/issues/105). **Do not claim support for a distro or compositor that is not marked as measured there** — compilation does not equal a working experience.
+
 <!-- egdev:stack:start -->
 ## Stack
 <div align="center">
