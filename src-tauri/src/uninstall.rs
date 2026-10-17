@@ -233,7 +233,10 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir(&p).unwrap();
-            Self(p)
+            // The OS temporary directory may itself have a linked ancestor
+            // (for example /var -> /private/var on macOS). Tests of unsafe links
+            // create those links explicitly beneath this real fixture root.
+            Self(p.canonicalize().unwrap())
         }
         fn plan(&self) -> Plan {
             Plan::new(
