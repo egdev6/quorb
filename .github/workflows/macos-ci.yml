@@ -1,0 +1,70 @@
+name: macOS CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Tests and bundle (macOS ARM64)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+
+      - name: Native environment and source
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Source SHA: %s\n' "$GITHUB_SHA"
+          uname -a
+          node --version
+          rustc -vV
+          test "$(uname -m)" = arm64
+          test "$(node -p 'process.arch')" = arm64
+          test "$(rustc -vV | awk '/^host:/ { print $2 }')" = aarch64-apple-darwin
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Frontend and script tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Rust tests with locked dependencies
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build native app and DMG
+        run: npm run app:build:mac
+
+      - name: Verify bundle without launching
+        run: node scripts/verify-macos-bundle.mjs

@@ -138,6 +138,11 @@ fn always_on_top_error(detail: &str) -> String {
 // ───────────────────────── comandos ─────────────────────────
 
 #[tauri::command]
+fn updater_mode() -> &'static str {
+    if cfg!(target_os = "macos") { "manual" } else { "native" }
+}
+
+#[tauri::command]
 fn get_config(state: State<'_, AppState>) -> AppConfig {
     state.config.lock().unwrap().clone()
 }
@@ -637,7 +642,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Debe ir el primero: si ya está abierta, muestra el widget existente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window(WIDGET) {
@@ -647,8 +652,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -765,6 +772,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            updater_mode,
             get_config,
             save_config,
             patch_config,
@@ -799,6 +807,14 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::config::Account;
+
+    #[test]
+    fn updater_policy_matches_compiled_target() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(updater_mode(), "manual");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(updater_mode(), "native");
+    }
 
     /// P1 (4º feedback): guardar una Base URL de 9Router distinta invalida los
     /// secretos del destino anterior. Sin esto, el siguiente fetch enviaría la

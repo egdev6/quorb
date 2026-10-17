@@ -1,4 +1,5 @@
 import { updateErrorText, type UpdateInfo, type UpdatePhase } from './updater';
+import type { UpdaterMode } from './updater-policy';
 
 /** Dependencias del ciclo de actualización, con costuras para probarlo sin Tauri. */
 export interface UpdaterControllerDeps {
@@ -20,6 +21,14 @@ export interface UpdaterController {
   /** `silent`: sin «buscando…» ni errores a la vista (segundo plano). */
   check(silent?: boolean): Promise<void>;
   install(): Promise<void>;
+}
+
+/** Ciclo de Ajustes: sin política nativa no escucha avisos ni activa acciones. */
+export function startUpdaterSession(controller: UpdaterController, mode: UpdaterMode, auto: boolean): () => void {
+  if (mode !== 'native') return () => {};
+  controller.start();
+  if (auto) void controller.check(true);
+  return () => controller.stop();
 }
 
 /** Acepta solo payloads con una versión utilizable; el resto se ignora. */

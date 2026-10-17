@@ -19,7 +19,6 @@
     "autostart:allow-is-enabled",
     "notification:default",
     "dialog:allow-open",
-    "updater:default",
     "process:allow-restart"
   ]
 }

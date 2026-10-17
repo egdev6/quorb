@@ -1,6 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
+    "macOS": {
+      "minimumSystemVersion": "15.0"
+    },
     "targets": [
       "app",
       "dmg"
