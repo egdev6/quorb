@@ -54,11 +54,42 @@ test('helper dispatch happens before Tauri and preserves the macOS updater guard
   assert.match(lib, /#\[cfg\(not\(target_os = "macos"\)\)\][\s\S]*?let builder = builder\.plugin\(tauri_plugin_updater/);
 });
 
-test('cleanup keeps the stable identity allowlist and exact credential ownership', () => {
-  const source = read('src-tauri/src/uninstall.rs');
+function assertStableIdentityAllowlist(source) {
+  // Normalize only CRLF; keep the tuple comparison exact across checkout styles.
+  source = source.replace(/\r\n/g, '\n');
   // The production allowlist has exactly the shipped identity, not a second profile.
   const allowlist = source.match(/if !matches!\(\s*\(profile\.identifier, profile\.home_dir\),\s*([^]*?)\n\s*\)/)?.[1];
   assert.equal(allowlist, '("es.egdev.quorb", ".quorb")');
+}
+
+const allowlistFixtureLines = [
+  'if !matches!(',
+  '    (profile.identifier, profile.home_dir),',
+  '    ("es.egdev.quorb", ".quorb")',
+  ')',
+];
+for (const [label, endings] of [
+  ['LF', ['\n', '\n', '\n']],
+  ['CRLF', ['\r\n', '\r\n', '\r\n']],
+  ['mixed LF/CRLF', ['\n', '\n', '\r\n']],
+]) {
+  const fixture = allowlistFixtureLines.map((line, index) => line + (endings[index] ?? '')).join('');
+  test(`stable identity allowlist accepts ${label}`, () => {
+    assertStableIdentityAllowlist(fixture);
+  });
+  test(`stable identity allowlist rejects a foreign identity or extra profile with ${label}`, () => {
+    assert.throws(() => assertStableIdentityAllowlist(fixture.replace('es.egdev.quorb', 'org.example.foreign')), assert.AssertionError);
+    assert.throws(() => assertStableIdentityAllowlist(fixture.replace('".quorb"', '".foreign"')), assert.AssertionError);
+    assert.throws(() => assertStableIdentityAllowlist(fixture.replace(
+      '("es.egdev.quorb", ".quorb")',
+      '("es.egdev.quorb", ".quorb") | ("org.example.foreign", ".foreign")',
+    )), assert.AssertionError);
+  });
+}
+
+test('cleanup keeps the stable identity allowlist and exact credential ownership', () => {
+  const source = read('src-tauri/src/uninstall.rs');
+  assertStableIdentityAllowlist(source);
   assert.match(source, /target\.strip_suffix\(&format!\("\.\{identifier\}"\)\)/);
   assert.match(source, /crate::secrets::ALL\.contains\(&base\)/);
   assert.match(source, /account\.is_none_or\(crate::config::is_account_id\)/);
