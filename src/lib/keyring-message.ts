@@ -4,7 +4,8 @@
 // error crudo al usuario (es técnico y filtra contexto del sistema), sino un
 // "qué hacer" corto.
 
-const KEYRING_PATTERNS = /libsecret|secret\s*service|secret\s*service\s*not\s*available|D-?Bus|keyring|SecretService|NoSecretService/i;
+const KEYRING_PATTERNS =
+  /libsecret|secret\s*service|D-?Bus|gnome[- ]?keyring|kwallet|platform\s+keyring|(?:^|\s)keyring\s+(?:error|not|failed)/i;
 
 /** Devuelve un mensaje accionable si `raw` parece un error del llavero; o `null`. */
 export function keyringErrorHint(raw: unknown): string | null {
