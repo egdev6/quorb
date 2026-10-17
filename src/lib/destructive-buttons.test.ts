@@ -36,14 +36,19 @@ describe('destructive button variants', () => {
     expect(matches?.[0].split(/\s+/)).not.toContain('eg-btn--ghost');
   });
 
-  it('does not mark reversible hide, close and preference reset controls as destructive', () => {
-    expect(detail.get('Se sigue consultando y avisando; recupéralo en Ajustes')).toBeDefined();
+  it('does not offer a hide action in the detail popup', () => {
+    expect(detail.has('Ocultar')).toBe(false);
+    expect(detail.has('Se sigue consultando y avisando; recupéralo en Ajustes')).toBe(false);
+    expect(detailSource).not.toMatch(/interact\(['"]hide['"]\)/);
+  });
+
+  it('does not mark reversible close and preference reset controls as destructive', () => {
     expect(settings.get('Cerrar')).toBeDefined();
     const resets = [...settings].filter(([label]) => label.startsWith('Restablecer'));
     expect(resets).toHaveLength(2);
     // Other “Quitar” actions just clear a shortcut/media selection, not stored secrets.
     expect(settings.get('Quitar')).toHaveLength(2);
-    const controls = [detail.get('Se sigue consultando y avisando; recupéralo en Ajustes'), settings.get('Cerrar'), settings.get('Quitar'), ...resets.map(([, value]) => value)];
+    const controls = [settings.get('Cerrar'), settings.get('Quitar'), ...resets.map(([, value]) => value)];
     for (const classes of controls.flat()) {
       expect(classes?.split(/\s+/)).not.toContain('eg-btn--destructive');
     }
