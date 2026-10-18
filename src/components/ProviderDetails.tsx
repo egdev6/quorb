@@ -4,6 +4,7 @@ import { formatCompact, formatMoney, formatResetIn, shortLabel } from '../lib/fo
 import { meterPace, spendPace, type Pace } from '../lib/pace';
 import type { Sample, UsageReport } from '../lib/types';
 import { RING_COLORS } from './RingGauge';
+import { disclosureOpen, saveDisclosure } from '../lib/popup-preferences';
 
 const RANGES = [
   { hours: 24, label: '24 h' },
@@ -91,6 +92,8 @@ function DailyBars({ days }: { days: { date: string; value: number }[] }) {
 }
 
 export function ProviderDetails({ report }: { report: UsageReport }) {
+  const [paceOpen, setPaceOpen] = useState(() => disclosureOpen(report.id, 'pace'));
+  const [historyOpen, setHistoryOpen] = useState(() => disclosureOpen(report.id, 'history'));
   const [hours, setHours] = useState<number>(24 * 7);
   const [samples, setSamples] = useState<Sample[] | null>(null);
 
@@ -141,74 +144,85 @@ export function ProviderDetails({ report }: { report: UsageReport }) {
           </span>
         </div>
       )}
-      <section className="details__sec">
-        <h3 className="details__title">Ritmo de consumo</h3>
-        {paces.filter((p) => p.pace).length === 0 && !sp && <p className="hist__empty">Sin ventana de tiempo conocida para calcular el ritmo.</p>}
-        {paces.map(
-          ({ m, color, pace }) =>
-            pace && (
-              <div key={m.label} className="pace" data-status={pace.status}>
-                <span className="pace__row">
-                  <span className="pace__label">{shortLabel(m.label)}</span>
-                  <span className="pace__txt">{paceText(pace)}</span>
+      <details className="details__sec" open={paceOpen} onToggle={(e) => {
+        const open = e.currentTarget.open;
+        setPaceOpen(open);
+        saveDisclosure(report.id, 'pace', open);
+      }}>
+        <summary className="details__toggle"><h3 className="details__title">Ritmo de consumo</h3></summary>
+        <div className="details__body">
+          {paces.filter((p) => p.pace).length === 0 && !sp && <p className="hist__empty">Sin ventana de tiempo conocida para calcular el ritmo.</p>}
+          {paces.map(
+            ({ m, color, pace }) =>
+              pace && (
+                <div key={m.label} className="pace" data-status={pace.status}>
+                  <span className="pace__row">
+                    <span className="pace__label">{shortLabel(m.label)}</span>
+                    <span className="pace__txt">{paceText(pace)}</span>
+                  </span>
+                  <PaceBar pace={pace} color={color} />
+                </div>
+              ),
+          )}
+          {sp && report.spend && (
+            <div className="pace" data-status={sp.status}>
+              <span className="pace__row">
+                <span className="pace__label">Gasto</span>
+                <span className="pace__txt">
+                  {sp.projectedAmount != null
+                    ? `Al ritmo actual: ${formatMoney(sp.projectedAmount, report.spend.currency)} a fin de mes`
+                    : 'Acaba de empezar el mes'}
                 </span>
-                <PaceBar pace={pace} color={color} />
-              </div>
-            ),
-        )}
-        {sp && report.spend && (
-          <div className="pace" data-status={sp.status}>
-            <span className="pace__row">
-              <span className="pace__label">Gasto</span>
-              <span className="pace__txt">
-                {sp.projectedAmount != null
-                  ? `Al ritmo actual: ${formatMoney(sp.projectedAmount, report.spend.currency)} a fin de mes`
-                  : 'Acaba de empezar el mes'}
               </span>
-            </span>
-            {report.spend.budget ? <PaceBar pace={sp} color={RING_COLORS[0]} /> : null}
-          </div>
-        )}
-      </section>
-
-      {report.daily && report.daily.length > 1 && (
-        <section className="details__sec">
-          <h3 className="details__title">Tokens por día · 30 días</h3>
-          <DailyBars days={report.daily} />
-        </section>
-      )}
-
-      <section className="details__sec">
-        <div className="details__head">
-          <h3 className="details__title">Historial</h3>
-          <div className="eg-tabs eg-tabs--segmented eg-tabs--sm" role="tablist" aria-label="Rango del historial">
-            {RANGES.map((r) => (
-              <button key={r.hours} type="button" role="tab" className="eg-tabs__item" aria-selected={hours === r.hours} onClick={() => setHours(r.hours)}>
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {samples == null ? (
-          <p className="hist__empty">Cargando…</p>
-        ) : series.pct.some((s) => s.points.length) ? (
-          <>
-            <div className="q-well">
-              <Sparkline series={series.pct} max={pctMax} />
+              {report.spend.budget ? <PaceBar pace={sp} color={RING_COLORS[0]} /> : null}
             </div>
-            <span className="daily__axis">
-              <span>{RANGES.find((r) => r.hours === hours)?.label}</span>
-              <span>escala 0–{pctMax} %</span>
-            </span>
-          </>
-        ) : series.spend.length ? (
-          <div className="q-well">
-            <Sparkline series={[{ color: RING_COLORS[0], points: series.spend }]} max={spendMax} />
+          )}
+        </div>
+      </details>
+
+      <details className="details__sec" open={historyOpen} onToggle={(e) => {
+        const open = e.currentTarget.open;
+        setHistoryOpen(open);
+        saveDisclosure(report.id, 'history', open);
+      }}>
+        <summary className="details__toggle"><h3 className="details__title">Historial</h3></summary>
+        <div className="details__body">
+          <div className="details__head">
+            <div className="eg-tabs eg-tabs--segmented eg-tabs--sm" role="tablist" aria-label="Rango del historial">
+              {RANGES.map((r) => (
+                <button key={r.hours} type="button" role="tab" className="eg-tabs__item" aria-selected={hours === r.hours} onClick={() => setHours(r.hours)}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
-        ) : (
-          <p className="hist__empty">Aún no hay lecturas guardadas.</p>
-        )}
-      </section>
+          {samples == null ? (
+            <p className="hist__empty">Cargando…</p>
+          ) : series.pct.some((s) => s.points.length) ? (
+            <>
+              <div className="q-well">
+                <Sparkline series={series.pct} max={pctMax} />
+              </div>
+              <span className="daily__axis">
+                <span>{RANGES.find((r) => r.hours === hours)?.label}</span>
+                <span>escala 0–{pctMax} %</span>
+              </span>
+            </>
+          ) : series.spend.length ? (
+            <div className="q-well">
+              <Sparkline series={[{ color: RING_COLORS[0], points: series.spend }]} max={spendMax} />
+            </div>
+          ) : (
+            <p className="hist__empty">Aún no hay lecturas guardadas.</p>
+          )}
+          {report.daily && report.daily.length > 1 && (
+            <section className="details__daily">
+              <h4 className="details__title">Tokens por día · 30 días</h4>
+              <DailyBars days={report.daily} />
+            </section>
+          )}
+        </div>
+      </details>
     </div>
   );
 }
