@@ -8,7 +8,7 @@
 
 use super::{net_error, Who};
 use crate::config::SubscriptionConfig;
-use crate::model::{Kind, Meter, Spend, Status, UsageReport};
+use crate::model::{Kind, Meter, Spend, Status, UsageReport, Validity, ValidityKind};
 use crate::secrets;
 use base64::Engine;
 use chrono::DateTime;
@@ -57,6 +57,7 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     let mut report = report;
     let p = parse(&body);
+    report.validity = p.validity;
     report.plan = p.plan;
     report.meters = p.meters;
     report.spend = p.spend;
@@ -132,6 +133,7 @@ pub(crate) struct Parsed {
     pub meters: Vec<Meter>,
     pub spend: Option<Spend>,
     pub message: Option<String>,
+    pub validity: Option<Validity>,
 }
 
 pub(crate) fn parse(v: &Value) -> Parsed {
@@ -195,7 +197,8 @@ pub(crate) fn parse(v: &Value) -> Parsed {
         _ => None,
     };
     let message = unlimited.then(|| "Plan sin límite de uso".to_string());
-    Parsed { plan, meters, spend, message }
+    let validity = end.map(|at| Validity { at: at.to_rfc3339(), kind: ValidityKind::Period });
+    Parsed { plan, meters, spend, message, validity }
 }
 
 #[cfg(test)]
@@ -230,6 +233,17 @@ mod tests {
         assert_eq!(p.meters[0].resets_at.as_deref(), Some("2026-10-20T10:00:00+00:00"));
         assert_eq!(p.meters[2].label, "Plan · modelos API");
         assert_eq!(p.spend.map(|s| s.amount), Some(4.2));
+    }
+
+    #[test]
+    fn reports_only_explicit_valid_billing_period_end() {
+        let p = parse(&json!({"billingCycleEnd": "2030-02-01T00:00:00Z"}));
+        let validity = p.validity.unwrap();
+        assert_eq!(validity.kind, crate::model::ValidityKind::Period);
+        assert_eq!(validity.at, "2030-02-01T00:00:00+00:00");
+        assert!(parse(&json!({})).validity.is_none());
+        assert!(parse(&json!({"billingCycleEnd": "invalid"})).validity.is_none());
+        assert!(parse(&json!({"billingCycleEnd": "2030-02-30T00:00:00Z"})).validity.is_none());
     }
 
     #[test]

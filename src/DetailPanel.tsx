@@ -9,11 +9,6 @@ import { api } from './lib/api';
 import { reportSummary } from './lib/format';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, samePhysical, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
 
-function readDetailsPreference(): boolean {
-  try { return JSON.parse(localStorage.getItem('detailsOpen') ?? 'false') === true; }
-  catch { return false; }
-}
-
 async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -32,7 +27,6 @@ async function copyText(text: string): Promise<boolean> {
 export function DetailPanel() {
   const [data, setData] = useState<DetailState | null>(null);
   const [positioned, setPositioned] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(readDetailsPreference);
   const [toast, setToast] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const dataRef = useRef<DetailState | null>(null);
@@ -126,7 +120,7 @@ export function DetailPanel() {
     const observer = new ResizeObserver((entries) => layout(entries[0]));
     observer.observe(panelRef.current);
     return () => { disposed = true; observer.disconnect(); };
-  }, [data, detailsOpen, enqueue]);
+  }, [data, enqueue]);
 
   useEffect(() => {
     if (!toast) return;
@@ -144,7 +138,7 @@ export function DetailPanel() {
     <div
       className="dock detail-dock"
       data-edge={data.edge}
-      style={{ '--panel-alpha': String(data.opacity), '--ring-1': data.colors[0], '--ring-2': data.colors[1], '--ring-3': data.colors[2] } as CSSProperties}
+      style={{ '--panel-alpha': String(data.opacity), '--popup-primary': data.colors[0], '--ring-1': data.colors[0], '--ring-2': data.colors[1], '--ring-3': data.colors[2] } as CSSProperties}
       onMouseEnter={() => interact('enter')}
       onMouseLeave={() => interact('leave')}
     >
@@ -158,19 +152,13 @@ export function DetailPanel() {
         style={{ left: 0, top: 0, width: data.width / base, transform: `scale(${scale})`, transformOrigin: 'top left', transition: 'none', animation: 'none', overflow: 'visible', '--orb': data.orbSize, visibility: positioned ? 'visible' : 'hidden' } as CSSProperties}
       >
         <ProviderCard report={data.report} />
-        <button className="panel__more" aria-expanded={detailsOpen} onClick={() => {
-          const next = !detailsOpen;
-          setDetailsOpen(next);
-          try { localStorage.setItem('detailsOpen', JSON.stringify(next)); } catch { /* preference is optional */ }
-        }}>
-          <span>Ritmo e historial</span>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-        </button>
-        {detailsOpen && <ProviderDetails key={data.report.id} report={data.report} />}
+        <section className="panel__insights" aria-labelledby="panel-insights-title">
+          <h2 id="panel-insights-title" className="panel__heading">Ritmo e historial</h2>
+          <ProviderDetails key={data.report.id} report={data.report} />
+        </section>
         <div className="panel__actions">
           {usageUrl && <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(usageUrl).catch(console.warn)}>Uso oficial ↗</button>}
           <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={async () => setToast((await copyText(reportSummary(data.report))) ? 'Copiado ✓' : 'No se pudo copiar')}>{toast ?? 'Copiar resumen'}</button>
-          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => interact('hide')} title="Se sigue consultando y avisando; recupéralo en Ajustes">Ocultar</button>
         </div>
         <footer className="panel__foot"><span>Actualizado {updated}</span><span>cada {data.refreshMinutes} min</span></footer>
         {data.error && <p className="panel__error">{data.error}</p>}

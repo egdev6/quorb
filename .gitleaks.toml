@@ -1,0 +1,13 @@
+# Configuración de gitleaks para Quorb.
+# Extiende la config por defecto y solo añade allowlists documentadas.
+[extend]
+useDefault = true
+
+# El smoke de Secret Service (src-tauri/src/secrets.rs) usa un placeholder
+# de baja entropía y sin credencial ("valor-de-prueba-del-smoke-de-llavero"),
+# pero la regla generic-api-key dispara sobre `set(&key, "...")` en commits
+# históricos donde la anotación inline `gitleaks:allow` no existe (el escaneo
+# cubre el histórico de la rama). Allowlist por commit del falso positivo:
+[allowlist]
+  description = "Smoke test del llavero: placeholder sin credencial, no es un secreto"
+  commits = ["b60502d818e7d3746c765c245a681f1e956bb2aa"]

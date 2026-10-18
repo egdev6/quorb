@@ -28,6 +28,10 @@ Quorb reúne tus límites de IA en una herramienta local de escritorio. Podéis 
 
 Su widget se pega al borde de la pantalla: es compacto, transparente y permanece por encima de las ventanas. Al pasar el ratón por un proveedor, muestra sus límites, plan, gasto, ritmo e historial.
 
+## Linux
+
+El port nativo a Linux está en curso. El baseline, la matriz de soporte (distros, X11/Wayland, bandeja, secretos, formato de paquete) y los límites conocidos viven en [docs/build-linux.md](./docs/build-linux.md), dentro de la [issue #105](https://github.com/egdev6/quorb/issues/105). **No afirmar soporte de ninguna distro o compositor que no esté marcado como medido allí** — compilar no equivale a una experiencia funcional.
+
 <!-- egdev:stack:start -->
 ## Stack
 <div align="center">

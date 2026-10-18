@@ -12,6 +12,8 @@ Thanks for taking the time to improve Quorb. Issues and pull requests are welcom
 
 Quorb currently targets Windows as its main platform; a Linux port is in progress (local development only, see the README Linux notes). For Windows you need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
+**Linux contributors**: the native port is tracked under [issue #105](https://github.com/egdev6/quorb/issues/105) and its baseline, support matrix and known limits are documented in [docs/build-linux.md](./docs/build-linux.md). For Linux build and tests, use the included devcontainer (`make up` then `make test`) — it provisions Node 22, Rust stable and the Tauri Linux system dependencies without touching the host. A Linux CI workflow (`.github/workflows/linux-ci.yml`) runs `cargo test --locked`, `npm test`, `npm run app:build`, and AppImage/deb verification on `ubuntu-22.04` runners, gated by tag `v*` or `workflow_dispatch` — it is **not** a PR gate yet (see #108 for the PR-gate follow-up). Do not claim support for a distro or compositor that is not marked as measured in [the matrix](./docs/build-linux.md#6-matriz-de-7-entornos-l0b--qué-funciona-y-qué-degrada).
+
 ```powershell
 git clone https://github.com/egdev6/quorb
 cd quorb
@@ -87,6 +89,33 @@ Each provider is a single Rust file in `src-tauri/src/providers/<name>.rs` that 
 
 Run the checks that cover your change before opening a PR: `npm test`, `npm run typecheck` and `cd src-tauri; cargo test`. Keep the change focused on the provider or fix you are contributing.
 
+### Uninstalling and choosing whether to keep data
+
+The **EXE (NSIS)** uninstaller keeps data by default. If you explicitly select
+**Delete app data**, the uninstaller closes the app and removes only Quorb's
+AppData (`es.egdev.quorb`), managed home (`.quorb`, including additional account
+sessions and CLI tools), and known Credential Manager entries. It never reads
+credential values or follows configured session-folder paths. Foreign app data,
+external Claude/Codex/Gemini sessions, custom folders, signing keys, downloaded
+installers and legacy `es.egdev.ai-usage` data are preserved. Filesystem deletion
+does not revoke provider-side OAuth access or tokens.
+
+Updates, installer-driven reinstalls (`_?=`), passive/silent uninstall and an
+unchecked checkbox preserve data. If cleanup encounters a link/junction,
+inaccessible path, locked file or vault error, uninstall stops with an error;
+partial cleanup is possible and is not reported as success. Close the app and
+retry, or uninstall while keeping data. Only the current Windows user is affected;
+this is not an all-users purge. **MSI does not implement this cleanup option** and
+still preserves user data. Linux and macOS packaging and cleanup are unchanged.
+
+This behavior applies to EXEs built with this change. Already-installed older
+uninstallers cannot be changed retroactively: install a corrected EXE before
+expecting its delete-data option to perform full cleanup. Maintainers must test
+keep/delete, isolation from foreign app data, update preservation and failure
+handling on Windows before delivery, using synthetic account and credential
+fixtures. Path checks reject existing links but are not an atomic filesystem
+snapshot; do not modify the data directories concurrently with cleanup.
+
 ### Releasing (maintainers)
 
 Version bumping uses the existing script:
@@ -123,6 +152,8 @@ Gracias por dedicar tiempo a mejorar Quorb. Se aceptan issues y pull requests, e
 ### Antes de empezar
 
 Quorb está dirigido actualmente a Windows como plataforma principal; hay un port Linux en marcha (solo desarrollo local, ver las notas de Linux del README). Para Windows se necesitan Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
+
+**Contribuidores de Linux**: el port nativo se sigue en la [issue #105](https://github.com/egdev6/quorb/issues/105) y su baseline, matriz de soporte y límites conocidos están documentados en [docs/build-linux.md](./docs/build-linux.md). Para compilar y testear en Linux, usad el devcontainer incluido (`make up` y luego `make test`) — aprovisiona Node 22, Rust estable y las dependencias de sistema de Tauri sin tocar el host. Existe un workflow de CI Linux (`.github/workflows/linux-ci.yml`) que corre `cargo test --locked`, `npm test`, `npm run app:build` y la verificación de AppImage/deb en runners `ubuntu-22.04`, limitado a tag `v*` o `workflow_dispatch` — **todavía no es gate de PR** (seguimiento en #108). No afirmar soporte de ninguna distro o compositor que no esté marcado como medido en [la matriz](./docs/build-linux.md#6-matriz-de-7-entornos-l0b--qué-funciona-y-qué-degrada).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
@@ -198,6 +229,35 @@ Cada proveedor es un solo archivo Rust en `src-tauri/src/providers/<nombre>.rs` 
 ### Pull requests
 
 Ejecutad las comprobaciones que cubran vuestro cambio antes de abrir una PR: `npm test`, `npm run typecheck` y `cd src-tauri; cargo test`. Mantened el cambio centrado en el proveedor o la corrección que aportáis.
+
+### Desinstalar y elegir si conservar los datos
+
+El desinstalador **EXE (NSIS)** conserva los datos por defecto. Si marcas
+explícitamente **Borrar datos de la app**, cierra la app y elimina solo los
+AppData de Quorb (`es.egdev.quorb`), su carpeta gestionada (`.quorb`, incluidas
+sesiones de cuentas adicionales y herramientas CLI) y sus entradas conocidas del
+Administrador de credenciales. No lee valores de credenciales ni sigue rutas de
+sesión configuradas. Conserva los datos de otras apps, sesiones externas de
+Claude/Codex/Gemini, carpetas personalizadas, claves de firma, instaladores
+descargados y datos legacy de `es.egdev.ai-usage`. El borrado local no revoca
+tokens ni accesos OAuth remotos.
+
+Las actualizaciones, reinstalaciones del instalador (`_?=`), desinstalaciones
+pasivas/silenciosas y la opción sin marcar conservan los datos. Si hay enlaces o
+junctions, rutas inaccesibles, archivos bloqueados o errores del almacén de
+credenciales, la desinstalación se detiene con un error; puede haber limpieza
+parcial y nunca se presenta como éxito. Cierra la app y reintenta, o desinstala
+conservando datos. Solo afecta al usuario Windows actual: no purga otros perfiles.
+**El MSI no incorpora esta opción de limpieza** y conserva los datos del usuario.
+El empaquetado y la limpieza en Linux y macOS no cambian.
+
+Esto se aplica a los EXE compilados con este cambio. No modifica retroactivamente
+los desinstaladores antiguos: instala un EXE corregido antes de esperar una
+limpieza completa. Antes de entregar, hay que probar en Windows conservar/borrar,
+aislamiento de datos ajenos, conservación al actualizar y errores, usando cuentas
+y credenciales sintéticas. Las comprobaciones rechazan enlaces existentes, pero
+no son una instantánea atómica del sistema de archivos: no modifiques las carpetas
+de datos mientras se limpian.
 
 ### Publicar (mantenedores)
 

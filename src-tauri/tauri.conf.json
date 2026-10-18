@@ -52,9 +52,12 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": false,
+    "category": "Utility",
     "targets": [
       "nsis",
-      "msi"
+      "msi",
+      "deb",
+      "appimage"
     ],
     "icon": [
       "icons/32x32.png",
@@ -64,6 +67,10 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "installer/hooks.nsh"
+      },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }

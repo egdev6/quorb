@@ -179,4 +179,77 @@ mod tests {
         set(&key, "").expect("borrado con set vacío");
         assert!(get(&key).is_none(), "la clave debería quedar eliminada");
     }
+
+    /// `entry` rechaza claves que no estén en la lista cerrada: es la guarda
+    /// que evita que un caller pueda pedir al llavero un identificador ajeno
+    /// (o que un fallback escriba una clave cualquiera como si fuera secreta).
+    #[test]
+    fn entry_rejects_keys_outside_the_allowlist() {
+        assert!(entry("openrouter_api_key").is_ok());
+        assert!(entry(&scoped(OPENROUTER_API_KEY, "openrouter:a1b2c3")).is_ok());
+        assert!(entry("api_key_cualquiera").is_err());
+        assert!(entry("api_key_cualquiera@openrouter:a1b2c3").is_err());
+        let err = entry("api_key_cualquiera").unwrap_err();
+        assert!(err.contains("desconocida"), "mensaje no accionable: {err}");
+    }
+
+    /// El `Err` que devuelve `set` ante una clave inválida **no filtra el
+    /// valor** y **no leak del nombre de una clave interna** de la lista
+    /// cerrada. Verifica el invariante de no-degradación a texto plano y el
+    /// no-leak de la issue #106.
+    #[test]
+    fn set_with_invalid_key_does_not_touch_disk_and_message_is_safe() {
+        let valor = "super-secret-must-not-leak";
+        let result = set("api_key_cualquiera", valor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(!err.contains(valor), "el error filtra el valor: {err}");
+        for internal in ALL.iter() {
+            assert!(!err.contains(internal), "el error filtra una clave interna ({internal}): {err}");
+        }
+        assert!(err.contains("desconocida"), "mensaje no accionable: {err}");
+    }
+
+    /// `get` con una clave inválida devuelve `None` (no panic, no error
+    /// filterable). Mantiene la simetría con `set` y la promesa de no
+    /// exponer nada del llavero si la clave no es nuestra.
+    #[test]
+    fn get_with_invalid_key_returns_none_and_does_not_leak() {
+        assert!(get("api_key_cualquiera").is_none());
+        assert!(get("api_key_cualquiera@openrouter:a1b2c3").is_none());
+    }
+
+    /// Smoke manual de Secret Service real: solo corre en Linux con un
+    /// escritorio con D-Bus + llavero activo. Marcado `#[ignore]` para que
+    /// no forme parte del `cargo test` de CI. Ejecutar con
+    /// `cargo test -- --ignored --nocapture` en una sesión de escritorio.
+    /// Verifica que el backend `linux-native` del crate `keyring` persiste
+    /// y recupera el valor a través de Secret Service.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requiere escritorio Linux con D-Bus + Secret Service"]
+    fn linux_secret_service_round_trip() {
+        // Clave única por corrida y propia de la lista cerrada: `entry` rechaza
+        // cualquier clave ajena, así que el smoke usa la misma vía que la app.
+        struct CleanupGuard(String);
+        impl Drop for CleanupGuard {
+            fn drop(&mut self) {
+                let _ = set(&self.0, "");
+            }
+        }
+        let key = scoped(
+            OPENROUTER_API_KEY,
+            &format!("openrouter:linux-smoke-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos()),
+        );
+        assert!(crate::config::is_account_id(key.split_once('@').unwrap().1), "la clave de prueba debe pasar la validación de cuentas");
+        assert!(get(&key).is_none(), "la clave única de prueba debería no existir");
+        let _guard = CleanupGuard(key.clone());
+        // Valor de prueba de baja entropía y sin credencial; aun así gitleaks
+        // (regla generic-api-key) dispara por el patrón `set(key, "...")`, así
+        // que anotamos el falso positivo explícitamente:
+        set(&key, "valor-de-prueba-del-smoke-de-llavero").expect("set en Secret Service"); // gitleaks:allow
+        assert_eq!(get(&key).as_deref(), Some("valor-de-prueba-del-smoke-de-llavero")); // gitleaks:allow
+        set(&key, "").expect("borrado con set vacío");
+        assert!(get(&key).is_none(), "la clave debería quedar eliminada");
+    }
 }

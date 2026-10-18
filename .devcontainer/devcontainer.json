@@ -1,0 +1,35 @@
+{
+  "name": "quorb-linux-dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/node:2.1.1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "stable"
+    }
+  },
+  "runArgs": [
+    "--tmpfs=/dev/shm:rw,nosuid,nodev,exec",
+    "--tmpfs=/tmp:rw,exec,nosuid,nodev"
+  ],
+  "forwardPorts": [1430],
+  "mounts": [
+    "source=quorb-cargo-home,target=/usr/local/cargo,type=volume",
+    "source=quorb-npm-cache,target=/home/vscode/.npm,type=volume"
+  ],
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "rust-analyzer.linkedProjects": ["src-tauri/Cargo.toml"]
+      }
+    }
+  }
+}
