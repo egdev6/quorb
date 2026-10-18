@@ -178,7 +178,7 @@ fn surfaces_for(is_wayland: bool, is_hyprland: bool, is_gnome: bool, is_kde: boo
         // escritorios evaluados (GNOME, KDE, XFCE) compositan.
         return DesktopSurfaces {
             always_on_top: SurfaceStatus { state: "ok", note: "En X11 la tira se mantiene sobre las demás ventanas." },
-            click_through: SurfaceStatus { state: "ok", note: "El ratón atraviesa los huecos de la tira." },
+            click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "ok", note: "El icono de bandeja se muestra en los gestores que la evalúan." },
             global_shortcuts: SurfaceStatus { state: "ok", note: "Los atajos globales funcionan desde cualquier app." },
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
@@ -189,7 +189,7 @@ fn surfaces_for(is_wayland: bool, is_hyprland: bool, is_gnome: bool, is_kde: boo
     if is_hyprland {
         return DesktopSurfaces {
             always_on_top: SurfaceStatus { state: "limited", note: "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide»." },
-            click_through: SurfaceStatus { state: "ok", note: "El ratón atraviesa los huecos de la tira." },
+            click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "limited", note: "Sin una barra que muestre AppIndicator, el icono no se ve: vuelve a abrir Quorb para recuperar la tira." },
             global_shortcuts: SurfaceStatus { state: "limited", note: "Los atajos globales dependen del registro por portal; si falla, el error se ve en Ajustes › Atajos." },
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
@@ -211,7 +211,7 @@ fn surfaces_for(is_wayland: bool, is_hyprland: bool, is_gnome: bool, is_kde: boo
     if is_kde {
         return DesktopSurfaces {
             always_on_top: SurfaceStatus { state: "ok", note: "KWin respeta siempre-encima." },
-            click_through: SurfaceStatus { state: "ok", note: "El ratón atraviesa los huecos de la tira." },
+            click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "ok", note: "KDE soporta bandeja AppIndicator/StatusNotifier de forma nativa." },
             global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
@@ -223,7 +223,7 @@ fn surfaces_for(is_wayland: bool, is_hyprland: bool, is_gnome: bool, is_kde: boo
     // mientras la verificación no confirme cada compositor.
     DesktopSurfaces {
         always_on_top: SurfaceStatus { state: "limited", note: "El soporte de siempre-encima depende del compositor; si la tira se oculta, usa «Auto-hide»." },
-        click_through: SurfaceStatus { state: "ok", note: "El ratón atraviesa los huecos de la tira (según el compositor)." },
+        click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
         tray_icon: SurfaceStatus { state: "limited", note: "Solo se muestra el icono si la barra admite StatusNotifier/AppIndicator." },
         global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
         autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
@@ -370,9 +370,14 @@ mod tests {
         let info = detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome"), Some("GNOME")));
         assert!(!info.is_wayland, "GNOME sobre Xorg no es Wayland");
         assert!(info.recommendation.contains("completa"), "recomendación X11");
-        // Sesión X11: superficies completas esperadas.
+        // Sesión X11: superficies completas esperadas (salvo click_through:
+        // el widget no implementa click-through hoy — solo el overlay de efectos).
         let surfaces: Vec<(&'static str, SurfaceStatus)> = info.surfaces.into_iter();
         for (name, status) in surfaces.iter() {
+            if *name == "click_through" {
+                assert_eq!(status.state, "limited", "click_through debe ser limited hasta implementar el widget");
+                continue;
+            }
             assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
         }
     }
@@ -396,6 +401,12 @@ mod tests {
         let surfaces: Vec<(&'static str, SurfaceStatus)> =
             detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome-xorg-errors"), None)).surfaces.into_iter();
         for (name, status) in surfaces.iter() {
+            // Click-through del widget es `limited` en todas las sesiones hoy:
+            // solo el overlay de efectos llama set_ignore_cursor_events, no la tira.
+            if *name == "click_through" {
+                assert_eq!(status.state, "limited", "click_through debe ser limited hasta implementar el widget");
+                continue;
+            }
             assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
         }
         // Nota honesta sobre composición (la tira es transparente).
