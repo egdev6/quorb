@@ -8,6 +8,7 @@ mod login;
 mod model;
 mod providers;
 mod secrets;
+mod uninstall;
 
 use config::AppConfig;
 use model::UsageReport;
@@ -659,6 +660,9 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(code) = uninstall::dispatch(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     let builder = tauri::Builder::default()
         // Debe ir el primero: si ya está abierta, muestra el widget existente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
