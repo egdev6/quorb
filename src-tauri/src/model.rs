@@ -54,6 +54,21 @@ pub struct Daily {
     pub value: f64,
 }
 
+/// Explicit provider metadata, never an estimated cancellation date.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ValidityKind {
+    Period,
+    Key,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Validity {
+    pub at: String,
+    pub kind: ValidityKind,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageReport {
@@ -62,6 +77,10 @@ pub struct UsageReport {
     pub kind: Kind,
     pub status: Status,
     pub plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validity: Option<Validity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_resets: Option<u32>,
     pub meters: Vec<Meter>,
     pub spend: Option<Spend>,
     pub message: Option<String>,
@@ -80,6 +99,8 @@ impl UsageReport {
             kind,
             status: Status::Ok,
             plan: None,
+            validity: None,
+            available_resets: None,
             meters: vec![],
             spend: None,
             message: None,
@@ -95,8 +116,36 @@ impl UsageReport {
             Status::Unconfigured => Some("settings".into()),
             _ => self.action,
         };
+        self.validity = None;
+        self.available_resets = None;
         self.status = status;
         self.message = Some(message.into());
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_credits_serialization_omits_unknown_but_preserves_zero() {
+        let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
+        assert_eq!(report.available_resets, None);
+        assert!(serde_json::to_value(&report).unwrap().get("availableResets").is_none());
+        report.available_resets = Some(0);
+        assert_eq!(serde_json::to_value(&report).unwrap()["availableResets"], 0);
+    }
+
+    #[test]
+    fn reset_credits_failure_clears_available_metadata() {
+        for status in [Status::Warning, Status::Error, Status::NeedsLogin, Status::Unconfigured] {
+            let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
+            report.available_resets = Some(2);
+            let failed = report.fail(status.clone(), "synthetic failure");
+            assert_eq!(failed.status, status);
+            assert_eq!(failed.available_resets, None);
+            assert!(serde_json::to_value(&failed).unwrap().get("availableResets").is_none());
+        }
     }
 }
