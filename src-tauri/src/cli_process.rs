@@ -175,55 +175,48 @@ fn reap(child: &mut std::process::Child, deadline: Instant) -> Option<std::proce
 /// Lector por stream con límite de bytes y sin `join` incondicional.
 struct BoundedReader {
     rx: std::sync::mpsc::Receiver<Vec<u8>>,
-    handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl BoundedReader {
     fn spawn<R: std::io::Read + Send + 'static>(reader: R) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
-        let handle = std::thread::spawn(move || {
-            let _ = tx.send(read_capped(reader));
-        });
-        Self {
-            rx,
-            handle: Some(handle),
-        }
+        std::thread::spawn(move || read_capped(reader, tx));
+        Self { rx }
     }
 
-    fn finish(mut self, deadline: Instant) -> String {
-        let wait = deadline.saturating_duration_since(Instant::now());
-        match self.rx.recv_timeout(wait) {
-            Ok(bytes) => {
-                // El hilo ya envió su resultado: el join es inmediato.
-                if let Some(handle) = self.handle.take() {
-                    let _ = handle.join();
-                }
-                String::from_utf8_lossy(&bytes).into_owned()
+    fn finish(self, deadline: Instant) -> String {
+        let mut out = Vec::new();
+        loop {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            match self.rx.recv_timeout(wait) {
+                Ok(bytes) => out.extend_from_slice(&bytes),
+                // Conservar lo recibido aunque un descendiente retenga la tubería.
+                // Nunca hacer join: EOF puede no llegar dentro de la cota.
+                Err(_) => return String::from_utf8_lossy(&out).into_owned(),
             }
-            // No terminó dentro del límite (tubería retenida por un proceso
-            // escapado): no se hace join para no colgarse.
-            Err(_) => String::new(),
         }
     }
 }
 
-fn read_capped<R: std::io::Read>(mut reader: R) -> Vec<u8> {
-    let mut out = Vec::new();
+fn read_capped<R: std::io::Read>(mut reader: R, tx: std::sync::mpsc::Sender<Vec<u8>>) {
+    let mut captured = 0;
     let mut chunk = [0u8; 8192];
     loop {
         match reader.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
-                if out.len() < MAX_CAPTURE_BYTES {
-                    let take = (MAX_CAPTURE_BYTES - out.len()).min(n);
-                    out.extend_from_slice(&chunk[..take]);
+                if captured < MAX_CAPTURE_BYTES {
+                    let take = (MAX_CAPTURE_BYTES - captured).min(n);
+                    // Publicar antes de EOF; en total se encolan como máximo 64 KiB
+                    // y MAX_CAPTURE_BYTES mensajes, incluso con lecturas de un byte.
+                    let _ = tx.send(chunk[..take].to_vec());
+                    captured += take;
                 }
                 // El resto se drena y descarta: acota la memoria sin bloquear al hijo.
             }
             Err(_) => break,
         }
     }
-    out
 }
 
 /// Contención a nivel de SO del árbol de procesos.
@@ -555,6 +548,51 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    #[test]
+    fn bounded_reader_preserves_partial_output_when_eof_misses_deadline() {
+        use std::io::{Cursor, Read};
+        use std::sync::mpsc;
+
+        struct HeldOpenReader {
+            payload: Cursor<Vec<u8>>,
+            blocked: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+        }
+
+        impl Read for HeldOpenReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.payload.read(buf)?;
+                if n == 0 {
+                    // La lectura siguiente prueba que el payload ya se capturó.
+                    let _ = self.blocked.send(());
+                    let _ = self.release.recv();
+                }
+                Ok(n)
+            }
+        }
+
+        let payload = framed("done");
+        let (blocked_tx, blocked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let reader = BoundedReader::spawn(HeldOpenReader {
+            payload: Cursor::new(payload.clone()),
+            blocked: blocked_tx,
+            release: release_rx,
+        });
+
+        // EOF sigue bloqueado, pero los bytes ya se leyeron; no hay sleeps ni
+        // dependencia del orden en que el SO planifique el hilo lector.
+        blocked_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("el lector debe capturar el payload antes de esperar EOF");
+        let output = reader.finish(Instant::now());
+
+        // Cerrar el canal libera EOF antes del assert. Si antes hay un panic,
+        // el drop de release_tx durante unwinding también libera al lector.
+        drop(release_tx);
+        assert_eq!(output.as_bytes(), payload.as_slice());
     }
 
     #[test]
