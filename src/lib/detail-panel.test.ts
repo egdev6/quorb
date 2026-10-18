@@ -6,6 +6,7 @@ import {
   fitPanel,
   isCurrentDetailInteraction,
   panelScaleFromTransform,
+  panelWidthFor,
   physicalPanelBounds,
   sameFit,
   samePhysical,
@@ -27,6 +28,10 @@ const placement = (over: Partial<DetailPlacement> = {}): DetailPlacement => ({
 });
 
 describe('panel fit', () => {
+  it.each([24, 40, 56, 60, 80, 100])('adds exactly 50 logical pixels at orb size %s', (orb) => {
+    const previous = Math.round(Math.min(460, Math.max(220, (330 * orb) / 60)));
+    expect(panelWidthFor(orb)).toBe(previous + 50);
+  });
   it('clamps the basal zoom to the orb range', () => {
     expect(basePanelZoom(56)).toBe(1);
     expect(basePanelZoom(20)).toBe(0.6);

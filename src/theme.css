@@ -39,11 +39,13 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
   gap: calc(8px * var(--k));
   padding: calc(8px * var(--k)) calc(10px * var(--k));
   border-radius: 9999px;
+  overflow: hidden;
   /* --panel-alpha = «Opacidad» de Ajustes */
   background: rgb(35 36 40 / var(--panel-alpha));
   border: 1px solid var(--color-border-hairline-strong);
   box-shadow: var(--shadow-edge-strong);
-  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(6px) saturate(150%);
+  backdrop-filter: blur(6px) saturate(150%);
 }
 .strip[data-vertical] { padding: calc(10px * var(--k)) calc(8px * var(--k)); }
 .strip__orbs { gap: calc(12px * var(--k)); }
@@ -55,7 +57,11 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 .orb.eg-gauge::after { content: none; }
 /* Una cuenta por círculo: número siempre arriba a la derecha, sin depender de los resets. */
 .orb__acct { position: absolute; right: -2px; top: -2px; bottom: auto; z-index: 2; pointer-events: none; }
-.orb.eg-gauge:hover:not(.is-warning):not(.is-over), .orb.eg-gauge.is-hover:not(.is-warning):not(.is-over) { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring-1) 45%, transparent); }
+.orb.eg-gauge:hover:not(:focus-visible):not(.is-warning):not(.is-over), .orb.eg-gauge.is-hover:not(:focus-visible):not(.is-warning):not(.is-over) { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring-1) 45%, transparent); }
+/* El puntero manda mientras cambia la selección React; en los huecos se conserva el halo activo. */
+.strip__orbs:has(.orb:hover) .orb.eg-gauge.is-hover:not(:hover):not(:focus-visible):not(.is-warning):not(.is-over) { box-shadow: none; }
+/* El hover genérico del DS no debe convertir el aviso ámbar en un destello rojo. */
+.orb.eg-gauge.is-warning:not(:focus-visible) { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-warning) 55%, transparent), 0 0 18px color-mix(in srgb, var(--color-status-warning) 35%, transparent); }
 /* .logo (styles.css) es un bloque a pantalla completa: dentro del Gauge vuelve a ser el hueco central del DS. */
 .eg-gauge__logo, .eg-gauge__logo.logo { position: absolute; inset: 28%; width: auto; height: auto; border-radius: 0; background: none; overflow: visible; }
 .q-card__logo.logo, .q-provider__logo.logo { background: none; border-radius: 0; overflow: visible; }
@@ -69,24 +75,24 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 .strip .icon-btn:hover { color: var(--color-fg-default); background: var(--color-action-primary-bg-default); }
 .strip .icon-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 
-.peek { background: linear-gradient(90deg, transparent, var(--ring-1), transparent); }
-
 /* ───────── 3 · panel de detalle (ModuleCard --glass) ───────── */
 /* El panel se escala entero con `zoom` (ver DetailPanel): dentro todo va a tamaño de DS. */
 .q-panel {
   --k: 1;
   padding: 0;
   gap: 16px;
-  overflow-x: hidden;
+  overflow: hidden;
   font-size: 14px;
   background: rgb(35 36 40 / var(--panel-alpha));
+  -webkit-backdrop-filter: blur(6px) saturate(150%);
+  backdrop-filter: blur(6px) saturate(150%);
   /* La ventana termina en el panel: la elevación exterior oscurece sus esquinas transparentes. */
   box-shadow: var(--shadow-edge-strong);
   animation: none;
 }
 .q-panel:hover, .q-panel.is-hover { transform: none; box-shadow: var(--shadow-edge-strong); }
 .q-card { display: flex; flex-direction: column; gap: 16px; }
-/* Redondear las bandas, no recortar el contenido/foco ni la medición natural. */
+/* Alinear las bandas con el marco redondeado; medir la altura natural antes del transform. */
 .q-panel > .q-card { border-radius: inherit; }
 /* Panel en bandas (ModuleCard --glass --banded): cabecera surface-3, cuerpo, pie surface-1. */
 .q-panel > .q-card > :not(.eg-module-card__head), .q-panel > :not(.q-card):not(.panel__foot) { margin-inline: 20px; }
@@ -203,6 +209,8 @@ html[data-window='settings'] body { background: var(--color-bg-canvas); color: v
 .q-brand__name { display: block; font: 800 24px/1 var(--font-display); text-transform: uppercase; }
 .q-brand__ver { display: block; margin-top: 2px; font-size: 12px; color: var(--color-fg-muted); }
 .q-settings__nav .eg-menu__item { width: 100%; border: 0; background: none; text-align: left; }
+/* El icono activo conserva el mismo rojo que el hover del menú. */
+.q-settings__nav .eg-menu--nav .eg-menu__item[aria-current] > .eg-icon { color: var(--color-fg-brand-default); }
 .q-settings__nav .eg-menu__count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-full); display: inline-grid; place-items: center; background: color-mix(in srgb, var(--color-status-warning) 18%, transparent); color: var(--color-status-warning); }
 
 .q-settings__main { display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }

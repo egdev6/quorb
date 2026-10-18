@@ -3,6 +3,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { api } from './lib/api';
 import { derivePalette } from './lib/palette';
+import { confettiVelocity, CORNER_HORIZONTAL_GAIN } from './lib/confetti-motion';
 
 // Ventana a pantalla completa, transparente y que deja pasar los clics.
 // Rust la coloca sobre el monitor de la tira, la muestra y emite «play-effect».
@@ -87,15 +88,14 @@ function Confetti({ accent, onDone }: { accent: string; onDone: () => void }) {
     const colors = [...derivePalette(accent), '#ffffff', '#ffd400'];
     const rnd = (a: number, b: number) => a + Math.random() * (b - a);
     const pieces: Piece[] = [];
-    const burst = (x: number, y: number, angle: number, n: number) => {
+    const burst = (x: number, y: number, angle: number, n: number, horizontalGain = 1) => {
       for (let i = 0; i < n; i++) {
         const a = angle + rnd(-0.45, 0.45);
         const speed = rnd(9, 19);
         pieces.push({
           x,
           y,
-          vx: Math.cos(a) * speed,
-          vy: Math.sin(a) * speed,
+          ...confettiVelocity(a, speed, horizontalGain),
           rot: rnd(0, Math.PI * 2),
           vr: rnd(-0.3, 0.3),
           w: rnd(6, 12),
@@ -106,8 +106,8 @@ function Confetti({ accent, onDone }: { accent: string; onDone: () => void }) {
       }
     };
     // Dos cañones en las esquinas inferiores + lluvia desde arriba
-    burst(0, H, -Math.PI / 3, 120);
-    burst(W, H, (-2 * Math.PI) / 3, 120);
+    burst(0, H, -Math.PI / 3, 120, CORNER_HORIZONTAL_GAIN);
+    burst(W, H, (-2 * Math.PI) / 3, 120, CORNER_HORIZONTAL_GAIN);
     for (let i = 0; i < 90; i++) burst(rnd(0, W), -20, Math.PI / 2, 1);
 
     const start = performance.now();

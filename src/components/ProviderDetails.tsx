@@ -3,9 +3,8 @@ import { api } from '../lib/api';
 import { formatCompact, formatMoney, formatResetIn, shortLabel } from '../lib/format';
 import { meterPace, spendPace, type Pace } from '../lib/pace';
 import type { Sample, UsageReport } from '../lib/types';
-import { meterColor } from '../lib/meter-colors';
 import { RING_COLORS } from './RingGauge';
-import { disclosureOpen, saveDisclosure } from '../lib/popup-preferences';
+import { disclosureOpen, popupMeterColor, saveDisclosure } from '../lib/popup-preferences';
 
 const RANGES = [
   { hours: 24, label: '24 h' },
@@ -110,19 +109,19 @@ export function ProviderDetails({ report }: { report: UsageReport }) {
   }, [report.id, hours, report.fetchedAt]);
 
   const ringMeters = report.meters.filter((m) => m.percent != null);
-  const paces = ringMeters.map((m, i) => ({ m, color: meterColor(report, m, i), pace: meterPace(m) }));
+  const paces = ringMeters.map((m, i) => ({ m, color: popupMeterColor(report, m, i), pace: meterPace(m) }));
   const sp = report.spend ? spendPace(report.spend) : null;
 
   const series = useMemo(() => {
     if (!samples) return { pct: [], spend: [] as [number, number][] };
     // History includes every percentage quota, not just the gauge's visible rings.
     const pct = ringMeters.map((m, i) => ({
-      color: meterColor(report, m, i),
+      color: popupMeterColor(report, m, i),
       points: samples.filter((s) => s.l === m.label).map((s) => [s.t, s.v] as [number, number]),
     }));
     const spend = samples.filter((s) => s.l === 'spend').map((s) => [s.t, s.v] as [number, number]);
     return { pct, spend };
-  }, [samples, report.meters, report.id]);
+  }, [samples, report.meters, report.id, report.kind]);
 
   // Escala del eje: no aplastamos consumos pequeños contra el 0.
   const peakPct = Math.max(0, ...series.pct.flatMap((s) => s.points.map((p) => p[1])));

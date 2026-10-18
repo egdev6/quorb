@@ -2105,6 +2105,7 @@ export function Settings() {
                 </Field>
                 <Rows>
                   <Toggle label="Círculos pequeños" hint="Un solo anillo por suscripción: el límite más cercano." checked={cfg.compact} onChange={(v) => liveChange({ compact: v })} />
+                  <Toggle label="Mostrar resets en los círculos" hint="El saldo de resets siempre sigue disponible en el panel de detalle." checked={cfg.showResets ?? true} onChange={(v) => liveChange({ showResets: v })} />
                 </Rows>
               </Section>
 

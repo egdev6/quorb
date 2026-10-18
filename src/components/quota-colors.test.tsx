@@ -52,11 +52,15 @@ function historyColors(r: UsageReport) {
   return [...details(r).matchAll(/<polyline[^>]*stroke="([^"]+)"/g)].map(m => m[1]);
 }
 
-function expectSurfaces(r: UsageReport, expected: string[]) {
+// The widget keeps the selected palette; qualifying subscription popups now
+// intentionally diverge. Keep explicit expectations rather than calling the helper under test.
+const white = '#ffffff';
+const accent = 'var(--popup-primary, #ff0036)';
+function expectSurfaces(r: UsageReport, expected: string[], popupExpected = expected) {
   expect(ringColors(r)).toEqual(expected.slice(0, 3));
-  expect(barColors(r)).toEqual(expected);
-  expect(paceColors(r)).toEqual(expected);
-  expect(historyColors(r)).toEqual(expected);
+  expect(barColors(r)).toEqual(popupExpected);
+  expect(paceColors(r)).toEqual(popupExpected);
+  expect(historyColors(r)).toEqual(popupExpected);
 }
 
 describe('active quota palette across gauge, card, pace and history', () => {
@@ -65,7 +69,8 @@ describe('active quota palette across gauge, card, pace and history', () => {
       [meter('Hours', hour), meter('Week', week)],
       [meter('Week', week), meter('Hours', hour)],
     ]) {
-      expectSurfaces(report(meters, id), meters.map(m => palette(m.windowSeconds === week ? 1 : 2)));
+      expectSurfaces(report(meters, id), meters.map(m => palette(m.windowSeconds === week ? 1 : 2)),
+        meters.map(m => m.windowSeconds === week ? accent : white));
     }
   });
 
@@ -92,15 +97,15 @@ describe('active quota palette across gauge, card, pace and history', () => {
       meter('Sesión', hour), meter('Semana · todos', week),
       meter('Semana · Sonnet', week), meter('Semana · Opus', week),
     ], 'claude');
-    expectSurfaces(r, [2, 1, 1, 1].map(palette));
+    expectSurfaces(r, [2, 1, 1, 1].map(palette), [white, accent, accent, accent]);
     const card = renderToStaticMarkup(<ProviderCard report={r} />);
     expect([...card.matchAll(/data-colored="true"/g)]).toHaveLength(4);
     expect([...card.matchAll(/class="eg-gauge__key/g)]).toHaveLength(4);
   });
 
-  it.each(['nan', 'nan:work', 'nan_cloud', 'gemini', 'cursor', 'openrouter:work'])('retains ordinal colors for %s, also beyond three quotas', (id: string) => {
+  it.each(['nan', 'nan:work', 'nan_cloud', 'gemini', 'cursor', 'openrouter:work'])('retains ordinal widget colors and popup period identity for %s beyond three quotas', (id: string) => {
     const r = report([meter('A', hour), meter('B', week), meter('C', day), meter('D', hour)], id);
-    expectSurfaces(r, [1, 2, 3, 1].map(palette));
+    expectSurfaces(r, [1, 2, 3, 1].map(palette), [white, accent, palette(3), white]);
     // Preserve main's compact behavior for model-based providers.
     r.meters[1].percent = 95;
     expect(ringColors(r, true)).toEqual([palette(1)]);
@@ -112,7 +117,7 @@ describe('active quota palette across gauge, card, pace and history', () => {
 
   it('does not let unknown percentages shift the palette or create bars', () => {
     const r = report([meter('Unknown', week, null), meter('A', hour), meter('B', week)], 'nan');
-    expectSurfaces(r, [1, 2].map(palette));
+    expectSurfaces(r, [1, 2].map(palette), [white, accent]);
     const html = renderToStaticMarkup(<ProviderCard report={r} />);
     expect((html.match(/role="progressbar"/g) ?? [])).toHaveLength(2);
     expect(barColors(report([meter('Unknown', week, null)]))).toEqual([]);

@@ -16,11 +16,11 @@ describe('provider detail sections', () => {
   describe.each([
     ['card', ProviderCard],
     ['details', ProviderDetails],
-  ] as const)('%s palette independence', (_name, Component) => {
+  ] as const)('%s popup period identity', (_name, Component) => {
     it.each([
       [18000, 604800, 604800],
       [604800, 18000],
-    ])('inherits ring colors for window order %j', (...windows) => {
+    ])('uses popup colors without mutating ring tokens for window order %j', (...windows) => {
       const html = renderToStaticMarkup(<Component report={{
         ...report,
         meters: windows.map((windowSeconds, i) => ({
@@ -29,8 +29,8 @@ describe('provider detail sections', () => {
         })),
       }} />);
       expect(html).not.toMatch(/style="[^"]*--ring-[123]:/);
-      expect(html).not.toContain('#ffffff');
-      expect(html).not.toContain('--popup-primary');
+      const colors = [...html.matchAll(/(?:--meter-color:|background:)([^;\"]+)/g)].map(m => m[1]);
+      expect(colors).toEqual(windows.map(seconds => seconds < 86400 ? '#ffffff' : 'var(--popup-primary, #ff0036)'));
     });
   });
 

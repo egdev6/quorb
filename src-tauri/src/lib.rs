@@ -3,6 +3,7 @@ mod cli_process;
 mod codex_setup;
 mod config;
 mod config_transaction;
+mod detail_geometry;
 mod history;
 mod login;
 mod model;
@@ -10,6 +11,9 @@ mod providers;
 mod secrets;
 mod wm_compat;
 mod uninstall;
+mod window_clip;
+#[cfg(target_os = "windows")]
+mod windows_backdrop;
 
 use config::AppConfig;
 use model::UsageReport;
@@ -33,6 +37,40 @@ const SETTINGS_HEIGHT: f64 = 920.0;
 const OVERLAY: &str = "overlay";
 const DETAIL: &str = "detail";
 const TRAY_ID: &str = "main";
+
+#[tauri::command]
+async fn set_surface_clip(window: WebviewWindow, clip: window_clip::Clip, backdrop: Option<bool>) -> Result<(), String> {
+    // Only plain wire geometry and a window handle cross the async boundary.
+    // The compositor, queue, visuals and completion actions stay on the UI thread.
+    let (tx, mut rx) = tauri::async_runtime::channel(1);
+    let ui_window = window.clone();
+    window.run_on_main_thread(move || {
+        let result = window_clip::apply(&ui_window, clip, backdrop.unwrap_or(true));
+        // Cancellation needs no native cleanup: the UI-owned cache retains the layer.
+        let _ = tx.try_send(result);
+    }).map_err(|e| e.to_string())?;
+    rx.recv().await.ok_or_else(|| "Surface clip UI callback was dropped".to_string())?
+}
+
+#[tauri::command]
+async fn set_detail_bounds(window: WebviewWindow, bounds: detail_geometry::Bounds) -> Result<(), String> {
+    let (tx, mut rx) = tauri::async_runtime::channel(1);
+    let ui_window = window.clone();
+    window.run_on_main_thread(move || {
+        let _ = tx.try_send(detail_geometry::apply(&ui_window, bounds));
+    }).map_err(|e| e.to_string())?;
+    rx.recv().await.ok_or_else(|| "Detail bounds UI callback was dropped".to_string())?
+}
+
+#[tauri::command]
+async fn set_widget_bounds(window: WebviewWindow, bounds: detail_geometry::Bounds) -> Result<(), String> {
+    let (tx, mut rx) = tauri::async_runtime::channel(1);
+    let ui_window = window.clone();
+    window.run_on_main_thread(move || {
+        let _ = tx.try_send(detail_geometry::apply_widget(&ui_window, bounds));
+    }).map_err(|e| e.to_string())?;
+    rx.recv().await.ok_or_else(|| "Widget bounds UI callback was dropped".to_string())?
+}
 
 /// Atajos registrados → acción, y errores del último registro (para Ajustes).
 #[derive(Default)]
@@ -681,7 +719,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init());
     #[cfg(not(target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
-    builder
+    let builder = builder
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -705,6 +743,8 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            windows_backdrop::initialize_ui_thread();
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             migrate_legacy_dir(&config_dir, "config.json");
@@ -729,7 +769,7 @@ pub fn run() {
             let history = history::History::load(data_dir.join("history.json"));
 
             // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
-            WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
+            let detail_builder = WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
                 .title(format!("{} · detalle", channel::current().name))
                 .inner_size(330.0, 260.0)
                 .decorations(false)
@@ -739,8 +779,10 @@ pub fn run() {
                 .skip_taskbar(true)
                 .resizable(false)
                 .focused(false)
-                .visible(false)
-                .build()?;
+                .visible(false);
+            #[cfg(target_os = "windows")]
+            let detail_builder = detail_builder.no_redirection_bitmap(true);
+            detail_builder.build()?;
 
             // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
             let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
@@ -785,6 +827,8 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            windows_backdrop::on_window_event(window, event);
             // Cerrar el widget lo oculta; la app sigue en la bandeja.
             if window.label() == WIDGET {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -818,6 +862,9 @@ pub fn run() {
             check_provider,
             open_settings,
             show_detail,
+            set_detail_bounds,
+            set_widget_bounds,
+            set_surface_clip,
             set_tray_tooltip,
             get_history,
             nan_probe,
@@ -829,9 +876,20 @@ pub fn run() {
             overlay_done,
             shortcut_errors,
             wm_compat::get_wm_info,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error al arrancar Quorb");
+        ]);
+    #[cfg(target_os = "windows")]
+    {
+        let app = builder.build(tauri::generate_context!()).expect("error al arrancar Quorb");
+        let exit_code = app.run_return(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) { windows_backdrop::begin_shutdown(); }
+        });
+        // Tauri has returned its UI thread to us. Finish an owned queue shutdown
+        // with a bounded native message pump, then release our WinRT apartment.
+        windows_backdrop::finish_shutdown();
+        if exit_code != 0 { std::process::exit(exit_code); }
+    }
+    #[cfg(not(target_os = "windows"))]
+    builder.run(tauri::generate_context!()).expect("error al arrancar Quorb");
 }
 
 #[cfg(test)]

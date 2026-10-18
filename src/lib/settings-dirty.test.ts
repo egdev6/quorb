@@ -35,6 +35,16 @@ describe('isDirty', () => {
 describe('isDirty con campos vivos', () => {
   const base = config();
 
+  it('treats reset visibility as live personalization and reconciles the confirmed preference', () => {
+    const base = config({ showResets: true });
+    const draft = config({ showResets: false });
+    expect(isDirty(base, draft)).toBe(false);
+    expect(reconcileLive(draft, { showResets: false } as Partial<AppConfig>, draft)).toEqual(draft);
+    // The canonical response must carry this live field just like compact/opacity.
+    const canonical = config({ showResets: true });
+    expect(reconcileLive(draft, { showResets: false } as Partial<AppConfig>, canonical)).toEqual(canonical);
+  });
+
   it('no se ensucia si solo cambia un campo vivo (antes y tras el autosave)', () => {
     expect(isDirty(base, { ...base, orbSize: 60 })).toBe(false);
     expect(isDirty(base, { ...base, accentColor: '#00aaff' })).toBe(false);
