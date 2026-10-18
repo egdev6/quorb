@@ -1,9 +1,11 @@
 import detail from '../DetailPanel.tsx?raw';
+import widget from '../Widget.tsx?raw';
 import { describe, expect, it, vi } from 'vitest';
 
 // Vitest stubs CSS imports; read the stylesheet rather than asserting against that stub.
 const { readFileSync } = await vi.importActual<{ readFileSync(path: URL, encoding: string): string }>('node:fs');
 const theme = readFileSync(new URL('../theme.css', import.meta.url), 'utf8');
+const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
 const rule = (selector: string) => {
   const start = theme.indexOf(`\n${selector} {`);
@@ -11,6 +13,47 @@ const rule = (selector: string) => {
   const body = theme.indexOf('{', start) + 1;
   return theme.slice(body, theme.indexOf('}', body));
 };
+
+describe('settings sidebar icons', () => {
+  it('uses the same brand red for the current icon as the foundation hover', () => {
+    expect(rule('.q-settings__nav .eg-menu--nav .eg-menu__item[aria-current] > .eg-icon').trim())
+      .toBe('color: var(--color-fg-brand-default);');
+  });
+});
+
+describe('auto-hide handle contrast', () => {
+  it('enlarges only the arrow and keeps its pulse stationary', () => {
+    expect(styles).toMatch(/\.peek svg\s*\{[^}]*width: 24px; height: 24px;/);
+    expect(styles).not.toContain('transform: translateY(1px)');
+    expect(styles).not.toContain('transform: translateY(-1px)');
+  });
+
+  it('does not paint the handle while the native viewport is preparing or settling', () => {
+    expect(styles).toContain(".dock[data-reveal='settling'] .peek");
+    expect(styles).toContain(".dock[data-reveal='leaving-handle'] .peek");
+    expect(styles).toContain('.dock[data-placement-failed]:is(');
+    expect(styles).not.toMatch(/\.dock\[data-placement-failed\]\s+\.peek\s*\{/);
+  });
+  it('does not override the dark semicircle with the obsolete red peek stripe', () => {
+    expect(theme).not.toMatch(/\.peek\s*\{[^}]*linear-gradient/);
+  });
+});
+
+describe('stable circle hover', () => {
+  it('keeps warning halos amber through pointer and selected-state changes', () => {
+    const warning = rule('.orb.eg-gauge.is-warning:not(:focus-visible)');
+    expect(warning).toContain('var(--color-status-warning) 55%');
+    expect(warning).toContain('var(--color-status-warning) 35%');
+    expect(warning).not.toContain('var(--ring-1)');
+  });
+
+  it('hands the hover halo to the pointed circle without clearing selection in the gaps', () => {
+    const handoff = rule('.strip__orbs:has(.orb:hover) .orb.eg-gauge.is-hover:not(:hover):not(:focus-visible):not(.is-warning):not(.is-over)');
+    expect(handoff.trim()).toBe('box-shadow: none;');
+    // :has(.orb:hover) is deliberate: plain strip:hover would extinguish the halo in every gap.
+    expect(theme).not.toContain('.strip__orbs:hover .orb.eg-gauge.is-hover');
+  });
+});
 
 describe('compact banked reset placement', () => {
   it('anchors the white reset count at bottom-right without overriding the shared reset color', () => {
@@ -110,12 +153,34 @@ describe('settings disclosures', () => {
 
 // Structural guards complement computed-style checks in the browser fixture.
 describe('detail panel surface (#95)', () => {
+  it('invalidates cached detail geometry before an in-flight native move', () => {
+    const begin = detail.indexOf('enqueue(async (current) =>');
+    const invalidate = detail.indexOf('lastAppliedRef.current = null', begin);
+    const move = detail.indexOf('await api.setDetailBounds(', begin);
+    expect(invalidate).toBeGreaterThan(begin);
+    expect(invalidate).toBeLessThan(move);
+  });
+
+  it('does not publish a detail popup until reveal reaches the open phase', () => {
+    expect(widget).toMatch(/const state: DetailState \| null = active[^?]*phase === 'open'/);
+  });
+  it('applies popup position and size atomically so its old height never covers the strip', () => {
+    expect(detail).toContain('await api.setDetailBounds(physical)');
+    expect(detail).not.toContain('await win.setPosition(');
+    expect(detail).not.toContain('await win.setSize(');
+  });
+  it('uses a light foreground blur without overriding the user opacity', () => {
+    for (const selector of ['.strip', '.q-panel']) {
+      expect(rule(selector)).toContain('backdrop-filter: blur(6px) saturate(150%);');
+      expect(rule(selector)).toContain('background: rgb(35 36 40 / var(--panel-alpha));');
+    }
+  });
   it('overrides clipped native-popup elevation while retaining its inset edge', () => {
     expect(rule('.q-panel')).toContain('box-shadow: var(--shadow-edge-strong);');
     expect(rule('.q-panel:hover, .q-panel.is-hover')).toContain('box-shadow: var(--shadow-edge-strong);');
   });
 
-  it('rounds the painted bands using the outer frame rather than clipping content', () => {
+  it('keeps the painted bands aligned with the rounded outer frame', () => {
     expect(rule('.q-panel > .q-card')).toMatch(/border-radius:\s*inherit/);
     const head = rule('.q-panel > .q-card > .eg-module-card__head');
     expect(head).toMatch(/border-top-left-radius:\s*inherit/);
@@ -125,10 +190,29 @@ describe('detail panel surface (#95)', () => {
     expect(foot).toMatch(/border-bottom-right-radius:\s*inherit/);
   });
 
-  it('preserves focus effects and uncapped natural-height measurement', () => {
-    expect(detail).toContain("overflow: 'visible'");
+  it('clips the surface boundary without capping natural-height measurement', () => {
+    expect(detail).toContain("overflow: 'hidden'");
+    expect(rule('.q-panel')).toMatch(/overflow:\s*hidden/);
+    expect(rule('.strip')).toMatch(/overflow:\s*hidden/);
+    expect(detail).toContain('borderBoxSize');
     for (const selector of ['.q-panel', '.q-panel > .q-card > .eg-module-card__head', '.q-panel .panel__foot']) {
       expect(rule(selector)).not.toMatch(/(?:height|max-height|clip-path)\s*:/);
     }
+  });
+
+  it('retains CSS foreground curves independently of the masked native backdrop', () => {
+    expect(theme).not.toContain('data-native-rounded');
+    expect(rule('.q-panel')).not.toMatch(/border-radius:\s*0/);
+  });
+
+  it('clips the native backdrop after resizing and before showing the popup', () => {
+    const resize = detail.indexOf('await api.setDetailBounds(');
+    const clip = detail.indexOf('await clipSurfaceSafely(');
+    const show = detail.indexOf('await api.showDetail(');
+    expect(resize).toBeGreaterThan(0);
+    expect(clip).toBeGreaterThan(resize);
+    expect(show).toBeGreaterThan(clip);
+    expect(widget).toContain('usesPeekWindow(phase) ? peekRect(s, edge) : s');
+    expect(widget).toContain("api.setSurfaceClip(c, !autoHide && phase === 'open')");
   });
 });

@@ -1,0 +1,117 @@
+name: W0 names — distro-name validation matrix
+
+# Disambiguates what wsl.exe --import accepts as distribution names:
+# spaces only, latin unicode only, cyrillic, CJK — each also via cmd.exe
+# to exclude pwsh argument-mangling. Follow-up of run 38990859346.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wsl-names:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Prepare pinned Alpine rootfs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path raw | Out-Null
+          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
+          $expected = "d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c"
+          Invoke-WebRequest -Uri $url -OutFile rootfs.tar.gz
+          $hash = (Get-FileHash rootfs.tar.gz -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" | Set-Content raw/rootfs-hash.txt
+          if ($hash -ne $expected) { exit 1 }
+
+      - name: Import matrix — pwsh, UTF8, spaced names
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          New-Item -ItemType Directory -Force -Path C:\wsl\n1, C:\wsl\n2 | Out-Null
+          ">> import [Hello World] (space, ASCII)" | Add-Content raw/import-pwsh.txt
+          & wsl.exe --import "Hello World" C:\wsl\n1 rootfs.tar.gz *>> raw/import-pwsh.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/import-pwsh.txt
+
+          ">> import [PruebaÑ] (latin unicode, no space)" | Add-Content raw/import-pwsh.txt
+          & wsl.exe --import "PruebaÑ" C:\wsl\n2 rootfs.tar.gz *>> raw/import-pwsh.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/import-pwsh.txt
+          Get-Content raw/import-pwsh.txt
+          exit 0
+
+      - name: Import matrix — pwsh, cyrillic + CJK
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          New-Item -ItemType Directory -Force -Path C:\wsl\n3, C:\wsl\n4 | Out-Null
+          ">> import [Quorb-Проверка] (cyrillic)" | Add-Content raw/import-pwsh2.txt
+          & wsl.exe --import "Quorb-Проверка" C:\wsl\n3 rootfs.tar.gz *>> raw/import-pwsh2.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/import-pwsh2.txt
+
+          ">> import [Quorb-世界] (CJK)" | Add-Content raw/import-pwsh2.txt
+          & wsl.exe --import "Quorb-世界" C:\wsl\n4 rootfs.tar.gz *>> raw/import-pwsh2.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/import-pwsh2.txt
+          ">> list after all imports" | Add-Content raw/import-pwsh2.txt
+          & wsl.exe --list --verbose *>> raw/import-pwsh2.txt
+          Get-Content raw/import-pwsh2.txt
+          exit 0
+
+      - name: Import matrix — same names via cmd.exe (control for arg mangling)
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          New-Item -ItemType Directory -Force -Path C:\wsl\c1, C:\wsl\c2 | Out-Null
+          ">> cmd: import [Cmd Space Name]" | Add-Content raw/import-cmd.txt
+          & cmd /c "wsl.exe --import CmdSpaceName_test C:\wsl\c1 rootfs.tar.gz" *>> raw/import-cmd.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/import-cmd.txt
+
+          ">> cmd: import [CmdPruebaÑ] via chcp 65001 + unicode-safe call" | Add-Content raw/import-cmd.txt
+          & cmd /c "chcp 65001>nul & wsl.exe --import CmdPruebaÑ C:\wsl\c2 rootfs.tar.gz" *>> raw/import-cmd.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/import-cmd.txt
+          & wsl.exe --list --verbose *>> raw/import-cmd.txt
+          Get-Content raw/import-cmd.txt
+          exit 0
+
+      - name: Behaviour of accepted names — target, set-default, terminate
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          ">> enumerate final states" | Add-Content raw/name-behaviour.txt
+          & wsl.exe --list --verbose *>> raw/name-behaviour.txt
+          & wsl.exe --list --quiet *>> raw/name-behaviour.txt
+          ">> target commands per accepted distro name" | Add-Content raw/name-behaviour.txt
+          $candidates = @("Hello World", "PruebaÑ", "Quorb-Проверка", "Quorb-世界", "CmdSpaceName_test", "CmdPruebaÑ")
+          foreach ($n in $candidates) {
+            "--- targeting: [$n]" | Add-Content raw/name-behaviour.txt
+            & wsl.exe -d $n -- sh -c "echo target-ok" *>> raw/name-behaviour.txt
+            "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/name-behaviour.txt
+          }
+          ">> set-default with accepted spaced/unicode name" | Add-Content raw/name-behaviour.txt
+          foreach ($n in $candidates) {
+            "--- set-default: [$n]" | Add-Content raw/name-behaviour.txt
+            & wsl.exe --set-default $n *>> raw/name-behaviour.txt
+            "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/name-behaviour.txt
+          }
+          & wsl.exe --set-default quorb_w0_fallback_placeholder *>> raw/name-behaviour.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/name-behaviour.txt
+          Get-Content raw/name-behaviour.txt
+          exit 0
+
+      - name: Evidence summary
+        shell: pwsh
+        run: |
+          $summary = "## W0 names — distro-name validation`n"
+          foreach ($f in (Get-ChildItem raw -File | Sort-Object Name)) {
+            $summary += "| $($f.Name) | $($f.Length) |`n"
+          }
+          Set-Content EVIDENCE.md $summary
+          Add-Content $env:GITHUB_STEP_SUMMARY $summary
+          exit 0
+
+      - name: Upload raw evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0-names-evidence
+          path: raw

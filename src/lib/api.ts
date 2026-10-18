@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AlertMoment, AppConfig, Effect, Sample, ScopedSecretKey, SecretStatus, UsageReport } from './types';
 // Tipos del contrato de la instalación asistida de Codex. Solo tipos: evita un ciclo de ejecución.
 import type { CodexInstallResult, CodexSetupStatus } from './codex-install';
+import type { SurfaceClip } from './surface-clip';
+import type { PhysicalBounds } from './detail-panel';
 
 /** Campos que el widget puede cambiar sin arrastrar el resto de la config. */
 export interface WidgetPatch {
@@ -13,6 +15,7 @@ export interface WidgetPatch {
   /** Personalización inmediata (#97): mismo merge atómico del backend. */
   opacity?: number;
   compact?: boolean;
+  showResets?: boolean;
   autoHide?: boolean;
   alwaysOnTop?: boolean;
   orbSize?: number;
@@ -68,6 +71,9 @@ export const api = {
   checkProvider: (id: string) => invoke<UsageReport | null>('check_provider', { id }),
   openSettings: () => invoke<void>('open_settings'),
   showDetail: () => invoke<boolean>('show_detail'),
+  setDetailBounds: (bounds: PhysicalBounds) => invoke<void>('set_detail_bounds', { bounds }),
+  setWidgetBounds: (bounds: PhysicalBounds) => invoke<void>('set_widget_bounds', { bounds }),
+  setSurfaceClip: (clip: SurfaceClip, backdrop = true) => invoke<void>('set_surface_clip', { clip, backdrop }),
   setTrayTooltip: (text: string) => invoke<void>('set_tray_tooltip', { text }),
   getHistory: (provider: string, hours: number) => invoke<Sample[]>('get_history', { provider, hours }),
   nanProbe: () => invoke<string>('nan_probe'),

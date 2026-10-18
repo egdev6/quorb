@@ -121,6 +121,8 @@ export interface AppConfig {
   refreshMinutes: number;
   opacity: number;
   compact: boolean;
+  /** Mostrar el saldo de resets en los círculos; el popup lo conserva siempre. */
+  showResets: boolean;
   /** Diámetro de los círculos (px) */
   orbSize: number;
   /** Color base de anillos y barras (#rrggbb) */

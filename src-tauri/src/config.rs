@@ -30,6 +30,8 @@ pub struct AppConfig {
     pub opacity: f32,
     /// Círculos pequeños: un solo anillo por proveedor.
     pub compact: bool,
+    /// Saldo de resets visible en los círculos; el popup siempre lo conserva.
+    pub show_resets: bool,
     /// Diámetro de los círculos de la tira, en px (ORB_SIZE_MIN–ORB_SIZE_MAX).
     pub orb_size: u32,
     /// Color base (#rrggbb) de anillos y barras; los otros dos tonos se derivan en el frontend.
@@ -82,6 +84,7 @@ pub struct WidgetPatch {
     /// normaliza (`sanitized`) y nunca toca cuentas, secretos ni atajos.
     pub opacity: Option<f32>,
     pub compact: Option<bool>,
+    pub show_resets: Option<bool>,
     pub auto_hide: Option<bool>,
     pub always_on_top: Option<bool>,
     pub orb_size: Option<u32>,
@@ -121,6 +124,9 @@ impl AppConfig {
         }
         if let Some(compact) = patch.compact {
             self.compact = compact;
+        }
+        if let Some(show_resets) = patch.show_resets {
+            self.show_resets = show_resets;
         }
         if let Some(auto_hide) = patch.auto_hide {
             self.auto_hide = auto_hide;
@@ -230,6 +236,7 @@ impl Default for AppConfig {
             refresh_minutes: 5,
             opacity: 0.94,
             compact: false,
+            show_resets: true,
             orb_size: ORB_SIZE_DEFAULT,
             accent_color: ACCENT_DEFAULT.into(),
             always_on_top: true,
@@ -564,6 +571,27 @@ pub fn save(path: &Path, cfg: &AppConfig) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_badges_default_visible_in_legacy_config() {
+        let cfg: AppConfig = serde_json::from_str(r#"{}"#).unwrap();
+        let json = serde_json::to_value(cfg).unwrap();
+        assert_eq!(json.get("showResets"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn reset_visibility_roundtrips_and_live_patch_preserves_other_fields() {
+        let mut cfg = AppConfig::default();
+        let original = cfg.clone();
+        cfg.apply_widget_patch(serde_json::from_str(r#"{"showResets":false}"#).unwrap());
+        let encoded = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(encoded.get("showResets"), Some(&serde_json::json!(false)));
+        let mut restored: AppConfig = serde_json::from_value(encoded).unwrap();
+        restored.apply_widget_patch(WidgetPatch::default());
+        assert_eq!(serde_json::to_value(&restored).unwrap()["showResets"], false);
+        restored.apply_widget_patch(serde_json::from_str(r#"{"showResets":true}"#).unwrap());
+        assert_eq!(restored, original);
+    }
 
     #[test]
     fn partial_json_fills_defaults() {

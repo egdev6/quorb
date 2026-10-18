@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { availableMonitors, currentMonitor, getCurrentWindow, primaryMonitor, type Monitor } from '@tauri-apps/api/window';
-import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
+import { PhysicalPosition } from '@tauri-apps/api/dpi';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { api, type WidgetPatch } from './lib/api';
@@ -15,20 +15,18 @@ import { useUpdaterMode } from './lib/useUpdater';
 import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
-import { DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, type DetailInteraction, type DetailState } from './lib/detail-panel';
+import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
+import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
+import { peekRect, usesPeekWindow, waitForViewport, watchPreparation } from './lib/auto-hide';
+import { useDockReveal } from './lib/useDockReveal';
 
 const CLOSE_DELAY = 280;
 const OPEN_DELAY = 90;
-/** Al ocultarse automáticamente queda esta franja (px lógicos) pegada al borde. */
-const PEEK = 5;
 const HIDE_DELAY = 900;
 /** Tras un aviso, la tira se muestra este tiempo aunque esté en auto-ocultar. */
 const REVEAL_MS = 6000;
-/** Ancho del panel para un círculo de 60 px; escala en proporción al tamaño elegido. */
-const PANEL_BASE_W = 330;
-const panelWidthFor = (orb: number) => Math.round(Math.min(460, Math.max(220, (PANEL_BASE_W * orb) / 60)));
 
 /** Zona útil del monitor (sin barra de tareas) en píxeles lógicos + escala + monitor completo en físicos. */
 interface Geo {
@@ -149,6 +147,11 @@ export function Widget() {
   // auto-ocultar
   const [inside, setInside] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const { phase, markPrepared, finishTransition } = useDockReveal(collapsed);
+  const [peekFocused, setPeekFocused] = useState(false);
+  const [placementRetry, setPlacementRetry] = useState(0);
+  const [placementFailed, setPlacementFailed] = useState(false);
   const [revealUntil, setRevealUntil] = useState(0);
 
   // reordenar círculos
@@ -157,6 +160,9 @@ export function Widget() {
   const updaterMode = useUpdaterMode();
 
   const stripRef = useRef<HTMLDivElement>(null);
+  const peekRef = useRef<HTMLButtonElement>(null);
+  const widgetQueue = useRef(createLatestQueue()).current;
+  const widgetBounds = useRef<PhysicalBounds | null>(null);
   const orbsRef = useRef<HTMLDivElement>(null);
   const detailStateRef = useRef<DetailState | null>(null);
   const detailReadyRef = useRef(false);
@@ -171,10 +177,12 @@ export function Widget() {
   const closeTimer = useRef<number | undefined>(undefined);
   const openTimer = useRef<number | undefined>(undefined);
   const shown = useRef(false);
-  const drag = useRef<{ sx: number; sy: number; start: PhysicalPosition | null; sf: number; raf: number } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; start: PhysicalPosition | null; sf: number; raf: number; pointerId: number; ending: boolean } | null>(null);
   const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const lastReorderAt = useRef(0);
   const openPeakRef = useRef<() => void>(() => {});
+  const dragWork = useRef<Promise<void>>(Promise.resolve());
+  const dragMounted = useRef(true);
 
   const edge: Edge = config && isEdge(config.dockEdge) ? config.dockEdge : 'top';
   const offset = config?.dockOffset ?? 0.5;
@@ -403,12 +411,13 @@ export function Widget() {
   };
 
   const autoHide = config?.autoHide ?? false;
+  const showHandle = autoHide || phase !== 'open';
   useEffect(() => {
     if (!autoHide) {
       setCollapsed(false);
       return;
     }
-    const busy = inside || hovered != null || dragging || reorder != null;
+    const busy = inside || focused || hovered != null || dragging || reorder != null;
     const wait = Math.max(HIDE_DELAY, revealUntil - Date.now());
     if (busy) {
       setCollapsed(false);
@@ -416,7 +425,7 @@ export function Widget() {
     }
     const t = window.setTimeout(() => setCollapsed(true), wait);
     return () => window.clearTimeout(t);
-  }, [autoHide, inside, hovered, dragging, reorder, revealUntil]);
+  }, [autoHide, inside, focused, hovered, dragging, reorder, revealUntil]);
   useEffect(() => {
     if (revealUntil > Date.now()) setCollapsed(false);
   }, [revealUntil]);
@@ -434,47 +443,79 @@ export function Widget() {
     return () => ro.disconnect();
   }, []);
 
-  // ───── colocar sólo la tira: esta geometría no depende del hover ─────
+  // Expand before entering; shrink only after the exit transition. Hovering between
+  // providers never changes this window, and each native rectangle is applied atomically.
   useEffect(() => {
-    if (!geo || !stripSize || dragging) return;
+    if (dragging) { widgetBounds.current = null; return; }
+    if (!geo || !stripSize) return;
+    let disposed = false;
     const s = stripRect(geo.area, edge, offset, stripSize.w, stripSize.h);
-    let win: Rect;
-
-    if (collapsed) {
-      // Solo una franja fina en el borde; la tira queda fuera de la ventana.
-      const a = geo.area;
-      win =
-        edge === 'top'
-          ? { x: s.x, y: a.y, w: s.w, h: PEEK }
-          : edge === 'bottom'
-            ? { x: s.x, y: a.y + a.h - PEEK, w: s.w, h: PEEK }
-            : edge === 'left'
-              ? { x: a.x, y: s.y, w: PEEK, h: s.h }
-              : { x: a.x + a.w - PEEK, y: s.y, w: PEEK, h: s.h };
-    } else {
-      win = s;
-    }
+    const win = usesPeekWindow(phase) ? peekRect(s, edge) : s;
+    const physical = physicalPanelBounds(win, geo.sf);
     setPos({ strip: { x: s.x - win.x, y: s.y - win.y } });
+    widgetQueue(async (current) => {
+      if (disposed || !current()) return;
+      if (!samePhysical(widgetBounds.current, physical)) {
+        widgetBounds.current = null; // Never reuse a cache invalidated by a stale in-flight move.
+        await api.setWidgetBounds(physical);
+        if (disposed || !current()) return;
+        widgetBounds.current = physical;
+      }
+      const surface = usesPeekWindow(phase) ? peekRef.current : stripRef.current;
+      if (!surface) throw new Error('Widget surface is not mounted');
+      const clip = measureSurfaceClip(surface, physical, geo.sf);
+      // Auto-hide uses CSS blur throughout, so its moving shape has no static native
+      // blur rectangle and no blur-radius change at the start/end of the animation.
+      await clipSurfaceSafely(clip, (c) => api.setSurfaceClip(c, !autoHide && phase === 'open'), console.warn, surface);
+      if (disposed || !current()) return;
+      if (!shown.current) {
+        await getCurrentWindow().show();
+        if (disposed || !current()) return;
+        shown.current = true;
+      }
+      if (phase === 'preparing' || phase === 'settling') await waitForViewport();
+      if (disposed || !current()) return;
+      setPlacementFailed(false);
+      if (phase === 'preparing' || phase === 'settling') markPrepared(phase);
+    }).catch((error) => {
+      if (disposed) return;
+      widgetBounds.current = null;
+      setPlacementFailed(true); // The still-visible handle offers an explicit user retry.
+      console.warn(error);
+    });
+    return () => { disposed = true; };
+  }, [geo, stripSize, edge, offset, dragging, phase, autoHide, placementRetry, widgetQueue, markPrepared]);
 
-    const w = getCurrentWindow();
-    const sf = geo.sf;
-    Promise.all([
-      w.setPosition(new PhysicalPosition(Math.round(win.x * sf), Math.round(win.y * sf))),
-      w.setSize(new PhysicalSize(Math.max(1, Math.round(win.w * sf)), Math.max(1, Math.round(win.h * sf)))),
-    ])
-      .then(() => {
-        if (!shown.current) {
-          shown.current = true;
-          return w.show();
-        }
-      })
-      .catch(() => {});
-  }, [geo, stripSize, edge, offset, dragging, collapsed]);
+  useEffect(() => watchPreparation(phase, () => setPlacementFailed(true)), [phase, placementRetry]);
+
+  useLayoutEffect(() => {
+    if (phase === 'open' && document.activeElement === peekRef.current) {
+      stripRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    }
+  }, [phase]);
+
+  // Dragging rounds all corners without changing the native window dimensions.
+  useEffect(() => {
+    if (!dragging || !geo || !stripRef.current) return;
+    let disposed = false;
+    // Placement and dragging mutate the same native surface. Share their lane,
+    // including the size read, rather than racing an outstanding docked clip.
+    widgetQueue(async (current) => {
+      if (disposed || !current()) return;
+      const size = await getCurrentWindow().innerSize();
+      if (disposed || !current() || !stripRef.current) return;
+      await clipSurfaceSafely(
+        measureSurfaceClip(stripRef.current, { w: size.width, h: size.height }, geo.sf),
+        (clip) => api.setSurfaceClip(clip, !autoHide), console.warn, stripRef.current,
+      );
+    }).catch(console.warn);
+    return () => { disposed = true; };
+  }, [dragging, geo, autoHide, widgetQueue]);
 
   // The detail window owns its dimensions; hovering never mutates widget geometry.
   useEffect(() => {
     const strip = geo && stripSize ? stripRect(geo.area, edge, offset, stripSize.w, stripSize.h) : null;
-    const state: DetailState | null = active && geo && strip && !dragging && !collapsed ? {
+    const state: DetailState | null = active && geo && strip && !dragging && !collapsed && phase === 'open' ? {
       // Keep the interaction session valid during background usage/config updates.
       revision: detailStateRef.current?.report.id === active.id
         ? detailStateRef.current.revision
@@ -500,7 +541,7 @@ export function Widget() {
     detailStateRef.current = state;
     if (!state) detailInsideRef.current = false;
     if (detailReadyRef.current) emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, state).catch(console.warn);
-  }, [active, geo, stripSize, edge, offset, vertical, anchorRel, dragging, collapsed, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
+  }, [active, geo, stripSize, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
 
   useEffect(() => {
     let disposed = false;
@@ -562,7 +603,7 @@ export function Widget() {
   };
 
   const openFor = (id: string, el: HTMLElement) => {
-    if (drag.current || orbDrag.current?.moved || Date.now() - lastReorderAt.current < 400) return;
+    if (phase !== 'open' || drag.current || orbDrag.current?.moved || Date.now() - lastReorderAt.current < 400) return;
     cancelTimers();
     const strip = stripRef.current?.getBoundingClientRect();
     const orb = el.getBoundingClientRect();
@@ -600,7 +641,15 @@ export function Widget() {
     if (detailInsideRef.current) return;
     closeTimer.current = window.setTimeout(() => setHovered(null), CLOSE_DELAY);
   };
-  useEffect(() => () => cancelTimers(), []);
+  useEffect(() => {
+    dragMounted.current = true;
+    return () => {
+      cancelTimers();
+      dragMounted.current = false;
+      if (drag.current) cancelAnimationFrame(drag.current.raf);
+      drag.current = null;
+    };
+  }, []);
 
   // Red de seguridad: si algo falla al medir/colocar, mostramos igualmente la ventana.
   useEffect(() => {
@@ -614,66 +663,90 @@ export function Widget() {
   }, []);
 
   // ───── arrastrar la tira y soltar con imán al borde más cercano ─────
+  const enqueueDrag = (job: () => Promise<void>) => {
+    const result = dragWork.current.then(job);
+    dragWork.current = result.catch(() => {});
+    return result;
+  };
+
   const onGripDown = (e: PointerEvent<HTMLSpanElement>) => {
-    if (e.button !== 0 || !geo) return;
+    if (e.button !== 0 || !geo || !dragMounted.current) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (drag.current) cancelAnimationFrame(drag.current.raf);
     cancelTimers();
     setHovered(null);
     setDragging(true);
-    const d = { sx: e.screenX, sy: e.screenY, start: null as PhysicalPosition | null, sf: geo.sf, raf: 0 };
+    const d = { sx: e.screenX, sy: e.screenY, start: null as PhysicalPosition | null, sf: geo.sf, raf: 0, pointerId: e.pointerId, ending: false };
     drag.current = d;
-    // Con el panel cerrado, la ventana mide lo mismo que la tira.
-    getCurrentWindow()
-      .outerPosition()
-      .then((p) => {
-        d.start = p;
-      })
-      .catch(() => {});
+    const current = () => dragMounted.current && drag.current === d;
+    enqueueDrag(async () => {
+      if (!current()) return;
+      const position = await getCurrentWindow().outerPosition();
+      if (current()) d.start = position;
+    }).catch((err) => {
+      if (!current()) return;
+      setError(String(err));
+      drag.current = null;
+      setDragging(false);
+    });
   };
 
   const onGripMove = (e: PointerEvent<HTMLSpanElement>) => {
     const d = drag.current;
-    if (!d?.start) return;
+    if (!d?.start || d.ending || e.pointerId !== d.pointerId) return;
+    const current = () => dragMounted.current && drag.current === d;
     const x = Math.round(d.start.x + (e.screenX - d.sx) * d.sf);
     const y = Math.round(d.start.y + (e.screenY - d.sy) * d.sf);
     cancelAnimationFrame(d.raf);
     d.raf = requestAnimationFrame(() => {
-      getCurrentWindow().setPosition(new PhysicalPosition(x, y)).catch(() => {});
+      enqueueDrag(async () => {
+        if (!current()) return;
+        await getCurrentWindow().setPosition(new PhysicalPosition(x, y));
+      }).catch((err) => { if (current()) setError(String(err)); });
     });
   };
 
   const onGripUp = async (e: PointerEvent<HTMLSpanElement>) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d || d.ending || e.pointerId !== d.pointerId) return;
+    d.ending = true;
+    const current = () => dragMounted.current && drag.current === d;
+    const grip = (e.target as HTMLElement).closest('.strip__grip')?.getBoundingClientRect();
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
       /* ya liberado */
     }
     cancelAnimationFrame(d.raf);
-    drag.current = null;
     try {
-      const w = getCurrentWindow();
-      const [wpos, mons] = await Promise.all([w.outerPosition(), availableMonitors()]);
-      // El imán usa el punto donde sueltas el asa (no el centro de la tira):
-      // así, al llevarla a un lateral, se pega a ese lateral aunque sea horizontal.
-      const grip = (e.target as HTMLElement).closest('.strip__grip')?.getBoundingClientRect();
-      const cx = wpos.x + (grip ? grip.left + grip.width / 2 : 0) * d.sf;
-      const cy = wpos.y + (grip ? grip.top + grip.height / 2 : 0) * d.sf;
-      const mon =
-        mons.find((m) => contains({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height }, cx, cy)) ??
-        (await currentMonitor());
-      if (mon) {
+      // Core setters acknowledge enqueue; later getters follow those tasks in UI FIFO.
+      await enqueueDrag(async () => {
+        if (!current()) return;
+        const [wpos, mons] = await Promise.all([getCurrentWindow().outerPosition(), availableMonitors()]);
+        if (!current()) return;
+        // El imán usa el punto donde sueltas el asa (no el centro de la tira):
+        // así, al llevarla a un lateral, se pega a ese lateral aunque sea horizontal.
+        const cx = wpos.x + (grip ? grip.left + grip.width / 2 : 0) * d.sf;
+        const cy = wpos.y + (grip ? grip.top + grip.height / 2 : 0) * d.sf;
+        const mon =
+          mons.find((m) => contains({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height }, cx, cy)) ??
+          (await currentMonitor());
+        if (!current() || !mon) return;
         const g = geoOf(mon);
         const snap = nearestEdge(g.area, cx / g.sf, cy / g.sf);
+        const saved = await api.patchConfig({ dockEdge: snap.edge, dockOffset: snap.offset, dockMonitor: g.monitor });
+        if (!current()) return;
         setGeo(g);
-        await patchConfig({ dockEdge: snap.edge, dockOffset: snap.offset, dockMonitor: g.monitor });
-      }
+        applyConfig(saved);
+      });
     } catch (err) {
-      setError(String(err));
+      if (current()) setError(String(err));
     } finally {
-      setDragging(false);
+      if (current()) {
+        drag.current = null;
+        setDragging(false);
+      }
     }
   };
 
@@ -728,9 +801,17 @@ export function Widget() {
   return (
     <div
       className="dock"
+      role="toolbar"
+      aria-label="Quorb"
+      aria-orientation={vertical ? 'vertical' : 'horizontal'}
       data-edge={edge}
       data-dragging={dragging || undefined}
-      data-collapsed={collapsed || undefined}
+      data-collapsed={phase === 'hidden' || undefined}
+      data-auto-hide={showHandle || undefined}
+      data-reveal={phase}
+      data-placement-failed={placementFailed || undefined}
+      onFocusCapture={() => { setFocused(true); setCollapsed(false); }}
+      onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
       style={{ '--panel-alpha': String(opacity), '--ring-1': ring1, '--ring-2': ring2, '--ring-3': ring3 } as CSSProperties}
       onMouseEnter={() => {
         insideRef.current = true;
@@ -743,14 +824,36 @@ export function Widget() {
         scheduleClose();
       }}
     >
-      {collapsed && <div className="peek" aria-label="Quorb (pasa el ratón para mostrar)" />}
+      {showHandle && <button
+        ref={peekRef}
+        type="button"
+        className="peek"
+        aria-label={placementFailed ? 'Reintentar mostrar Quorb' : 'Mostrar Quorb'}
+        aria-controls="quorb-strip"
+        aria-hidden={phase === 'open' && !peekFocused || undefined}
+        tabIndex={phase === 'hidden' || placementFailed && (usesPeekWindow(phase) || phase === 'preparing') ? 0 : -1}
+        onTransitionEnd={(e) => {
+          if (phase === 'leaving-handle' && e.target === e.currentTarget && e.propertyName === 'opacity') finishTransition();
+        }}
+        onFocus={() => setPeekFocused(true)}
+        onBlur={() => setPeekFocused(false)}
+        onClick={() => { setCollapsed(false); setPlacementRetry((n) => n + 1); }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg>
+      </button>}
 
       <div
         ref={stripRef}
+        id="quorb-strip"
         className="strip"
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && e.propertyName === 'transform'
+            && !e.currentTarget.getAnimations().some((a) => a.playState === 'running')) finishTransition();
+        }}
         data-small={small || undefined}
         data-vertical={vertical || undefined}
-        aria-hidden={collapsed || undefined}
+        aria-hidden={phase !== 'open' || undefined}
+        inert={phase !== 'open'}
         style={{ left: pos.strip.x, top: pos.strip.y, '--orb': orbSize } as CSSProperties}
       >
         <span
@@ -773,6 +876,7 @@ export function Widget() {
               size={orbSize}
               active={hovered === r.id}
               account={tags[r.id]}
+              showResets={config?.showResets ?? true}
               threshold={config?.alerts.threshold}
               dragging={reorder?.id === r.id}
               onHover={(el) => openFor(r.id, el)}

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ProviderCard } from './components/ProviderCard';
 import { ProviderDetails } from './components/ProviderDetails';
 import { api } from './lib/api';
 import { reportSummary } from './lib/format';
+import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, samePhysical, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
 
 async function copyText(text: string): Promise<boolean> {
@@ -98,13 +98,15 @@ export function DetailPanel() {
       const physical = physicalPanelBounds(detailBounds(data, next), data.scaleFactor);
       if (positionedRef.current && samePhysical(lastAppliedRef.current, physical)) return;
       enqueue(async (current) => {
-        const win = getCurrentWindow();
-        if (!current()) return;
-        await win.setPosition(new PhysicalPosition(physical.x, physical.y));
-        if (!current()) return;
-        // Size from the fitted geometry (not the rendered rect) so a 600.000061 px
-        // float overshoot never becomes a phantom 601 px window.
-        await win.setSize(new PhysicalSize(physical.w, physical.h));
+        if (!current() || disposed) return;
+        // An in-flight move can outlive its layout. Clear the old geometry before
+        // awaiting it, so a return to that geometry cannot incorrectly dedupe.
+        lastAppliedRef.current = null;
+        // Move and resize together: moving a taller previous panel first briefly
+        // covers the widget below it. Physical bounds already include DPI rounding.
+        await api.setDetailBounds(physical);
+        if (!current() || disposed) return;
+        await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
         if (!current() || disposed) return;
         positionedRef.current = true;
         setPositioned(true);
@@ -149,7 +151,7 @@ export function DetailPanel() {
         aria-label={`Detalle de ${data.report.name}`}
         // No transitions/animations: a transitioned `transform` would make the measured
         // rect lag behind the fitted scale and corrupt the next measurement.
-        style={{ left: 0, top: 0, width: data.width / base, transform: `scale(${scale})`, transformOrigin: 'top left', transition: 'none', animation: 'none', overflow: 'visible', '--orb': data.orbSize, visibility: positioned ? 'visible' : 'hidden' } as CSSProperties}
+        style={{ left: 0, top: 0, width: data.width / base, transform: `scale(${scale})`, transformOrigin: 'top left', transition: 'none', animation: 'none', overflow: 'hidden', '--orb': data.orbSize, visibility: positioned ? 'visible' : 'hidden' } as CSSProperties}
       >
         <ProviderCard report={data.report} />
         <section className="panel__insights" aria-labelledby="panel-insights-title">

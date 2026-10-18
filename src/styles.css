@@ -357,14 +357,40 @@ html[data-window='detail'], html[data-window='detail'] body { background: transp
 .btn--accent:hover { border-color: var(--red-hover); background: var(--red-hover); }
 .btn:focus-visible { outline: 2px solid var(--red-hover); outline-offset: 2px; }
 
-/* ───────── auto-ocultar: franja en el borde ───────── */
-.peek {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, var(--ring-1), transparent);
-  opacity: 0.75;
+/* ───────── auto-ocultar: asa semicircular y entrada desde el borde ───────── */
+.dock[data-edge='bottom'] { --reveal-x: 0px; --reveal-y: 100%; --peek-angle: 0deg; }
+.dock[data-edge='top'] { --reveal-x: 0px; --reveal-y: -100%; --peek-angle: 180deg; }
+.dock[data-edge='left'] { --reveal-x: -100%; --reveal-y: 0px; --peek-angle: 90deg; }
+.dock[data-edge='right'] { --reveal-x: 100%; --reveal-y: 0px; --peek-angle: -90deg; }
+.dock[data-auto-hide] .strip { transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 220ms ease; }
+.dock[data-reveal='hidden'] .strip, .dock[data-reveal='leaving-handle'] .strip, .dock[data-reveal='preparing'] .strip, .dock[data-reveal='closing'] .strip, .dock[data-reveal='settling'] .strip {
+  transform: translate(var(--reveal-x), var(--reveal-y)); opacity: 0; pointer-events: none;
 }
-.dock[data-edge='left'] .peek, .dock[data-edge='right'] .peek { background: linear-gradient(180deg, transparent, var(--ring-1), transparent); }
+.dock[data-reveal='hidden'] .strip, .dock[data-reveal='leaving-handle'] .strip, .dock[data-reveal='preparing'] .strip, .dock[data-reveal='settling'] .strip { visibility: hidden; }
+.dock[data-reveal='opening'] .strip { transform: translate(0, 0); opacity: 1; pointer-events: none; }
+.dock[data-reveal='open'] .strip { transform: translate(0, 0); opacity: 1; }
+.peek {
+  position: absolute; z-index: 3; width: 48px; height: 24px; padding: 0; box-sizing: border-box;
+  display: grid; place-items: center; overflow: hidden; cursor: pointer;
+  border: 1px solid var(--color-border-hairline-strong); color: var(--ring-1); background: rgb(35 36 40 / var(--panel-alpha));
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  opacity: 1; transition: opacity 120ms ease;
+}
+.dock[data-edge='bottom'] .peek { left: 50%; bottom: 0; translate: -50% 0; border-bottom: 0; border-radius: 24px 24px 0 0; }
+.dock[data-edge='top'] .peek { left: 50%; top: 0; translate: -50% 0; border-top: 0; border-radius: 0 0 24px 24px; }
+.dock[data-edge='left'] .peek { left: 0; top: 50%; translate: 0 -50%; width: 24px; height: 48px; border-left: 0; border-radius: 0 24px 24px 0; }
+.dock[data-edge='right'] .peek { right: 0; top: 50%; translate: 0 -50%; width: 24px; height: 48px; border-right: 0; border-radius: 24px 0 0 24px; }
+.dock[data-reveal='leaving-handle'] .peek, .dock[data-reveal='preparing'] .peek, .dock[data-reveal='opening'] .peek, .dock[data-reveal='open'] .peek, .dock[data-reveal='closing'] .peek, .dock[data-reveal='settling'] .peek {
+  opacity: 0; pointer-events: none;
+}
+.dock[data-placement-failed]:is([data-reveal='hidden'], [data-reveal='leaving-handle'], [data-reveal='settling'], [data-reveal='preparing']) .peek { opacity: 1; pointer-events: auto; }
+.peek:focus-visible { outline: 2px solid var(--ring-1); outline-offset: -3px; }
+.peek svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; rotate: var(--peek-angle); animation: peek-breathe 1800ms ease-in-out infinite; }
+@keyframes peek-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dock[data-auto-hide] .strip, .peek { transition: none; }
+  .peek svg { animation: none; }
+}
 
 /* ───────── reordenar círculos ───────── */
 .orb { touch-action: none; }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { UsageReport } from '../lib/types';
 import { formatMoney } from '../lib/format';
 import { MeterBar } from './MeterBar';
-import { meterColor } from '../lib/meter-colors';
+import { popupMeterColor } from '../lib/popup-preferences';
 import { api } from '../lib/api';
 import { ProviderLogo } from './ProviderLogo';
 import { ValidityBadge } from './ValidityBadge';
@@ -84,7 +84,7 @@ export function ProviderCard({ report }: { report: UsageReport }) {
                 key={m.label}
                 meter={m}
                 ring={r}
-                color={index != null ? meterColor(report, m, index) : undefined}
+                color={index != null ? popupMeterColor(report, m, index) : undefined}
               />
             );
           })}
