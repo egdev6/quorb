@@ -10,7 +10,7 @@ const theme = readFileSync(new URL('../theme.css', import.meta.url), 'utf8');
 // SSR does not run effects: seed the history state without a DOM or Tauri calls.
 const history = vi.hoisted(() => ({ samples: null as Sample[] | null }));
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal<typeof import('react')>();
+  const react = await importOriginal() as typeof import('react');
   return {
     ...react,
     useState: ((initial: unknown) => {
