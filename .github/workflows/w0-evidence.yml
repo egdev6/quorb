@@ -1,0 +1,346 @@
+name: W0 evidence — Windows/WSL discovery
+
+# Evidence-only lab for Quorb issue #90 (W0 observe phase).
+# Run on a hosted Windows runner; collects real wsl.exe behavior.
+# Collects no credentials and contains no Quorb code.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wsl-w0:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Host inventory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path raw | Out-Null
+          Get-ComputerInfo -Property OsName, OsVersion, OsArchitecture |
+            Out-String | Set-Content raw/host-info.txt
+          "Image label: $env:ImageOS / $env:ImageVersion" | Set-Content raw/host-image.txt
+
+            exit 0
+
+      - name: WSL baseline — default encoding (raw bytes preserved)
+        shell: pwsh
+        run: |
+          & cmd /c "wsl.exe --status > raw\status-default.txt 2>&1"
+          "EXIT=$LASTEXITCODE" | Add-Content raw/status-default.txt
+          & cmd /c "wsl.exe --version > raw\version-default.txt 2>&1"
+          "EXIT=$LASTEXITCODE" | Add-Content raw/version-default.txt
+          & cmd /c "wsl.exe --list --verbose > raw\list-verbose-default.txt 2>&1"
+          "EXIT=$LASTEXITCODE" | Add-Content raw/list-verbose-default.txt
+          & cmd /c "wsl.exe --list --online > raw\list-online-default.txt 2>&1"
+          "EXIT=$LASTEXITCODE" | Add-Content raw/list-online-default.txt
+          $bytes = [IO.File]::ReadAllBytes("raw/list-verbose-default.txt")
+          $head = ($bytes[0..63] | ForEach-Object { $_.ToString('X2') }) -join ' '
+          $bom16 = ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE -or
+                    $bytes.Length -ge 2 -and $bytes[1] -eq 0x00 -and $bytes[2] -eq 0x2D -or
+                    $bytes.Length -ge 2 -and $bytes[3] -eq 0x00)
+          "Head bytes: $head" | Set-Content raw/hex-head-list-verbose.txt
+          "Likely UTF-16LE payload: $bom16" | Set-Content raw/encoding-shape.txt
+
+            exit 0
+
+      - name: WSL baseline — WSL_UTF8=1
+        shell: pwsh
+        env:
+          WSL_UTF8: '1'
+        run: |
+          cmd /c "wsl.exe --status > raw\status-wslutf8.txt 2>&1"
+          cmd /c "wsl.exe --list --verbose > raw\list-verbose-wslutf8.txt 2>&1"
+          cmd /c "wsl.exe --list --all > raw\list-all-wslutf8.txt 2>&1"
+          cmd /c "wsl.exe --help > raw\help-wslutf8.txt 2>&1"
+          Get-Content raw/status-wslutf8.txt
+          Get-Content raw/list-verbose-wslutf8.txt
+
+            exit 0
+
+      - name: Zero-distro state — unregister everything, capture diagnostics
+        shell: pwsh
+        run: |
+          cmd /c "wsl.exe --list --quiet > raw\pre-zero-quiet-raw.txt 2>&1"
+          function Get-WslText([string]$path) {
+            $b = [IO.File]::ReadAllBytes($path)
+            if ($b.Length -ge 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE) {
+              return [Text.Encoding]::Unicode.GetString($b, 2, $b.Length - 2)
+            }
+            $utf8 = [Text.Encoding]::UTF8.GetString($b)
+            if ($utf8.Contains([char]0)) {
+              $utf8 = [Text.Encoding]::Unicode.GetString($b)
+            }
+            return $utf8.Trim([char]0, " ", "`r", "`n", "`t")
+          }
+          $names = (Get-WslText "raw/pre-zero-quiet-raw.txt") -split "`r?`n" |
+            Where-Object { $_.Trim() }
+          "Names found (decoded): $($names -join ' | ')" |
+            Set-Content raw/zero-step-found.txt
+          foreach ($d in $names) {
+            & wsl.exe --unregister $d.Trim() *> raw/unregister-log.txt -Append
+          }
+          ">> --status with zero distros" | Add-Content raw/zero-distro-status.txt
+          & wsl.exe --status *>> raw/zero-distro-status.txt
+          ">> -l -v with zero distros" | Add-Content raw/zero-distro-list.txt
+          & wsl.exe --list --verbose *>> raw/zero-distro-list.txt
+          ">> exit code of running a missing distro" | Add-Content raw/zero-distro-missing.txt
+          & wsl.exe -d Ubuntu -- echo probe *>> raw/zero-distro-missing.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/zero-distro-missing.txt
+          Get-WslText "raw/zero-distro-list.txt" | Set-Content raw/zero-distro-list-decoded.txt
+
+            exit 0
+
+      - name: Prepare pinned Alpine rootfs (sha256-verified)
+        shell: pwsh
+        run: |
+          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
+          $expected = "d4e6fd67dcf75e40c451560ac7265166c2b72a0f38ddc9aae756a7de3d1efa0c"
+          Invoke-WebRequest -Uri $url -OutFile rootfs.tar.gz
+          $hash = (Get-FileHash rootfs.tar.gz -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash expected=$expected" | Set-Content raw/rootfs-hash.txt
+          if ($hash -ne $expected) {
+            "HASH MISMATCH — aborting" | Add-Content raw/rootfs-hash.txt
+            exit 1
+          }
+
+            exit 0
+
+      - name: Import two distros — plain name and spaced/unicode name
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\wsl\q1, C:\wsl\q2 | Out-Null
+          & wsl.exe --import quorb_w0 C:\wsl\q1 rootfs.tar.gz *>&1 |
+            Set-Content raw/import-plain.txt
+          & wsl.exe --import "Quorb Prueba Ñ" C:\wsl\q2 rootfs.tar.gz *>&1 |
+            Set-Content raw/import-unicode.txt
+          $env:WSL_UTF8 = '1'
+          ">> -l -v after imports" | Add-Content raw/list-after-import.txt
+          & wsl.exe --list --verbose *>> raw/list-after-import.txt
+
+            exit 0
+
+      - name: Listing does not wake a stopped distro (timing evidence)
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          & wsl.exe --terminate quorb_w0 *>&1 | Set-Content raw/terminate-first.txt
+          Start-Sleep -Seconds 2
+          ">> state after terminate" | Add-Content raw/stopped-list.txt
+          & wsl.exe --list --verbose *>> raw/stopped-list.txt
+          ">> run 20x --list --quiet then re-check state" | Add-Content raw/list-does-not-wake.txt
+          1..20 | ForEach-Object { & wsl.exe --list --quiet | Out-Null }
+          Start-Sleep -Seconds 2
+          & wsl.exe --list --verbose *>> raw/list-does-not-wake.txt
+
+            exit 0
+
+      - name: A command wakes the distro; Running vs Stopped
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          ">> running command in quorb_w0" | Add-Content raw/wake-and-run.txt
+          & wsl.exe -d quorb_w0 -- uname -a *>> raw/wake-and-run.txt
+          ">> state right after command" | Add-Content raw/running-list.txt
+          & wsl.exe --list --verbose *>> raw/running-list.txt
+          ">> terminate then re-check" | Add-Content raw/terminated-list.txt
+          & wsl.exe --terminate quorb_w0 *>> raw/terminated-list.txt
+          & wsl.exe --list --verbose *>> raw/terminated-list.txt
+
+            exit 0
+
+      - name: Default user and home (no name assumptions)
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          ">> whoami before /etc/wsl.conf (import default = root)" |
+            Add-Content raw/user-default.txt
+          & wsl.exe -d quorb_w0 -- whoami *>> raw/user-default.txt
+          ">> create non-root user" | Add-Content raw/user-default.txt
+          & wsl.exe -d quorb_w0 -- sh -c "adduser -D quorbuser 2>&1" *>> raw/user-default.txt
+          ">> write /etc/wsl.conf [user] default=quorbuser" | Add-Content raw/user-default.txt
+          & wsl.exe -d quorb_w0 -- sh -c "printf '[user]\ndefault=quorbuser\n' > /etc/wsl.conf && cat /etc/wsl.conf" *>> raw/user-default.txt
+          ">> terminate to apply new default user" | Add-Content raw/user-default.txt
+          & wsl.exe --terminate quorb_w0 *>> raw/user-default.txt
+          Start-Sleep -Seconds 2
+          ">> whoami after conf" | Add-Content raw/user-default.txt
+          & wsl.exe -d quorb_w0 -- whoami *>> raw/user-default.txt
+          ">> home resolution (no assumption from Windows username)" | Add-Content raw/user-default.txt
+          & wsl.exe -d quorb_w0 -- sh -c 'echo "HOME=$HOME"; getent passwd quorbuser; echo "pwd=$(pwd)"' *>> raw/user-default.txt
+          ">> Windows-side username for contrast (runneradmin expected)" |
+            Add-Content raw/user-default.txt
+          whoami >> raw/user-default.txt
+          ">> -u root override still works" | Add-Content raw/user-default.txt
+          & wsl.exe -d quorb_w0 -u root -- whoami *>> raw/user-default.txt
+
+            exit 0
+
+      - name: Unicode and spaced distro name targeting
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          ">> run command in distro with spaced/unicode name" |
+            Add-Content raw/unicode-name.txt
+          & wsl.exe -d "Quorb Prueba Ñ" -- sh -c "echo target-ok" *>> raw/unicode-name.txt
+          ">> confirm it is the second independent rootfs" | Add-Content raw/unicode-name.txt
+          & wsl.exe -d "Quorb Prueba Ñ" -- sh -c 'cat /etc/alpine-release; echo $$' *>> raw/unicode-name.txt
+          ">> full -l -v shows the unicode name?" | Add-Content raw/unicode-name.txt
+          & wsl.exe --list --verbose *>> raw/unicode-name.txt
+          ">> setting default distro to the unicode name then unsetting" | Add-Content raw/unicode-name.txt
+          & wsl.exe --set-default "Quorb Prueba Ñ" *>> raw/unicode-name.txt
+          & wsl.exe --set-default quorb_w0 *>> raw/unicode-name.txt
+
+            exit 0
+
+      - name: Exit codes — missing distro, invalid flags
+        shell: pwsh
+        run: |
+          ">> wsl -d nonexistent-distro" | Add-Content raw/exit-codes.txt
+          & wsl.exe -d nonexistent-distro -- echo hi *>> raw/exit-codes.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/exit-codes.txt
+          ">> wsl --definitely-not-a-flag" | Add-Content raw/exit-codes.txt
+          & wsl.exe --definitely-not-a-flag *>> raw/exit-codes.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/exit-codes.txt
+          ">> wsl --list --all (valid)" | Add-Content raw/exit-codes.txt
+          & wsl.exe --list --all *>> raw/exit-codes.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/exit-codes.txt
+          ">> empty distro name" | Add-Content raw/exit-codes.txt
+          & wsl.exe -d " " -- echo hi *>> raw/exit-codes.txt
+          "LASTEXITCODE=$LASTEXITCODE" | Add-Content raw/exit-codes.txt
+
+            exit 0
+
+      - name: Timeout / hang behavior evidence
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          ">> launch sleeping wsl command in background (does NOT wait)" |
+            Add-Content raw/timeout-hang.txt
+          $p = Start-Process -FilePath wsl.exe -ArgumentList @(
+              '-d', 'quorb_w0', '--', 'sleep', '60'
+            ) -PassThru -NoNewWindow -RedirectStandardOutput raw/timeout-stdout.txt -RedirectStandardError raw/timeout-stderr.txt
+          Start-Sleep -Seconds 3
+          "Launcher alive after 3s: $(-not ($p.HasExited))" | Add-Content raw/timeout-hang.txt
+          ">> distro should be Running while the sleep lives" | Add-Content raw/timeout-hang.txt
+          & wsl.exe --list --verbose *>> raw/timeout-hang.txt
+          ">> kill only the launcher" | Add-Content raw/timeout-hang.txt
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          ">> state after launcher kill (child may still live)" | Add-Content raw/timeout-hang.txt
+          & wsl.exe --list --verbose *>> raw/timeout-hang.txt
+          ">> explicit terminate" | Add-Content raw/timeout-hang.txt
+          & wsl.exe --terminate quorb_w0 *>> raw/timeout-hang.txt
+
+            exit 0
+
+      # F7 — Acceso UNC sin despertar la distro (home vía \\wsl.localhost\$)
+      - name: UNC access to home without waking the distro
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          & wsl.exe --terminate quorb_w0 *>$null
+          Start-Sleep -Seconds 2
+          ">> state after terminate" | Add-Content raw/unc-wake.txt
+          & wsl.exe --list --verbose *>> raw/unc-wake.txt
+          ">> Test-Path \\wsl.localhost\quorb_w0\home\quorbuser (distro Stopped)" |
+            Add-Content raw/unc-wake.txt
+          $t1 = Test-Path "\\wsl.localhost\quorb_w0\home\quorbuser"
+          "Test-Path result: $t1" | Add-Content raw/unc-wake.txt
+          ">> state right after Test-Path" | Add-Content raw/unc-wake.txt
+          & wsl.exe --list --verbose *>> raw/unc-wake.txt
+          ">> Get-ChildItem \\wsl.localhost\quorb_w0\home\quorbuser (distro Stopped)" |
+            Add-Content raw/unc-wake.txt
+          try {
+            $items = @(Get-ChildItem "\\wsl.localhost\quorb_w0\home\quorbuser" -ErrorAction Stop)
+            "Get-ChildItem count: $($items.Count)" | Add-Content raw/unc-wake.txt
+          } catch {
+            "Get-ChildItem error: $($_.Exception.Message)" | Add-Content raw/unc-wake.txt
+          }
+          ">> state right after Get-ChildItem" | Add-Content raw/unc-wake.txt
+          & wsl.exe --list --verbose *>> raw/unc-wake.txt
+          ">> CONTROL: wsl -d quorb_w0 -- whoami (must wake)" | Add-Content raw/unc-wake.txt
+          & wsl.exe -d quorb_w0 -- whoami *>> raw/unc-wake.txt
+          ">> state after control whoami" | Add-Content raw/unc-wake.txt
+          & wsl.exe --list --verbose *>> raw/unc-wake.txt
+
+            exit 0
+
+      # F8 — Semántica de shell para detección y login (decisión W1)
+      - name: Shell semantics for detection and login
+        shell: pwsh
+        run: |
+          $env:WSL_UTF8 = '1'
+          & wsl.exe -d quorb_w0 -- true  # ensure Running
+          ">> plain `wsl -d X -- <cmd>` (sh -c form)" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -- sh -c 'echo SHELL=$SHELL; echo 0=$$; which sh; echo PATH=$PATH' *>> raw/shell-semantics.txt
+          ">> explicit `-e sh -c`" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -e sh -c 'echo SHELL=$SHELL; echo 0=$$' *>> raw/shell-semantics.txt
+          ">> whoami (default user per /etc/wsl.conf)" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -- whoami *>> raw/shell-semantics.txt
+          ">> `bash -lc` (login shell) PATH" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -- bash -lc 'echo BASH=$BASH; echo PATH=$PATH' *>> raw/shell-semantics.txt
+          ">> `bash -c` (non-login) PATH" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -- bash -c 'echo BASH=$BASH; echo PATH=$PATH' *>> raw/shell-semantics.txt
+          ">> /bin/sh -lc PATH" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -- /bin/sh -lc 'echo PATH=$PATH' *>> raw/shell-semantics.txt
+          ">> PATH de la distro por defecto (no login)" | Add-Content raw/shell-semantics.txt
+          & wsl.exe -d quorb_w0 -- 'echo $PATH' *>> raw/shell-semantics.txt
+
+            exit 0
+
+      # F9/F10 — Path de wsl.exe en el runner + stdin no-TTY
+      - name: wsl.exe location and non-TTY stdin behavior
+        shell: pwsh
+        run: |
+          ">> (Get-Command wsl.exe).Source on hosted windows-latest" | Set-Content raw/wsl-path.txt
+          (Get-Command wsl.exe).Source | Tee-Object -FilePath raw/wsl-path.txt -Append
+          ">> wsl.exe --version" | Set-Content raw/wsl-version.txt
+          & wsl.exe --version *>> raw/wsl-version.txt
+          ">> F10: stdin no-TTY — same cmd via pwsh and cmd /c" | Set-Content raw/stdin-tty.txt
+          "via pwsh (redir stdio):" | Add-Content raw/stdin-tty.txt
+          & wsl.exe -d quorb_w0 -- whoami *>> raw/stdin-tty.txt
+          "via cmd /c (redir stdio):" | Add-Content raw/stdin-tty.txt
+          & cmd /c "wsl.exe -d quorb_w0 -- whoami" *>> raw/stdin-tty.txt
+          ">> F10: stdin-echo test (read from stdin and echo)" | Add-Content raw/stdin-tty.txt
+          "echo via pwsh pipe:" | Add-Content raw/stdin-tty.txt
+          "hi-from-pwsh" | & wsl.exe -d quorb_w0 -- sh -c 'read x; echo got=[$x]' *>> raw/stdin-tty.txt
+          "echo via cmd pipe:" | Add-Content raw/stdin-tty.txt
+          cmd /c "echo hi-from-cmd | wsl.exe -d quorb_w0 -- sh -c ""read x; echo got=[$x]""" *>> raw/stdin-tty.txt
+          & wsl.exe --terminate quorb_w0 *>$null
+
+            exit 0
+
+      - name: Evidence summary and artifact matrix
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem raw -File | Sort-Object Name | ForEach-Object {
+            "| $($_.Name) | $($_.Length) |"
+          }
+          $head = [System.Collections.Generic.List[string]]::new()
+          $head.Add("## W0 evidence — Windows/WSL discovery (windows-latest)")
+          $head.Add("")
+          $head.Add("| File | Size |")
+          $head.Add("| --- | --- |")
+          $head.AddRange([string[]]$lines)
+          $head.Add("")
+          $head.Add("Nuances to inspect for the W1 decision:")
+          $head.Add("1. Encoding of wsl.exe --list / --status output without WSL_UTF8 (UTF-16LE BOM or not) — see hex-head-list-verbose.txt")
+          $head.Add("2. Exit codes: missing distro vs invalid flags vs empty name")
+          $head.Add("3. State transitions after import, wake, terminate, hang-kill (list-after-import, running-list, terminated-list, timeout-hang)")
+          $head.Add("4. Plain --list --quiet x20 does not wake a stopped distro? — list-does-not-wake.txt")
+          $head.Add("5. Default user / home before and after /etc/wsl.conf [user] — user-default.txt")
+          $head.Add("6. Zero-distro diagnostics — zero-distro-*.txt")
+          $head.Add("7. Spaced / unicode distro name behavior — unicode-name.txt, import-unicode.txt")
+          $summary = $head -join "`n"
+          Set-Content EVIDENCE.md $summary
+          Add-Content $env:GITHUB_STEP_SUMMARY $summary
+
+            exit 0
+
+      - name: Upload raw evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0-evidence
+          path: raw
