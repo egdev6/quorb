@@ -401,10 +401,11 @@ fn play_effect(app: AppHandle, state: State<'_, AppState>, req: EffectRequest) -
     }
     w.set_position(PhysicalPosition::new(req.x, req.y)).map_err(|e| e.to_string())?;
     w.set_size(PhysicalSize::new(req.width.max(1), req.height.max(1))).map_err(|e| e.to_string())?;
-    // `show()` primero: tao 0.37.1 hace `window.window().unwrap()` en
-    // `set_ignore_cursor_events`, y hasta que la ventana se mapea (show) no
-    // existe el GdkWindow → panic en Wayland (tao#1204). Si el click-through
-    // no funciona, es un no-op silencioso (recomendación de `wm_compat`).
+    // Misma micro-ventana que el OVERLAY en `setup()`: `show()` antes de
+    // `set_ignore_cursor_events` para evitar el panic de tao 0.37.1 en
+    // Wayland. El bloque canónico con la nota completa está en el builder
+    // del OVERLAY (ver `setup()`). Si el click-through no funciona, es un
+    // no-op silencioso (recomendación de `wm_compat`).
     w.show().map_err(|e| e.to_string())?;
     let _ = w.set_ignore_cursor_events(true);
     app.emit_to(

@@ -128,13 +128,6 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
             .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("Hyprland")))
             .unwrap_or(false);
 
-    let recommendation = recommendation(
-        is_wayland,
-        is_hyprland,
-        env_n.desktop_session.as_deref(),
-        env_n.xdg_current_desktop.as_deref(),
-    );
-
     // `env_n` ya clonó los `Option<String>` desde el `&Env` input (y filtró
     // vacíos); se mueven al struct sin clones adicionales.
     let is_gnome = env_n.desktop_session.as_deref().map(|s| s.eq_ignore_ascii_case("gnome")).unwrap_or(false)
@@ -147,6 +140,14 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
     })
     .unwrap_or(false)
         || env_n.xdg_current_desktop.as_deref().map(|s| s.split(':').any(is_kde_token)).unwrap_or(false);
+
+    let recommendation = recommendation(
+        is_wayland,
+        is_hyprland,
+        is_kde,
+        env_n.desktop_session.as_deref(),
+        env_n.xdg_current_desktop.as_deref(),
+    );
 
     WindowManagerInfo {
         wayland_display: env_n.wayland_display,
@@ -242,29 +243,32 @@ pub fn detect_wm_info() -> WindowManagerInfo {
 fn is_wayland_only_session(token: &str) -> bool {
     matches!(
         token.trim().to_ascii_lowercase().as_str(),
-        "wayland" | "hyprland" | "sway" | "wlroots" | "niri" | "river" | "wayfire"
+        "wayland" | "hyprland" | "sway" | "wlroots" | "niri" | "river" | "wayfire" | "labwc" | "cosmic"
     )
 }
 
 /// Recomendación estática derivada del compositor detectado. Pura: el caller
-/// la copia al JSON sin hacer formatting (es &'static str).
+/// la copia al JSON sin hacer formatting (es &'static str). `is_kde` se recibe
+/// del mismo cálculo que `surfaces_for` (única fuente de verdad; no duplicar
+/// aquí el match de `desktop_session`).
 fn recommendation(
     is_wayland: bool,
     is_hyprland: bool,
+    is_kde: bool,
     desktop_session: Option<&str>,
-    xdg_current_desktop: Option<&str>,
+    _xdg_current_desktop: Option<&str>,
 ) -> &'static str {
     if is_hyprland {
         "Hyprland es particularmente estricto con always-on-top. \
          Si la tira se ve normal pero se oculta tras otras ventanas, \
          activa «Auto-hide» en Ajustes como Plan B."
     } else if is_wayland {
-        match (desktop_session, xdg_current_desktop) {
+        match (desktop_session, is_kde) {
             (Some(d), _) if d.eq_ignore_ascii_case("gnome") => {
                 "GNOME Wayland (Mutter) puede ignorar hints de always-on-top en \
                  algunos escenarios. La tira recurre a posición fija + skip_taskbar."
             }
-            (Some(d), _) if d.eq_ignore_ascii_case("kde-plasma") || d.eq_ignore_ascii_case("plasma") => {
+            (_, true) => {
                 "KDE Wayland suele respetar always-on-top; click-through puede \
                  fallar — usa la posición fija como fallback."
             }
