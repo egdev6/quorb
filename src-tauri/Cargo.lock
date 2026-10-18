@@ -3170,6 +3170,9 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tokio",
+ "windows",
+ "windows-core",
+ "windows-numerics",
  "windows-sys 0.61.2",
  "winreg",
 ]

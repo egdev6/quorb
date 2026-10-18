@@ -27,7 +27,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * confirmación explícita, ni mientras su autosave está en vuelo ni si falló
  * (la recuperación del fallo es un reintento del propio campo vivo).
  */
-const LIVE_FIELDS = ['orbSize', 'accentColor', 'opacity', 'compact', 'dockEdge', 'dockOffset', 'autoHide', 'alwaysOnTop'] as const;
+const LIVE_FIELDS = ['orbSize', 'accentColor', 'opacity', 'compact', 'showResets', 'dockEdge', 'dockOffset', 'autoHide', 'alwaysOnTop'] as const;
 
 /** Copia de la config sin los campos vivos, para comparar solo lo manual. */
 function withoutLiveFields(cfg: AppConfig): Omit<AppConfig, (typeof LIVE_FIELDS)[number]> {

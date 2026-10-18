@@ -7,7 +7,8 @@
 
 use super::{home, net_error, read_json, resolve_path, unix_to_rfc3339, Who};
 use crate::config::SubscriptionConfig;
-use crate::model::{Kind, Meter, Status, UsageReport};
+use crate::model::{Kind, Meter, Status, UsageReport, Validity, ValidityKind};
+use base64::Engine;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -45,7 +46,11 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
         Ok(p) => p,
         Err(e) => return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «codex login».")),
     };
-    let auth = match read_json(&path).and_then(|v| Auth::parse(&v)) {
+    let auth_json = match read_json(&path) {
+        Ok(v) => v,
+        Err(e) => return report.fail(Status::NeedsLogin, e),
+    };
+    let auth = match Auth::parse(&auth_json) {
         Ok(a) => a,
         Err(e) => return report.fail(Status::NeedsLogin, e),
     };
@@ -71,11 +76,21 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
         Ok(v) => v,
         Err(e) => return report.fail(Status::Error, format!("Respuesta inesperada: {e}")),
     };
-    let (plan, meters) = parse_usage(&body);
     let mut report = report;
+    report.validity = parse_validity(
+        auth_json.pointer("/tokens/id_token").and_then(Value::as_str),
+        auth.account_id.as_deref(),
+        chrono::Utc::now(),
+    );
+    hydrate_usage(report, &body)
+}
+
+fn hydrate_usage(mut report: UsageReport, body: &Value) -> UsageReport {
+    let (plan, meters) = parse_usage(body);
     report.plan = plan;
+    report.available_resets = parse_available_resets(body);
     report.meters = meters;
-    if report.meters.is_empty() {
+    if report.meters.is_empty() && report.available_resets.is_none() {
         return report.fail(Status::Warning, "Respuesta sin datos de uso (¿ha cambiado el formato?)");
     }
     report
@@ -110,6 +125,22 @@ impl Auth {
     }
 }
 
+/// Display metadata only: never infer a billing date from OAuth exp or expose tokens.
+fn parse_validity(token: Option<&str>, account_id: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<Validity> {
+    let token = token.filter(|t| t.len() <= 65_536)?;
+    let parts: Vec<_> = token.split('.').collect();
+    if parts.len() != 3 { return None; }
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    let claims: Value = serde_json::from_slice(&payload).ok()?;
+    if claims.get("exp").and_then(Value::as_i64)? <= now.timestamp() { return None; }
+    let account = claims.get("https://api.openai.com/auth")?;
+    let account_id = account_id.filter(|id| !id.is_empty())?;
+    if account.get("chatgpt_account_id").and_then(Value::as_str)? != account_id { return None; }
+    let at = chrono::DateTime::parse_from_rfc3339(account.get("chatgpt_subscription_active_until")?.as_str()?).ok()?;
+    if at <= now { return None; }
+    Some(Validity { at: at.to_rfc3339(), kind: ValidityKind::Period })
+}
+
 fn window_label(seconds: Option<i64>, fallback: &str) -> String {
     match seconds {
         Some(s) if s > 0 && s <= 6 * 3600 => format!("Sesión · {} h", (s as f64 / 3600.0).round() as i64),
@@ -129,6 +160,11 @@ fn parse_window(w: &Value, fallback: &str) -> Option<Meter> {
         resets_at: w.get("reset_at").and_then(Value::as_i64).and_then(unix_to_rfc3339),
         ..Default::default()
     })
+}
+
+fn parse_available_resets(v: &Value) -> Option<u32> {
+    let count = v.get("rate_limit_reset_credits")?.get("available_count")?.as_i64()?;
+    u32::try_from(count).ok()
 }
 
 pub(crate) fn parse_usage(v: &Value) -> (Option<String>, Vec<Meter>) {
@@ -257,6 +293,125 @@ mod tests {
         let v = json!({"OPENAI_API_KEY": null, "tokens": {"id_token": "a", "access_token": "b", "refresh_token": "c", "account_id": "acc"}});
         assert_eq!(Auth::parse(&v).unwrap(), Auth { access_token: "b".into(), account_id: Some("acc".into()) });
         assert!(Auth::parse(&json!({"OPENAI_API_KEY": "sk-..."})).unwrap_err().contains("API key"));
+    }
+
+    fn id_token(claims: Value) -> String {
+        use base64::Engine;
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+        format!("header.{payload}.signature")
+    }
+
+    #[test]
+    fn reads_optional_period_end_from_current_matching_id_token() {
+        let now = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().to_utc();
+        let token = id_token(json!({
+            "exp": now.timestamp() + 3600,
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acc",
+                "chatgpt_subscription_active_until": "2030-02-01T00:00:00Z"
+            }
+        }));
+        let v = parse_validity(Some(&token), Some("acc"), now).unwrap();
+        assert_eq!(v.kind, crate::model::ValidityKind::Period);
+        assert_eq!(v.at, "2030-02-01T00:00:00+00:00");
+        assert!(parse_validity(Some(&token), Some("other"), now).is_none());
+        assert!(parse_validity(Some(&token), None, now).is_none());
+        assert!(parse_validity(Some(&token), Some("acc"), now + chrono::Duration::hours(2)).is_none());
+    }
+
+    #[test]
+    fn never_substitutes_token_expiration_for_subscription_period() {
+        let now = chrono::Utc::now();
+        for token in ["bad".to_string(), id_token(json!({"exp": now.timestamp() + 3600})),
+            id_token(json!({"https://api.openai.com/auth": {"chatgpt_subscription_active_until": "bad"}})),
+            id_token(json!({"exp": now.timestamp() + 3600, "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acc", "chatgpt_subscription_active_until": "2020-01-01T00:00:00Z"
+            }}))] {
+            assert!(parse_validity(Some(&token), Some("acc"), now).is_none());
+        }
+        assert!(parse_validity(None, Some("acc"), now).is_none());
+    }
+
+    #[test]
+    fn reset_credits_hydration_accepts_count_without_meters_or_period() {
+        for count in [2, 0] {
+            let body = json!({"rate_limit_reset_credits": {"available_count": count}});
+            let report = hydrate_usage(UsageReport::new("codex", "Codex", Kind::Subscription), &body);
+            assert_eq!(report.status, Status::Ok);
+            assert_eq!(report.available_resets, Some(count));
+            assert!(report.meters.is_empty());
+            assert!(report.validity.is_none());
+            assert!(report.message.is_none());
+        }
+    }
+
+    #[test]
+    fn reset_credits_hydration_clears_metadata_when_usage_is_unknown() {
+        for body in [json!({}), json!({"rate_limit_reset_credits": {"available_count": "2"}})] {
+            let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
+            report.available_resets = Some(2);
+            report.validity = Some(Validity { at: "2030-02-01T00:00:00Z".into(), kind: ValidityKind::Period });
+            let report = hydrate_usage(report, &body);
+            assert_eq!(report.status, Status::Warning);
+            assert_eq!(report.available_resets, None);
+            assert_eq!(report.validity, None);
+            assert!(report.meters.is_empty());
+        }
+    }
+
+    #[test]
+    fn reset_credits_hydration_preserves_quota_and_existing_period_with_bad_count() {
+        let body = json!({
+            "plan_type": "plus",
+            "rate_limit": {"primary_window": {"used_percent": 20, "limit_window_seconds": 18000}},
+            "rate_limit_reset_credits": {"available_count": -1}
+        });
+        let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
+        report.validity = Some(Validity { at: "2030-02-01T00:00:00Z".into(), kind: ValidityKind::Period });
+        let expected_validity = report.validity.clone();
+        let report = hydrate_usage(report, &body);
+        assert_eq!(report.status, Status::Ok);
+        assert_eq!(report.available_resets, None);
+        assert_eq!(report.validity, expected_validity);
+        assert_eq!((report.plan, report.meters), parse_usage(&body));
+    }
+
+    #[test]
+    fn reset_credits_accepts_checked_integer_counts() {
+        for count in [2_u32, 0, u32::MAX] {
+            let v = json!({"rate_limit_reset_credits": {"available_count": count}});
+            assert_eq!(parse_available_resets(&v), Some(count));
+        }
+    }
+
+    #[test]
+    fn reset_credits_rejects_missing_or_invalid_counts_without_changing_usage() {
+        let base = json!({
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": {"used_percent": 20, "limit_window_seconds": 18000},
+                "secondary_window": {"used_percent": 50, "limit_window_seconds": 604800}
+            },
+            "credits": {"has_credits": true, "unlimited": false, "balance": "15.0", "available_count": 99}
+        });
+        let expected = parse_usage(&base);
+        assert_eq!(expected.0.as_deref(), Some("Plus"));
+        assert_eq!(expected.1.len(), 3);
+        assert_eq!(expected.1[2].used, Some(15.0));
+        assert_eq!(parse_available_resets(&base), None);
+        for invalid in [
+            Value::Null, json!({}), json!([]), json!(2), json!("2"), json!(true),
+            json!({"available_count": null}), json!({"available_count": -1}),
+            json!({"available_count": u32::MAX as u64 + 1}),
+            json!({"available_count": u64::MAX}), json!({"available_count": 2.0}),
+            json!({"available_count": 2.5}), json!({"available_count": "2"}),
+            json!({"available_count": true}),
+        ] {
+            let mut v = base.clone();
+            v["rate_limit_reset_credits"] = invalid;
+            assert_eq!(parse_available_resets(&v), None, "{v}");
+            assert_eq!(parse_usage(&v), expected);
+        }
     }
 
     #[test]

@@ -27,6 +27,10 @@ export interface UsageReport {
   kind: Kind;
   status: Status;
   plan: string | null;
+  /** Explicit provider dates only; period end does not confirm cancellation. */
+  validity?: { at: string; kind: 'period' | 'key' } | null;
+  /** Saldo de resets comunicado por Codex, no una proyección de reinicios automáticos. */
+  availableResets?: number | null;
   meters: Meter[];
   spend: Spend | null;
   message: string | null;
@@ -117,6 +121,8 @@ export interface AppConfig {
   refreshMinutes: number;
   opacity: number;
   compact: boolean;
+  /** Mostrar el saldo de resets en los círculos; el popup lo conserva siempre. */
+  showResets: boolean;
   /** Diámetro de los círculos (px) */
   orbSize: number;
   /** Color base de anillos y barras (#rrggbb) */

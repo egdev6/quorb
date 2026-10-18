@@ -1,6 +1,9 @@
 import { panelRect, type Edge, type Rect } from './dock';
 import type { UsageReport } from './types';
 
+/** Preserve the current orb scaling/clamps, then add 50 logical pixels. */
+export const panelWidthFor = (orb: number) => Math.round(Math.min(460, Math.max(220, (330 * orb) / 60))) + 50;
+
 export const DETAIL_WINDOW = 'detail';
 export const DETAIL_EVENTS = {
   state: 'detail-state',

@@ -5,8 +5,9 @@ import { formatCompact, formatPercent, formatResetIn, levelFor } from '../lib/fo
 /**
  * Un límite del panel (EGDEV Foundation): marca del anillo + etiqueta + %,
  * ProgressBar --lg y cuándo se reinicia. `ring` = anillo del círculo (1–3) o null.
+ * `color` conserva la identidad del límite, incluso cuando no cabe en el círculo.
  */
-export function MeterBar({ meter, ring }: { meter: Meter; ring: number | null }) {
+export function MeterBar({ meter, ring, color }: { meter: Meter; ring: number | null; color?: string }) {
   const pct = meter.percent;
   const reset = formatResetIn(meter.resetsAt);
   const amount =
@@ -18,9 +19,20 @@ export function MeterBar({ meter, ring }: { meter: Meter; ring: number | null })
   const meta = [pct != null ? amount : null, reset ? `Se reinicia ${reset}` : null].filter(Boolean).join(' · ');
 
   return (
-    <div className="q-meter" data-ring={ring ?? undefined} data-level={levelFor(pct)}>
+    <div
+      className="q-meter"
+      data-ring={ring ?? undefined}
+      data-level={levelFor(pct)}
+      data-colored={color ? true : undefined}
+      style={color ? { '--meter-color': color } as CSSProperties : undefined}
+    >
       <div className="q-meter__row">
-        {ring != null && <span className={`eg-gauge__key${ring > 1 ? ` eg-gauge__key--${ring}` : ''}`} aria-hidden="true" />}
+        {(ring != null || color) && (
+          <span
+            className={`eg-gauge__key${ring != null && ring > 1 ? ` eg-gauge__key--${ring}` : ''}`}
+            aria-hidden="true"
+          />
+        )}
         <span className="q-meter__label">{meter.label}</span>
         <b className="q-meter__value">{pct != null ? formatPercent(pct) : amount}</b>
       </div>
