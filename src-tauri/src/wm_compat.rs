@@ -81,10 +81,18 @@ impl Env {
     /// Lee las env vars del proceso y las normaliza (vacía → None).
     pub fn from_process() -> Self {
         Self {
-            wayland_display: std::env::var("WAYLAND_DISPLAY").ok().filter(|s| !s.is_empty()),
-            xdg_session_type: std::env::var("XDG_SESSION_TYPE").ok().filter(|s| !s.is_empty()),
-            desktop_session: std::env::var("DESKTOP_SESSION").ok().filter(|s| !s.is_empty()),
-            xdg_current_desktop: std::env::var("XDG_CURRENT_DESKTOP").ok().filter(|s| !s.is_empty()),
+            wayland_display: std::env::var("WAYLAND_DISPLAY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            xdg_session_type: std::env::var("XDG_SESSION_TYPE")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            desktop_session: std::env::var("DESKTOP_SESSION")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            xdg_current_desktop: std::env::var("XDG_CURRENT_DESKTOP")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 }
@@ -110,7 +118,11 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
     // XDG_CURRENT_DESKTOP no debe marcar Wayland. Sway/Hyprland/wlroots y
     // el resto de tokens solo-Wayland no tienen X11, así que sí lo señalan.
     let is_wayland = env_n.wayland_display.is_some()
-        || env_n.xdg_session_type.as_deref().map(|s| s.eq_ignore_ascii_case("wayland")).unwrap_or(false)
+        || env_n
+            .xdg_session_type
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(false)
         || env_n
             .xdg_current_desktop
             .as_deref()
@@ -130,16 +142,40 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
 
     // `env_n` ya clonó los `Option<String>` desde el `&Env` input (y filtró
     // vacíos); se mueven al struct sin clones adicionales.
-    let is_gnome = env_n.desktop_session.as_deref().map(|s| s.eq_ignore_ascii_case("gnome")).unwrap_or(false)
-        || env_n.xdg_current_desktop.as_deref().map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("GNOME"))).unwrap_or(false);
-    let is_kde = env_n.desktop_session.as_deref().map(|s| {
-        matches!(
-            s.to_ascii_lowercase().as_str(),
-            "kde" | "kde-5" | "kde-6" | "kde-plasma" | "plasma" | "plasma5" | "plasma6" | "kde_x11" | "kde5-19" | "default.desktop"
-        )
-    })
-    .unwrap_or(false)
-        || env_n.xdg_current_desktop.as_deref().map(|s| s.split(':').any(is_kde_token)).unwrap_or(false);
+    let is_gnome = env_n
+        .desktop_session
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("gnome"))
+        .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("GNOME")))
+            .unwrap_or(false);
+    let is_kde = env_n
+        .desktop_session
+        .as_deref()
+        .map(|s| {
+            matches!(
+                s.to_ascii_lowercase().as_str(),
+                "kde"
+                    | "kde-5"
+                    | "kde-6"
+                    | "kde-plasma"
+                    | "plasma"
+                    | "plasma5"
+                    | "plasma6"
+                    | "kde_x11"
+                    | "kde5-19"
+                    | "default.desktop"
+            )
+        })
+        .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(is_kde_token))
+            .unwrap_or(false);
 
     let recommendation = recommendation(
         is_wayland,
@@ -171,7 +207,12 @@ fn is_kde_token(token: &str) -> bool {
 
 /// Límites por superficie derivados de la sesión detectada. Pura y
 /// determinista: los tests fijan lo que Ajustes va a mostrar.
-fn surfaces_for(is_wayland: bool, is_hyprland: bool, is_gnome: bool, is_kde: bool) -> DesktopSurfaces {
+fn surfaces_for(
+    is_wayland: bool,
+    is_hyprland: bool,
+    is_gnome: bool,
+    is_kde: bool,
+) -> DesktopSurfaces {
     if !is_wayland {
         // X11 (la común en la matriz): siempre-encima, click-through, bandeja,
         // atajos y transparencia dependen del compositor de Windows, pero los
@@ -243,7 +284,15 @@ pub fn detect_wm_info() -> WindowManagerInfo {
 fn is_wayland_only_session(token: &str) -> bool {
     matches!(
         token.trim().to_ascii_lowercase().as_str(),
-        "wayland" | "hyprland" | "sway" | "wlroots" | "niri" | "river" | "wayfire" | "labwc" | "cosmic"
+        "wayland"
+            | "hyprland"
+            | "sway"
+            | "wlroots"
+            | "niri"
+            | "river"
+            | "wayfire"
+            | "labwc"
+            | "cosmic"
     )
 }
 
@@ -292,7 +341,12 @@ pub fn get_wm_info() -> WindowManagerInfo {
 mod tests {
     use super::*;
 
-    fn env(wayland_display: Option<&str>, xdg_session_type: Option<&str>, desktop_session: Option<&str>, xdg_current_desktop: Option<&str>) -> Env {
+    fn env(
+        wayland_display: Option<&str>,
+        xdg_session_type: Option<&str>,
+        desktop_session: Option<&str>,
+        xdg_current_desktop: Option<&str>,
+    ) -> Env {
         Env {
             wayland_display: wayland_display.map(str::to_string),
             xdg_session_type: xdg_session_type.map(str::to_string),
@@ -369,13 +423,19 @@ mod tests {
     fn gnome_xorg_is_not_wayland() {
         let info = detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome"), Some("GNOME")));
         assert!(!info.is_wayland, "GNOME sobre Xorg no es Wayland");
-        assert!(info.recommendation.contains("completa"), "recomendación X11");
+        assert!(
+            info.recommendation.contains("completa"),
+            "recomendación X11"
+        );
         // Sesión X11: superficies completas esperadas (salvo click_through:
         // el widget no implementa click-through hoy — solo el overlay de efectos).
         let surfaces: Vec<(&'static str, SurfaceStatus)> = info.surfaces.into_iter();
         for (name, status) in surfaces.iter() {
             if *name == "click_through" {
-                assert_eq!(status.state, "limited", "click_through debe ser limited hasta implementar el widget");
+                assert_eq!(
+                    status.state, "limited",
+                    "click_through debe ser limited hasta implementar el widget"
+                );
                 continue;
             }
             assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
@@ -384,9 +444,13 @@ mod tests {
 
     #[test]
     fn plasma_x11_is_not_wayland() {
-        let info = detect_wm_info_from_env(&env(None, Some("x11"), Some("plasma"), Some("KDE:plasma")));
+        let info =
+            detect_wm_info_from_env(&env(None, Some("x11"), Some("plasma"), Some("KDE:plasma")));
         assert!(!info.is_wayland, "Plasma sobre X11 no es Wayland");
-        assert_eq!(info.surfaces.global_shortcuts.state, "ok", "atajos completos en X11");
+        assert_eq!(
+            info.surfaces.global_shortcuts.state, "ok",
+            "atajos completos en X11"
+        );
     }
 
     #[test]
@@ -399,26 +463,44 @@ mod tests {
     #[test]
     fn x11_surfaces_are_all_expected_complete() {
         let surfaces: Vec<(&'static str, SurfaceStatus)> =
-            detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome-xorg-errors"), None)).surfaces.into_iter();
+            detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome-xorg-errors"), None))
+                .surfaces
+                .into_iter();
         for (name, status) in surfaces.iter() {
             // Click-through del widget es `limited` en todas las sesiones hoy:
             // solo el overlay de efectos llama set_ignore_cursor_events, no la tira.
             if *name == "click_through" {
-                assert_eq!(status.state, "limited", "click_through debe ser limited hasta implementar el widget");
+                assert_eq!(
+                    status.state, "limited",
+                    "click_through debe ser limited hasta implementar el widget"
+                );
                 continue;
             }
             assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
         }
         // Nota honesta sobre composición (la tira es transparente).
-        let transparency = surfaces.iter().find(|(n, _)| *n == "transparency").map(|(_, s)| s).unwrap();
+        let transparency = surfaces
+            .iter()
+            .find(|(n, _)| *n == "transparency")
+            .map(|(_, s)| s)
+            .unwrap();
         assert!(transparency.note.contains("composición"));
     }
 
     #[test]
     fn gnome_wayland_limits_tray_click_through_and_shortcuts() {
-        let s = detect_wm_info_from_env(&env(Some("wayland-0"), Some("wayland"), Some("gnome"), None)).surfaces;
+        let s = detect_wm_info_from_env(&env(
+            Some("wayland-0"),
+            Some("wayland"),
+            Some("gnome"),
+            None,
+        ))
+        .surfaces;
         assert_eq!(s.tray_icon.state, "limited");
-        assert!(s.tray_icon.note.contains("AppIndicator"), "debe decir cómo recuperar el icono");
+        assert!(
+            s.tray_icon.note.contains("AppIndicator"),
+            "debe decir cómo recuperar el icono"
+        );
         assert_eq!(s.click_through.state, "limited");
         assert_eq!(s.global_shortcuts.state, "limited");
         assert_eq!(s.always_on_top.state, "limited");
@@ -436,7 +518,8 @@ mod tests {
 
     #[test]
     fn hyprland_limits_always_on_top_and_tray() {
-        let s = detect_wm_info_from_env(&env(None, Some("wayland"), Some("hyprland"), None)).surfaces;
+        let s =
+            detect_wm_info_from_env(&env(None, Some("wayland"), Some("hyprland"), None)).surfaces;
         assert_eq!(s.always_on_top.state, "limited");
         assert_eq!(s.tray_icon.state, "limited");
         assert!(s.tray_icon.note.contains("vuelve a abrir Quorb"));
