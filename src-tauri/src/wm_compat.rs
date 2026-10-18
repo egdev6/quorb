@@ -117,18 +117,6 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
     // GNOME/KDE cotidianamente corren sobre Xorg: su token en
     // XDG_CURRENT_DESKTOP no debe marcar Wayland. Sway/Hyprland/wlroots y
     // el resto de tokens solo-Wayland no tienen X11, así que sí lo señalan.
-    let is_wayland = env_n.wayland_display.is_some()
-        || env_n
-            .xdg_session_type
-            .as_deref()
-            .map(|s| s.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(false)
-        || env_n
-            .xdg_current_desktop
-            .as_deref()
-            .map(|s| s.split(':').any(is_wayland_only_session))
-            .unwrap_or(false);
-
     let is_hyprland = env_n
         .desktop_session
         .as_deref()
@@ -139,6 +127,23 @@ pub fn detect_wm_info_from_env(env: &Env) -> WindowManagerInfo {
             .as_deref()
             .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("Hyprland")))
             .unwrap_or(false);
+
+    // Hyprland es un compositor Wayland-only: si `DESKTOP_SESSION=hyprland` o
+    // `XDG_CURRENT_DESKTOP=Hyprland` sin más señales, el usuario está en
+    // Wayland (no en X11) — `surfaces_for` debe tomar la rama Hyprland, no
+    // la X11. `is_hyprland` se usa como señal adicional de Wayland.
+    let is_wayland = env_n.wayland_display.is_some()
+        || env_n
+            .xdg_session_type
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(is_wayland_only_session))
+            .unwrap_or(false)
+        || is_hyprland;
 
     // `env_n` ya clonó los `Option<String>` desde el `&Env` input (y filtró
     // vacíos); se mueven al struct sin clones adicionales.
@@ -390,8 +395,19 @@ mod tests {
 
     #[test]
     fn desktop_session_hyprland_signals_hyprland() {
+        // Solo DESKTOP_SESSION=hyprland sin XDG_SESSION_TYPE ni XDG_CURRENT_DESKTOP.
+        // Hyprland es un compositor Wayland-only, por lo que el usuario está
+        // en Wayland y `surfaces_for` debe tomar la rama Hyprland (no la X11).
         let info = detect_wm_info_from_env(&env(None, None, Some("hyprland"), None));
-        assert!(info.is_hyprland);
+        assert!(info.is_hyprland, "is_hyprland debe ser true");
+        assert!(info.is_wayland, "is_wayland debe ser true: Hyprland es solo-Wayland");
+        // Las superficies deben ser las de Hyprland: bandeja y always-on-top con `limited`.
+        assert_eq!(info.surfaces.always_on_top.state, "limited", "always_on_top limited en Hyprland");
+        assert_eq!(info.surfaces.tray_icon.state, "limited", "tray_icon limited en Hyprland");
+        assert!(info.surfaces.tray_icon.note.contains("vuelve a abrir Quorb"), "nota de tray en Hyprland");
+        assert_eq!(info.surfaces.click_through.state, "limited", "click_through limited en Hyprland");
+        assert_eq!(info.surfaces.global_shortcuts.state, "limited");
+        assert_eq!(info.surfaces.autostart.state, "ok");
     }
 
     #[test]
