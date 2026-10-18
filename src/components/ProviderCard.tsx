@@ -5,6 +5,7 @@ import { MeterBar } from './MeterBar';
 import { meterColor } from '../lib/meter-colors';
 import { api } from '../lib/api';
 import { ProviderLogo } from './ProviderLogo';
+import { ValidityBadge } from './ValidityBadge';
 
 const STATUS: Record<UsageReport['status'], { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }> = {
   ok: { label: 'Al día', tone: 'success' },
@@ -104,6 +105,8 @@ export function ProviderCard({ report }: { report: UsageReport }) {
           )}
         </div>
       )}
+
+      <ValidityBadge report={report} />
 
       {report.message && (
         <div className={`eg-notice eg-notice--sm eg-notice--${report.status === 'ok' ? 'info' : status.tone === 'neutral' ? 'info' : status.tone}`} role="status">
