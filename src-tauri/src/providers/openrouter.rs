@@ -5,7 +5,7 @@
 
 use super::{month_window, net_error, Who};
 use crate::config::OpenRouterConfig;
-use crate::model::{Kind, Meter, Spend, Status, UsageReport};
+use crate::model::{Kind, Meter, Spend, Status, UsageReport, Validity, ValidityKind};
 use crate::secrets;
 use serde_json::Value;
 
@@ -41,6 +41,7 @@ pub async fn fetch(_cfg: &OpenRouterConfig, who: Who<'_>, http: &reqwest::Client
     report.meters = parsed.meters;
     report.spend = parsed.spend;
     report.plan = parsed.plan;
+    report.validity = parsed.validity;
     report.message = parsed.message;
     report
 }
@@ -50,6 +51,7 @@ pub(crate) struct Parsed {
     pub spend: Option<Spend>,
     pub plan: Option<String>,
     pub message: Option<String>,
+    pub validity: Option<Validity>,
 }
 
 fn num(v: Option<&Value>) -> Option<f64> {
@@ -135,7 +137,10 @@ pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
         Some(false) => Some("Créditos".into()),
         None => None,
     };
-    Parsed { meters, spend, plan, message }
+    let validity = d.get("expires_at").and_then(Value::as_str)
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .map(|at| Validity { at: at.to_rfc3339(), kind: ValidityKind::Key });
+    Parsed { meters, spend, plan, message, validity }
 }
 
 fn next_utc_midnight() -> String {
@@ -169,6 +174,18 @@ mod tests {
         assert_eq!(p.spend.as_ref().map(|s| s.amount), Some(30.0));
         assert_eq!(p.message.as_deref(), Some("Hoy 1.25 $ · saldo 147.70 $"));
         assert_eq!(p.plan.as_deref(), Some("Créditos"));
+    }
+
+    #[test]
+    fn reads_only_explicit_valid_key_expiration() {
+        let p = parse(&json!({"data": {"expires_at": "2030-02-01T00:00:00Z"}}), None);
+        let validity = p.validity.unwrap();
+        assert_eq!(validity.kind, crate::model::ValidityKind::Key);
+        assert_eq!(validity.at, "2030-02-01T00:00:00+00:00");
+        for value in [json!(null), json!("not a date"), json!(123), json!("2030-02-30T00:00:00Z")] {
+            assert!(parse(&json!({"data": {"expires_at": value}}), None).validity.is_none());
+        }
+        assert!(parse(&json!({"data": {"limit_reset": "monthly"}}), None).validity.is_none());
     }
 
     #[test]

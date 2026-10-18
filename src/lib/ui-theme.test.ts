@@ -31,6 +31,41 @@ describe('consumption palette (#96)', () => {
   });
 });
 
+describe('settings disclosures', () => {
+  it('replaces native markers with a right-aligned chevron that rotates when open', () => {
+    const summary = rule('.q-details summary');
+    expect(summary).toContain('display: flex;');
+    expect(summary).toContain('align-items: center;');
+    expect(summary).toContain('justify-content: space-between;');
+    expect(summary).toContain('gap: 12px;');
+    expect(summary).toContain('list-style: none;');
+    expect(rule('.q-details summary::-webkit-details-marker')).toContain('display: none;');
+    const chevron = rule('.q-details summary::after');
+    expect(chevron).toContain("content: '';");
+    expect(chevron).toContain('width: 8px;');
+    expect(chevron).toContain('height: 8px;');
+    expect(chevron).toContain('flex: none;');
+    expect(chevron).toContain('border-right: 2px solid currentColor;');
+    expect(chevron).toContain('border-bottom: 2px solid currentColor;');
+    expect(chevron).toContain('transform: rotate(45deg);');
+    expect(chevron).toContain('transition: transform 200ms ease;');
+    expect(rule('.q-details[open] > summary::after')).toContain('transform: rotate(225deg);');
+  });
+
+  it('provides hover feedback and a visible keyboard focus outline', () => {
+    expect(rule('.q-details summary:hover')).toContain('color: var(--color-fg-default);');
+    const focus = rule('.q-details summary:focus-visible');
+    expect(focus).toContain('outline: 2px solid var(--color-fg-brand-hover);');
+    expect(focus).toContain('outline-offset: 4px;');
+  });
+
+  it('disables chevron animation under reduced motion', () => {
+    expect(theme).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.q-details summary::after\s*\{\s*transition:\s*none;\s*\}\s*\}/,
+    );
+  });
+});
+
 // Structural guards complement computed-style checks in the browser fixture.
 describe('detail panel surface (#95)', () => {
   it('overrides clipped native-popup elevation while retaining its inset edge', () => {
