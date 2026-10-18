@@ -18,6 +18,7 @@ import { hiddenNineRouterIds, nineRouterSubName, revealIds } from './lib/visibil
 import { openAccountLogin } from './lib/account-login';
 import { createPresencePoller, effectivePersisted, isConnectionDirty } from './lib/account-health';
 import { createCodexInstallController, type CodexInstallController } from './lib/codex-install';
+import { keyringErrorHint } from './lib/keyring-message';
 import { comboFromEvent, prettyCombo } from './lib/shortcuts';
 import { ProviderLogo } from './components/ProviderLogo';
 import { CodexInstall } from './components/CodexInstall';
@@ -197,7 +198,9 @@ function SecretInput({ id, label, configured, onSaved, hint }: { id: ScopedSecre
       setMsg(v ? 'Guardada en el Administrador de credenciales' : 'Eliminada');
       onSaved();
     } catch (e) {
-      setMsg(String(e));
+      // Si el backend falla por falta de llavero (Secret Service / libsecret en
+      // Linux), muestra un mensaje accionable en vez del error técnico crudo.
+      setMsg(keyringErrorHint(e) ?? String(e));
     } finally {
       setBusy(false);
     }
@@ -586,6 +589,10 @@ type HealthProps = {
   saving: boolean;
   /** Guarda y confirma (`true`) si la config quedó persistida. */
   onSave: () => Promise<boolean>;
+  /** Si la cuenta tiene login por CLI, abre el login cuando el report viene con `needsLogin`. */
+  onLogin?: () => void;
+  /** `true` mientras `onLogin` está en curso: deshabilita el CTA (single-flight). */
+  loginBusy?: boolean;
 };
 
 type Health = { phase: 'checking' } | { phase: 'done'; report: UsageReport | null } | { phase: 'failed'; error: string };
@@ -605,7 +612,7 @@ function healthSummary(r: UsageReport): string {
  * Último paso de cada proveedor y cuenta: consulta la cuenta con lo guardado y dice si
  * funciona y, si no, por qué (sesión caducada, clave rechazada, falta un dato…).
  */
-function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, refreshKey }: HealthProps & { id: string; refreshKey?: unknown }) {
+function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLogin, loginBusy, refreshKey }: HealthProps & { id: string; refreshKey?: unknown }) {
   const [h, setH] = useState<Health>({ phase: 'checking' });
   const [busy, setBusy] = useState(false);
   const seq = useRef(0);
@@ -692,6 +699,16 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, refr
         ) : (
           <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" disabled={state === 'checking'} onClick={run}>
             Comprobar ahora
+          </button>
+        )}
+        {state === 'warn' && r?.status === 'needsLogin' && onLogin && (
+          <button
+            type="button"
+            className="eg-btn eg-btn--primary eg-btn--sm"
+            disabled={busy || saving || loginBusy}
+            onClick={onLogin}
+          >
+            Iniciar sesión
           </button>
         )}
       </span>
@@ -800,7 +817,7 @@ function CliConnect({
         )}
       </li>
       {persisted ? (
-        <HealthStep id={id} {...health} refreshKey={connected} />
+        <HealthStep id={id} {...health} onLogin={connect} loginBusy={busy} refreshKey={connected} />
       ) : (
         <li>
           <b>Comprobación</b>

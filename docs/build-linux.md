@@ -167,7 +167,7 @@ Decisiones aceptadas en este baseline (revisables solo con evidencia nueva):
 | Sesión gráfica | GNOME Wayland y KDE Plasma Wayland soportados; Hyprland con degradaciones documentadas; X11 best-effort |
 | Política X11/Wayland | **Wayland-first**: la app arranca y funciona bajo Wayland; en X11 funciona pero sin garantías de always-on-top/click-through estrictos. Degradaciones documentadas en el bloque "Compatibilidad" de Ajustes (F3/#107 lo implementa) |
 | Bandeja | `libayatana-appindicator3` (recomendado); `libappindicator3` legacy como fallback si la distro no provee ayatana |
-| Secretos | Backend factual: `keyring` 3.6.3 + feature `linux-native` → **keyutils** (`linux-keyutils`, keyring del kernel), **no** Secret Service/D-Bus. La migración a Secret Service queda para #106, sin cambiar dependencias en esta PR. Fallo explícito del command en entornos sin keyutils: F2/#106 confirma el detalle |
+| Secretos | Backend: `keyring` 3.6.3 con feature `linux-native` → **keyutils** (`linux-keyutils`, keyring del kernel) por defecto, **con soporte Secret Service/D-Bus vía libsecret** (GNOME Keyring/KWallet) implementado en #106/#122. Round-trip con Secret Service validado por el mantenedor en escritorio Linux real. Si no hay keyutils del kernel ni sesión D-Bus con llavero, el command falla explícitamente — **sin fallback a texto plano**. Mensaje accionable en Ajustes vía la heurística de `src/lib/keyring-message.ts` |
 | Paquete local | `.deb` (Debian/Ubuntu) y `.AppImage` (Arch y resto). AUR fuera del MVP. Firma digital fuera (F5) |
 | Compilación ≠ experiencia | El binario puede compilar y no ser usable en un compositor/distro dado; esto no se considera "soportado" sin la matriz §6 y el smoke real |
 

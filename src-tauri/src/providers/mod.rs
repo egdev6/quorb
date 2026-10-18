@@ -359,6 +359,31 @@ mod tests {
     }
 
     #[test]
+    fn session_file_preserves_paths_with_spaces_and_non_ascii() {
+        let home = temp_dir("spaces");
+        let mut cfg = AppConfig::default();
+        cfg.claude.credentials_path = Some("/tmp/mi configuración/.claude/.credentials.json".into());
+        assert_eq!(
+            session_file(&cfg, "claude", &home),
+            Some(PathBuf::from("/tmp/mi configuración/.claude/.credentials.json"))
+        );
+        cfg.gemini.credentials_path = Some("/home/usuario/Configuración ñ/oauth_creds.json".into());
+        assert_eq!(
+            session_file(&cfg, "gemini", &home),
+            Some(PathBuf::from("/home/usuario/Configuración ñ/oauth_creds.json"))
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn resolve_path_error_lists_candidate_paths() {
+        let candidates = [PathBuf::from("/home/u/.claude/.credentials.json"), PathBuf::from("/var/lib/creds x.json")];
+        let err = resolve_path(Some("/no existe/ruta con espacios.json"), &candidates).unwrap_err();
+        // La ruta con espacios y la lista de candidatos aparecen en el mensaje.
+        assert!(err.contains("/no existe/ruta con espacios.json"));
+    }
+
+    #[test]
     fn month_start_is_first_day_midnight() {
         let now = Utc.with_ymd_and_hms(2026, 10, 6, 15, 30, 0).unwrap();
         assert_eq!(month_start(now).to_rfc3339(), "2026-10-01T00:00:00+00:00");
