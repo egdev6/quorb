@@ -9,6 +9,7 @@ mod model;
 mod providers;
 mod secrets;
 mod wm_compat;
+mod uninstall;
 
 use config::AppConfig;
 use model::UsageReport;
@@ -96,6 +97,11 @@ struct AppState {
     config_path: PathBuf,
     http: reqwest::Client,
     history: history::History,
+    /// Single-flight para aperturas de login CLI en curso. Protege contra
+    /// doble clic en «Iniciar sesión» (HealthStep/CliConnect) y contra reenvíos
+    /// duplicados: mientras un `provider` esté en este set, una segunda llamada
+    /// a `open_login` con el mismo id devuelve `Err` sin abrir una segunda terminal.
+    login_in_flight: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Resultado de un patch atómico. `native_error` describe un efecto nativo que
@@ -462,8 +468,20 @@ fn account_session(state: State<'_, AppState>, id: String) -> bool {
 
 #[tauri::command]
 fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+    // Single-flight: si hay una apertura en curso para este id, no abrir
+    // una segunda terminal (doble clic / reenvío del frontend).
+    // `unwrap_or_else(into_inner)`: si otro hanco pánicara con el lock tomado,
+    // el mutex queda envenenado y con `unwrap` todos los `open_login` futuros
+    // paniquearían en cascada. Con `into_inner` seguimos operando el set.
+    let mut inflight = state.login_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+    if !inflight.insert(provider.clone()) {
+        return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
+    }
+    drop(inflight); // no mantener el lock mientras spawn_terminal corre
     let cfg = state.config.lock().unwrap().clone();
-    login::open(&provider, &cfg)
+    let r = login::open(&provider, &cfg);
+    state.login_in_flight.lock().unwrap_or_else(|p| p.into_inner()).remove(&provider);
+    r
 }
 
 /// Estado de solo lectura de la instalación asistida de Codex (sin procesos).
@@ -647,6 +665,9 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(code) = uninstall::dispatch(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     let builder = tauri::Builder::default()
         // Debe ir el primero: si ya está abierta, muestra el widget existente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -758,6 +779,7 @@ pub fn run() {
                 config_path,
                 http,
                 history,
+                login_in_flight: Mutex::new(std::collections::HashSet::new()),
             });
             build_tray(app)?;
             Ok(())
