@@ -1,0 +1,243 @@
+name: W0 Wayland evidence — compositor headless en CI
+
+# Evidence-only lab for Quorb issue #107 (wayland-matrix). Levanta un
+# compositor Wayland real (`weston --headless`) en el runner
+# `ubuntu-latest` de GitHub Actions, exporta las variables de entorno
+# que Quorb leería (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`,
+# `XDG_CURRENT_DESKTOP`, `DESKTOP_SESSION`) y captura el estado del
+# compositor. La matriz completa Mutter/KDE/Hyprland requiere self-hosted;
+# este workflow valida la rama "Wayland genérico" (weston) en CI.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  w0-wayland:
+    name: Wayland (weston) headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install compositor Wayland headless
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends weston libwayland-client0
+
+      - name: Levantar weston con backend software (pixman) y exportar WAYLAND_DISPLAY
+        run: |
+          mkdir -p raw
+          # weston con backend headless-backend (sin DRM/GPU) + `--use-pixman`
+          # (renderer software). Esto crea un compositor Wayland real que no
+          # requiere /dev/dri. --backend=headless-backend.so crea una salida
+          # virtual; --use-pixman elimina el requisito de EGL/GLES2.
+          # NO pasar `--headless`: el backend headless-backend ya es headless,
+          # y weston 13 rechaza la flag como "unhandled option" cuando se
+          # combina con --backend.
+          weston --use-pixman --backend=headless-backend.so --socket=wayland-0 > weston.log 2>&1 &
+          WESTON_PID=$!
+          sleep 4
+          # Capturar el log del compositor (verifica arranque limpio o error).
+          cat weston.log | tee raw/weston.log
+          # Verificación: el socket existe ahora (backend headless no requiere DRM).
+          ls -la /run/user/$(id -u)/wayland-0 2>/dev/null || \
+            ls -la "${XDG_RUNTIME_DIR}/wayland-0" 2>/dev/null || \
+            echo "socket not visible (investigar)"
+          echo "WAYLAND_DISPLAY=wayland-0" >> $GITHUB_ENV
+          echo "XDG_SESSION_TYPE=wayland" >> $GITHUB_ENV
+          echo "XDG_CURRENT_DESKTOP=weston" >> $GITHUB_ENV
+          echo "DESKTOP_SESSION=weston" >> $GITHUB_ENV
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> $GITHUB_ENV
+          echo "GDK_BACKEND=wayland" >> $GITHUB_ENV
+
+      - name: Capturar estado del compositor y las env vars que Quorb ve
+        run: |
+          mkdir -p raw
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" | tee raw/env.txt
+          echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE" | tee -a raw/env.txt
+          echo "XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP" | tee -a raw/env.txt
+          echo "DESKTOP_SESSION=$DESKTOP_SESSION" | tee -a raw/env.txt
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" | tee -a raw/env.txt
+          echo "GDK_BACKEND=$GDK_BACKEND" | tee -a raw/env.txt
+          # Capturar info del compositor (versión + salidas virtuales).
+          which wayland-info >/dev/null 2>&1 && (wayland-info 2>&1 | tee raw/wayland-info.txt) || \
+            (echo "wayland-info not installed" | tee raw/wayland-info.txt)
+          # Estado final del compositor (alive?) y socket.
+          kill -0 "$WESTON_PID" 2>/dev/null && echo "weston alive (pid $WESTON_PID)" | tee raw/status.txt || \
+            echo "weston exited" | tee raw/status.txt
+          ls -la /run/user/$(id -u)/wayland-0 2>/dev/null >> raw/status.txt || echo "socket missing" >> raw/status.txt
+          # La deteccion Wayland de wm_compat.rs es via WAYLAND_DISPLAY (set) +
+          # XDG_SESSION_TYPE=wayland (set), no via `is_wayland_only_session`
+          # (que lista tokens como "weston"/"hyprland"/"sway"/"wlroots"/etc.).
+          # Los tests de unidad (en w0-evidence.yml) cubren ambos vectores en CI.
+          # Sin compilaci n de la app en CI (requiere toolchain Tauri), el test
+          # de unidad de `wm_compat` cubre la clasificacion. Anotamos el env
+          # capturado como artefacto para an alisis manual.
+
+      - name: Upload raw evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0-wayland-evidence
+          path: raw
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+
+  # ---- Matriz Wayland extendida: Mutter (GNOME), KWin (KDE), Hyprland ----
+
+  mutter-gnome:
+    name: Mutter (GNOME Wayland) headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Mutter + GNOME session headless
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mutter gnome-session-bin dbus-x11
+
+      - name: Lanzar Mutter headless y exportar WAYLAND_DISPLAY
+        run: |
+          mkdir -p raw-gnome
+          export XDG_RUNTIME_DIR=/tmp/runtime-gnome
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          # dbus-run-session en background mantiene el session bus vivo mientras
+          # mutter corre; el `&` dentro del bash -c anterior mataba el bus al
+          # terminar el bash (assertion failed: session_bus en set_gnome_env).
+          dbus-run-session -- bash -c "exec mutter --headless --wayland > raw-gnome/mutter.log 2>&1" &
+          sleep 6
+          cat raw-gnome/mutter.log | tee raw-gnome/mutter.log
+          ls -la "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null || echo "socket not found"
+          WAYLAND_DISPLAY=$(ls "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null | head -1 | sed 's|.*/||')
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" >> $GITHUB_ENV
+          echo "XDG_SESSION_TYPE=wayland" >> $GITHUB_ENV
+          echo "XDG_CURRENT_DESKTOP=GNOME" >> $GITHUB_ENV
+          echo "DESKTOP_SESSION=gnome" >> $GITHUB_ENV
+
+      - name: Capturar env de Mutter y verificar socket
+        run: |
+          mkdir -p raw-gnome
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" | tee raw-gnome/env.txt
+          echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE" | tee -a raw-gnome/env.txt
+          echo "XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP" | tee -a raw-gnome/env.txt
+          echo "DESKTOP_SESSION=$DESKTOP_SESSION" | tee -a raw-gnome/env.txt
+          ls -la "${XDG_RUNTIME_DIR:-/tmp/runtime-gnome}"/wayland-* 2>/dev/null >> raw-gnome/env.txt || echo "socket missing" >> raw-gnome/env.txt
+
+      - name: Upload raw evidence (Mutter/GNOME)
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0-mutter-gnome-evidence
+          path: raw-gnome/
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+
+  kwin-kde:
+    name: KWin (KDE Wayland) headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install KWin + Plasma minimal
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends kwin-wayland kwin-x11 dbus-x11
+
+      - name: Lanzar KWin headless y exportar WAYLAND_DISPLAY
+        run: |
+          mkdir -p raw-kde
+          export XDG_RUNTIME_DIR=/tmp/runtime-kde
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          # KWin 5.27 no soporta --headless (error: Unknown option 'headless').
+          # --virtual crea una salida Wayland virtual; --no-lockscreen evita
+          # el bloqueo de pantalla en un arranque headless.
+          dbus-run-session -- bash -c "kwin_wayland --virtual --no-lockscreen > raw-kde/kwin.log 2>&1" &
+          sleep 6
+          cat raw-kde/kwin.log | tee raw-kde/kwin.log
+          ls -la "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null || echo "socket not found"
+          WAYLAND_DISPLAY=$(ls "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null | head -1 | sed 's|.*/||')
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" >> $GITHUB_ENV
+          echo "XDG_SESSION_TYPE=wayland" >> $GITHUB_ENV
+          echo "XDG_CURRENT_DESKTOP=KDE" >> $GITHUB_ENV
+          echo "DESKTOP_SESSION=plasma" >> $GITHUB_ENV
+
+      - name: Capturar env de KWin y verificar socket
+        run: |
+          mkdir -p raw-kde
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" | tee raw-kde/env.txt
+          echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE" | tee -a raw-kde/env.txt
+          echo "XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP" | tee -a raw-kde/env.txt
+          echo "DESKTOP_SESSION=$DESKTOP_SESSION" | tee -a raw-kde/env.txt
+          ls -la "${XDG_RUNTIME_DIR:-/tmp/runtime-kde}"/wayland-* 2>/dev/null >> raw-kde/env.txt || echo "socket missing" >> raw-kde/env.txt
+
+      - name: Upload raw evidence (KWin/KDE)
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0-kwin-kde-evidence
+          path: raw-kde/
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+
+  hyprland:
+    name: Hyprland headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Hyprland
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hyprland dbus-x11
+
+      - name: Lanzar Hyprland headless y exportar WAYLAND_DISPLAY
+        run: |
+          mkdir -p raw-hyprland
+          export XDG_RUNTIME_DIR=/tmp/runtime-hyprland
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          dbus-run-session -- bash -c "Hyprland --headless --no-config > raw-hyprland/hyprland.log 2>&1 &"
+          sleep 6
+          cat raw-hyprland/hyprland.log | tee raw-hyprland/hyprland.log
+          ls -la "$XDG_RUNTIME_DIR"/hyprland-* 2>/dev/null || ls -la "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null || echo "socket not found"
+          WAYLAND_DISPLAY=$(ls "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null | head -1 | sed 's|.*/||')
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" >> $GITHUB_ENV
+          echo "XDG_SESSION_TYPE=wayland" >> $GITHUB_ENV
+          echo "XDG_CURRENT_DESKTOP=Hyprland" >> $GITHUB_ENV
+          echo "DESKTOP_SESSION=Hyprland" >> $GITHUB_ENV
+
+      - name: Capturar env de Hyprland y verificar socket
+        run: |
+          mkdir -p raw-hyprland
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" | tee raw-hyprland/env.txt
+          echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE" | tee -a raw-hyprland/env.txt
+          echo "XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP" | tee -a raw-hyprland/env.txt
+          echo "DESKTOP_SESSION=$DESKTOP_SESSION" | tee -a raw-hyprland/env.txt
+          ls -la "${XDG_RUNTIME_DIR:-/tmp/runtime-hyprland}"/hyprland-* 2>/dev/null >> raw-hyprland/env.txt || \
+            ls -la "${XDG_RUNTIME_DIR:-/tmp/runtime-hyprland}"/wayland-* 2>/dev/null >> raw-hyprland/env.txt || echo "socket missing" >> raw-hyprland/env.txt
+
+      - name: Upload raw evidence (Hyprland)
+        uses: actions/upload-artifact@v4
+        with:
+          name: w0-hyprland-evidence
+          path: raw-hyprland/
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
