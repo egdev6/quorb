@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { availableMonitors, currentMonitor, getCurrentWindow, primaryMonitor, type Monitor } from '@tauri-apps/api/window';
+import { availableMonitors, currentMonitor, cursorPosition, getAllWindows, getCurrentWindow, primaryMonitor, type Monitor } from '@tauri-apps/api/window';
 import { PhysicalPosition } from '@tauri-apps/api/dpi';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
@@ -17,6 +17,7 @@ import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
 import { createWidgetRecovery } from './lib/widget-recovery';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
+import { createDetailPresence, presenceFromPoint } from './lib/detail-presence';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
@@ -178,6 +179,24 @@ export function Widget() {
   const refreshAbort = useRef<AbortController | null>(null);
   const closeTimer = useRef<number | undefined>(undefined);
   const openTimer = useRef<number | undefined>(undefined);
+  /**
+   * Native cursor presence (#154): on macOS the DOM can stop delivering
+   * `mouseleave` in transparent non-activating windows, pinning the popup.
+   * While the popup is open we sample the global cursor position against the
+   * native bounds of both windows — platform-independent close guarantee.
+   */
+  const presenceRef = useRef(
+    createDetailPresence({
+      isOpen: () => detailStateRef.current != null,
+      scheduleClose: () => {
+        // Direct close timer: never gated by the DOM-only `detailInsideRef`,
+        // which is exactly what gets stuck on macOS.
+        window.clearTimeout(closeTimer.current);
+        closeTimer.current = window.setTimeout(() => setHovered(null), CLOSE_DELAY);
+      },
+      cancelClose: () => window.clearTimeout(closeTimer.current),
+    }),
+  ).current;
   const shown = useRef(false);
   const drag = useRef<{ sx: number; sy: number; start: PhysicalPosition | null; sf: number; raf: number; pointerId: number; ending: boolean } | null>(null);
   const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
@@ -683,6 +702,48 @@ export function Widget() {
     if (detailInsideRef.current) return;
     closeTimer.current = window.setTimeout(() => setHovered(null), CLOSE_DELAY);
   };
+
+  // Muestreo nativo de presencia (#154): mientras el popup esté abierto, la
+  // posición global del cursor frente a los bounds nativos de ambas ventanas
+  // alimenta el tracker. Falla en silencio (Wayland puede no exponer la
+  // posición): el muestreo degrada, nunca adivina.
+  useEffect(() => {
+    if (!hovered) {
+      presenceRef.reset();
+      return;
+    }
+    let disposed = false;
+    const boundsOf = async (label: string): Promise<PhysicalBounds | null> => {
+      try {
+        const win = (await getAllWindows()).find((w) => w.label === label);
+        if (!win) return null;
+        const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
+        return { x: pos.x, y: pos.y, w: size.width, h: size.height };
+      } catch {
+        return null;
+      }
+    };
+    const sample = async () => {
+      try {
+        const point = await cursorPosition();
+        const [widget, detail] = await Promise.all([boundsOf('widget'), boundsOf(DETAIL_WINDOW)]);
+        if (disposed) return;
+        const { widget: inWidget, detail: inDetail } = presenceFromPoint(point, widget, detail);
+        // Sincroniza el flag DOM-only por si su `mouseleave` nunca llegó.
+        detailInsideRef.current = inDetail;
+        presenceRef.cursor('widget', inWidget);
+        presenceRef.cursor('detail', inDetail);
+      } catch {
+        // Sin posición de cursor (p. ej. Wayland): no hay conclusión.
+      }
+    };
+    const interval = window.setInterval(() => { void sample(); }, 400);
+    void sample();
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [hovered, presenceRef]);
   useEffect(() => {
     dragMounted.current = true;
     return () => {
