@@ -1,6 +1,6 @@
 [package]
 name = "quorb"
-version = "0.6.0"
+version = "0.7.0"
 description = "Edge-docked usage rings for your AI subscriptions and APIs"
 license = "MIT"
 repository = "https://github.com/egdev6/quorb"
