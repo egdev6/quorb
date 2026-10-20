@@ -1,0 +1,75 @@
+name: Linux PR CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-pr-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Tests and build (Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Tauri 2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsecret-1-dev \
+            libnotify-dev \
+            libfuse2 \
+            xvfb \
+            dbus \
+            dbus-x11
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Frontend and script tests
+        run: npm test
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Rust tests with locked dependencies
+        working-directory: src-tauri
+        run: cargo test --locked

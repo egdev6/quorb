@@ -110,7 +110,7 @@ test('workflow adoption pins the reviewed integrated baseline and keeps target e
   assert.equal(active.replace(/\r\n/g, '\n'), source.replace(/\r\n/g, '\n'), 'active workflow must match the reviewed source');
   for (const eol of ['\n', '\r\n']) {
     const workflow = source.replace(/\r?\n/g, eol);
-    assert.match(workflow, /^  TRUSTED_BASELINE: 587fc3a1806b58217881d4c94d8aa2df75ab57e1$/m);
+    assert.match(workflow, /^  TRUSTED_BASELINE: 3b45818e0114de0b393eea5fd9ee2a2cabb433ed$/m);
     assert.match(workflow, /ref: \$\{\{ env\.TRUSTED_BASELINE \}\}/);
     assert.match(workflow, /ref: \$\{\{ env\.TARGET_COMMIT \}\}/);
     assert.match(workflow, /node trusted\/scripts\/security\/code-safety\.mjs scan/);

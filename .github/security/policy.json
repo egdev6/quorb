@@ -17,12 +17,12 @@
     { "path": ".github/assets/logo.png", "sha256": "e166759b87c38620404a5d27601efdf856b517ea8d3c6a94d0d34f6950483289" },
     { "path": ".github/assets/project-image.png", "sha256": "faeecc4a72ced1cb8fdb766d74602e72b412cbcc6ed5abde37efee08e743cf0a" },
     { "path": ".github/assets/quorb-configura-avisos.png", "sha256": "a284744d3af853a6f234a54edb425ce554bfb3012d2ebb19ef9d9b7ded79733d" },
-    { "path": "src-tauri/icons/128x128.png", "sha256": "3959818bda86d10f9fcbe49619ee51579cf414f4a166328e4d13ccd47f7f518e" },
-    { "path": "src-tauri/icons/128x128@2x.png", "sha256": "22fbc66d8a71abc906c4d7354e91b3816ad340cc30c42a1a79f265564ce9e00e" },
-    { "path": "src-tauri/icons/32x32.png", "sha256": "543c979e70bdfd5e64c0fea20ca652c82bb9598153f30cd2119e42a08096894b" },
-    { "path": "src-tauri/icons/icon.icns", "sha256": "da545af8c619e13615caa7c57541b45dae94c43e92d2a2641eff74d00909fc0b" },
-    { "path": "src-tauri/icons/icon.ico", "sha256": "784ee2a9faed89c2c43037ff0e3e62dd1080fff5abb861cdfa0848075185bf9d" },
-    { "path": "src-tauri/icons/icon.png", "sha256": "a5e96c616381d1798a3ea7a6fe7fc724b602c75df66c728dec4bf3ba9f23dfdb" },
-    { "path": "src/assets/quorb-logo.png", "sha256": "ea090d8c53c7d660b02ecb33e745781ca7d38b3a90ca6f7d960a86c07ca407d9" }
+    { "path": "src-tauri/icons/128x128.png", "sha256": "cbfe742e80b051b90e138c6d2d9e9d8f7cede5721ab9ad27ae6e2b7ebeb62cbb" },
+    { "path": "src-tauri/icons/128x128@2x.png", "sha256": "1d7c58a8ffd4ed44516bbb94da30ce32d0de5c073b732c27ed21f1c1b021e662" },
+    { "path": "src-tauri/icons/32x32.png", "sha256": "e9bac15046a06984227c24185477ccd2ca43e8a30834769c0842c759e4743087" },
+    { "path": "src-tauri/icons/icon.icns", "sha256": "d987765bbdea610ebacb99161739d4e226a3841497e211fc98eb376b092ebbbc" },
+    { "path": "src-tauri/icons/icon.ico", "sha256": "a4cb81f4099f0d66dc13f8b90a509ef1b0b7b976e8507ded00c35f3e04d5a987" },
+    { "path": "src-tauri/icons/icon.png", "sha256": "b84947626de7af941d4a0d405e0f1987402dd06cf9e59e88b3537d93b5157638" },
+    { "path": "src/assets/quorb-logo.png", "sha256": "646cf10a0c465fe7d11f2e6c6be544fdddfda93256d47f22aa04a009d1d01f1b" }
   ]
 }

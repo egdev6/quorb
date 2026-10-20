@@ -43,11 +43,26 @@ test('ICNS approval requires exact path, hash and regular non-executable mode', 
   assert.equal(analyze([icon], pol()).ok, false, 'ICNS is not approved by extension alone');
 });
 
-test('repository policy pins the statically reviewed macOS icon', () => {
+test('repository policy pins the preliminary macOS icon approval', () => {
   const policy = validatePolicy(JSON.parse(readFileSync(new URL('../../.github/security/policy.json', import.meta.url), 'utf8')));
   assert.deepEqual(policy.approvedBinaryImages.filter(image => image.path.endsWith('.icns')), [
-    { path: 'src-tauri/icons/icon.icns', sha256: 'da545af8c619e13615caa7c57541b45dae94c43e92d2a2641eff74d00909fc0b' },
+    { path: 'src-tauri/icons/icon.icns', sha256: 'd987765bbdea610ebacb99161739d4e226a3841497e211fc98eb376b092ebbbc' },
   ]);
+});
+
+test('repository policy pins seven preliminary transparent-icon approvals without expanding the allowlist', () => {
+  const policy = validatePolicy(JSON.parse(readFileSync(new URL('../../.github/security/policy.json', import.meta.url), 'utf8')));
+  const expected = [
+    { path: 'src-tauri/icons/128x128.png', sha256: 'cbfe742e80b051b90e138c6d2d9e9d8f7cede5721ab9ad27ae6e2b7ebeb62cbb' },
+    { path: 'src-tauri/icons/128x128@2x.png', sha256: '1d7c58a8ffd4ed44516bbb94da30ce32d0de5c073b732c27ed21f1c1b021e662' },
+    { path: 'src-tauri/icons/32x32.png', sha256: 'e9bac15046a06984227c24185477ccd2ca43e8a30834769c0842c759e4743087' },
+    { path: 'src-tauri/icons/icon.icns', sha256: 'd987765bbdea610ebacb99161739d4e226a3841497e211fc98eb376b092ebbbc' },
+    { path: 'src-tauri/icons/icon.ico', sha256: 'a4cb81f4099f0d66dc13f8b90a509ef1b0b7b976e8507ded00c35f3e04d5a987' },
+    { path: 'src-tauri/icons/icon.png', sha256: 'b84947626de7af941d4a0d405e0f1987402dd06cf9e59e88b3537d93b5157638' },
+    { path: 'src/assets/quorb-logo.png', sha256: '646cf10a0c465fe7d11f2e6c6be544fdddfda93256d47f22aa04a009d1d01f1b' },
+  ];
+  assert.equal(policy.approvedBinaryImages.length, 19);
+  assert.deepEqual(policy.approvedBinaryImages.filter(image => expected.some(approval => approval.path === image.path)), expected);
 });
 
 test('image approval never exempts links, executable modes or bidi paths', () => {

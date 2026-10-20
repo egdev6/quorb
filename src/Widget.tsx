@@ -15,6 +15,7 @@ import { useUpdaterMode } from './lib/useUpdater';
 import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
+import { createWidgetRecovery } from './lib/widget-recovery';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
@@ -163,6 +164,7 @@ export function Widget() {
   const peekRef = useRef<HTMLButtonElement>(null);
   const widgetQueue = useRef(createLatestQueue()).current;
   const widgetBounds = useRef<PhysicalBounds | null>(null);
+  const placementInFlight = useRef(false);
   const orbsRef = useRef<HTMLDivElement>(null);
   const detailStateRef = useRef<DetailState | null>(null);
   const detailReadyRef = useRef(false);
@@ -453,6 +455,7 @@ export function Widget() {
     const win = usesPeekWindow(phase) ? peekRect(s, edge) : s;
     const physical = physicalPanelBounds(win, geo.sf);
     setPos({ strip: { x: s.x - win.x, y: s.y - win.y } });
+    placementInFlight.current = true;
     widgetQueue(async (current) => {
       if (disposed || !current()) return;
       if (!samePhysical(widgetBounds.current, physical)) {
@@ -482,9 +485,48 @@ export function Widget() {
       widgetBounds.current = null;
       setPlacementFailed(true); // The still-visible handle offers an explicit user retry.
       console.warn(error);
-    });
+    }).finally(() => { if (!disposed) placementInFlight.current = false; });
     return () => { disposed = true; };
   }, [geo, stripSize, edge, offset, dragging, phase, autoHide, placementRetry, widgetQueue, markPrepared]);
+
+  // Windows can displace or resize a normal window without changing the
+  // monitor geometry or our cached target. Audit reality without moving healthy
+  // windows or undoing a user hide/minimize/drag. The existing queue owns all moves.
+  useEffect(() => {
+    let disposed = false;
+    const win = getCurrentWindow();
+    const allowed = () => !disposed && !drag.current && !placementInFlight.current
+      && (phase === 'open' || phase === 'hidden') && shown.current && widgetBounds.current !== null;
+    const check = createWidgetRecovery({
+      allowed,
+      expected: () => widgetBounds.current,
+      read: async () => {
+        const expected = widgetBounds.current;
+        const [position, size, monitors, visible, minimized] = await Promise.all([
+          win.outerPosition(), win.outerSize(), availableMonitors(), win.isVisible(), win.isMinimized(),
+        ]);
+        return {
+          bounds: { x: position.x, y: position.y, w: size.width, h: size.height },
+          monitors: monitors.map((m) => ({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height })),
+          visible, minimized, expected,
+        };
+      },
+      recover: async (snapshot) => {
+        // Refresh the dock target too: its saved monitor may have disconnected.
+        const [fresh, visible, minimized] = await Promise.all([
+          resolveGeo(dockMonitor), win.isVisible(), win.isMinimized(),
+        ]);
+        if (!allowed() || !fresh || !visible || minimized || !snapshot.expected
+          || !samePhysical(widgetBounds.current, snapshot.expected)) return;
+        widgetBounds.current = null;
+        setGeo(fresh);
+        setPlacementRetry((n) => n + 1);
+      },
+    });
+    void check();
+    const id = window.setInterval(() => { void check(); }, 5_000);
+    return () => { disposed = true; window.clearInterval(id); };
+  }, [dockMonitor, phase]);
 
   useEffect(() => watchPreparation(phase, () => setPlacementFailed(true)), [phase, placementRetry]);
 

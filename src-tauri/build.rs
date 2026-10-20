@@ -1,6 +1,7 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
     println!("cargo:rerun-if-changed=tauri.conf.json");
+    println!("cargo:rerun-if-changed=icons");
     let base: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string("tauri.conf.json").expect("Tauri config"),
     ).expect("Valid Tauri config");
