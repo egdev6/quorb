@@ -727,12 +727,11 @@ export function Widget() {
       try {
         const point = await cursorPosition();
         const [widget, detail] = await Promise.all([boundsOf('widget'), boundsOf(DETAIL_WINDOW)]);
-        if (disposed) return;
+        if (disposed || !widget || !detail) return;
         const { widget: inWidget, detail: inDetail } = presenceFromPoint(point, widget, detail);
         // Sincroniza el flag DOM-only por si su `mouseleave` nunca llegó.
         detailInsideRef.current = inDetail;
-        presenceRef.cursor('widget', inWidget);
-        presenceRef.cursor('detail', inDetail);
+        presenceRef.sample(inWidget, inDetail);
       } catch {
         // Sin posición de cursor (p. ej. Wayland): no hay conclusión.
       }

@@ -19,6 +19,57 @@ function setup(isOpen: () => boolean = () => true) {
 afterEach(() => vi.useRealTimers());
 
 describe('createDetailPresence', () => {
+  it('cierra aunque la primera observación ya esté fuera de ambas ventanas y no haya mouseleave', () => {
+    const { tracker, scheduleClose } = setup();
+    tracker.sample(false, false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+    tracker.sample(false, false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('tras cerrar y reabrir vuelve a cerrar con la primera observación exterior', () => {
+    const { tracker, scheduleClose } = setup();
+    tracker.cursor('widget', true);
+    tracker.reset();
+    tracker.cursor('widget', false);
+    tracker.cursor('detail', false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+  });
+  it('muestrea el tránsito widget↔panel sin programar cierres intermedios', () => {
+    const { tracker, scheduleClose, cancelClose } = setup();
+    tracker.sample(true, false);
+    tracker.sample(false, true);
+    tracker.sample(true, false);
+    expect(scheduleClose).not.toHaveBeenCalled();
+    expect(cancelClose).toHaveBeenCalledTimes(1);
+    tracker.sample(false, false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+    tracker.sample(false, true);
+    expect(cancelClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('sin eventos DOM el temporizador cierra y la reentrada lo cancela', () => {
+    vi.useFakeTimers();
+    const close = vi.fn();
+    let timer: ReturnType<typeof setTimeout>;
+    const tracker = createDetailPresence({
+      isOpen: () => true,
+      scheduleClose: () => { clearTimeout(timer); timer = setTimeout(close, 280); },
+      cancelClose: () => clearTimeout(timer),
+    });
+    tracker.sample(false, false);
+    vi.advanceTimersByTime(200);
+    tracker.sample(false, false); // no pospone el cierre
+    vi.advanceTimersByTime(80);
+    expect(close).toHaveBeenCalledTimes(1);
+    tracker.sample(true, false);
+    tracker.sample(false, false);
+    vi.advanceTimersByTime(200);
+    tracker.sample(false, true); // reentrada en el panel
+    vi.advanceTimersByTime(400);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('escenario #154: popup abierto, el DOM no emite mouseleave y el cursor nativo sale de ambas superficies → queda pendiente de cerrar', () => {
     const { tracker, lastAction } = setup();
     tracker.cursor('widget', true);

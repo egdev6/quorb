@@ -1,17 +1,13 @@
 /**
  * Native cursor presence for the hover detail popup (#154).
  *
- * The popup's close path must not depend on DOM `mouseleave`: on macOS, a
- * Webview in a transparent, non-activating window can stop delivering
- * mouse-moved/exit events, and the popup then stays pinned forever. The
- * widget forwards tao's reliable window-level `CursorEntered`/`CursorLeft`
- * (tao emits them from native tracking rects) for the `widget` and `detail`
- * windows as a `detail-cursor-presence` event, and this tracker turns those
- * transitions into close scheduling.
+ * On macOS a transparent, non-activating Webview can stop delivering DOM
+ * mouseleave. The widget therefore samples the global cursor against both
+ * native windows. Reconcile the first sample too: a quick exit can happen
+ * before sampling starts, on Windows as well as macOS.
  *
- * DOM `mouseleave` handlers keep working as before (Windows path); the
- * native presence is an additional, platform-independent guarantee, so both
- * sources converge on the same close timer owned by the widget.
+ * DOM handlers remain the fast close path; native samples provide a fallback
+ * using the same close timer, independently of stale DOM presence flags.
  */
 
 export type PresenceSurface = 'widget' | 'detail';
@@ -28,6 +24,8 @@ export interface DetailPresenceHooks {
 export interface DetailPresence {
   /** Cursor transition for one surface (native or sampled). */
   cursor(surface: PresenceSurface, inside: boolean): void;
+  /** Reconcile both surfaces atomically from a complete native sample. */
+  sample(widget: boolean, detail: boolean): void;
   /** True while the cursor is over either surface. */
   isAnyInside(): boolean;
   /** Forget presence (popup closed by another path). */
@@ -36,22 +34,31 @@ export interface DetailPresence {
 
 export function createDetailPresence(hooks: DetailPresenceHooks): DetailPresence {
   const inside: Record<PresenceSurface, boolean> = { widget: false, detail: false };
+  let reconciled = false;
+
+  const sample = (widget: boolean, detail: boolean) => {
+    const wasInside = inside.widget || inside.detail;
+    const anyInside = widget || detail;
+    inside.widget = widget;
+    inside.detail = detail;
+    // Repeated outside samples must not keep restarting the close delay.
+    if (reconciled && wasInside === anyInside) return;
+    reconciled = true;
+    if (!hooks.isOpen()) return;
+    if (anyInside) hooks.cancelClose();
+    else hooks.scheduleClose();
+  };
 
   return {
     cursor(surface, next) {
-      if (inside[surface] === next) return; // duplicates are no-ops
-      inside[surface] = next;
-      if (next) {
-        // Cursor reached a surface that must keep the popup alive.
-        if (hooks.isOpen()) hooks.cancelClose();
-        return;
-      }
-      if (hooks.isOpen() && !inside.widget && !inside.detail) hooks.scheduleClose();
+      sample(surface === 'widget' ? next : inside.widget, surface === 'detail' ? next : inside.detail);
     },
+    sample,
     isAnyInside() {
       return inside.widget || inside.detail;
     },
     reset() {
+      reconciled = false;
       inside.widget = false;
       inside.detail = false;
     },
