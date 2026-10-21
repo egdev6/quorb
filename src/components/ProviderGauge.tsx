@@ -82,7 +82,13 @@ export function ProviderGauge({
       aria-expanded={active}
       style={{ '--size': `${size}px`, '--w': `${w}px`, '--gap': `${gap}px` } as CSSProperties}
       onMouseEnter={(e) => onHover(e.currentTarget)}
-      onFocus={(e) => onHover(e.currentTarget)}
+      onFocus={(e) => {
+        // Windows can restore pointer-acquired focus when the popup hides.
+        // Treating that as hover reopens it outside both windows, causing a loop.
+        // Keep keyboard focus opening, and leave other platforms unchanged.
+        if (/Windows/.test(navigator.userAgent) && !e.currentTarget.matches(':focus-visible')) return;
+        onHover(e.currentTarget);
+      }}
       onClick={(e) => onHover(e.currentTarget)}
       onPointerCancel={pointer?.onPointerUp}
       {...pointer}

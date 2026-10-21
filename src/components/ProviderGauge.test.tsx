@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ProviderGauge } from './ProviderGauge';
 import type { Meter, UsageReport } from '../lib/types';
@@ -15,6 +15,53 @@ function colors(meters: Meter[], small = false, size = 60, id = 'claude') {
   return [...html.matchAll(/class="eg-gauge__ring" style="([^"]*)"/g)]
     .map((match) => match[1].match(/--c:([^;]+)/)?.[1]);
 }
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('ProviderGauge popup focus', () => {
+  function gauge(userAgent: string, focusVisible: boolean) {
+    vi.stubGlobal('navigator', { userAgent });
+    const onHover = vi.fn();
+    const report: UsageReport = {
+      id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
+      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+    };
+    const button = ProviderGauge({ report, small: false, size: 60, active: false, onHover });
+    const target = { matches: vi.fn(() => focusVisible) };
+    const event = { currentTarget: target };
+    return { button, target, event, onHover };
+  }
+
+  it('does not reopen on repeated incidental Windows focus after the pointer left', () => {
+    const { button, target, event, onHover } = gauge('Windows NT 10.0', false);
+    button.props.onMouseEnter(event);
+    expect(onHover).toHaveBeenCalledWith(target);
+    onHover.mockClear(); // The native presence tracker has closed the popup.
+    for (let i = 0; i < 5; i++) button.props.onFocus(event);
+    expect(onHover).not.toHaveBeenCalled();
+  });
+
+  it('still opens on Windows keyboard focus and click', () => {
+    const keyboard = gauge('Windows NT 10.0', true);
+    keyboard.button.props.onFocus(keyboard.event);
+    expect(keyboard.onHover).toHaveBeenCalledWith(keyboard.target);
+    expect(keyboard.target.matches).toHaveBeenCalledWith(':focus-visible');
+    const pointer = gauge('Windows NT 10.0', false);
+    pointer.button.props.onClick(pointer.event);
+    expect(pointer.onHover).toHaveBeenCalledWith(pointer.target);
+  });
+
+  it.each(['Macintosh; Intel Mac OS X', 'X11; Linux x86_64'])(
+    'leaves all focus opening behavior unchanged on %s', (userAgent) => {
+      for (const focusVisible of [false, true]) {
+        const { button, event, onHover, target } = gauge(userAgent, focusVisible);
+        button.props.onFocus(event);
+        expect(onHover).toHaveBeenCalledWith(target);
+        expect(target.matches).not.toHaveBeenCalled();
+      }
+    },
+  );
+});
 
 describe('ProviderGauge semantic colors', () => {
   it.each(['nan', 'nan:work', 'gemini', 'cursor', 'copilot', 'openrouter'])('keeps one configured color per ring for %s', (id) => {
