@@ -6,9 +6,12 @@ set -euo pipefail
 
 echo
 echo "=== [2/2] .AppImage ==="
-APPIMAGE="$(ls /artifacts/quorb_*.AppImage 2>/dev/null | head -1 || true)"
+# Tauri nombra el artefacto «Quorb_<version>_amd64.AppImage» (Q mayúscula); el
+# glob debe ser case-insensitive o no encuentra nada y el skip oculta la
+# validación.
+APPIMAGE="$(find /artifacts -maxdepth 1 -type f -iname '*.AppImage' 2>/dev/null | sort | head -1 || true)"
 if [ -z "$APPIMAGE" ]; then
-  echo "No se encontró /artifacts/quorb_*.AppImage — salta la validación .AppImage."
+  echo "AVISO: no hay ningún .AppImage en /artifacts — se omite la validación .AppImage."
   exit 0
 fi
 echo "Extrayendo $APPIMAGE ..."

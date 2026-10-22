@@ -11,5 +11,12 @@ ls -la /artifacts
 verify-deb.sh
 verify-appimage.sh
 
+# Si se esperaba validar bundles y no había ninguno en /artifacts, fallar en
+# lugar de declarar «OK»: un skip silencioso convierte un gate vacío en verde.
+if [ -z "$(find /artifacts -maxdepth 1 -type f \( -iname '*.deb' -o -iname '*.AppImage' \) -print -quit 2>/dev/null)" ]; then
+  echo "✖ No se encontró ningún bundle en /artifacts (.deb ni .AppImage): nada se pudo validar." >&2
+  exit 1
+fi
+
 echo
-echo "✔ Build-verify OK: .deb y .AppImage han arrancado en Ubuntu 22.04 limpia."
+echo "✔ Build-verify OK: los bundles presentes en /artifacts han arrancado en Ubuntu 22.04 limpia."

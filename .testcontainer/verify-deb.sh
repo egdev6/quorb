@@ -7,9 +7,11 @@ set -euo pipefail
 
 echo
 echo "=== [1/2] .deb ==="
-DEB="$(ls /artifacts/quorb_*.deb 2>/dev/null | head -1 || true)"
+# Tauri nombra el paquete «Quorb_<version>_amd64.deb» (Q mayúscula); el glob
+# debe ser case-insensitive o no encuentra nada y el skip oculta la validación.
+DEB="$(find /artifacts -maxdepth 1 -type f -iname '*.deb' 2>/dev/null | sort | head -1 || true)"
 if [ -z "$DEB" ]; then
-  echo "No se encontró /artifacts/quorb_*.deb — salta la validación .deb."
+  echo "AVISO: no hay ningún .deb en /artifacts — se omite la validación .deb."
   exit 0
 fi
 echo "Instalando $DEB ..."
