@@ -54,6 +54,17 @@ Cobertura:
   vigente no refresca, pasado refresca, sin `access_token` siempre. No hace
   HTTP; el refresh real queda como gap declarado.
 
+**Dónde vive la sesión de Claude según la plataforma** (estructura documentada de
+Claude Code v2.1.x, revisada en el lab): macOS → Keychain, servicio
+`Claude Code-credentials` (el JSON `~/.claude/.credentials.json` se borra al
+migrar); Linux, WSL y Windows nativo → `~/.claude/.credentials.json` (en Windows,
+`%USERPROFILE%\.claude\`). El fixture de arriba es el layout Linux/WSL/Windows.
+Quorb ya cubre el caso macOS con `keychain_fallback` → `security
+find-generic-password -s "Claude Code-credentials" -w` (timeout de 5 s y solo para
+la sesión principal sin ruta explícita), con tests
+`keychain_fallback_only_for_main_session_without_explicit_path` y
+`parses_keychain_secret_and_rejects_garbage`.
+
 Run `39837767677` (commit `43caa59`), log leído directamente: los 3 tests
 aparecen como `ok` (`249 passed; 0 failed; 1 ignored`) y el ignored es el smoke
 de la sección 4, ejecutado aparte y también `ok`.
@@ -133,6 +144,9 @@ arrancando de verdad (`.deb` → `/usr/bin/quorb` vivo 60 s; `.AppImage` → viv
   corresponde a la matriz física del PRD Wayland, ya cubierta en su propio lab).
 - **Distribución**: solo `ubuntu-22.04` (el mismo runner de `windows-latest` que
   usa el resto de CI). Otras distribuciones no están en la matriz.
+- **Token por variable de entorno**: si el usuario exporta
+  `CLAUDE_CODE_OAUTH_TOKEN` (override silencioso del CLI), Quorb no lo lee —
+  solo archivo y Keychain.
 - **Sin cobertura de logout/login en graphical-session con pkexec**.
 
 ## 7. Reproducir
