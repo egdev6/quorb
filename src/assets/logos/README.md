@@ -11,6 +11,7 @@ Deja aquí el logo de cada proveedor (`.svg`, `.png` o `.webp`). Se busca primer
 | OpenAI API | `openai_api`, `openai` |
 | Gemini | `gemini`, `google` |
 | Cursor | `cursor` |
+| Grok (SuperGrok) | `grok` |
 | GitHub Copilot | `copilot`, `github-copilot`, `microsoft-copilot`, `github` |
 | OpenRouter | `openrouter` |
 
