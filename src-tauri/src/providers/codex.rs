@@ -311,6 +311,23 @@ mod tests {
         assert!(Auth::parse(&json!({"OPENAI_API_KEY": "sk-..."})).unwrap_err().contains("API key"));
     }
 
+    /// Sesión real de Codex: el fixture es la estructura que escribe
+    /// `$CODEX_HOME/auth.json` (o `~/.codex/auth.json`) tras `codex login`.
+    /// Verifica parseo y validez con reloj inyectado (sin credenciales reales).
+    #[test]
+    fn parses_real_session_fixture() {
+        let raw = include_str!("fixtures/codex-auth.json");
+        let v: Value = serde_json::from_str(raw).expect("fixture codex válido");
+        let auth = Auth::parse(&v).expect("el fixture debe parsear como sesión real");
+        assert_eq!(auth.access_token, "example-access-token-codex");
+        assert_eq!(auth.account_id.as_deref(), Some("account-example-123"));
+        // El id_token del fixture expira en el año ~2100: a día de hoy es válido.
+        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).expect("now fijo");
+        let id_token = v.pointer("/tokens/id_token").and_then(Value::as_str).unwrap();
+        assert!(parse_validity(Some(id_token), Some("account-example-123"), now).is_some(),
+            "la sesión real válida debe reportar validez");
+    }
+
     fn id_token(claims: Value) -> String {
         use base64::Engine;
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
