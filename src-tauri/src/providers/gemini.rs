@@ -73,9 +73,13 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
 /// ¿El token del archivo aún es usable, o hay que refrescar?
 /// Pura y testeable sin HTTP (mismo patrón que `is_expired`/`parse_validity`).
 fn token_needs_refresh(creds: &Value, now_ms: i64) -> bool {
-    let Some(t) = creds.get("access_token").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+    let usable = creds
+        .get("access_token")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.is_empty());
+    if !usable {
         return true;
-    };
+    }
     let expiry = creds.get("expiry_date").and_then(Value::as_i64).unwrap_or(0);
     expiry - 60_000 <= now_ms
 }
