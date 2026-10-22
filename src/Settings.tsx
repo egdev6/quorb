@@ -40,6 +40,7 @@ const LINKS = {
   minimaxKeys: 'https://www.minimax.io/',
   minimaxKeysCn: 'https://www.minimaxi.com/',
   geminiCli: 'https://github.com/google-gemini/gemini-cli',
+  grokCli: 'https://x.ai/',
   releases: 'https://github.com/egdev6/quorb/releases',
   repo: 'https://github.com/egdev6/quorb',
   issues: 'https://github.com/egdev6/quorb/issues/new?template=provider-request.md',
@@ -1043,6 +1044,7 @@ const PROVIDER_TABS = [
   { id: 'codex', name: 'ChatGPT y Codex', group: 'sub', desc: 'Plus / Pro · sesión y semanal de Codex' },
   { id: 'gemini', name: 'Gemini', group: 'sub', desc: 'Cuota diaria por modelo' },
   { id: 'cursor', name: 'Cursor', group: 'sub', desc: 'Uso del plan en el ciclo y on-demand' },
+  { id: 'grok', name: 'Grok', group: 'sub', desc: 'SuperGrok · uso semanal de créditos del CLI' },
   { id: 'copilot', name: 'GitHub Copilot', group: 'sub', desc: 'Peticiones premium del mes' },
   { id: 'minimax', name: 'MiniMax', group: 'sub', desc: 'Cuota del plan M/Token y saldo de pago por uso' },
   { id: 'nan', name: 'NaN Builders', group: 'api', desc: 'Cuota del plan y tokens por día' },
@@ -1108,6 +1110,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.codex.enabled);
     case 'gemini':
       return on(cfg.gemini.enabled);
+    case 'grok':
+      return on(cfg.grok.enabled);
     case 'cursor':
       return on(cfg.cursor.enabled);
     case 'copilot':
@@ -1806,7 +1810,7 @@ export function Settings() {
           health={healthFor(selAccount.id, !selAccount.enabled)}
           cliMissing={cli[selAccount.provider] === false}
           loginCommand={
-            selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini'
+            selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini' || selAccount.provider === 'grok'
               ? cfg[selAccount.provider].loginCommand
               : ''
           }
@@ -1817,7 +1821,7 @@ export function Settings() {
       {!selAccount && (
         <>
 
-      {(tab === 'claude' || tab === 'codex' || tab === 'gemini') &&
+      {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') &&
         (() => {
           const p = tab;
           const info = {
@@ -1845,6 +1849,17 @@ export function Settings() {
               ),
               file: 'Fichero de credenciales',
               hint: <>Vacío = <code>%USERPROFILE%\.gemini\oauth_creds.json</code></>,
+            },
+            grok: {
+              kicker: 'Suscripción · OAuth',
+              title: 'Grok (SuperGrok)',
+              note: (
+                <>
+                  Uso semanal de créditos de tu suscripción en el CLI de Grok. Quorb lee la sesión que guarda <code>grok login</code>. Endpoint no oficial.
+                </>
+              ),
+              file: 'Fichero auth.json',
+              hint: <>Vacío = <code>%GROK_HOME%</code> o <code>%USERPROFILE%\.grok\auth.json</code></>,
             },
           }[p];
           return (

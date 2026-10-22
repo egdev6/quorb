@@ -346,6 +346,12 @@ mod tests {
         let cfg = AppConfig { accounts: vec![extra_account("codex", &codex_dir)], ..Default::default() };
         assert_eq!(session_file(&cfg, "codex:w1", &home), Some(codex_dir.join("auth.json")));
 
+        // Cuenta adicional de Grok: mismo `auth.json` en su carpeta.
+        let grok_dir = home.join("grok-w1");
+        std::fs::create_dir_all(&grok_dir).unwrap();
+        let cfg = AppConfig { accounts: vec![extra_account("grok", &grok_dir)], ..Default::default() };
+        assert_eq!(session_file(&cfg, "grok:w1", &home), Some(grok_dir.join("auth.json")));
+
         // Proveedor sin login por CLI: nunca hay fichero de sesión.
         let or_dir = home.join("openrouter-w1");
         std::fs::create_dir_all(&or_dir).unwrap();

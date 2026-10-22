@@ -32,6 +32,7 @@ export const OFFICIAL_USAGE_URL: Record<string, string> = {
   openai_api: 'https://platform.openai.com/usage',
   gemini: 'https://aistudio.google.com/usage',
   cursor: 'https://cursor.com/dashboard?tab=usage',
+  grok: 'https://grok.com/',
   copilot: 'https://github.com/settings/billing/premium_requests_usage',
   openrouter: 'https://openrouter.ai/activity',
 };

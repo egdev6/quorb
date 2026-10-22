@@ -14,6 +14,7 @@ export const SESSION_DIR: Partial<Record<AccountProvider, { env: string; file: s
   claude: { env: 'CLAUDE_CONFIG_DIR', file: '.credentials.json' },
   codex: { env: 'CODEX_HOME', file: 'auth.json' },
   gemini: { env: 'GEMINI_CLI_HOME', file: '.gemini\\oauth_creds.json' },
+  grok: { env: 'GROK_HOME', file: 'auth.json' },
 };
 
 /** Cómo instalar el CLI con el que se inicia sesión (si falta en el equipo). */
@@ -75,6 +76,7 @@ export const ACCOUNT_SECRETS: Record<AccountProvider, SecretKey[]> = {
   claude: [],
   codex: [],
   gemini: [],
+  grok: [],
   cursor: ['cursor_token'],
   copilot: ['github_token'],
   nan: ['nan_api_key', 'nan_session'],

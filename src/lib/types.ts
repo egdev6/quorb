@@ -155,6 +155,7 @@ export interface AppConfig {
   codex: SubscriptionConfig;
   gemini: SubscriptionConfig;
   cursor: SubscriptionConfig;
+  grok: SubscriptionConfig;
   copilot: CopilotConfig;
   openrouter: { enabled: boolean };
   anthropicApi: ApiCostConfig;
@@ -170,6 +171,7 @@ export type AccountProvider =
   | 'claude'
   | 'codex'
   | 'gemini'
+  | 'grok'
   | 'cursor'
   | 'copilot'
   | 'nan'

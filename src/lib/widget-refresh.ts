@@ -8,7 +8,7 @@ import type { AppConfig } from './types';
  */
 export function dataKey(c: AppConfig | null): string {
   return c
-    ? JSON.stringify([c.claude, c.codex, c.gemini, c.cursor, c.copilot, c.openrouter, c.anthropicApi, c.openaiApi, c.nan, c.minimax, c.nineRouter])
+    ? JSON.stringify([c.claude, c.codex, c.gemini, c.cursor, c.grok, c.copilot, c.openrouter, c.anthropicApi, c.openaiApi, c.nan, c.minimax, c.nineRouter])
     : '';
 }
 

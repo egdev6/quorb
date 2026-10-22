@@ -28,6 +28,7 @@ pub fn open(id: &str, cfg: &AppConfig) -> Result<(), String> {
         "claude" => cfg.claude.login_command.trim(),
         "codex" => cfg.codex.login_command.trim(),
         "gemini" => cfg.gemini.login_command.trim(),
+        "grok" => cfg.grok.login_command.trim(),
         "cursor" => cfg.cursor.login_command.trim(),
         other => return Err(format!("El proveedor {other} no tiene login por CLI")),
     };
@@ -48,7 +49,7 @@ pub fn open(id: &str, cfg: &AppConfig) -> Result<(), String> {
 /// ¿Está instalado el CLI de login de cada proveedor que lo usa? Para avisar en
 /// Ajustes antes de que pulses «Iniciar sesión».
 pub fn cli_status(cfg: &AppConfig) -> std::collections::BTreeMap<String, bool> {
-    [("claude", &cfg.claude.login_command), ("codex", &cfg.codex.login_command), ("gemini", &cfg.gemini.login_command)]
+    [("claude", &cfg.claude.login_command), ("codex", &cfg.codex.login_command), ("gemini", &cfg.gemini.login_command), ("grok", &cfg.grok.login_command)]
         .into_iter()
         .map(|(p, c)| (p.to_string(), !matches!(find_program(&program_of(c)), Found::Missing)))
         .collect()
