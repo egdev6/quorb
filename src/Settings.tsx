@@ -7,7 +7,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { useAppName } from './lib/app-identity';
 import { api } from './lib/api';
 import { configKeyFor, isAccountVisible, setAccountVisibility } from './lib/settings-visibility';
-import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AppConfig, type Effect, type MediaSize, type NineRouterPeriod, type ScopedSecretKey, type SecretKey, type SecretStatus, type UsageReport } from './lib/types';
+import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AppConfig, type Effect, type Locale, type MediaSize, type NineRouterPeriod, type ScopedSecretKey, type SecretKey, type SecretStatus, type UsageReport } from './lib/types';
 import { ACCOUNT_SECRETS, CLI_INSTALL, SESSION_DIR, accountReady, accountsOf, defaultSessionDir, newAccount, secretKey } from './lib/accounts';
 import { ACCENT_PRESETS, DEFAULT_ACCENT, derivePalette, normalizeHex } from './lib/palette';
 import { isDirty, isSettingsDirty, reconcileLive, reconcileSaved, withCanonicalLive } from './lib/settings-dirty';
@@ -26,6 +26,8 @@ import { ProviderLogo } from './components/ProviderLogo';
 import { CodexInstall } from './components/CodexInstall';
 import quorbLogo from './assets/quorb-logo.png';
 import { useUpdater } from './lib/useUpdater';
+import { t } from './i18n';
+import { changeLocale as applyLocaleChange, useLocale } from './i18n/use-locale';
 import { formatMoney, formatPercent, peakMeter } from './lib/format';
 
 const LINKS = {
@@ -1131,8 +1133,95 @@ function loadTab(): ProviderTab {
   }
 }
 
+/** Cabecera de títulos de Ajustes (ceja + h1 + descripción). Extraída para poder
+ *  renderizar y probar el corte visible de i18n sin montar la ventana completa. */
+export function SettingsHeadTitles({ locale, section }: { locale: Locale; section: PageId }) {
+  return (
+    <div className="q-head__titles">
+      <p className="eg-eyebrow">{t(locale, 'settings.title')}</p>
+      <h1>{t(locale, `settings.pages.${section}.title`)}</h1>
+      <p className="q-head__desc">{t(locale, `settings.pages.${section}.desc`)}</p>
+    </div>
+  );
+}
+
+/** Barra lateral de Ajustes: marca, secciones y plegado. Extraída por el mismo
+ *  motivo: renderizable en pruebas con el locale explícito. */
+export function SettingsNav({
+  appName,
+  section,
+  locale,
+  navCollapsed,
+  onSelectSection,
+  onToggleNav,
+  pendingProviders,
+  shortcutErrors,
+}: {
+  appName: string | null;
+  section: PageId;
+  locale: Locale;
+  navCollapsed: boolean;
+  onSelectSection: (p: PageId) => void;
+  onToggleNav: () => void;
+  pendingProviders: number;
+  shortcutErrors: string[];
+}) {
+  return (
+    <aside className="q-settings__nav" aria-label="Quorb">
+      <div className="q-brand">
+        <img className="q-brand__logo" src={quorbLogo} alt="" aria-hidden="true" />
+        <span className="q-brand__text">
+          <span className="q-brand__name">{appName ?? '…'}</span>
+          <span className="q-brand__ver">{t(locale, 'settings.title')}</span>
+        </span>
+      </div>
+      <nav aria-label="Secciones de ajustes">
+        <ul className="eg-menu eg-menu--nav">
+          {PAGES.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                className="eg-menu__item"
+                aria-current={section === p.id ? 'page' : undefined}
+                aria-label={navCollapsed ? t(locale, `settings.nav.${p.id}`) : undefined}
+                title={navCollapsed ? t(locale, `settings.nav.${p.id}`) : undefined}
+                onClick={() => onSelectSection(p.id)}
+              >
+                <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d={p.icon} />
+                </svg>
+                <span className="eg-menu__label">{t(locale, `settings.nav.${p.id}`)}</span>
+                {p.id === 'providers' && pendingProviders > 0 && (
+                  <span className="eg-menu__count" title="Activos pero sin configurar">{pendingProviders}</span>
+                )}
+                {p.id === 'shortcuts' && shortcutErrors.length > 0 && <span className="eg-menu__count">{shortcutErrors.length}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <button
+        type="button"
+        className="eg-menu__item q-nav-toggle"
+        aria-expanded={!navCollapsed}
+        aria-label={navCollapsed ? 'Expandir el menú' : 'Contraer el menú'}
+        title={navCollapsed ? 'Expandir el menú' : 'Contraer el menú'}
+        onClick={onToggleNav}
+      >
+        <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 4h18v16H3zM9 4v16" />
+          <path d={navCollapsed ? 'm13 10 2 2-2 2' : 'm15 10-2 2 2 2'} />
+        </svg>
+        <span className="eg-menu__label">Contraer</span>
+      </button>
+    </aside>
+  );
+}
+
 export function Settings() {
   const appName = useAppName();
+  // Idioma de esta ventana: una lectura + `config-changed`; `es` hasta cargar.
+  const locale = useLocale();
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [baseline, setBaseline] = useState<AppConfig | null>(null);
   const [secrets, setSecrets] = useState<SecretStatus>({});
@@ -1281,6 +1370,16 @@ export function Settings() {
   // misma cola para que la base canónica no quede desincronizada del backend.
   const persistAlerts = (alerts: AppConfig['alerts']) =>
     enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
+
+  // El selector de Idioma guarda por la misma cola que el resto de Ajustes y
+  // también lo adopta en el borrador (ver `changeLocale` en i18n/use-locale).
+  // Si el guardado falla, ese helper devuelve el borrador al locale del backend
+  // y aquí solo queda avisarlo: el selector ya refleja lo persistido.
+  const [localeError, setLocaleError] = useState<string | null>(null);
+  const changeLocale = (loc: Locale) =>
+    applyLocaleChange(loc, { setDraft: setCfg, getConfig: api.getConfig, enqueueSave })
+      .then(() => setLocaleError(null))
+      .catch((err: unknown) => setLocaleError(err instanceof Error ? err.message : String(err)));
 
   const loadSecrets = () => api.secretStatus().then(setSecrets).catch(console.error);
 
@@ -1510,7 +1609,6 @@ export function Settings() {
         .catch(console.error);
     }
   };
-  const page = PAGES.find((p) => p.id === section) ?? PAGES[0];
   const pendingProviders = PROVIDER_TABS.filter((t) => providerState(t.id, cfg, secrets) === 'warn').length;
   const palette = derivePalette(cfg.accentColor);
 
@@ -1549,63 +1647,21 @@ export function Settings() {
 
   return (
     <div className="q-settings" data-nav-collapsed={navCollapsed || undefined}>
-      <aside className="q-settings__nav" aria-label="Quorb">
-        <div className="q-brand">
-          <img className="q-brand__logo" src={quorbLogo} alt="" aria-hidden="true" />
-          <span className="q-brand__text">
-            <span className="q-brand__name">{appName ?? '…'}</span>
-            <span className="q-brand__ver">Ajustes</span>
-          </span>
-        </div>
-        <nav aria-label="Secciones de ajustes">
-          <ul className="eg-menu eg-menu--nav">
-            {PAGES.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  className="eg-menu__item"
-                  aria-current={section === p.id ? 'page' : undefined}
-                  aria-label={navCollapsed ? p.label : undefined}
-                  title={navCollapsed ? p.label : undefined}
-                  onClick={() => selectSection(p.id)}
-                >
-                  <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d={p.icon} />
-                  </svg>
-                  <span className="eg-menu__label">{p.label}</span>
-                  {p.id === 'providers' && pendingProviders > 0 && (
-                    <span className="eg-menu__count" title="Activos pero sin configurar">{pendingProviders}</span>
-                  )}
-                  {p.id === 'shortcuts' && shortcutErrors.length > 0 && <span className="eg-menu__count">{shortcutErrors.length}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <button
-          type="button"
-          className="eg-menu__item q-nav-toggle"
-          aria-expanded={!navCollapsed}
-          aria-label={navCollapsed ? 'Expandir el menú' : 'Contraer el menú'}
-          title={navCollapsed ? 'Expandir el menú' : 'Contraer el menú'}
-          onClick={toggleNav}
-        >
-          <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 4h18v16H3zM9 4v16" />
-            <path d={navCollapsed ? 'm13 10 2 2-2 2' : 'm15 10-2 2 2 2'} />
-          </svg>
-          <span className="eg-menu__label">Contraer</span>
-        </button>
-      </aside>
+      <SettingsNav
+        appName={appName}
+        section={section}
+        locale={locale}
+        navCollapsed={navCollapsed}
+        onSelectSection={selectSection}
+        onToggleNav={toggleNav}
+        pendingProviders={pendingProviders}
+        shortcutErrors={shortcutErrors}
+      />
 
       <main className="q-settings__main">
         <div className="q-settings__content">
           <header className="q-head">
-            <div className="q-head__titles">
-              <p className="eg-eyebrow">Ajustes</p>
-              <h1>{page.title}</h1>
-              <p className="q-head__desc">{page.desc}</p>
-            </div>
+            <SettingsHeadTitles locale={locale} section={section} />
             <label className="eg-check eg-check--switch">
               <input
                 type="checkbox"
@@ -2166,6 +2222,22 @@ export function Settings() {
                     <span className="eg-field__label">Personalización no aplicada</span>
                     <small className="eg-field__hint">{liveState.error}</small>
                     <button type="button" className="q-link" onClick={() => void liveRef.current?.retry()}>Reintentar</button>
+                  </div>
+                )}
+              </Section>
+
+              <Section title={t(locale, 'settings.language.title')}>
+                <Field label={t(locale, 'settings.language.label')} hint={t(locale, 'settings.language.hint')}>
+                  <select value={locale} onChange={(e) => changeLocale(e.target.value as Locale)}>
+                    {/* Las opciones se etiquetan siempre en su propia lengua. */}
+                    <option value="es">Español</option>
+                    <option value="en">English</option>
+                  </select>
+                </Field>
+                {localeError && (
+                  <div className="eg-field" role="alert">
+                    <span className="eg-field__label">{t(locale, 'settings.language.error')}</span>
+                    <small className="eg-field__hint">{localeError}</small>
                   </div>
                 )}
               </Section>

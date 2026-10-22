@@ -43,19 +43,12 @@ pub const MSG_GENERIC_ERROR: &str = "No se pudo completar la instalación de Cod
 pub const MSG_CANCELLED: &str = "Instalación cancelada.";
 pub const MSG_INSTALLED: &str = "Codex se ha instalado correctamente.";
 
-/// Texto fijo del diálogo nativo de confirmación.
-pub const CONSENT_MESSAGE: &str = "Se instalará el CLI oficial de Codex solo para Quorb.\n\n\
-• Paquete: @openai/codex@0.162.1 (versión fijada)\n\
-• Registro canónico de npm: https://registry.npmjs.org/\n\
-• Carpeta gestionada: ~/.quorb/tools/codex-0.162.1 (fuera del registro global)\n\
-• Requisito: Node.js 22 o superior ya instalado (no se instala Node ni se pide elevación)\n\
-• Se descargará el binario nativo y se verificará antes de activarlo\n\n\
-No se modifica el registro global de npm, no se cambia el PATH del sistema ni de otros programas, y no se inicia sesión ni se guardan credenciales: el acceso con tu cuenta de ChatGPT lo haces después con «Iniciar sesión».\n\n\
-¿Instalar Codex ahora?";
-
-pub fn consent_message() -> String {
-    CONSENT_MESSAGE.replace("solo para Quorb.", &format!("solo para {}.", crate::channel::current().name))
-        .replace("~/.quorb/", &format!("~/{}/", crate::channel::current().home_dir))
+/// Mensaje del diálogo de consentimiento en el idioma dado, con el nombre del
+/// canal y la carpeta gestionada ya sustituidos. El literal original en
+/// español vive en el catálogo: `i18n::CODEX_CONSENT_MESSAGE_ES`.
+pub fn consent_message(locale: crate::i18n::Locale) -> String {
+    let profile = crate::channel::current();
+    crate::i18n::codex_consent_message(locale, profile.name, profile.home_dir)
 }
 
 // ───────────────────────── DTOs ─────────────────────────
@@ -995,7 +988,11 @@ mod tests {
             "elevación",
             "credenciales",
         ] {
-            assert!(CONSENT_MESSAGE.contains(needle), "falta «{needle}»");
+            let message = crate::i18n::text(
+                crate::i18n::Locale::Es,
+                crate::i18n::Msg::CodexConsentMessage,
+            );
+            assert!(message.contains(needle), "falta «{needle}»");
         }
     }
 
@@ -1544,7 +1541,7 @@ mod tests {
         assert!(s.iter().any(|d| {
             d.contains(&format!("{root}/tools/codex-0.162.1/node_modules/@openai/codex-win32-arm64"))
         }));
-        assert!(consent_message().contains(&format!("~/{root}/tools/")));
+        assert!(consent_message(crate::i18n::Locale::Es).contains(&format!("~/{root}/tools/")));
         assert!(s.iter().any(|d| d.contains("x86_64-pc-windows-msvc")));
         assert!(s.iter().any(|d| d.contains("aarch64-pc-windows-msvc")));
     }

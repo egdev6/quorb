@@ -5,6 +5,7 @@ mod config;
 mod config_transaction;
 mod detail_geometry;
 mod history;
+mod i18n;
 mod login;
 mod model;
 mod providers;
@@ -180,6 +181,86 @@ fn always_on_top_error(detail: &str) -> String {
     format!("No se pudo aplicar «siempre encima»: {detail}")
 }
 
+/// Locale actual de la config guardada, para ventanas nuevas y la bandeja.
+fn current_locale(app: &AppHandle) -> i18n::Locale {
+    app.try_state::<AppState>()
+        .map(|s| i18n::locale_from_config(&s.config.lock().unwrap().locale))
+        .unwrap_or(i18n::Locale::Es)
+}
+
+/// Menú de la bandeja con los textos del idioma dado. Ids y handlers siempre
+/// iguales: al re-etiquetar solo cambia el texto visible.
+fn tray_menu(manager: &AppHandle, labels: [&str; 4]) -> tauri::Result<Menu<tauri::Wry>> {
+    let [toggle_label, refresh_label, settings_label, quit_label] = labels;
+    let toggle = MenuItem::with_id(manager, "toggle", toggle_label, true, None::<&str>)?;
+    let refresh = MenuItem::with_id(manager, "refresh", refresh_label, true, None::<&str>)?;
+    let settings = MenuItem::with_id(manager, "settings", settings_label, true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(manager)?;
+    let quit = MenuItem::with_id(manager, "quit", quit_label, true, None::<&str>)?;
+    Menu::with_items(manager, &[&toggle, &refresh, &settings, &sep, &quit])
+}
+
+/// Textos nativos a re-aplicar tras un cambio de idioma.
+#[derive(Debug, PartialEq)]
+struct LocaleRelabel {
+    tray: [&'static str; 4],
+    /// (etiqueta de ventana, título) de Ajustes, detalle y efectos.
+    titles: [(&'static str, String); 3],
+}
+
+/// Decide si un guardado cambia el idioma y, si es así, con qué textos se
+/// re-etiquetan la bandeja y las ventanas. Puro: sin Tauri, testeable.
+fn locale_relabel(old: &str, new: &str, channel: &str) -> Option<LocaleRelabel> {
+    if old == new {
+        return None;
+    }
+    let locale = i18n::locale_from_config(new);
+    Some(LocaleRelabel {
+        tray: i18n::tray_labels(locale),
+        titles: [
+            (SETTINGS, i18n::settings_title(locale, channel)),
+            (DETAIL, i18n::detail_title(locale, channel)),
+            (OVERLAY, i18n::overlay_title(locale, channel)),
+        ],
+    })
+}
+
+/// Ejecuta un plan de re-etiquetado con efectos inyectados: la bandeja una vez
+/// y el título de cada ventana.
+fn run_locale_relabel(
+    plan: &LocaleRelabel,
+    mut set_tray: impl FnMut([&'static str; 4]),
+    mut set_title: impl FnMut(&str, &str),
+) {
+    set_tray(plan.tray);
+    for (label, title) in &plan.titles {
+        set_title(label, title);
+    }
+}
+
+/// Aplica un cambio de idioma guardado a la bandeja y a los títulos de las
+/// ventanas nativas. Silencioso: un fallo nativo puntual (p. ej. una ventana ya
+/// cerrada) no debe abortar el guardado de la config.
+fn apply_locale(app: &AppHandle, old: &str, new: &str) {
+    let Some(plan) = locale_relabel(old, new, channel::current().name) else { return };
+    run_locale_relabel(
+        &plan,
+        |labels| {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                match tray_menu(app, labels) {
+                    Ok(menu) => { let _ = tray.set_menu(Some(menu)); }
+                    Err(e) => eprintln!("No pude reconstruir el menú de la bandeja: {e}"),
+                }
+            }
+        },
+        |label, title| {
+            if let Some(w) = app.get_webview_window(label) {
+                let _ = w.set_title(title);
+            }
+        },
+    );
+}
+
 // ───────────────────────── comandos ─────────────────────────
 
 #[tauri::command]
@@ -230,6 +311,8 @@ fn save_config(app: AppHandle, state: State<'_, AppState>, config: AppConfig) ->
     if old_shortcuts != config.shortcuts {
         apply_shortcuts(&app, &config.shortcuts);
     }
+    // Un cambio de idioma re-etiqueta la bandeja y los títulos nativos.
+    apply_locale(&app, &old.locale, &config.locale);
     // Contrato legacy de `save_config`: mantiene el efecto nativo de siempre encima.
     // El resultado del patch vivo (`patch_config`) es el que reporta el fallo.
     let _ = apply_always_on_top(&app, config.always_on_top);
@@ -270,8 +353,11 @@ fn forget_nine_router_secrets() -> Result<(), String> {
 #[tauri::command]
 fn patch_config(app: AppHandle, state: State<'_, AppState>, patch: config::WidgetPatch) -> Result<ConfigPatchOutcome, String> {
     let apply_top = patch_touches_always_on_top(&patch);
-    let (_old, config) = update_config(&state, |current| current.apply_widget_patch(patch))?;
+    let (old, config) = update_config(&state, |current| current.apply_widget_patch(patch))?;
     let native_error = if apply_top { apply_always_on_top(&app, config.always_on_top) } else { None };
+    // Hoy el patch no incluye `locale`, pero si algún día lo cambiara aquí se
+    // re-etiqueta igual que en `save_config` (mismo espejo de efectos nativos).
+    apply_locale(&app, &old.locale, &config.locale);
     let _ = app.emit("config-changed", &config);
     Ok(ConfigPatchOutcome { config, native_error })
 }
@@ -546,12 +632,14 @@ async fn install_codex(app: AppHandle, window: WebviewWindow) -> Result<codex_se
         let node = codex_setup::discover_node_in(&codex_setup::node_search_roots(platform));
         let tools_root = codex_setup::tools_root(&providers::home());
         let base_env = codex_setup::process_env_map();
+        let locale = current_locale(&app);
+        let (install_label, cancel_label) = i18n::codex_consent_buttons(locale);
         let confirm = || {
             app.dialog()
-                .message(codex_setup::consent_message())
-                .title("Instalar Codex")
+                .message(codex_setup::consent_message(locale))
+                .title(i18n::text(locale, i18n::Msg::CodexConsentTitle))
                 .kind(MessageDialogKind::Info)
-                .buttons(MessageDialogButtons::OkCancelCustom("Instalar".into(), "Cancelar".into()))
+                .buttons(MessageDialogButtons::OkCancelCustom(install_label.into(), cancel_label.into()))
                 // Dueño nativo: la confirmación se ancla a la ventana de Ajustes.
                 .parent(&window)
                 .blocking_show()
@@ -612,7 +700,7 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
         .map(|m| m.size().height as f64 / m.scale_factor() - 96.0)
         .map_or(SETTINGS_HEIGHT, |max| SETTINGS_HEIGHT.min(max).max(520.0));
     let win = WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("index.html".into()))
-        .title(format!("Ajustes · {}", channel::current().name))
+        .title(i18n::settings_title(current_locale(app), channel::current().name))
         .inner_size(1040.0, height)
         .min_inner_size(480.0, 520.0)
         .center()
@@ -659,13 +747,8 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let toggle = MenuItem::with_id(app, "toggle", "Mostrar / ocultar widget", true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, "refresh", "Actualizar ahora", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Ajustes…", true, None::<&str>)?;
-    let sep = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&toggle, &refresh, &settings, &sep, &quit])?;
+fn build_tray(app: &tauri::App, locale: i18n::Locale) -> tauri::Result<()> {
+    let menu = tray_menu(app.handle(), i18n::tray_labels(locale))?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(channel::current().name)
@@ -769,8 +852,9 @@ pub fn run() {
             let history = history::History::load(data_dir.join("history.json"));
 
             // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
+            let locale = i18n::locale_from_config(&cfg.locale);
             let detail_builder = WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
-                .title(format!("{} · detalle", channel::current().name))
+                .title(i18n::detail_title(locale, channel::current().name))
                 .inner_size(330.0, 260.0)
                 .decorations(false)
                 .transparent(true)
@@ -786,7 +870,7 @@ pub fn run() {
 
             // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
             let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
-                .title(format!("{} · efectos", channel::current().name))
+                .title(i18n::overlay_title(locale, channel::current().name))
                 .decorations(false)
                 .transparent(true)
                 .shadow(false)
@@ -823,7 +907,7 @@ pub fn run() {
                 history,
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
             });
-            build_tray(app)?;
+            build_tray(app, locale)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -896,6 +980,36 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::config::Account;
+
+    #[test]
+    fn locale_relabel_is_planned_only_when_the_locale_changes() {
+        assert!(locale_relabel("es", "es", "Quorb").is_none());
+        assert!(locale_relabel("en", "en", "Quorb").is_none());
+        let plan = locale_relabel("es", "en", "Quorb").expect("es -> en relabels");
+        assert_eq!(plan.tray, ["Show / hide widget", "Refresh now", "Settings…", "Quit"]);
+        assert_eq!(
+            plan.titles.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
+            vec![SETTINGS, DETAIL, OVERLAY]
+        );
+        assert_eq!(plan.titles[0].1, i18n::settings_title(i18n::Locale::En, "Quorb"));
+        let back = locale_relabel("en", "es", "Quorb").expect("en -> es relabels");
+        assert_eq!(back.tray, ["Mostrar / ocultar widget", "Actualizar ahora", "Ajustes…", "Salir"]);
+        assert_eq!(back.titles[0].1, i18n::settings_title(i18n::Locale::Es, "Quorb"));
+    }
+
+    #[test]
+    fn locale_relabel_applies_the_tray_once_and_every_window_title() {
+        let plan = locale_relabel("es", "en", "Quorb Beta").unwrap();
+        let mut trays = Vec::new();
+        let mut titles = Vec::new();
+        run_locale_relabel(&plan, |labels| trays.push(labels), |label, title| titles.push((label.to_string(), title.to_string())));
+        assert_eq!(trays, vec![plan.tray]);
+        assert_eq!(
+            titles,
+            plan.titles.iter().map(|(l, t)| (l.to_string(), t.clone())).collect::<Vec<_>>()
+        );
+        assert!(titles.iter().all(|(_, t)| t.contains("Quorb Beta")), "titles keep the channel name: {titles:?}");
+    }
 
     #[test]
     fn updater_policy_matches_compiled_target() {

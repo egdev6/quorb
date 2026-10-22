@@ -23,6 +23,21 @@ pub(crate) fn plan_allowance(plan: &str) -> (Option<f64>, &'static str) {
     }
 }
 
+/// Medidor de peticiones premium del mes: uso sobre la cuota incluida del plan.
+/// Extraído de `fetch` para poder testearlo sin red (seguimiento 2 de #66).
+fn premium_meter(usage: f64, allowance: Option<f64>, reset: String, window: i64) -> Meter {
+    Meter {
+        id: "premium_requests".into(),
+        label: "Peticiones premium".into(),
+        percent: allowance.map(|a| usage / a * 100.0),
+        used: Some(usage),
+        limit: allowance,
+        unit: Some("peticiones".into()),
+        resets_at: Some(reset),
+        window_seconds: Some(window),
+    }
+}
+
 pub async fn fetch(cfg: &CopilotConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let mut report = who.report("GitHub Copilot", Kind::Subscription);
     let (default_allowance, plan_label) = plan_allowance(&cfg.plan);
@@ -63,16 +78,7 @@ pub async fn fetch(cfg: &CopilotConfig, who: Who<'_>, http: &reqwest::Client) ->
     let usage = parse(&body);
     let allowance = cfg.custom_allowance.map(f64::from).filter(|a| *a > 0.0).or(default_allowance);
     let (reset, window) = month_window(now);
-    report.meters.push(Meter {
-        id: "premium_requests".into(),
-        label: "Peticiones premium".into(),
-        percent: allowance.map(|a| usage.requests / a * 100.0),
-        used: Some(usage.requests),
-        limit: allowance,
-        unit: Some("peticiones".into()),
-        resets_at: Some(reset),
-        window_seconds: Some(window),
-    });
+    report.meters.push(premium_meter(usage.requests, allowance, reset, window));
     if usage.extra_amount > 0.0 {
         report.spend = Some(Spend {
             amount: usage.extra_amount,
@@ -131,6 +137,24 @@ pub(crate) fn parse(v: &Value) -> CopilotUsage {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn premium_meter_bundles_id_label_unit_and_values() {
+        let m = premium_meter(120.0, Some(300.0), "2026-11-01T00:00:00Z".into(), 2_592_000);
+        assert_eq!(m.id, "premium_requests");
+        assert_eq!(m.label, "Peticiones premium");
+        assert_eq!(m.unit.as_deref(), Some("peticiones"));
+        assert_eq!(m.percent, Some(40.0));
+        assert_eq!(m.used, Some(120.0));
+        assert_eq!(m.limit, Some(300.0));
+        assert_eq!(m.resets_at.as_deref(), Some("2026-11-01T00:00:00Z"));
+        assert_eq!(m.window_seconds, Some(2_592_000));
+        // Sin cuota conocida: hay uso pero ni límite ni porcentaje.
+        let m = premium_meter(10.0, None, "r".into(), 1);
+        assert_eq!(m.percent, None);
+        assert_eq!(m.limit, None);
+        assert_eq!(m.used, Some(10.0));
+    }
 
     #[test]
     fn sums_premium_requests() {

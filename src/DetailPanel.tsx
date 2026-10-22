@@ -5,6 +5,8 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { ProviderCard } from './components/ProviderCard';
 import { ProviderDetails } from './components/ProviderDetails';
 import { api } from './lib/api';
+import { intlLocale } from './i18n';
+import { useLocale } from './i18n/use-locale';
 import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, samePhysical, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
@@ -26,6 +28,8 @@ async function copyText(text: string): Promise<boolean> {
 
 export function DetailPanel() {
   const [data, setData] = useState<DetailState | null>(null);
+  // Idioma de esta ventana: una lectura + `config-changed`; `es` hasta cargar.
+  const locale = useLocale();
   const [positioned, setPositioned] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -135,7 +139,7 @@ export function DetailPanel() {
   // El panel se diseña a la medida del DS (círculo de 56 px) y se escala entero con el tamaño de los círculos.
   const base = basePanelZoom(data.orbSize);
   const scale = fit?.zoom ?? base;
-  const updated = data.updatedAt == null ? '—' : new Date(data.updatedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const updated = data.updatedAt == null ? '—' : new Date(data.updatedAt).toLocaleTimeString(intlLocale(locale), { hour: '2-digit', minute: '2-digit' });
   return (
     <div
       className="dock detail-dock"

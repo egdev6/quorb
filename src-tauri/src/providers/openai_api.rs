@@ -9,6 +9,23 @@ use serde_json::Value;
 
 const URL: &str = "https://api.openai.com/v1/organization/costs";
 
+/// Medidor de presupuesto mensual: % del gasto sobre el tope configurado.
+/// El importe ya se muestra en `spend`; el medidor aporta la serie del historial.
+/// Extraído de `fetch` para poder testearlo sin red (seguimiento 2 de #66).
+fn budget_meter(total: f64, budget: f64, currency: String, reset: String, window: i64) -> Meter {
+    Meter {
+        id: "budget_monthly".into(),
+        label: "Presupuesto mensual".into(),
+        percent: Some(total / budget * 100.0),
+        // el importe ya se muestra en `spend`
+        used: None,
+        limit: None,
+        unit: Some(currency),
+        resets_at: Some(reset),
+        window_seconds: Some(window),
+    }
+}
+
 pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let report = who.report("OpenAI API", Kind::Api);
     let Some(key) = who.secret(secrets::OPENAI_ADMIN_KEY) else {
@@ -65,17 +82,7 @@ pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) ->
     });
     if let Some(b) = cfg.monthly_budget_usd.filter(|b| *b > 0.0) {
         let (reset, window) = month_window(chrono::Utc::now());
-        report.meters.push(Meter {
-            id: "budget_monthly".into(),
-            label: "Presupuesto mensual".into(),
-            percent: Some(total / b * 100.0),
-            // el importe ya se muestra en `spend`
-            used: None,
-            limit: None,
-            unit: Some(currency),
-            resets_at: Some(reset.clone()),
-            window_seconds: Some(window),
-        });
+        report.meters.push(budget_meter(total, b, currency, reset, window));
     }
     report
 }
@@ -104,6 +111,20 @@ pub(crate) fn sum_costs(v: &Value) -> (f64, Option<String>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn budget_meter_bundles_id_label_unit_and_values() {
+        let m = budget_meter(30.0, 120.0, "EUR".into(), "2026-11-01T00:00:00Z".into(), 2_592_000);
+        assert_eq!(m.id, "budget_monthly");
+        assert_eq!(m.label, "Presupuesto mensual");
+        assert_eq!(m.unit.as_deref(), Some("EUR"));
+        assert_eq!(m.percent, Some(25.0));
+        // El importe ya se muestra en `spend`: el medidor no lo duplica.
+        assert_eq!(m.used, None);
+        assert_eq!(m.limit, None);
+        assert_eq!(m.resets_at.as_deref(), Some("2026-11-01T00:00:00Z"));
+        assert_eq!(m.window_seconds, Some(2_592_000));
+    }
 
     #[test]
     fn sums_costs() {

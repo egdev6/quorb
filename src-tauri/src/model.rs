@@ -25,8 +25,12 @@ pub enum Kind {
 #[derive(Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Meter {
-    /// Identificador estable (snake_case) del medidor: la lógica de la UI y el historial
-    /// se apoyan en él, no en `label`, que es solo texto visible.
+    /// Identificador estable **y obligatorio** (snake_case) del medidor: la lógica
+    /// de la UI y el historial se apoyan en él, no en `label`, que es solo texto
+    /// visible y cambia con el idioma. Todo medidor nuevo debe traer id (se
+    /// vigila con `debug_assert!` al grabar en el historial); solo los medidores
+    /// legacy pueden llegar sin él, y entonces `history::sample_key` respalda
+    /// en `label`.
     pub id: String,
     pub label: String,
     /// 0–100
