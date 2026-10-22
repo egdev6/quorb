@@ -22,3 +22,6 @@ Provider SuperGrok (Grok Build CLI) para Quorb — issue #173.
 
 - L1: "si porque te voy a pedir algo" → investigación del mecanismo; resultado: SuperGrok vía Grok CLI (issue #173, aprobado por "si").
 - L2: Investigación de wire: CodexBar docs/grok.md — auth.json (claves OIDC, campo `key`, `GROK_HOME`), billing proxy (`config.creditUsagePercent`, `currentPeriod.end`, headers `x-xai-token-auth: xai-grok-cli`), plan por `/v1/settings` → `subscription_tier_display`.
+- L3: T1 listo — commit `feat(providers): provider SuperGrok via Grok CLI (backend)` (grok.rs + config + wiring, 9 tests).
+- L4: T2 listo — commit `feat(providers): SuperGrok provider UI (frontend)`; se sacó del commit el directorio `.agents/` no relacionado (amend).
+- L5: T3 verificado — cargo test 236 ok, vitest 220 ok, tsc limpio, `vite build` ok, clippy sin avisos en grok. S1–S7 cubiertos; sin logo SVG (monograma `Gr` por defecto, documentado en logos/README).
