@@ -11,8 +11,8 @@ echo "=== [1/2] .deb ==="
 # debe ser case-insensitive o no encuentra nada y el skip oculta la validación.
 DEB="$(find /artifacts -maxdepth 1 -type f -iname '*.deb' 2>/dev/null | sort | head -1 || true)"
 if [ -z "$DEB" ]; then
-  echo "AVISO: no hay ningún .deb en /artifacts — se omite la validación .deb."
-  exit 0
+  echo "✖ No hay ningún .deb en /artifacts: se esperaba el bundle .deb y no se puede validar." >&2
+  exit 1
 fi
 echo "Instalando $DEB ..."
 dpkg -i "$DEB" || { echo "  dpkg -i falló; resolviendo deps con apt-get -f install..."; apt-get -f install -y; }

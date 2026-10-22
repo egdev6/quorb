@@ -11,8 +11,8 @@ echo "=== [2/2] .AppImage ==="
 # validación.
 APPIMAGE="$(find /artifacts -maxdepth 1 -type f -iname '*.AppImage' 2>/dev/null | sort | head -1 || true)"
 if [ -z "$APPIMAGE" ]; then
-  echo "AVISO: no hay ningún .AppImage en /artifacts — se omite la validación .AppImage."
-  exit 0
+  echo "✖ No hay ningún .AppImage en /artifacts: se esperaba el bundle .AppImage y no se puede validar." >&2
+  exit 1
 fi
 echo "Extrayendo $APPIMAGE ..."
 test -x "$APPIMAGE" || chmod +x "$APPIMAGE"
