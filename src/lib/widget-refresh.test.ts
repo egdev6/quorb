@@ -13,6 +13,7 @@ function cfg(over: Partial<AppConfig> = {}): AppConfig {
     copilot: { enabled: true },
     openrouter: { enabled: true },
     nan: { enabled: true },
+    minimax: { enabled: false },
     anthropicApi: { enabled: false },
     openaiApi: { enabled: false },
     nineRouter: { enabled: true, baseUrl: 'http://localhost:20128', period: '7d', showSubProviders: true, minSpendUsd: 0, monthlyBudgetUsd: null },

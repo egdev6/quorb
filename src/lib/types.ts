@@ -55,6 +55,12 @@ export interface ApiCostConfig {
   monthlyBudgetUsd: number | null;
 }
 
+/** MiniMax. `baseUrl` cubre las dos regiones: global `api.minimax.io` y China `api.minimaxi.com`. */
+export interface MiniMaxConfig {
+  enabled: boolean;
+  baseUrl: string;
+}
+
 export interface NanConfig {
   enabled: boolean;
   baseUrl: string;
@@ -154,6 +160,7 @@ export interface AppConfig {
   anthropicApi: ApiCostConfig;
   openaiApi: ApiCostConfig;
   nan: NanConfig;
+  minimax: MiniMaxConfig;
   nineRouter: NineRouterConfig;
   /** Cuentas adicionales de un proveedor (la principal es la de su campo) */
   accounts: Account[];
@@ -195,6 +202,8 @@ export type SecretKey =
   | 'nan_api_key'
   | 'nan_session'
   | 'openrouter_api_key'
+  | 'minimax_subscription_key'
+  | 'minimax_api_key'
   | 'github_token'
   | 'cursor_token'
   | 'nine_router_password'

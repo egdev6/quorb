@@ -8,6 +8,7 @@ pub mod copilot;
 pub mod cursor;
 pub mod gemini;
 pub mod nan;
+pub mod minimax;
 pub mod nan_cloud;
 pub mod nine_router;
 pub mod nine_router_creds;
@@ -83,6 +84,9 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
     if cfg.openrouter.enabled {
         jobs.push(async move { vec![openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await] }.boxed());
     }
+    if cfg.minimax.enabled {
+        jobs.push(async move { vec![minimax::fetch(&cfg.minimax, Who::main("minimax"), http).await] }.boxed());
+    }
     if cfg.nine_router.enabled {
         // 9Router lleva su propio registro de uso; ademas del orbe agregado,
         // descubrimos sus sub-proveedores y los exponemos como cuentas propias.
@@ -121,6 +125,7 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         "copilot" => copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await,
         "nan" => nan::fetch(&cfg.nan, Who::main("nan"), http).await,
         "openrouter" => openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await,
+        "minimax" => minimax::fetch(&cfg.minimax, Who::main("minimax"), http).await,
         "nine_router" => nine_router::fetch(&cfg.nine_router, Who::main("nine_router"), http).await,
         "anthropic_api" => anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await,
         "openai_api" => openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await,

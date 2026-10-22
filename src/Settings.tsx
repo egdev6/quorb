@@ -37,6 +37,8 @@ const LINKS = {
   nanDocs: 'https://nan.builders/docs',
   githubToken: 'https://github.com/settings/personal-access-tokens/new',
   openrouterKeys: 'https://openrouter.ai/settings/keys',
+  minimaxKeys: 'https://www.minimax.io/',
+  minimaxKeysCn: 'https://www.minimaxi.com/',
   geminiCli: 'https://github.com/google-gemini/gemini-cli',
   releases: 'https://github.com/egdev6/quorb/releases',
   repo: 'https://github.com/egdev6/quorb',
@@ -1042,6 +1044,7 @@ const PROVIDER_TABS = [
   { id: 'gemini', name: 'Gemini', group: 'sub', desc: 'Cuota diaria por modelo' },
   { id: 'cursor', name: 'Cursor', group: 'sub', desc: 'Uso del plan en el ciclo y on-demand' },
   { id: 'copilot', name: 'GitHub Copilot', group: 'sub', desc: 'Peticiones premium del mes' },
+  { id: 'minimax', name: 'MiniMax', group: 'sub', desc: 'Cuota del plan M/Token y saldo de pago por uso' },
   { id: 'nan', name: 'NaN Builders', group: 'api', desc: 'Cuota del plan y tokens por día' },
   { id: 'openrouter', name: 'OpenRouter', group: 'api', desc: 'Saldo y gasto por clave' },
   { id: 'anthropic_api', name: 'Anthropic API', group: 'api', desc: 'Gasto del mes con clave de admin' },
@@ -1113,6 +1116,9 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.nan.enabled, !!s.nan_session || !!s.nan_api_key);
     case 'openrouter':
       return on(cfg.openrouter.enabled, !!s.openrouter_api_key);
+    case 'minimax':
+      // Solo la Subscription Key es obligatoria; el saldo PAYG es un extra opcional.
+      return on(cfg.minimax.enabled, !!s.minimax_subscription_key);
     case 'anthropic_api':
       return on(cfg.anthropicApi.enabled, !!s.anthropic_admin_key);
     case 'openai_api':
@@ -1938,6 +1944,52 @@ export function Settings() {
         </Section>
       )}
 
+      {tab === 'minimax' && (
+        <Section kicker="Suscripción · API oficial" title="MiniMax">
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)} onChange={(v) => setVisibility('minimax', v)} />
+          <p className="q-note">
+            Cuota del plan y, si añades la segunda clave, tu saldo de pago por uso. Son
+            <b> dos credenciales distintas</b> en la consola: la primera da acceso al plan y la segunda al saldo.
+          </p>
+          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
+            <li data-done={!!secrets.minimax_subscription_key || undefined}>
+              <b>Subscription Key del plan</b>
+              <SecretInput
+                id="minimax_subscription_key"
+                label="Subscription Key"
+                configured={!!secrets.minimax_subscription_key}
+                onSaved={loadSecrets}
+                hint={<>Del panel M/Token en <Link href={LINKS.minimaxKeys}>minimax.io</Link>. En la región de China, en <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link> (el host por región se cambia en Ajustes avanzados).</>}
+              />
+            </li>
+            <li data-done={!!secrets.minimax_api_key || undefined}>
+              <b>API key de pago por uso (opcional)</b>
+              <SecretInput
+                id="minimax_api_key"
+                label="API key PAYG"
+                configured={!!secrets.minimax_api_key}
+                onSaved={loadSecrets}
+                hint={<>Sin ella solo se muestra la cuota del plan; el saldo es opcional y su fallo no lo degrade.</>}
+              />
+            </li>
+            <HealthStep id="minimax" {...healthFor('minimax', !cfg.minimax.enabled)} />
+          </ol>
+          <details className="q-details">
+            <summary>Avanzado · URL del API</summary>
+            <Field
+              label="Base URL"
+              hint="Las claves son por región: global en api.minimax.io, China en api.minimaxi.com. Si el anillo sale con error 1004 o 2049, prueba con la de tu región."
+            >
+              <input
+                type="text"
+                spellCheck={false}
+                value={cfg.minimax.baseUrl}
+                onChange={(e) => set('minimax', { baseUrl: e.target.value })}
+              />
+            </Field>
+          </details>
+        </Section>
+      )}
       {tab === 'openrouter' && (
         <Section kicker="Pago por uso · API oficial" title="OpenRouter">
           <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />

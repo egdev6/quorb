@@ -55,6 +55,8 @@ const ALIASES: Record<string, string[]> = {
   cursor: ['cursor'],
   copilot: ['copilot', 'github-copilot', 'microsoft-copilot', 'github'],
   openrouter: ['openrouter'],
+  // `minimax-cn` es el nombre del nodo de 9Router para la región de China.
+  minimax: ['minimax', 'minimax-cn', 'minimax_cn', 'minimaxi'],
   nine_router: ['nine_router', '9router'],
   // Nombres de nodos personalizados de 9Router → logo del proveedor real.
   zhipu: ['zhipu', 'z-ai', 'glm', 'glm-cn'],
@@ -107,6 +109,7 @@ const MONOGRAM: Record<string, { text: string; sub?: string }> = {
   cursor: { text: 'Cu' },
   copilot: { text: 'Co' },
   openrouter: { text: 'OR' },
+  minimax: { text: 'MM' },
   nine_router: { text: '9R' },
 };
 
