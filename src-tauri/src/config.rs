@@ -77,6 +77,7 @@ pub struct AppConfig {
     pub codex: SubscriptionConfig,
     pub gemini: SubscriptionConfig,
     pub cursor: SubscriptionConfig,
+    pub grok: SubscriptionConfig,
     pub copilot: CopilotConfig,
     pub openrouter: OpenRouterConfig,
     pub anthropic_api: ApiCostConfig,
@@ -235,6 +236,7 @@ impl Account {
             "claude" => Some("CLAUDE_CONFIG_DIR"),
             "codex" => Some("CODEX_HOME"),
             "gemini" => Some("GEMINI_CLI_HOME"),
+            "grok" => Some("GROK_HOME"),
             _ => None,
         }
     }
@@ -246,6 +248,7 @@ impl Account {
             "claude" => Some(dir.join(".credentials.json")),
             "codex" => Some(dir.join("auth.json")),
             "gemini" => Some(dir.join(".gemini").join("oauth_creds.json")),
+            "grok" => Some(dir.join("auth.json")),
             _ => None,
         }
     }
@@ -289,6 +292,11 @@ impl Default for AppConfig {
                 enabled: false,
                 credentials_path: None,
                 login_command: "cursor".into(),
+            },
+            grok: SubscriptionConfig {
+                enabled: false,
+                credentials_path: None,
+                login_command: "grok login".into(),
             },
             copilot: CopilotConfig::default(),
             openrouter: OpenRouterConfig::default(),
@@ -538,6 +546,7 @@ impl AppConfig {
             &mut self.codex.credentials_path,
             &mut self.gemini.credentials_path,
             &mut self.cursor.credentials_path,
+            &mut self.grok.credentials_path,
         ] {
             if p.as_deref().map(str::trim).unwrap_or("").is_empty() {
                 *p = None;

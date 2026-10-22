@@ -7,6 +7,7 @@ pub mod codex;
 pub mod copilot;
 pub mod cursor;
 pub mod gemini;
+pub mod grok;
 pub mod nan;
 pub mod minimax;
 pub mod nan_cloud;
@@ -72,6 +73,9 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
     if cfg.gemini.enabled {
         jobs.push(async move { vec![gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await] }.boxed());
     }
+    if cfg.grok.enabled {
+        jobs.push(async move { vec![grok::fetch(&cfg.grok, Who::main("grok"), http).await] }.boxed());
+    }
     if cfg.cursor.enabled {
         jobs.push(async move { vec![cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await] }.boxed());
     }
@@ -121,6 +125,7 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         "claude" => claude::fetch(&cfg.claude, Who::main("claude"), http).await,
         "codex" => codex::fetch(&cfg.codex, Who::main("codex"), http).await,
         "gemini" => gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await,
+        "grok" => grok::fetch(&cfg.grok, Who::main("grok"), http).await,
         "cursor" => cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await,
         "copilot" => copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await,
         "nan" => nan::fetch(&cfg.nan, Who::main("nan"), http).await,
@@ -148,6 +153,7 @@ pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
         "claude" => Some(main(&cfg.claude, home.join(".claude").join(".credentials.json"))),
         "codex" => codex::resolved_auth_path(cfg.codex.credentials_path.as_deref()).ok(),
         "gemini" => Some(main(&cfg.gemini, home.join(".gemini").join("oauth_creds.json"))),
+        "grok" => grok::resolved_auth_path(cfg.grok.credentials_path.as_deref()).ok(),
         _ => None,
     }
 }
@@ -164,6 +170,7 @@ fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Clie
         "claude" => async move { claude::fetch(&session(&cfg.claude), who, http).await }.boxed(),
         "codex" => async move { codex::fetch(&session(&cfg.codex), who, http).await }.boxed(),
         "gemini" => async move { gemini::fetch(&session(&cfg.gemini), who, http).await }.boxed(),
+        "grok" => async move { grok::fetch(&session(&cfg.grok), who, http).await }.boxed(),
         // Solo con su token: la sesión de la app de Cursor es la de la cuenta principal.
         "cursor" => async move { cursor::fetch(&SubscriptionConfig::default(), who, http).await }.boxed(),
         "copilot" => {
@@ -272,6 +279,13 @@ pub fn session_stamp(cfg: &AppConfig) -> u64 {
     }
     if cfg.gemini.enabled {
         files.push(main(&cfg.gemini, h.join(".gemini").join("oauth_creds.json")));
+    }
+    if cfg.grok.enabled {
+        // Mismo resolver que `grok::fetch`: el sello observa el fichero que de
+        // verdad se lee (incluido el respaldo ~/.grok/auth.json).
+        if let Ok(p) = grok::resolved_auth_path(cfg.grok.credentials_path.as_deref()) {
+            files.push(p);
+        }
     }
     files.extend(cfg.accounts.iter().filter(|a| a.enabled).filter_map(|a| a.credentials_file(&h)));
     files
