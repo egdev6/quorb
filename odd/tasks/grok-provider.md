@@ -25,3 +25,4 @@ Provider SuperGrok (Grok Build CLI) para Quorb — issue #173.
 - L3: T1 listo — commit `feat(providers): provider SuperGrok via Grok CLI (backend)` (grok.rs + config + wiring, 9 tests).
 - L4: T2 listo — commit `feat(providers): SuperGrok provider UI (frontend)`; se sacó del commit el directorio `.agents/` no relacionado (amend).
 - L5: T3 verificado — cargo test 236 ok, vitest 220 ok, tsc limpio, `vite build` ok, clippy sin avisos en grok. S1–S7 cubiertos; sin logo SVG (monograma `Gr` por defecto, documentado en logos/README).
+- L6: Prueba en vivo del usuario: endpoints verificados con sesión real (billing HTTP 200, `creditUsagePercent: 9.0`, ventana semanal; settings HTTP 200, "SuperGrok"). Bugs encontrados y corregidos: `grok` faltaba en `CONFIG_KEY` de `settings-visibility.ts` (el toggle de visibilidad descartaba el cambio) y el logo era el de 2023 — reemplazado por la marca actual (feb 2025). Usuario confirma: "ok ahora si, super testeado". S6 completo con logo.
