@@ -995,24 +995,24 @@ look like text.
 
 | Line | Text |
 |---:|---|
-| 260 | ${…}: sesión caducada |
-| 260 | Pulsa «Renovar sesión» en su panel. Quorb se actualiza solo en cuanto se renueve. |
-| 408 | Quorb ${…} disponible |
-| 408 | Pulsa el icono de descarga de la tira para actualizar. |
-| 430 | No se pudo actualizar Quorb |
-| 487 | Widget surface is not mounted |
-| 688 | .orb[data-id="${…}"] |
-| 907 | Quorb |
-| 933 | Reintentar mostrar Quorb |
-| 933 | Mostrar Quorb |
-| 963 | Arrastrar: se pega al borde más cercano |
-| 992 | Reintentar |
-| 994 | Cargando… |
-| 998 | Configurar |
-| 1011 | Actualizando a ${…}${…} |
-| 1012 | Actualizar a Quorb ${…} |
-| 1018 | Actualizar ahora |
-| 1021 | Ajustes |
+| 266 | ${…}: sesión caducada |
+| 266 | Pulsa «Renovar sesión» en su panel. Quorb se actualiza solo en cuanto se renueve. |
+| 414 | Quorb ${…} disponible |
+| 414 | Pulsa el icono de descarga de la tira para actualizar. |
+| 436 | No se pudo actualizar Quorb |
+| 493 | Widget surface is not mounted |
+| 697 | .orb[data-id="${…}"] |
+| 941 | Quorb |
+| 967 | Reintentar mostrar Quorb |
+| 967 | Mostrar Quorb |
+| 997 | Arrastrar: se pega al borde más cercano |
+| 1026 | Reintentar |
+| 1028 | Cargando… |
+| 1032 | Configurar |
+| 1045 | Actualizando a ${…}${…} |
+| 1046 | Actualizar a Quorb ${…} |
+| 1052 | Actualizar ahora |
+| 1055 | Ajustes |
 
 ## src/components/CodexInstall.tsx
 

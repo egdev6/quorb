@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDetailPresence, pointInBounds, presenceFromPoint } from './detail-presence';
+import { createDetailPresence, pointInBounds, presenceFromPoint, shouldSampleNativePresence } from './detail-presence';
 
 /**
  * Deterministic tracker whose close bookkeeping records the ORDER of
@@ -184,5 +184,26 @@ describe('presenceFromPoint', () => {
   it('con bounds desconocidos la superficie no se puede afirmar', () => {
     expect(presenceFromPoint({ x: 50, y: 250 }, widget, null)).toEqual({ widget: true, detail: false });
     expect(presenceFromPoint({ x: 50, y: 250 }, null, null)).toEqual({ widget: false, detail: false });
+  });
+});
+
+describe('shouldSampleNativePresence', () => {
+  it('solo macOS: en Linux cursorPosition() devuelve (0,0) y cerraria el popup de golpe', () => {
+    // El muestreo nativo solo aporta algo donde el Webview pierde el mouseleave
+    // del DOM (#154). En Linux/WebKitGTK devuelve (0,0) en vez de fallar, asi que
+    // compararlo contra los bounds lee «fuera» y dispara el cierre cada 400 ms.
+    expect(shouldSampleNativePresence('macos')).toBe(true);
+    expect(shouldSampleNativePresence('windows')).toBe(false);
+    expect(shouldSampleNativePresence('linux')).toBe(false);
+  });
+
+  it('preserva exactamente el gate que sustituye: /Macintosh|Mac OS X/.test(ua)', () => {
+    const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15';
+    const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    const LINUX_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15';
+    const legacy = (ua: string) => /Macintosh|Mac OS X/.test(ua);
+    expect(shouldSampleNativePresence('macos')).toBe(legacy(MAC_UA));
+    expect(shouldSampleNativePresence('windows')).toBe(legacy(WINDOWS_UA));
+    expect(shouldSampleNativePresence('linux')).toBe(legacy(LINUX_UA));
   });
 });
