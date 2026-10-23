@@ -1,0 +1,10 @@
+{
+  "_note": "Fixture de sesión Codex real — estructura que lee Quorb: tokens.id_token (JWT con claims https://api.openai.com/auth + exp), tokens.access_token, tokens.account_id. Valores de ejemplo, NO credenciales reales.",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "id_token": "HEADER.eyJleHAiOjQxMDAwMDAwMDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2NvdW50LWV4YW1wbGUtMTIzIiwiY2hhdGdwdF9wbGFuX3R5cGUiOiJwbHVzIiwiY2hhdGdwdF9zdWJzY3JpcHRpb25fYWN0aXZlX3VudGlsIjoiMjA5OS0xMi0zMVQyMzo1OTo1OVoifX0.SIGNATURE_PLACEHOLDER",
+    "access_token": "example-access-token-codex",
+    "refresh_token": "example-refresh-token-codex",
+    "account_id": "account-example-123"
+  }
+}

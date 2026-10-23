@@ -1,4 +1,5 @@
 import { samePhysical, type PhysicalBounds } from './detail-panel';
+import type { Os } from './os-detect';
 
 export interface RecoverySnapshot {
   bounds: PhysicalBounds;
@@ -23,6 +24,20 @@ function valid(bounds: PhysicalBounds): boolean {
 function overlaps(a: PhysicalBounds, b: PhysicalBounds): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x
     && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/**
+ * Does auditing native reality belong to this platform at all?
+ *
+ * Only Windows displaces or resizes a normal window without the monitor
+ * geometry or our cached target changing (#147/#148). On xdg-shell
+ * `outerPosition()` is (0,0) by design and GTK sizing differs, so auditing
+ * there reads a healthy window as displaced and re-places it every tick —
+ * the flicker and disappearing widget of #168. Named and tested so the gate
+ * keeps its reason instead of surviving as an inline condition.
+ */
+export function shouldAuditNativePosition(os: Os): boolean {
+  return os === 'windows';
 }
 
 /** Check native reality, not the last successfully requested rectangle.

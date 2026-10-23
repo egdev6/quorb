@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createWidgetRecovery, type RecoverySnapshot } from './widget-recovery';
+import { createWidgetRecovery, shouldAuditNativePosition, type RecoverySnapshot } from './widget-recovery';
 
 const primary = { x: 0, y: 0, w: 4096, h: 1152 };
 function snapshot(over: Partial<RecoverySnapshot> = {}): RecoverySnapshot {
@@ -112,5 +112,25 @@ describe('widget off-screen recovery', () => {
     await expect(s.check()).resolves.toBeUndefined();
     await s.check();
     expect(s.recover).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('shouldAuditNativePosition', () => {
+  const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+  const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15';
+  const LINUX_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15';
+
+  it('solo audita en Windows: en Linux el recovery seria un falso positivo estructural', () => {
+    // Wayland xdg-shell devuelve outerPosition() === (0,0) por diseño y GTK
+    // dimensiona distinto, asi que cada tick «corregiria» una ventana sana (#148).
+    expect(shouldAuditNativePosition('windows')).toBe(true);
+    expect(shouldAuditNativePosition('macos')).toBe(false);
+    expect(shouldAuditNativePosition('linux')).toBe(false);
+  });
+
+  it('preserva exactamente el gate que sustituye: /Windows/.test(ua)', () => {
+    expect(shouldAuditNativePosition('windows')).toBe(/Windows/.test(WINDOWS_UA));
+    expect(shouldAuditNativePosition('macos')).toBe(/Windows/.test(MAC_UA));
+    expect(shouldAuditNativePosition('linux')).toBe(/Windows/.test(LINUX_UA));
   });
 });

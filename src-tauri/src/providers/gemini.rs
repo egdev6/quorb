@@ -70,13 +70,24 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     report
 }
 
+/// ¿El token del archivo aún es usable, o hay que refrescar?
+/// Pura y testeable sin HTTP (mismo patrón que `is_expired`/`parse_validity`).
+fn token_needs_refresh(creds: &Value, now_ms: i64) -> bool {
+    let usable = creds
+        .get("access_token")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.is_empty());
+    if !usable {
+        return true;
+    }
+    let expiry = creds.get("expiry_date").and_then(Value::as_i64).unwrap_or(0);
+    expiry - 60_000 <= now_ms
+}
+
 async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp_millis();
-    let expiry = creds.get("expiry_date").and_then(Value::as_i64).unwrap_or(0);
-    if let Some(t) = creds.get("access_token").and_then(Value::as_str) {
-        if expiry - 60_000 > now {
-            return Ok(t.to_string());
-        }
+    if !token_needs_refresh(creds, now) {
+        return Ok(creds.get("access_token").and_then(Value::as_str).unwrap().to_string());
     }
     let refresh = creds
         .get("refresh_token")
@@ -200,5 +211,25 @@ mod tests {
         assert_eq!(project_id(&v).as_deref(), Some("my-proj-123"));
         assert_eq!(tier_name(&v).as_deref(), Some("Google AI Pro"));
         assert_eq!(project_id(&json!({"cloudaicompanionProject": {"id": "p2"}})).as_deref(), Some("p2"));
+    }
+
+    /// Sesión real de Gemini CLI: el fixture es la estructura que escribe
+    /// `~/.gemini/oauth_creds.json` tras `gemini` (login con Google).
+    /// `token_needs_refresh` decide sin HTTP (función pura) que el token del
+    /// archivo sigue válido → no dispara el refresh de red. El camino de
+    /// refresh real (expirado) depende de `reqwest` y queda fuera (gap
+    /// documentado); aquí se verifica la decisión, no la llamada HTTP.
+    #[test]
+    fn parses_real_session_fixture_returns_valid_token_without_http() {
+        let raw = include_str!("fixtures/gemini-oauth_creds.json");
+        let v: Value = serde_json::from_str(raw).expect("fixture gemini válido");
+        assert_eq!(v.get("access_token").and_then(Value::as_str), Some("example-access-token-gemini"));
+        // Ahora (2026) muy por debajo de expiry_date: NO necesita refresh.
+        let now = 1_800_000_000_000;
+        assert!(!token_needs_refresh(&v, now), "token del fixture sigue vigente");
+        // Si ya pasó la expiry, el fixture obliga a refrescar (no usa el token).
+        assert!(token_needs_refresh(&v, 2_100_000_000_000), "token expirado exige refresh");
+        // Sin access_token → siempre hay que refrescar.
+        assert!(token_needs_refresh(&json!({"refresh_token": "r"}), now), "sin token, hay que refrescar");
     }
 }

@@ -333,6 +333,25 @@ mod tests {
         assert!(Credentials::parse(&json!({})).is_err());
     }
 
+    /// Sesión real de Claude Code: el fixture es la estructura que escribe
+    /// `~/.claude/.credentials.json` tras el login OAuth. Verifica que el
+    /// parser acepta el archivo real y decide la caducidad con reloj inyectado
+    /// (sin esperar a que caduque).
+    #[test]
+    fn parses_real_session_fixture() {
+        let raw = include_str!("fixtures/claude-credentials.json");
+        let v: Value = serde_json::from_str(raw).expect("fixture claude válido");
+        let c = Credentials::parse(&v).expect("el fixture debe parsear como sesión real");
+        assert_eq!(c.access_token, "example-access-token-abcdef");
+        assert_eq!(c.plan.as_deref(), Some("Pro"));
+        let exp = c.expires_at_ms.expect("el fixture trae expiresAt");
+        assert!(!c.is_expired(1_800_000_000_000), "no caduca antes de su expiry");
+        assert!(c.is_expired(exp), "caduca en su expiry");
+        // Un token sin expiresAt no se considera caducado (no inventamos expiración).
+        let sin_expiry = Credentials { access_token: "t".into(), expires_at_ms: None, plan: None };
+        assert!(!sin_expiry.is_expired(exp));
+    }
+
     #[test]
     fn parses_usage_windows_and_skips_nulls() {
         let v = json!({

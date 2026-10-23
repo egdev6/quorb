@@ -1,0 +1,8 @@
+{
+  "_note": "Fixture de sesión Gemini real — estructura que lee Quorb: access_token, refresh_token, expiry_date (ms Epoch). Valores de ejemplo, NO credenciales reales. Corner: expiry_date lejano (caduca ~2033) para que access_token NO haga refresh HTTP.",
+  "access_token": "example-access-token-gemini",
+  "refresh_token": "example-refresh-token-gemini",
+  "scope": "https://www.googleapis.com/auth/generative-language",
+  "token_type": "Bearer",
+  "expiry_date": 2000000000000
+}

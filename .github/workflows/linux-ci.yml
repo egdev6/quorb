@@ -80,6 +80,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libsecret-1-dev \
+            gnome-keyring \
             libnotify-dev \
             libfuse2 \
             xvfb \
@@ -104,6 +105,26 @@ jobs:
       - name: Rust tests with locked dependencies
         working-directory: src-tauri
         run: cargo test --locked
+
+      # ---- W3 #106: Secret Service smoke (Linux real) ----
+      # El smoke `linux_secret_service_round_trip` (secrets.rs) está `#[ignore]`
+      # porque necesita un Secret Service de escritorio real (D-Bus + libsecret).
+      # Aquí se monta uno efímero: `dbus-run-session` crea un session bus aislado
+      # (y ya exporta DBUS_SESSION_BUS_ADDRESS) y `gnome-keyring-daemon --unlock`
+      # levanta el servicio con una contraseña de prueba propia del runner.
+      # El test guarda/lee/borra un valor de prueba y valida el backend
+      # `linux-native` del crate `keyring` — criterio 2 de la issue #106.
+      - name: Secret Service smoke (gnome-keyring, D-Bus session)
+        run: |
+          echo "► Arrancando Secret Service efímero (dbus-run-session + gnome-keyring)..."
+          dbus-run-session -- bash -euo pipefail -c '
+            eval $(printf "%s" "quorb-ci-testpass" | gnome-keyring-daemon --unlock --components=secrets)
+            echo "  DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+            echo "  GNOME_KEYRING_CONTROL=${GNOME_KEYRING_CONTROL:-<none>}"
+            cd src-tauri
+            echo "► Corriendo smoke linux_secret_service_round_trip (--ignored)..."
+            cargo test --locked linux_secret_service_round_trip -- --ignored --nocapture
+          '
 
       # ---- Solo si with_bundle == bundle ----
 

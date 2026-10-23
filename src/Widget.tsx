@@ -15,9 +15,10 @@ import { useUpdaterMode } from './lib/useUpdater';
 import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
-import { createWidgetRecovery } from './lib/widget-recovery';
+import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
-import { createDetailPresence, presenceFromPoint } from './lib/detail-presence';
+import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
+import { openDelayForOs, osFromUA } from './lib/os-detect';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
@@ -25,7 +26,12 @@ import { peekRect, usesPeekWindow, waitForViewport, watchPreparation } from './l
 import { useDockReveal } from './lib/useDockReveal';
 
 const CLOSE_DELAY = 280;
-const OPEN_DELAY = 90;
+/**
+ * Platform-scoped, not global: Linux needs the long delay because nothing else
+ * contains an accidental sweep there, while Windows and macOS keep the original
+ * 90 ms. The rationale and the per-platform values live in `openDelayForOs()`.
+ */
+const OPEN_DELAY = openDelayForOs(osFromUA(navigator.userAgent));
 const HIDE_DELAY = 900;
 /** Tras un aviso, la tira se muestra este tiempo aunque esté en auto-ocultar. */
 const REVEAL_MS = 6000;
@@ -514,6 +520,9 @@ export function Widget() {
   useEffect(() => {
     let disposed = false;
     const win = getCurrentWindow();
+    // Windows DWM recovery (#147/#148): on Wayland/Linux, outerPosition() returns (0,0)
+    // and GTK window sizing differs, causing infinite false-positive recovery loops.
+    if (!shouldAuditNativePosition(osFromUA(navigator.userAgent))) return;
     const allowed = () => !disposed && !drag.current && !placementInFlight.current
       && (phase === 'open' || phase === 'hidden') && shown.current && widgetBounds.current !== null;
     const check = createWidgetRecovery({
@@ -708,6 +717,9 @@ export function Widget() {
   // alimenta el tracker. Falla en silencio (Wayland puede no exponer la
   // posición): el muestreo degrada, nunca adivina.
   useEffect(() => {
+    // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
+    // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
+    if (!shouldSampleNativePresence(osFromUA(navigator.userAgent))) return;
     if (!hovered) {
       presenceRef.reset();
       return;
@@ -779,13 +791,25 @@ export function Widget() {
     cancelTimers();
     setHovered(null);
     setDragging(true);
-    const d = { sx: e.screenX, sy: e.screenY, start: null as PhysicalPosition | null, sf: geo.sf, raf: 0, pointerId: e.pointerId, ending: false };
+    // `widgetBounds.current` es la verdad incluso cuando el compositor no
+    // reporta posición: el caché lo escribe el propio `setWidgetBounds` que
+    // colocó la ventana, no una lectura de `outerPosition()`. Por eso sirve
+    // como origen síncrono del arrastre en xdg-shell, donde `outerPosition()`
+    // devuelve (0, 0) por diseño y no puede arrancar la aritmética por delta.
+    const initialStart = widgetBounds.current
+      ? new PhysicalPosition(widgetBounds.current.x, widgetBounds.current.y)
+      : null;
+    const d = { sx: e.screenX, sy: e.screenY, start: initialStart, sf: geo.sf, raf: 0, pointerId: e.pointerId, ending: false };
     drag.current = d;
     const current = () => dragMounted.current && drag.current === d;
     enqueueDrag(async () => {
       if (!current()) return;
       const position = await getCurrentWindow().outerPosition();
-      if (current()) d.start = position;
+      // Un (0, 0) real es una esquina legítima; solo se descarta cuando ya
+      // tenemos un origen creíble del caché.
+      if (current() && (position.x !== 0 || position.y !== 0 || !d.start)) {
+        d.start = position;
+      }
     }).catch((err) => {
       if (!current()) return;
       setError(String(err));
@@ -827,10 +851,20 @@ export function Widget() {
         if (!current()) return;
         const [wpos, mons] = await Promise.all([getCurrentWindow().outerPosition(), availableMonitors()]);
         if (!current()) return;
-        // El imán usa el punto donde sueltas el asa (no el centro de la tira):
-        // así, al llevarla a un lateral, se pega a ese lateral aunque sea horizontal.
-        const cx = wpos.x + (grip ? grip.left + grip.width / 2 : 0) * d.sf;
-        const cy = wpos.y + (grip ? grip.top + grip.height / 2 : 0) * d.sf;
+        // `wpos` manda cuando el compositor informa algo: es la posición real.
+        // Si informa (0,0) con un origen en caché, se toma la rama por delta
+        // (caso de la esquina superior izquierda, reportado en #168). Como
+        // `start` sale del mismo caché que escribió `setWidgetBounds`, la
+        // desviación solo puede ser redondeo del compositor; si algún día se
+        // reporta el orbe imantado en esa esquina, revisar primero el redondeo.
+        const posX = (wpos.x !== 0 || wpos.y !== 0)
+          ? wpos.x
+          : (d.start?.x ?? 0) + (e.screenX - d.sx) * d.sf;
+        const posY = (wpos.x !== 0 || wpos.y !== 0)
+          ? wpos.y
+          : (d.start?.y ?? 0) + (e.screenY - d.sy) * d.sf;
+        const cx = posX + (grip ? grip.left + grip.width / 2 : 0) * d.sf;
+        const cy = posY + (grip ? grip.top + grip.height / 2 : 0) * d.sf;
         const mon =
           mons.find((m) => contains({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height }, cx, cy)) ??
           (await currentMonitor());

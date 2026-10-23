@@ -10,7 +10,22 @@
  * using the same close timer, independently of stale DOM presence flags.
  */
 
+import type { Os } from './os-detect';
+
 export type PresenceSurface = 'widget' | 'detail';
+
+/**
+ * Does native presence sampling belong to this platform at all?
+ *
+ * Only where the DOM stops delivering the signal it is meant to supplement:
+ * a transparent, non-activating macOS Webview can drop `mouseleave` (#154).
+ * WebKitGTK does not fail there — `cursorPosition()` answers (0,0) — so the
+ * sample reads "outside", and every 400 ms tick closes the popup the user
+ * just opened. The DOM handlers stay the close path everywhere else.
+ */
+export function shouldSampleNativePresence(os: Os): boolean {
+  return os === 'macos';
+}
 
 export interface DetailPresenceHooks {
   /** Popup currently open (a detail state is showing). */
