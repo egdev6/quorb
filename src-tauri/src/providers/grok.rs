@@ -204,6 +204,7 @@ pub(crate) fn parse(body: &Value, _now: DateTime<Utc>) -> Parsed {
         (Some(p), at) => {
             let label = if p > 100.5 { "Uso de créditos" } else { "Uso semanal" };
             vec![Meter {
+                id: "weekly".into(),
                 label: label.into(),
                 percent: Some(p.clamp(0.0, 100.0)),
                 used: None,
