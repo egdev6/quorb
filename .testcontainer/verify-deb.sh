@@ -4,14 +4,15 @@
 # (libwebkit2gtk-4.1-0), scripting de postinst roto, binario que crashea al
 # arrancar sin display real.
 set -euo pipefail
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-/artifacts}"
 
 echo
 echo "=== [1/2] .deb ==="
 # Tauri nombra el paquete «Quorb_<version>_amd64.deb» (Q mayúscula); el glob
 # debe ser case-insensitive o no encuentra nada y el skip oculta la validación.
-DEB="$(find /artifacts -maxdepth 1 -type f -iname '*.deb' 2>/dev/null | sort | head -1 || true)"
+DEB="$(find "$ARTIFACTS_DIR" -maxdepth 1 -type f -iname '*.deb' 2>/dev/null | sort | head -1 || true)"
 if [ -z "$DEB" ]; then
-  echo "✖ No hay ningún .deb en /artifacts: se esperaba el bundle .deb y no se puede validar." >&2
+  echo "✖ No hay ningún .deb en $ARTIFACTS_DIR: se esperaba el bundle .deb y no se puede validar." >&2
   exit 1
 fi
 echo "Instalando $DEB ..."
