@@ -6,6 +6,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Los scripts de build-verify son bash de Linux (find/chmod/xvfb): este test
+// solo tiene sentido en POSIX. En Windows (ci.yml corre npm test en
+// windows-latest) no hay bash ni find reliably → no ejecutamos nada allí.
+const isPosix = process.platform !== 'win32';
+const suiteOpts = { skip: isPosix ? false : 'solo POSIX (scripts bash de Linux)' };
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tc = path.join(here, '..', '.testcontainer');
 const deb = path.join(tc, 'verify-deb.sh');
@@ -31,27 +37,26 @@ function run(script, files) {
   }
 }
 
-const DEB = 'Quorb_0.7.0_amd64.deb';
 const APPIMAGE = 'Quorb_0.7.0_amd64.AppImage';
 
-test('verify-deb.sh falla si falta su propio bundle .deb', () => {
+test('verify-deb.sh falla si falta su propio bundle .deb', suiteOpts, () => {
   const r = run(deb, []);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /No hay ningún \.deb/);
 });
 
-test('verify-appimage.sh falla si falta su propio bundle .AppImage', () => {
+test('verify-appimage.sh falla si falta su propio bundle .AppImage', suiteOpts, () => {
   const r = run(appimage, []);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /No hay ningún \.AppImage/);
 });
 
-test('el gate falla con el set vacío, sin bundles', () => {
+test('el gate falla con el set vacío, sin bundles', suiteOpts, () => {
   const r = run(verify, []);
   assert.equal(r.code, 1);
 });
 
-test('el gate falla si falta el .deb y solo llega el .AppImage', () => {
+test('el gate falla si falta el .deb y solo llega el .AppImage', suiteOpts, () => {
   const r = run(verify, [APPIMAGE]);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /No hay ningún \.deb/);
