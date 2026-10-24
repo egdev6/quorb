@@ -15,8 +15,9 @@ pub mod nine_router;
 pub mod nine_router_creds;
 pub mod openai_api;
 pub mod openrouter;
+pub mod zai;
 
-use crate::config::{Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenRouterConfig, SubscriptionConfig};
+use crate::config::{Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenRouterConfig, SubscriptionConfig, ZaiConfig};
 use crate::model::{Kind, UsageReport};
 use crate::secrets;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
@@ -102,6 +103,9 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
     if cfg.openai_api.enabled {
         jobs.push(async move { vec![openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await] }.boxed());
     }
+    if cfg.zai.enabled {
+        jobs.push(async move { vec![zai::fetch(&cfg.zai, Who::main("zai"), http).await] }.boxed());
+    }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
         jobs.push(async move { vec![fetch_account(cfg, a, http).await] }.boxed());
     }
@@ -134,6 +138,7 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         "nine_router" => nine_router::fetch(&cfg.nine_router, Who::main("nine_router"), http).await,
         "anthropic_api" => anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await,
         "openai_api" => openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await,
+        "zai" => zai::fetch(&cfg.zai, Who::main("zai"), http).await,
         _ => return None,
     })
 }
@@ -192,6 +197,7 @@ fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Clie
         "openrouter" => async move { openrouter::fetch(&OpenRouterConfig { enabled: true }, who, http).await }.boxed(),
         // Sub-proveedor de 9Router (`nine_router:claude`): filtra su uso en las stats.
         "nine_router" => async move { nine_router::fetch(&cfg.nine_router, who, http).await }.boxed(),
+        "zai" => async move { zai::fetch(&ZaiConfig { enabled: true }, who, http).await }.boxed(),
         "anthropic_api" | "openai_api" => {
             let c = ApiCostConfig { enabled: true, monthly_budget_usd: a.monthly_budget_usd };
             if a.provider == "anthropic_api" {

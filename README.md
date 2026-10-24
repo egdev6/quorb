@@ -110,8 +110,9 @@ React 19 and TypeScript handle the widget, settings and overlays. Tauri 2 and Ru
 | OpenRouter | Spend, key limit and credits | API key |
 | NaN Builders | Plan quota and daily tokens | Email magic link or API key |
 | Anthropic API / OpenAI API | Monthly cost | Admin API keys |
+| z.ai | GLM Coding Plan: 5-hour and weekly coding quotas, monthly web tools, manual reset balance | API key |
 
-Some integrations use undocumented endpoints, which may change or stop working. Copilot, OpenRouter and the cost APIs use official APIs; NaN combines documented API access with undocumented dashboard endpoints.
+Some integrations use undocumented endpoints, which may change or stop working. Copilot, OpenRouter and the cost APIs use official APIs; NaN combines documented API access with undocumented dashboard endpoints, and z.ai reads undocumented quota and reset endpoints.
 
 ### Features
 

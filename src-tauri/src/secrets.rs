@@ -18,6 +18,8 @@ pub const MINIMAX_SUBSCRIPTION_KEY: &str = "minimax_subscription_key";
 /// API key de pago por uso de MiniMax (endpoint `query_balance`). Son credenciales
 /// distintas en la consola: esta no da acceso al plan y la anterior no lee el saldo.
 pub const MINIMAX_API_KEY: &str = "minimax_api_key";
+/// API key de z.ai (z.ai/manage-apikey) para la cuota del GLM Coding Plan.
+pub const ZAI_API_KEY: &str = "zai_api_key";
 /// Token fine-grained de GitHub con permiso «Plan» (lectura) para la facturación de Copilot.
 pub const GITHUB_TOKEN: &str = "github_token";
 /// Token de Cursor pegado a mano (si no, se lee de la app).
@@ -30,7 +32,7 @@ pub const NINE_ROUTER_SESSION: &str = "nine_router_session";
 /// coincide con el destino actual, no se envían (evita credenciales de A en B).
 pub const NINE_ROUTER_BOUND_URL: &str = "nine_router_bound_url";
 
-pub const ALL: [&str; 12] = [
+pub const ALL: [&str; 13] = [
     ANTHROPIC_ADMIN_KEY,
     OPENAI_ADMIN_KEY,
     NAN_API_KEY,
@@ -38,6 +40,7 @@ pub const ALL: [&str; 12] = [
     OPENROUTER_API_KEY,
     MINIMAX_SUBSCRIPTION_KEY,
     MINIMAX_API_KEY,
+    ZAI_API_KEY,
     GITHUB_TOKEN,
     CURSOR_TOKEN,
     NINE_ROUTER_PASSWORD,
@@ -52,6 +55,7 @@ pub fn for_provider(provider: &str) -> &'static [&'static str] {
         "copilot" => &[GITHUB_TOKEN],
         "openrouter" => &[OPENROUTER_API_KEY],
         "minimax" => &[MINIMAX_SUBSCRIPTION_KEY, MINIMAX_API_KEY],
+        "zai" => &[ZAI_API_KEY],
         "anthropic_api" => &[ANTHROPIC_ADMIN_KEY],
         "openai_api" => &[OPENAI_ADMIN_KEY],
         "nan" => &[NAN_API_KEY, NAN_SESSION],

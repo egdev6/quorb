@@ -70,8 +70,6 @@ async function resolveGeo(name: string | null): Promise<Geo | null> {
   return m ? geoOf(m) : null;
 }
 
-/** Campos que, si cambian, obligan a volver a pedir datos. */
-
 // Pequeñas preferencias locales del widget (no críticas).
 const local = {
   get<T>(k: string, d: T): T {

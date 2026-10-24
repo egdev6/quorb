@@ -39,6 +39,7 @@ const LINKS = {
   openrouterKeys: 'https://openrouter.ai/settings/keys',
   minimaxKeys: 'https://www.minimax.io/',
   minimaxKeysCn: 'https://www.minimaxi.com/',
+  zaiKeys: 'https://z.ai/manage-apikey/apikey-list',
   geminiCli: 'https://github.com/google-gemini/gemini-cli',
   grokCli: 'https://x.ai/',
   releases: 'https://github.com/egdev6/quorb/releases',
@@ -993,6 +994,22 @@ function AccountEditor({
           </>
         )}
 
+        {a.provider === 'zai' && (
+          <>
+            <li data-done={has('zai_api_key') || undefined}>
+              <b>API key</b>
+              <SecretInput
+                id={key('zai_api_key')}
+                label="API key"
+                configured={has('zai_api_key')}
+                onSaved={onSecrets}
+                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+              />
+            </li>
+            {check}
+          </>
+        )}
+
         {(a.provider === 'anthropic_api' || a.provider === 'openai_api') && (
           <>
             <li data-done={has(adminKey) || undefined}>
@@ -1051,9 +1068,8 @@ const PROVIDER_TABS = [
   { id: 'openrouter', name: 'OpenRouter', group: 'api', desc: 'Saldo y gasto por clave' },
   { id: 'anthropic_api', name: 'Anthropic API', group: 'api', desc: 'Gasto del mes con clave de admin' },
   { id: 'openai_api', name: 'OpenAI API', group: 'api', desc: 'Gasto del mes con clave de admin' },
-
   { id: 'nine_router', name: '9Router', group: 'api', desc: 'Pasarela local · uso y gasto agregados' },
-
+  { id: 'zai', name: 'z.ai', group: 'sub', desc: 'GLM Coding Plan · cuotas de 5 h, semanales y web tools' },
 ] as const;
 /** Secciones de Ajustes, una por responsabilidad (rediseño de Quorb en Claude Design). */
 const PAGES = [
@@ -1129,6 +1145,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.openaiApi.enabled, !!s.openai_admin_key);
     case 'nine_router':
       return on(cfg.nineRouter.enabled, !!s.nine_router_password);
+    case 'zai':
+      return on(cfg.zai.enabled, !!s.zai_api_key);
   }
 }
 
@@ -2021,6 +2039,26 @@ export function Settings() {
               />
             </li>
             <HealthStep id="openrouter" {...healthFor('openrouter', !cfg.openrouter.enabled)} />
+          </ol>
+        </Section>
+      )}
+
+      {tab === 'zai' && (
+        <Section kicker="Suscripción · GLM Coding Plan" title="z.ai">
+          <Toggle label="Mostrar en el widget" checked={cfg.zai.enabled} onChange={(v) => set('zai', { enabled: v })} />
+          <p className="q-note">Cuotas de coding de las últimas 5 h y de la semana, y cuota mensual de web tools del Coding Plan.</p>
+          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
+            <li data-done={!!secrets.zai_api_key || undefined}>
+              <b>API key</b>
+              <SecretInput
+                id="zai_api_key"
+                label="API key"
+                configured={!!secrets.zai_api_key}
+                onSaved={loadSecrets}
+                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+              />
+            </li>
+            <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
           </ol>
         </Section>
       )}

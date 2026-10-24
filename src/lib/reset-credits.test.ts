@@ -31,7 +31,7 @@ describe('server-reported Codex reset credits', () => {
     }
   });
 
-  it.each(['claude', 'openai_api', 'openrouter', 'nine_router:codex', 'codex-other'])(
+  it.each(['claude', 'openai_api', 'openrouter', 'nine_router:codex', 'codex-other', 'zai-other'])(
     'ignores metadata from non-Codex provider %s', (id) => {
       expect(resetCreditsInfo({ ...banked(2), id })).toBeNull();
     },
@@ -46,5 +46,28 @@ describe('server-reported Codex reset credits', () => {
       expect(resetCreditsInfo(r)).toBeNull();
       expect(resetCreditsInfo({ ...r, availableResets: 2 } as UsageReport)).toMatchObject({ count: 2 });
     }
+  });
+});
+
+describe('server-reported z.ai reset credits', () => {
+  const zaiBanked = (count: unknown): UsageReport => ({ ...report, id: 'zai', availableResets: count as number });
+
+  it('shows the z.ai balance with its own provider note', () => {
+    expect(resetCreditsInfo(zaiBanked(2))).toMatchObject({ count: 2, label: '2 resets disponibles' });
+    expect(resetCreditsInfo(zaiBanked(1))).toMatchObject({ count: 1, label: '1 reset disponible' });
+    expect(resetCreditsInfo(zaiBanked(2))?.title).toContain('saldo comunicado por z.ai');
+    expect(resetCreditsInfo(zaiBanked(2))?.title).not.toContain('Codex');
+  });
+
+  it.each([null, undefined, -1, 0.5, '2', 4294967296])(
+    'hides unknown or invalid count %s rather than assuming zero', (count) => {
+      expect(resetCreditsInfo(zaiBanked(count))).toBeNull();
+    },
+  );
+
+  it('hides stale and unsuccessful z.ai reports like Codex', () => {
+    expect(resetCreditsInfo({ ...zaiBanked(2), status: 'warning' })?.count).toBe(2);
+    expect(resetCreditsInfo({ ...zaiBanked(2), stale: true })).toBeNull();
+    expect(resetCreditsInfo({ ...zaiBanked(2), status: 'error' })).toBeNull();
   });
 });

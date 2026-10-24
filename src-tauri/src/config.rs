@@ -82,6 +82,7 @@ pub struct AppConfig {
     pub openrouter: OpenRouterConfig,
     pub anthropic_api: ApiCostConfig,
     pub openai_api: ApiCostConfig,
+    pub zai: ZaiConfig,
     pub nan: NanConfig,
     pub minimax: MiniMaxConfig,
     pub nine_router: NineRouterConfig,
@@ -168,7 +169,7 @@ impl AppConfig {
 /// Proveedores que admiten cuentas adicionales (todos).
 /// En 9Router las «cuentas» son sus sub-proveedores (`nine_router:claude`…); el
 /// backend las descubre solo, pero el id debe validar como cuenta.
-pub const ACCOUNT_PROVIDERS: [&str; 10] = [
+pub const ACCOUNT_PROVIDERS: [&str; 11] = [
     "claude",
     "codex",
     "gemini",
@@ -179,6 +180,7 @@ pub const ACCOUNT_PROVIDERS: [&str; 10] = [
     "anthropic_api",
     "openai_api",
     "nine_router",
+    "zai",
 ];
 
 /// `<proveedor>:<sufijo>`, con sufijo de 1–64 caracteres `[a-z0-9-]`.
@@ -303,6 +305,7 @@ impl Default for AppConfig {
             shortcuts: ShortcutsConfig::default(),
             anthropic_api: ApiCostConfig::default(),
             openai_api: ApiCostConfig::default(),
+            zai: ZaiConfig::default(),
             nan: NanConfig::default(),
             minimax: MiniMaxConfig::default(),
             nine_router: NineRouterConfig::default(),
@@ -358,6 +361,14 @@ impl Default for CopilotConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OpenRouterConfig {
+    pub enabled: bool,
+}
+
+/// z.ai — GLM Coding Plan: se conecta con una API key (z.ai/manage-apikey),
+/// pero lo que muestra es la cuota de la suscripción, no un gasto por uso.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ZaiConfig {
     pub enabled: bool,
 }
 

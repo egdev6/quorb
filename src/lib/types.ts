@@ -160,6 +160,7 @@ export interface AppConfig {
   openrouter: { enabled: boolean };
   anthropicApi: ApiCostConfig;
   openaiApi: ApiCostConfig;
+  zai: { enabled: boolean };
   nan: NanConfig;
   minimax: MiniMaxConfig;
   nineRouter: NineRouterConfig;
@@ -178,7 +179,8 @@ export type AccountProvider =
   | 'openrouter'
   | 'anthropic_api'
   | 'openai_api'
-  | 'nine_router';
+  | 'nine_router'
+  | 'zai';
 
 /** Cuenta adicional (config.rs › Account). `id` = `<proveedor>:<sufijo>` */
 export interface Account {
@@ -210,7 +212,8 @@ export type SecretKey =
   | 'cursor_token'
   | 'nine_router_password'
   | 'nine_router_session'
-  | 'nine_router_bound_url';
+  | 'nine_router_bound_url'
+  | 'zai_api_key';
 /** Secreto de la cuenta principal o de una adicional (`<secreto>@<id de cuenta>`) */
 export type ScopedSecretKey = SecretKey | `${SecretKey}@${string}`;
 export type SecretStatus = Partial<Record<ScopedSecretKey, boolean>>;
