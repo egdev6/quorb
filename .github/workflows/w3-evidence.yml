@@ -57,7 +57,10 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile rootfs.tar.gz
           # The sha256 comes from the published .sha256 file of the same
           # release: the lab cannot pin a wrong or invented hash.
-          $expected = (Invoke-WebRequest -Uri "$url.sha256").Content.Trim().Split()[0].ToLower()
+          # (Se descarga a fichero: en PowerShell 7, `.Content` sin charset
+          # vuelve como byte[] y no tiene `.Trim()`.)
+          Invoke-WebRequest -Uri "$url.sha256" -OutFile rootfs.sha256
+          $expected = (((Get-Content rootfs.sha256 -Raw).Trim() -split '\s+')[0]).ToLower()
           $actual = (Get-FileHash rootfs.tar.gz -Algorithm SHA256).Hash.ToLower()
           "expected=$expected actual=$actual" | Set-Content raw/rootfs-sha256.txt
           if ($expected -ne $actual) {
