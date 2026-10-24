@@ -19,10 +19,11 @@ permissions:
 
 jobs:
   wsl-w3:
-    # `windows-latest` es hoy windows-2025-vs2026, donde WSL NO viene
-    # instalado. Las imágenes con WSL preinstalado son windows-2022 y
-    # windows-2019 (el lab W0 corrió en la que entonces era latest).
-    runs-on: windows-2022
+    # Server 2025 (windows-latest) trae WSL funcional — es la imagen del
+    # lab W0, que importó una distro y ejecutó wsl.exe de verdad.
+    # OJO: windows-2022 tiene solo el stub de wsl.exe (sin el subsistema:
+    # `--status` devuelve -444 y `--import` no funciona).
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - name: Host inventory
@@ -31,20 +32,23 @@ jobs:
           New-Item -ItemType Directory -Force -Path raw | Out-Null
           Get-ComputerInfo -Property OsName, OsVersion, OsArchitecture |
             Out-String | Set-Content raw/host-info.txt
+          # Sonda de "WSL disponible": `wsl --version` con exit 0.
+          # (`--status` no sirve: en builds sin el subsistema devuelve -444;
+          #  `--list` con cero distros devuelve -1 y es un estado NORMAL,
+          #  no la ausencia de WSL — ver F2 del lab W0.)
           & wsl.exe --version > raw\version.txt 2>&1
-          "EXIT=$LASTEXITCODE" | Add-Content raw/version.txt
+          $wslOk = ($LASTEXITCODE -eq 0)
+          "EXIT=$LASTEXITCODE" | Add-Content raw\version.txt
           & wsl.exe --list --verbose > raw\list-before.txt 2>&1
-          "EXIT=$LASTEXITCODE" | Add-Content raw/list-before.txt
-          # WSL debe existir en el runner: si no, el fallo del primer
-          # comando aborta el paso con un exit code opaco.
-          $v = (Get-Content raw\version.txt -Raw)
-          if ($v -notmatch "WSL version" -and $v -notmatch "version") {
-            "WSL NO DISPONIBLE en el runner (windows-2022 lo trae preinstalado)" |
-              Out-File raw\wsl-missing.txt
+          "EXIT=$LASTEXITCODE (non-zero = cero distros, normal)" | Add-Content raw\list-before.txt
+          if (-not $wslOk) {
+            "WSL NO DISPONIBLE en el runner" | Out-File raw\wsl-missing.txt
             Get-Content raw\version.txt | Out-File raw\wsl-missing.txt -Append
             Get-Content raw\wsl-missing.txt
             exit 1
           }
+          Get-Content raw\version.txt
+          exit 0
 
       - name: Prepare pinned Alpine rootfs (sha256-verified) and import
         shell: pwsh
