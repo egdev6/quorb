@@ -1,0 +1,230 @@
+name: "W3 evidence — WSL: pidfile/kill acotado (nivel 1) y F14 doble frontera"
+
+# Evidence-only lab for Quorb issue #90 (W3 phase).
+# Run on a hosted Windows runner; validates with a REAL WSL distro the two
+# gaps that W2 declared as unproven:
+#   Gap 1 — the scoped cancellation (level 1): the pidfile is written, the
+#           remote process of the operation is killed by that PID, and the
+#           distro stays Running (no --terminate).
+#   Gap 2 — F14 double frontier: with a constant script and the data as
+#           POSITIONAL parameters, the value arrives byte for byte.
+# Contains no Quorb code and collects no credentials: it drives wsl.exe the
+# same way the adapter does (argv nativo, nunca un string de shell).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wsl-w3:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Host inventory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path raw | Out-Null
+          Get-ComputerInfo -Property OsName, OsVersion, OsArchitecture |
+            Out-String | Set-Content raw/host-info.txt
+          & wsl.exe --version > raw\version.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw/version.txt
+          & wsl.exe --list --verbose > raw\list-before.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw/list-before.txt
+
+      - name: Prepare pinned Alpine rootfs (sha256-verified) and import
+        shell: pwsh
+        run: |
+          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile rootfs.tar.gz
+          # The sha256 comes from the published .sha256 file of the same
+          # release: the lab cannot pin a wrong or invented hash.
+          $expected = (Invoke-WebRequest -Uri "$url.sha256").Content.Trim().Split()[0].ToLower()
+          $actual = (Get-FileHash rootfs.tar.gz -Algorithm SHA256).Hash.ToLower()
+          "expected=$expected actual=$actual" | Set-Content raw/rootfs-sha256.txt
+          if ($expected -ne $actual) {
+            "sha256 MISMATCH" | Add-Content raw/rootfs-sha256.txt
+            exit 1
+          }
+          & wsl.exe --import quorb_w3 C:\wsl\q3 rootfs.tar.gz *>&1 |
+            Set-Content raw/import.txt
+          "EXIT=$LASTEXITCODE" | Add-Content raw/import.txt
+          # Ubuntu: el runner de GitHub trae una distro por defecto
+          # (normalmente Ubuntu). La mantenemos y la usamos tal cual; si no
+          # hay ninguna distro aparte de la Alpine, lo documentamos.
+          & wsl.exe --list --verbose > raw\list-after-import.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\list-after-import.txt
+          $ubuntu = (& wsl.exe --list --quiet 2>$null | Where-Object { $_.Trim() -and $_ -match 'Ubuntu|Debian' } | Select-Object -First 1)
+          if ($ubuntu) {
+            "ubuntu=$ubuntu" | Add-Content raw\list-after-import.txt
+          } else {
+            "ubuntu=<none — se valida solo con Alpine>" | Add-Content raw\list-after-import.txt
+          }
+
+      - name: Select target distros (Alpine lab + Ubuntu si existe)
+        shell: pwsh
+        run: |
+          # Distro objetivo fijada para el lab: la Alpine importada.
+          "alpine=quorb_w3" | Set-Content raw\distros.txt
+          $ubuntu = (& wsl.exe --list --quiet 2>$null | Where-Object { $_.Trim() -and $_ -match 'Ubuntu|Debian' } | Select-Object -First 1)
+          if ($ubuntu) { "ubuntu=$ubuntu" | Add-Content raw\distros.txt } else { "ubuntu=<none>" | Add-Content raw\distros.txt }
+          Get-Content raw\distros.txt
+
+      # ------------------------------------------------------------------
+      # Gap 1 — scoped cancellation (level 1), por distro (Alpine + Ubuntu)
+      # ------------------------------------------------------------------
+      - name: Gap 1 — launch, pidfile, scoped kill y distro viva (por distro)
+        shell: pwsh
+        run: |
+          $lines = Get-Content raw\distros.txt
+          $distros = @($lines | ForEach-Object {
+            $parts = $_ -split '=', 2
+            if ($parts[1] -and $parts[1] -ne '<none>') { $parts[1] }
+          })
+          if ($distros.Count -eq 0) { "NO DISTRO TO TEST" | Out-File raw\gap1-verdict.txt; exit 1 }
+          $failed = @()
+          foreach ($d in $distros) {
+            $tag = $d -replace '[^A-Za-z0-9]', ''
+            $nonce = "$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())-$PID"
+            $dir = "/tmp/quorb-wsl-$tag-$nonce"
+            "dir=$dir" | Set-Content "raw\gap1-$tag-dir.txt"
+            # Mismo script constante que el adaptador (SCRIPT_EXEC_PIDFILE):
+            # dir privado (700) + pidfile + exec del comando colgado.
+            $script = 'mkdir "$1" && chmod 700 "$1" && umask 077 && echo $$ > "$1/pid" && shift && exec "$@"'
+            & wsl.exe -d $d -e sh -c $script sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
+            "EXIT=$LASTEXITCODE (124/137 al matarlo = esperado)" | Add-Content "raw\gap1-$tag-launch.txt"
+            # pidfile con PID numérico
+            & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-pid.txt"
+            $pid_ = (Get-Content "raw\gap1-$tag-pid.txt" | Select-Object -First 1).Trim()
+            & wsl.exe -d $d -- ls -ld $dir > "raw\gap1-$tag-dir-listing.txt" 2>&1
+            "remote pid=$pid_" | Add-Content "raw\gap1-$tag-dir-listing.txt"
+            if ($pid_ -notmatch '^\d+$') {
+              "NO PID IN PIDFILE" | Add-Content "raw\gap1-$tag-dir-listing.txt"; $failed += $d; continue
+            }
+            # Kill acotado: solo ese PID, desde dentro de la distro.
+            & wsl.exe -d $d -- kill -TERM $pid_ > "raw\gap1-$tag-kill-term.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-kill-term.txt"
+            Start-Sleep -Milliseconds 400
+            # `kill -0` existe solo mientras el PID está vivo; non-zero = muerto.
+            & wsl.exe -d $d -- kill -0 $pid_ > "raw\gap1-$tag-kill-alive.txt" 2>&1
+            "EXIT=$LASTEXITCODE (non-zero = el proceso remoto ya no existe)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
+            # La distro debe seguir Running — sin --terminate.
+            & wsl.exe --list --verbose > "raw\gap1-$tag-list-after.txt" 2>&1
+            & wsl.exe -d $d -- ls -ld $dir >> "raw\gap1-$tag-list-after.txt" 2>&1
+            # Veredicto por distro
+            $alive   = Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-Object -First 1
+            $listing = Get-Content "raw\gap1-$tag-list-after.txt"
+            $ok = $true
+            if ($alive -match "^EXIT=0") { "FAIL: remoto vivo tras el kill" | Out-File "raw\gap1-$tag-verdict.txt"; $ok = $false }
+            else { "OK: proceso remoto murio ($d)" | Out-File "raw\gap1-$tag-verdict.txt" }
+            if (($listing | Select-String $d | Select-Object -First 1) -match "Running") {
+              "OK: la distro sigue Running ($d, sin --terminate)" | Add-Content "raw\gap1-$tag-verdict.txt"
+            } else { "FAIL: la distro ya no esta Running ($d)" | Add-Content "raw\gap1-$tag-verdict.txt"; $ok = $false }
+            if ($listing | Select-String "drwx------") { "OK: directorio pidfile 700" | Add-Content "raw\gap1-$tag-verdict.txt" }
+            else { "WARN: modo 700 no confirmado" | Add-Content "raw\gap1-$tag-verdict.txt" }
+            if ($ok) { "VERDICT: PASS" | Add-Content "raw\gap1-$tag-verdict.txt" } else { "VERDICT: FAIL" | Add-Content "raw\gap1-$tag-verdict.txt"; $failed += $d }
+            Get-Content "raw\gap1-$tag-verdict.txt"
+            # Cleanup: matar el posible sleep huérfano y borrar el dir.
+            & wsl.exe -d $d -- kill -KILL $pid_ 2>&1 | Out-Null
+            & wsl.exe -d $d -- rm -rf $dir > "raw\gap1-$tag-cleanup.txt" 2>&1
+            "cleanup dir=$dir" | Add-Content "raw\gap1-$tag-cleanup.txt"
+          }
+          if ($failed.Count -gt 0) { "FAILED DISTROS: $($failed -join ', ')" | Out-File raw\gap1-verdict.txt; Get-Content raw\gap1-verdict.txt; exit 1 }
+          "TODAS LAS DISTROS: PASS" | Out-File raw\gap1-verdict.txt
+
+      # ------------------------------------------------------------------
+      # Gap 2 — F14 double frontier: literal preservation
+      # ------------------------------------------------------------------
+      - name: Gap 2 — F14 literal preservation a traves de las dos fronteras (por distro)
+        shell: pwsh
+        run: |
+          # Contrato: script CONSTANTE, datos como PARAMETROS posicionales.
+          # El valor viaja pwsh -> (argv nativo a wsl.exe) -> sh -c script
+          # constante -> proceso final, y debe llegar byte a byte.
+          # Los valores se pasan como base64 para que la capa de quoting de
+          # Windows (CREATE_PROCESS, igual que el adaptador) nunca toque los
+          # caracteres dificiles: lo que se prueba es la doble frontera, no
+          # el escaping del shell del host.
+          $script = 'exec "$@"'
+          $lines = Get-Content raw\distros.txt
+          $distros = @($lines | ForEach-Object {
+            $parts = $_ -split '=', 2
+            if ($parts[1] -and $parts[1] -ne '<none>') { $parts[1] }
+          })
+          if ($distros.Count -eq 0) { "NO DISTRO TO TEST" | Out-File raw\gap2-f14.txt; exit 1 }
+          $all = @()
+          foreach ($d in $distros) {
+            $tag = $d -replace '[^A-Za-z0-9]', ''
+            $cases = @(
+              @{ name = "space";     value = "con espacio" },
+              # `acentu-ñ-世界` es deliberado: incluye acento, ñ y CJK en un
+              # solo valor "mal escrito" que la doble frontera NO debe
+              # corregir ni transformar — debe llegar byte a byte tal cual.
+              @{ name = "nonascii";  value = "acentu-ñ-世界" },
+              @{ name = "squote";    value = "it's" },
+              @{ name = "dquote";    value = 'say "hi"' },
+              @{ name = "dollar";    value = 'cost $HOME' },
+              @{ name = "backtick";  value = 'id `whoami`' },
+              @{ name = "glob";      value = "*.txt" },
+              @{ name = "newline";   value = "line1`nline2" },
+              @{ name = "empty";     value = "" },
+              @{ name = "dash";      value = "--not-an-option" },
+              @{ name = "semicolon"; value = "a;echo pwned" },
+              @{ name = "backslash"; value = "C:\Users\quorb" }
+            )
+            foreach ($c in $cases) {
+              $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c.value))
+              # printf %s <b64>: el b64 es el dato posicional. Si llega
+              # intacto, la doble frontera preservo la cadena de bytes.
+              & wsl.exe -d $d -e sh -c $script sh printf %s $b64 > "raw\gap2-$tag-out.txt" 2>&1
+              "EXIT=$LASTEXITCODE" | Add-Content "raw\gap2-$tag-out.txt"
+              $got = (Get-Content "raw\gap2-$tag-out.txt" -Raw).Trim()
+              $all += [pscustomobject]@{
+                distro = $d
+                case   = $c.name
+                passed = ($got -eq $b64)
+                b64    = $b64
+                got    = $got
+              }
+            }
+          }
+          $all | ConvertTo-Json -Depth 3 | Set-Content raw\gap2-f14.json
+          $failed = @($all | Where-Object { -not $_.passed })
+          "cases=$($all.Count) failed=$($failed.Count)" | Add-Content raw\gap2-f14.txt
+          $all | Format-Table distro, case, passed -AutoSize | Out-String | Add-Content raw\gap2-f14.txt
+          if ($failed.Count -gt 0) {
+            "FAIL: preservacion literal rota en: $($failed.distro + '/' + $failed.case -join ', ')" | Add-Content raw\gap2-f14.txt
+            Get-Content raw\gap2-f14.txt
+            exit 1
+          }
+          Get-Content raw\gap2-f14.txt
+
+      - name: Gap 2 — shell strategy y LOGIN PATH (por distro)
+        shell: pwsh
+        run: |
+          $lines = Get-Content raw\distros.txt
+          $distros = @($lines | ForEach-Object {
+            $parts = $_ -split '=', 2
+            if ($parts[1] -and $parts[1] -ne '<none>') { $parts[1] }
+          })
+          foreach ($d in $distros) {
+            $tag = $d -replace '[^A-Za-z0-9]', ''
+            # Misma sonda que usa el adaptador para shell_strategy.
+            & wsl.exe -d $d -e sh -c 'command -v bash' > "raw\gap2-$tag-shell-strategy.txt" 2>&1
+            "EXIT=$LASTEXITCODE (0 = bash presente -> BashLogin; no -> ShPosix)" | Add-Content "raw\gap2-$tag-shell-strategy.txt"
+            # HOME de la distro (F5): no es el usuario de Windows.
+            & wsl.exe -d $d -- sh -c 'printf %s "$HOME"' > "raw\gap2-$tag-home.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap2-$tag-home.txt"
+            "== $d ==" | Add-Content raw\gap2-shell-and-home.txt
+            Get-Content "raw\gap2-$tag-shell-strategy.txt" | Add-Content raw\gap2-shell-and-home.txt
+            Get-Content "raw\gap2-$tag-home.txt" | Add-Content raw\gap2-shell-and-home.txt
+          }
+
+      - name: Upload raw evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: w3-evidence
+          path: raw/
+          if-no-files-found: error
