@@ -19,7 +19,10 @@ permissions:
 
 jobs:
   wsl-w3:
-    runs-on: windows-latest
+    # `windows-latest` es hoy windows-2025-vs2026, donde WSL NO viene
+    # instalado. Las imágenes con WSL preinstalado son windows-2022 y
+    # windows-2019 (el lab W0 corrió en la que entonces era latest).
+    runs-on: windows-2022
     timeout-minutes: 30
     steps:
       - name: Host inventory
@@ -32,6 +35,16 @@ jobs:
           "EXIT=$LASTEXITCODE" | Add-Content raw/version.txt
           & wsl.exe --list --verbose > raw\list-before.txt 2>&1
           "EXIT=$LASTEXITCODE" | Add-Content raw/list-before.txt
+          # WSL debe existir en el runner: si no, el fallo del primer
+          # comando aborta el paso con un exit code opaco.
+          $v = (Get-Content raw\version.txt -Raw)
+          if ($v -notmatch "WSL version" -and $v -notmatch "version") {
+            "WSL NO DISPONIBLE en el runner (windows-2022 lo trae preinstalado)" |
+              Out-File raw\wsl-missing.txt
+            Get-Content raw\version.txt | Out-File raw\wsl-missing.txt -Append
+            Get-Content raw\wsl-missing.txt
+            exit 1
+          }
 
       - name: Prepare pinned Alpine rootfs (sha256-verified) and import
         shell: pwsh
