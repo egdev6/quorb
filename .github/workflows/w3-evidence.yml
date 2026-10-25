@@ -196,25 +196,19 @@ jobs:
             # son globales entre invocaciones de wsl.exe. El host escribe la
             # senal (`touch <dir>/kill`) y el watcher mata SOLO el proceso de
             # la operacion, comprobando ademas que el TESTIGO sigue vivo.
-            $opScript = 'd="$1"; main=$$; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 1; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
-            # Se lanza en BACKGROUND como hace el adaptador (ProcessRunner
-            # hace spawn y retorna; el timeout es suyo). Si el harness
-            # esperase, la invocacion terminaria al expirar el sleep y se
-            # llevaria por delante al watcher y al TESTIGO.
-            # Start-Job pasa los argumentos como array nativo de pwsh (con
-            # eventos de shell, no conquoting .NET como Start-Process).
-            $job = Start-Job -ScriptBlock {
-              param($distro, $script, $dir)
-              & wsl.exe -d $distro -e sh -c $script sh $dir sleep 300
-            } -ArgumentList $d, $opScript, $dir
-            "started=$($job.Id)" | Set-Content "raw\gap1-$tag-hostpid.txt"
+            $opScript = 'd="$1"; shift; mkdir "$d" && chmod 700 "$d" && umask 077 || exit 1; sleep 300 & op=$!; echo $op > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 1; done; kill -TERM $op 2>/dev/null; sleep 1; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exit 0'
+            # El comando se deja en BACKGROUND DENTRO de la distro: el
+            # `&` final lo deja corriendo y el shell remoto sale de
+            # inmediato, asi que el host no queda esperando (mismo modelo
+            # que el adaptador: spawn y retorno, el timeout es del runner).
+            # Nota: en pwsh `&` NO es "job en background" (es el call
+            # operator); por eso el background va DENTRO del script de la
+            # distro y el host solo espera la senal.
+            & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 >
+              "raw\gap1-$tag-launch.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-launch.txt"
             # Margen para que el script arranque y cree el pidfile.
             Start-Sleep -Seconds 5
-            # La salida del job se recoge aqui (el job sigue vivo: el
-            # comando duerme 300 s, como el proceso del adaptador).
-            Receive-Job -Job $job -ErrorAction SilentlyContinue |
-              Out-File "raw\gap1-$tag-launch.txt" -Encoding utf8
-            "job state=$($job.State)" | Add-Content "raw\gap1-$tag-hostpid.txt"
             # PIDs reales
             & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid.txt" 2>&1
             & wsl.exe -d $d -- cat $dir/witness > "raw\gap1-$tag-witness.txt" 2>&1
