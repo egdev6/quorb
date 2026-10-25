@@ -55,9 +55,10 @@ jobs:
         run: |
           # La .wslconfig global del runner decide el comportamiento del
           # subsistema. Para el lab interesa:
-          #  - instanceIdleTimeout=-1: por defecto (15 s) la distro se apaga
-          #    por inactividad y se llevaria por delante al proceso TESTIGO,
-          #    dando un falso FAIL. Con -1 la distro no se apaga sola.
+          #  - instanceIdleTimeout=-1: la distro no se apaga por inactividad
+          #    (por defecto 15 s) y no se lleva al TESTIGO.
+          #  - vmIdleTimeout=-1: la VM no se apaga por inactividad (por
+          #    defecto 60 s) y no se lleva TODOS los procesos de la distro.
           #  - debugConsole=true: deja la salida del kernel al arrancar
           #    (evidencia de diagnostico).
           # Los cambios solo aplican tras `wsl --shutdown` (documentacion de
@@ -69,6 +70,11 @@ jobs:
             "",
             "[wsl2]",
             "debugConsole=true",
+            # vmIdleTimeout: por defecto 60 s, la VM se apaga por
+            # inactividad y se lleva todos los procesos de la distro
+            # (explicaba la desaparicion del sleep/watcher). -1 la
+            # desactiva.
+            "vmIdleTimeout=-1",
             ""
           ) | Out-File -Encoding utf8 $wslconfig
           "== $wslconfig (escrito por el lab) ==" | Out-File raw\wslconfig-written.txt
