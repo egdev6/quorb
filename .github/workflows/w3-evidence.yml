@@ -196,7 +196,7 @@ jobs:
             # son globales entre invocaciones de wsl.exe. El host escribe la
             # senal (`touch <dir>/kill`) y el watcher mata SOLO el proceso de
             # la operacion, comprobando ademas que el TESTIGO sigue vivo.
-            $opScript = 'd="$1"; main=$$; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 0.2; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
+            $opScript = 'd="$1"; main=$$; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 1; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
             # Se lanza en BACKGROUND como hace el adaptador (ProcessRunner
             # hace spawn y retorna; el timeout es suyo). Si el harness
             # esperase, la invocacion terminaria al expirar el sleep y se
@@ -237,6 +237,12 @@ jobs:
               if (Test-Path "raw\gap1-$tag-done.txt") { $state = "done"; break }
             }
             & wsl.exe -d $d -- cat $dir/witness-state > "raw\gap1-$tag-witness-state.txt" 2>&1
+            # Diagnostico en vivo: que procesos quedan en la distro y que hay
+            # en el dir (el fichero de senal deberia estar).
+            & wsl.exe -d $d -- ps -eo pid,args > "raw\gap1-$tag-ps-after.txt" 2>&1
+            & wsl.exe -d $d -- ls -la $dir > "raw\gap1-$tag-ls-after.txt" 2>&1
+            Get-Content "raw\gap1-$tag-ps-after.txt" | Out-File "raw\gap1-$tag-detail.txt"
+            Get-Content "raw\gap1-$tag-ls-after.txt" | Out-File "raw\gap1-$tag-detail.txt" -Append
             & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid-after.txt" 2>&1
             "watcher=$state" | Add-Content "raw\gap1-$tag-kill-alive.txt"
             "EXIT=$LASTEXITCODE (el watcher proceso la senal)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
