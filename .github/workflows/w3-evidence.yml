@@ -329,7 +329,11 @@ jobs:
             # El proceso remoto esta vivo y la distro corre.
             & wsl.exe -d $d -- ps -eo pid,args > "raw\g1b-$tag-before.txt" 2>&1
             # LO QUE HACE EL RUNNER EN EL TIMEOUT: matar el wsl.exe host.
-            Stop-Process -Id $p.Id -Force
+            # Stop-Process sobre un proceso ya terminado lanza error y con
+            # $ErrorActionPreference de Actions aborta el paso: se tolera
+            # (si ya salio, es justo lo que se espera del timeout).
+            "host exited before stop=$($p.HasExited)" | Add-Content "raw\g1b-$tag-hostpid.txt"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 4
             # La distro debe seguir viva (Running) y el proceso remoto
             # muerto: la sesion se cerro con el lanzador.
