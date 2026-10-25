@@ -81,6 +81,13 @@ jobs:
           } else {
             "ubuntu=<none — se valida solo con Alpine>" | Add-Content raw\list-after-import.txt
           }
+          # Volcado al log: sha256, resultado del import y enumeración.
+          "---- import ----" | Out-File raw\import-detail.txt
+          Get-Content raw\rootfs-sha256.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\import.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\list-after-import.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\import-detail.txt
+          exit 0
 
       - name: Select target distros (Alpine lab + Ubuntu si existe)
         shell: pwsh
