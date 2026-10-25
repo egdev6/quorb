@@ -9,6 +9,7 @@
 //! `fail(Status::Error)` sin romper la app. El endpoint `/use` que consume un
 //! reset existe, pero Quorb es monitoreo read-only y nunca lo llama.
 
+use chrono::{DateTime, TimeZone, Utc};
 use super::{net_error, Who};
 use crate::config::ZaiConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
@@ -113,9 +114,9 @@ pub(crate) fn parse_quota(v: &Value) -> Parsed {
 fn tokens_meter(limit: &Value) -> Meter {
     let (unit, number) = (limit.get("unit").and_then(Value::as_i64), limit.get("number").and_then(Value::as_i64));
     match (unit, number) {
-        (Some(3), Some(5)) => window_meter(limit, "coding_5h", "Cuota · 5 h", H5),
-        (Some(6), Some(1)) => window_meter(limit, "coding_week", "Cuota · semana", WEEK),
-        _ => meter(limit, "coding_5h", "Cuota · 5 h", "créditos", Some(H5)),
+        (Some(3), Some(5)) => window_meter(limit, "five_hour", "Cuota · 5 h", H5),
+        (Some(6), Some(1)) => window_meter(limit, "weekly", "Cuota · semana", WEEK),
+        _ => meter(limit, "five_hour", "Cuota · 5 h", "créditos", Some(H5)),
     }
 }
 
@@ -157,6 +158,22 @@ fn next_reset(limit: &Value) -> Option<String> {
         .and_then(super::unix_to_rfc3339)
 }
 
+/// Timestamps del endpoint de resets (`"2026-10-25 06:39:58"`): espacio como
+/// separador y sin zona — no son RFC3339 y el parser genérico los rechaza.
+///
+/// Decisión de TZ: se asume la zona del servidor de z.ai, Asia/Shanghai
+/// (UTC+8 fijo, sin horario de verano). Evidencia (captura de #94, 24-oct):
+/// `lastWeekResetTime: "2026-10-25 06:39:58"` se registró ANTES de la toma de
+/// la propia captura (2026-10-24T23:20:45Z); con UTC o Madrid el instante
+/// sería posterior a ella (imposible), con UTC+8 es 22:39:58Z (encaja).
+pub(crate) fn zai_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    let naive = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
+    chrono::FixedOffset::east_opt(8 * 3600)?
+        .from_local_datetime(&naive)
+        .single()
+        .map(|t| t.with_timezone(&Utc))
+}
+
 fn pretty_level(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -169,12 +186,21 @@ fn pretty_level(s: &str) -> String {
 /// `available: true` de `fiveHourResets` + `weekResets` (la API no trae el
 /// conteo hecho; el dashboard de z.ai lo computa igual). `None` si la respuesta
 /// es un error de negocio (HTTP 200 + `success: false`) o no tiene la forma
-/// esperada; `Some(0)` cuando el plan no tiene resets pendientes.
+/// esperada; `Some(0)` cuando el plan no tiene resets pendientes. Los
+/// `last*ResetTime`, si vienen, deben parsear con `zai_timestamp`: un valor
+/// ilegible delata un cambio de esquema y degrada el saldo sin tocar medidores.
 pub(crate) fn parse_available_resets(v: &Value) -> Option<u32> {
     if v.get("success").and_then(Value::as_bool) == Some(false) {
         return None;
     }
     let data = v.get("data")?.as_object()?;
+    for key in ["lastFiveHourResetTime", "lastWeekResetTime"] {
+        if let Some(s) = data.get(key).and_then(Value::as_str) {
+            if zai_timestamp(s).is_none() {
+                return None;
+            }
+        }
+    }
     let groups = ["fiveHourResets", "weekResets"].map(|k| data.get(k).and_then(Value::as_array));
     if groups.iter().all(Option::is_none) {
         return None;
@@ -240,7 +266,7 @@ mod tests {
         let p = parse_quota(&fixture());
         let m: Vec<&Meter> = p.meters.iter().collect();
         assert_eq!(m.len(), 2, "debe traer las dos cuotas conocidas");
-        assert_eq!(m[0].id, "coding_5h", "el fallback legado de créditos comparte id con la ventana de 5 h");
+        assert_eq!(m[0].id, "five_hour", "el fallback legado de créditos comparte id con la ventana de 5 h");
         assert_eq!(m[0].label, "Cuota · 5 h");
         assert_eq!(m[0].percent, Some(70.0));
         assert_eq!(m[0].used, Some(84.0));
@@ -267,14 +293,14 @@ mod tests {
         });
         let p = parse_quota(&v);
         assert_eq!(p.meters.len(), 3, "5 h, semana y web tools");
-        assert_eq!(p.meters[0].id, "coding_5h");
+        assert_eq!(p.meters[0].id, "five_hour");
         assert_eq!(p.meters[0].label, "Cuota · 5 h");
         assert_eq!(p.meters[0].window_seconds, Some(5 * 3600));
         assert_eq!(p.meters[0].percent, Some(61.0));
         assert_eq!(p.meters[0].used, None, "`usage` no es créditos en las ventanas");
         assert_eq!(p.meters[0].limit, None, "`number` es el tamaño de ventana, no la cuota");
         assert_eq!(p.meters[0].resets_at, super::super::unix_to_rfc3339(1_760_000_000));
-        assert_eq!(p.meters[1].id, "coding_week");
+        assert_eq!(p.meters[1].id, "weekly");
         assert_eq!(p.meters[1].label, "Cuota · semana");
         assert_eq!(p.meters[1].window_seconds, Some(7 * 24 * 3600));
         assert_eq!(p.meters[1].percent, Some(42.0));
@@ -310,7 +336,7 @@ mod tests {
         });
         let p = parse_quota(&v);
         assert_eq!(p.meters.len(), 1);
-        assert_eq!(p.meters[0].id, "coding_5h");
+        assert_eq!(p.meters[0].id, "five_hour");
         assert_eq!(p.meters[0].label, "Cuota · 5 h");
     }
 
@@ -328,7 +354,7 @@ mod tests {
         let v = json!({"data": {"limits": [{"type": "TOKENS_LIMIT"}]}});
         let p = parse_quota(&v);
         assert_eq!(p.meters.len(), 1);
-        assert_eq!(p.meters[0].id, "coding_5h");
+        assert_eq!(p.meters[0].id, "five_hour");
         assert_eq!(p.meters[0].percent, None);
         assert_eq!(p.meters[0].resets_at, None);
         assert_eq!(p.meters[0].used, None);
@@ -427,5 +453,63 @@ mod tests {
         ] {
             assert_eq!(parse_available_resets(&v), None, "{v}");
         }
+    }
+
+    #[test]
+    fn zai_timestamps_assume_shanghai_fixed_offset() {
+        assert_eq!(
+            zai_timestamp("2026-10-25 06:39:58").map(|t| t.to_rfc3339()),
+            Some("2026-10-24T22:39:58+00:00".into()),
+            "la captura real de #94 solo precede a su propia toma con UTC+8"
+        );
+        assert_eq!(
+            zai_timestamp("2026-12-22 23:59:59").map(|t| t.to_rfc3339()),
+            Some("2026-12-22T15:59:59+00:00".into())
+        );
+        for bad in ["", "x", "2026-10-25", "2026-10-25T06:39:58Z", "2026-10-25 06:39", "2026-13-45 99:99:99"] {
+            assert!(zai_timestamp(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn resets_with_unparseable_last_reset_time_degrade_to_none() {
+        let mut v = resets_fixture();
+        v["data"]["lastWeekResetTime"] = json!("hace un rato");
+        assert_eq!(parse_available_resets(&v), None, "esquema cambiado: saldo desconocido");
+        // null/ausente se tolera: el saldo sigue contando.
+        v["data"]["lastWeekResetTime"] = Value::Null;
+        assert_eq!(parse_available_resets(&v), Some(2));
+    }
+
+    #[test]
+    fn http_404_body_degrades_to_warning_without_inventing_rings() {
+        // El 404 de /api/monitor/usage (reportado en #94) responde un sobre de
+        // error: sin medidores, `fetch` degrada a Warning, nunca a un anillo.
+        let v = json!({"code": 404, "msg": "Not Found", "success": false, "data": null});
+        let p = parse_quota(&v);
+        assert!(p.meters.is_empty() && p.plan.is_none());
+    }
+
+    #[test]
+    fn credit_limit_and_zero_percent_variants_do_not_invent_rings() {
+        // egdev6: no descartar otras variantes (CREDIT_LIMIT, 0 %): solo se
+        // muestran los tipos conocidos presentes en la respuesta.
+        let v = json!({"data": {"level": "max", "limits": [
+            {"type": "CREDIT_LIMIT", "number": 100, "usage": 100, "percentage": 0, "nextResetTime": 1_760_000_000_000_i64},
+            {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 61, "nextResetTime": 1_760_000_000_000_i64}
+        ]}});
+        let p = parse_quota(&v);
+        assert_eq!(p.meters.len(), 1, "CREDIT_LIMIT no genera medidor");
+        assert_eq!(p.meters[0].id, "five_hour");
+    }
+
+    #[test]
+    fn each_known_limit_type_stands_alone() {
+        // «Caso sin alguno de los tipos»: cada tipo conocido basta para su
+        // medidor; no se exige el conjunto completo.
+        let only_tokens = json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 42}]}});
+        let only_time = json!({"data": {"limits": [{"type": "TIME_LIMIT", "percentage": 10}]}});
+        assert_eq!(parse_quota(&only_tokens).meters[0].id, "weekly");
+        assert_eq!(parse_quota(&only_time).meters[0].id, "web_tools");
     }
 }
