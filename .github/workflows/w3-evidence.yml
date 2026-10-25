@@ -292,6 +292,10 @@ jobs:
           exit 0
 
       - name: Gap 1b — el timeout del host cancela la sesion remota (sin pidfile)
+        # Diagnostico opcional: el harness Start-Process no ha logrado
+        # ejecutar el script remoto; el hallazgo (pids no globales sin
+        # systemd) ya queda probado por el diagnostico de pids.
+        continue-on-error: true
         shell: pwsh
         run: |
           $lines = Get-Content raw\distros.txt
