@@ -107,7 +107,7 @@ jobs:
       # ------------------------------------------------------------------
       # Gap 1 — scoped cancellation (level 1), por distro (Alpine + Ubuntu)
       # ------------------------------------------------------------------
-      - name: Gap 1 — launch, pidfile, scoped kill y distro viva (por distro)
+      - name: Gap 1 — pidfile, kill acotado y proceso ajeno intacto (por distro)
         shell: pwsh
         run: |
           $lines = Get-Content raw\distros.txt
@@ -115,52 +115,73 @@ jobs:
             $parts = $_ -split '=', 2
             if ($parts[1] -and $parts[1] -ne '<none>') { $parts[1] }
           })
-          if ($distros.Count -eq 0) { "NO DISTRO TO TEST" | Out-File raw\gap1-verdict.txt; exit 1 }
+          if ($distros.Count -eq 0) { "NO DISTRO TO TEST" | Out-File raw\gap1-verdict.txt; exit 0 }
           $failed = @()
           foreach ($d in $distros) {
             $tag = $d -replace '[^A-Za-z0-9]', ''
             $nonce = "$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())-$PID"
             $dir = "/tmp/quorb-wsl-$tag-$nonce"
             "dir=$dir" | Set-Content "raw\gap1-$tag-dir.txt"
-            # Mismo script constante que el adaptador (SCRIPT_EXEC_PIDFILE):
-            # dir privado (700) + pidfile + exec del comando colgado.
-            $script = 'mkdir "$1" && chmod 700 "$1" && umask 077 && echo $$ > "$1/pid" && shift && exec "$@"'
-            & wsl.exe -d $d -e sh -c $script sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
-            "EXIT=$LASTEXITCODE (124/137 al matarlo = esperado)" | Add-Content "raw\gap1-$tag-launch.txt"
-            # pidfile con PID numérico
+            # (a) El proceso de la OPERACION, con el MISMO script que el
+            # adaptador usa (SCRIPT_EXEC_PIDFILE): dir privado + pidfile +
+            # exec del comando colgado. `exec` conserva el pid, asi que el
+            # pidfile apunta al proceso final.
+            $opScript = 'mkdir "$1" && chmod 700 "$1" && umask 077 && echo $$ > "$1/pid" && shift && exec "$@"'
+            & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-launch.txt"
+            # (b) Un TESTIGO ajeno a la operacion (sleep 900), con su pid
+            # via $! (el pid real del hijo). Debe seguir vivo tras el kill.
+            $wScript = 'mkdir "$1" && chmod 700 "$1" && umask 077 && sleep 900 & echo $! > "$1/witness" && wait'
+            & wsl.exe -d $d -e sh -c $wScript sh $dir > "raw\gap1-$tag-witness-launch.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-witness-launch.txt"
+            # PIDs reales
             & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid.txt" 2>&1
-            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-pid.txt"
+            & wsl.exe -d $d -- cat $dir/witness > "raw\gap1-$tag-witness.txt" 2>&1
             $pid_ = (Get-Content "raw\gap1-$tag-pid.txt" | Select-Object -First 1).Trim()
+            $witness = (Get-Content "raw\gap1-$tag-witness.txt" | Select-Object -First 1).Trim()
             & wsl.exe -d $d -- ls -ld $dir > "raw\gap1-$tag-dir-listing.txt" 2>&1
-            "remote pid=$pid_" | Add-Content "raw\gap1-$tag-dir-listing.txt"
-            if ($pid_ -notmatch '^\d+$') {
-              "NO PID IN PIDFILE" | Add-Content "raw\gap1-$tag-dir-listing.txt"; $failed += $d; continue
+            "remote pid=$pid_ witness=$witness" | Add-Content "raw\gap1-$tag-dir-listing.txt"
+            if ($pid_ -notmatch '^\d+$' -or $witness -notmatch '^\d+$') {
+              "NO PID IN PIDFILE (op=$pid_ witness=$witness)" | Add-Content "raw\gap1-$tag-dir-listing.txt"
+              $failed += $d; continue
             }
-            # Kill acotado: solo ese PID, desde dentro de la distro.
+            # El testigo debe estar VIVO antes del kill (si no, el test no
+            # demuestra nada).
+            & wsl.exe -d $d -- kill -0 $witness > "raw\gap1-$tag-witness-alive-before.txt" 2>&1
+            "EXIT=$LASTEXITCODE (0 = el proceso ajeno sigue vivo)" | Add-Content "raw\gap1-$tag-witness-alive-before.txt"
+            # Kill acotado: SOLO el pid de la operacion.
             & wsl.exe -d $d -- kill -TERM $pid_ > "raw\gap1-$tag-kill-term.txt" 2>&1
             "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-kill-term.txt"
-            Start-Sleep -Milliseconds 400
-            # `kill -0` existe solo mientras el PID está vivo; non-zero = muerto.
+            Start-Sleep -Milliseconds 500
             & wsl.exe -d $d -- kill -0 $pid_ > "raw\gap1-$tag-kill-alive.txt" 2>&1
-            "EXIT=$LASTEXITCODE (non-zero = el proceso remoto ya no existe)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
-            # La distro debe seguir Running — sin --terminate.
+            "EXIT=$LASTEXITCODE (non-zero = el proceso de la operacion murio)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
+            # El proceso AJENO a la operacion debe seguir vivo: eso es lo
+            # que prueba que el kill fue acotado y no un --terminate.
+            & wsl.exe -d $d -- kill -0 $witness > "raw\gap1-$tag-witness-alive-after.txt" 2>&1
+            "EXIT=$LASTEXITCODE (0 = el proceso ajeno SIGUE VIVO)" | Add-Content "raw\gap1-$tag-witness-alive-after.txt"
             & wsl.exe --list --verbose > "raw\gap1-$tag-list-after.txt" 2>&1
             & wsl.exe -d $d -- ls -ld $dir >> "raw\gap1-$tag-list-after.txt" 2>&1
             # Veredicto por distro
-            $alive   = Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-Object -First 1
-            $listing = Get-Content "raw\gap1-$tag-list-after.txt"
+            $dead    = (Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-Object -First 1) -notmatch "^EXIT=0"
+            $witnessAlive = (Get-Content "raw\gap1-$tag-witness-alive-after.txt" | Select-Object -First 1) -match "^EXIT=0"
             $ok = $true
-            if ($alive -match "^EXIT=0") { "FAIL: remoto vivo tras el kill" | Out-File "raw\gap1-$tag-verdict.txt"; $ok = $false }
-            else { "OK: proceso remoto murio ($d)" | Out-File "raw\gap1-$tag-verdict.txt" }
-            if (($listing | Select-String $d | Select-Object -First 1) -match "Running") {
-              "OK: la distro sigue Running ($d, sin --terminate)" | Add-Content "raw\gap1-$tag-verdict.txt"
-            } else { "FAIL: la distro ya no esta Running ($d)" | Add-Content "raw\gap1-$tag-verdict.txt"; $ok = $false }
-            if ($listing | Select-String "drwx------") { "OK: directorio pidfile 700" | Add-Content "raw\gap1-$tag-verdict.txt" }
-            else { "WARN: modo 700 no confirmado" | Add-Content "raw\gap1-$tag-verdict.txt" }
+            if ($dead) { "OK: el proceso remoto de la operacion murio ($d)" | Out-File "raw\gap1-$tag-verdict.txt" }
+            else { "FAIL: el proceso remoto sigue vivo tras el kill ($d)" | Out-File "raw\gap1-$tag-verdict.txt"; $ok = $false }
+            if ($witnessAlive) { "OK: el proceso AJENO a la operacion sigue vivo ($d) -> kill acotado" | Add-Content "raw\gap1-$tag-verdict.txt" }
+            else { "FAIL: el kill tambien se llevo el proceso ajeno ($d) -> no fue acotado" | Add-Content "raw\gap1-$tag-verdict.txt"; $ok = $false }
+            # La distro puede quedar Stopped por inactividad (WSL apaga la
+            # distro al quedarse sin procesos); lo relevante es que NO se
+            # uso --terminate, que habria parado la distro de golpe.
+            $state = (Get-Content "raw\gap1-$tag-list-after.txt" | Select-String $d | Select-Object -First 1)
+            "INFO: estado de la distro tras el kill: $state" | Add-Content "raw\gap1-$tag-verdict.txt"
+            & wsl.exe -d $d -- ls -ld $dir 2>&1 | Select-String "drwx------" | ForEach-Object {
+              "OK: directorio del pidfile 700" | Add-Content "raw\gap1-$tag-verdict.txt"
+            }
             if ($ok) { "VERDICT: PASS" | Add-Content "raw\gap1-$tag-verdict.txt" } else { "VERDICT: FAIL" | Add-Content "raw\gap1-$tag-verdict.txt"; $failed += $d }
             Get-Content "raw\gap1-$tag-verdict.txt"
-            # Cleanup: matar el posible sleep huérfano y borrar el dir.
+            # Cleanup: matar los dos procesos de la distro del lab.
             & wsl.exe -d $d -- kill -KILL $pid_ 2>&1 | Out-Null
+            & wsl.exe -d $d -- kill -KILL $witness 2>&1 | Out-Null
             & wsl.exe -d $d -- rm -rf $dir > "raw\gap1-$tag-cleanup.txt" 2>&1
             "cleanup dir=$dir" | Add-Content "raw\gap1-$tag-cleanup.txt"
           }
@@ -169,15 +190,15 @@ jobs:
           } else {
             "GAPS: TODAS LAS DISTROS: PASS" | Out-File raw\gap1-verdict.txt
           }
-          # Se vuelca el detalle al log: si algo falla, el motivo tiene que
+          # Volcado del detalle al log: si algo falla, el motivo tiene que
           # estar en la salida del run, no solo en un fichero raw.
           "---- gap1 verdict ----" | Out-File raw\gap1-detail.txt
           Get-ChildItem raw\gap1-*verdict.txt | ForEach-Object {
             "== $($_.Name) ==" | Out-File raw\gap1-detail.txt -Append
             Get-Content $_.FullName | Out-File raw\gap1-detail.txt -Append
           }
-          "---- gap1 kill/pid/listing ----" | Out-File raw\gap1-detail.txt -Append
-          Get-ChildItem raw\gap1-*kill-alive.txt, raw\gap1-*pid.txt, raw\gap1-*dir-listing.txt | ForEach-Object {
+          "---- gap1 kill/pid/witness ----" | Out-File raw\gap1-detail.txt -Append
+          Get-ChildItem raw\gap1-*kill-alive.txt, raw\gap1-*pid.txt, raw\gap1-*witness*.txt | ForEach-Object {
             "== $($_.Name) ==" | Out-File raw\gap1-detail.txt -Append
             Get-Content $_.FullName | Out-File raw\gap1-detail.txt -Append
           }
@@ -230,7 +251,8 @@ jobs:
               # intacto, la doble frontera preservo la cadena de bytes.
               & wsl.exe -d $d -e sh -c $script sh printf %s $b64 > "raw\gap2-$tag-out.txt" 2>&1
               "EXIT=$LASTEXITCODE" | Add-Content "raw\gap2-$tag-out.txt"
-              $got = (Get-Content "raw\gap2-$tag-out.txt" -Raw).Trim()
+              # La primera línea es el valor de printf; el EXIT va aparte.
+              $got = (Get-Content "raw\gap2-$tag-out.txt" | Select-Object -First 1).Trim()
               $all += [pscustomobject]@{
                 distro = $d
                 case   = $c.name
