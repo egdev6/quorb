@@ -1,12 +1,13 @@
 import type { UsageReport } from './types';
 import { providerOf } from './accounts';
 
-/** Only the server's banked balance is authoritative; dates and quotas are unrelated. */
+/** Provider-specific note for each provider that reports a banked reset balance. */
 const RESET_NOTE: Record<string, string> = {
   codex: 'saldo comunicado por Codex; no son reinicios automáticos',
   zai: 'saldo comunicado por z.ai; cada reset vence y se usa manualmente',
 };
 
+/** Only the server's banked balance is authoritative; dates and quotas are unrelated. */
 export function resetCreditsInfo(report: UsageReport) {
   const count = report.availableResets;
   const note = RESET_NOTE[providerOf(report.id)];
