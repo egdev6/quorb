@@ -50,6 +50,34 @@ jobs:
           Get-Content raw\version.txt
           exit 0
 
+      - name: Configure WSL for the lab (deterministic runner)
+        shell: pwsh
+        run: |
+          # La .wslconfig global del runner decide el comportamiento del
+          # subsistema. Para el lab interesa:
+          #  - instanceIdleTimeout=-1: por defecto (15 s) la distro se apaga
+          #    por inactividad y se llevaria por delante al proceso TESTIGO,
+          #    dando un falso FAIL. Con -1 la distro no se apaga sola.
+          #  - debugConsole=true: deja la salida del kernel al arrancar
+          #    (evidencia de diagnostico).
+          # Los cambios solo aplican tras `wsl --shutdown` (documentacion de
+          # Microsoft), asi que se reinicia el subsistema antes de importar.
+          $wslconfig = Join-Path $env:USERPROFILE ".wslconfig"
+          @(
+            "[general]",
+            "instanceIdleTimeout=-1",
+            "",
+            "[wsl2]",
+            "debugConsole=true",
+            ""
+          ) | Out-File -Encoding utf8 $wslconfig
+          "== $wslconfig (escrito por el lab) ==" | Out-File raw\wslconfig-written.txt
+          Get-Content $wslconfig | Out-File raw\wslconfig-written.txt -Append
+          & wsl.exe --shutdown > raw\wsl-shutdown.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\wsl-shutdown.txt
+          Get-Content raw\wslconfig-written.txt
+          exit 0
+
       - name: Prepare pinned Alpine rootfs (sha256-verified) and import
         shell: pwsh
         run: |
