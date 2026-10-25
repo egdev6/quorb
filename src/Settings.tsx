@@ -2076,7 +2076,7 @@ export function Settings() {
 
       {tab === 'zai' && (
         <Section kicker="Suscripción · GLM Coding Plan" title="z.ai">
-          <Toggle label="Mostrar en el widget" checked={cfg.zai.enabled} onChange={(v) => set('zai', { enabled: v })} />
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
           <p className="q-note">Cuotas de coding de las últimas 5 h y de la semana, y cuota mensual de web tools del Coding Plan.</p>
           <ol className="q-steps" aria-label="Cómo conectar la cuenta">
             <li data-done={!!secrets.zai_api_key || undefined}>
