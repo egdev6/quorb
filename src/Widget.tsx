@@ -24,6 +24,9 @@ import { accountTags } from './lib/accounts';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { peekRect, usesPeekWindow, waitForViewport, watchPreparation } from './lib/auto-hide';
 import { useDockReveal } from './lib/useDockReveal';
+import { t } from './i18n';
+import { localeFrom } from './i18n/use-locale';
+import { StripFallback } from './components/StripFallback';
 
 const CLOSE_DELAY = 280;
 /**
@@ -145,6 +148,7 @@ export function Widget() {
   const [error, setError] = useState<string | null>(null);
 
   // dock
+  const locale = localeFrom(config);
   const [geo, setGeo] = useState<Geo | null>(null);
   const [stripSize, setStripSize] = useState<Size | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -262,8 +266,9 @@ export function Widget() {
       api.setTrayTooltip(trayTooltip(merged)).catch(() => {});
       runAlerts(prev, merged);
       if (nativeAlertsEnabled(configRef.current?.alerts)) {
+        const loc = localeFrom(configRef.current);
         for (const r of sessionsLost(prev, merged)) {
-          notify(`${r.name}: sesión caducada`, 'Pulsa «Renovar sesión» en su panel. Quorb se actualiza solo en cuanto se renueve.');
+          notify(t(loc, 'widget.sessionExpiredTitle', { name: r.name }), t(loc, 'widget.sessionExpiredBody'));
         }
       }
       setUpdatedAt(new Date());
@@ -411,7 +416,8 @@ export function Widget() {
           /* sin almacenamiento */
         }
         if (shouldNotifyUpdate(info.version, store)) {
-          notify(`Quorb ${info.version} disponible`, 'Pulsa el icono de descarga de la tira para actualizar.');
+          const loc = localeFrom(configRef.current);
+          notify(t(loc, 'widget.updateAvailableTitle', { version: info.version }), t(loc, 'widget.updateAvailableBody'));
           setRevealUntil(Date.now() + REVEAL_MS);
         }
       } catch {
@@ -433,7 +439,7 @@ export function Widget() {
       await installUpdate((progress) => setUpdate({ phase: 'installing', info, progress }));
     } catch (e) {
       setUpdate({ phase: 'available', info });
-      notify('No se pudo actualizar Quorb', updateErrorText(e));
+      notify(t(localeFrom(configRef.current), 'widget.updateFailedTitle'), updateErrorText(e));
     }
   };
 
@@ -964,7 +970,7 @@ export function Widget() {
         ref={peekRef}
         type="button"
         className="peek"
-        aria-label={placementFailed ? 'Reintentar mostrar Quorb' : 'Mostrar Quorb'}
+        aria-label={placementFailed ? t(locale, 'widget.retryShow') : t(locale, 'widget.show')}
         aria-controls="quorb-strip"
         aria-hidden={phase === 'open' && !peekFocused || undefined}
         tabIndex={phase === 'hidden' || placementFailed && (usesPeekWindow(phase) || phase === 'preparing') ? 0 : -1}
@@ -994,7 +1000,7 @@ export function Widget() {
       >
         <span
           className="strip__grip"
-          title="Arrastrar: se pega al borde más cercano"
+          title={t(locale, 'widget.dragHint')}
           onPointerDown={onGripDown}
           onPointerMove={onGripMove}
           onPointerUp={onGripUp}
@@ -1019,18 +1025,9 @@ export function Widget() {
               pointer={orbHandlers(r.id)}
             />
           ))}
-          {visible.length === 0 &&
-            (error ? (
-              <button className="btn btn--accent btn--sm" onClick={retryStartup} title={error}>
-                Reintentar
-              </button>
-            ) : loading || !config ? (
-              <span style={{ color: 'var(--text-2)', fontSize: 11, padding: '0 6px' }}>Cargando…</span>
-            ) : (
-              <button className="btn btn--accent btn--sm" onClick={() => api.openSettings()}>
-                Configurar
-              </button>
-            ))}
+          {visible.length === 0 && (
+            <StripFallback error={error} busy={loading} ready={config != null} locale={locale} onRetry={retryStartup} onConfigure={() => api.openSettings()} />
+          )}
         </div>
 
         <div className="strip__tools">
@@ -1042,17 +1039,17 @@ export function Widget() {
               disabled={update.phase === 'installing'}
               title={
                 update.phase === 'installing'
-                  ? `Actualizando a ${update.info.version}${update.progress != null ? ` · ${update.progress} %` : '…'}`
-                  : `Actualizar a Quorb ${update.info.version}`
+                  ? t(locale, 'widget.updatingTo', { version: update.info.version, detail: update.progress != null ? ` · ${update.progress} %` : '…' })
+                  : t(locale, 'widget.updateTo', { version: update.info.version })
               }
             >
               {Icon.update}
             </button>
           )}
-          <button className="icon-btn" data-spin={loading || undefined} onClick={refresh} title="Actualizar ahora">
+          <button className="icon-btn" data-spin={loading || undefined} onClick={refresh} title={t(locale, 'widget.refreshNow')}>
             {Icon.refresh}
           </button>
-          <button className="icon-btn" onClick={() => api.openSettings()} title="Ajustes">
+          <button className="icon-btn" onClick={() => api.openSettings()} title={t(locale, 'widget.settings')}>
             {Icon.gear}
           </button>
         </div>

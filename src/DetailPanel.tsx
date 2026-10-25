@@ -160,7 +160,7 @@ export function DetailPanel() {
         <ProviderCard report={data.report} />
         <section className="panel__insights" aria-labelledby="panel-insights-title">
           <h2 id="panel-insights-title" className="panel__heading">Ritmo e historial</h2>
-          <ProviderDetails key={data.report.id} report={data.report} />
+          <ProviderDetails key={data.report.id} report={data.report} locale={locale} />
         </section>
         <div className="panel__actions">
           {usageUrl && <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(usageUrl).catch(console.warn)}>Uso oficial ↗</button>}
