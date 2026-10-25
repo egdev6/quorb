@@ -151,8 +151,25 @@ jobs:
             & wsl.exe -d $d -- rm -rf $dir > "raw\gap1-$tag-cleanup.txt" 2>&1
             "cleanup dir=$dir" | Add-Content "raw\gap1-$tag-cleanup.txt"
           }
-          if ($failed.Count -gt 0) { "FAILED DISTROS: $($failed -join ', ')" | Out-File raw\gap1-verdict.txt; Get-Content raw\gap1-verdict.txt; exit 1 }
-          "TODAS LAS DISTROS: PASS" | Out-File raw\gap1-verdict.txt
+          if ($failed.Count -gt 0) {
+            "GAPS: FAILED DISTROS: $($failed -join ', ')" | Out-File raw\gap1-verdict.txt
+          } else {
+            "GAPS: TODAS LAS DISTROS: PASS" | Out-File raw\gap1-verdict.txt
+          }
+          # Se vuelca el detalle al log: si algo falla, el motivo tiene que
+          # estar en la salida del run, no solo en un fichero raw.
+          "---- gap1 verdict ----" | Out-File raw\gap1-detail.txt
+          Get-ChildItem raw\gap1-*verdict.txt | ForEach-Object {
+            "== $($_.Name) ==" | Out-File raw\gap1-detail.txt -Append
+            Get-Content $_.FullName | Out-File raw\gap1-detail.txt -Append
+          }
+          "---- gap1 kill/pid/listing ----" | Out-File raw\gap1-detail.txt -Append
+          Get-ChildItem raw\gap1-*kill-alive.txt, raw\gap1-*pid.txt, raw\gap1-*dir-listing.txt | ForEach-Object {
+            "== $($_.Name) ==" | Out-File raw\gap1-detail.txt -Append
+            Get-Content $_.FullName | Out-File raw\gap1-detail.txt -Append
+          }
+          Get-Content raw\gap1-detail.txt
+          exit 0
 
       # ------------------------------------------------------------------
       # Gap 2 — F14 double frontier: literal preservation
@@ -215,11 +232,12 @@ jobs:
           "cases=$($all.Count) failed=$($failed.Count)" | Add-Content raw\gap2-f14.txt
           $all | Format-Table distro, case, passed -AutoSize | Out-String | Add-Content raw\gap2-f14.txt
           if ($failed.Count -gt 0) {
-            "FAIL: preservacion literal rota en: $($failed.distro + '/' + $failed.case -join ', ')" | Add-Content raw\gap2-f14.txt
-            Get-Content raw\gap2-f14.txt
-            exit 1
+            "GAPS: FAIL preservacion literal en: $($failed.distro + '/' + $failed.case -join ', ')" | Add-Content raw\gap2-f14.txt
+          } else {
+            "GAPS: preservacion literal OK en todos los casos" | Add-Content raw\gap2-f14.txt
           }
           Get-Content raw\gap2-f14.txt
+          exit 0
 
       - name: Gap 2 — shell strategy y LOGIN PATH (por distro)
         shell: pwsh
@@ -242,7 +260,24 @@ jobs:
             Get-Content "raw\gap2-$tag-home.txt" | Add-Content raw\gap2-shell-and-home.txt
           }
 
+      - name: Global verdict (both gaps)
+        shell: pwsh
+        run: |
+          $g1 = (Get-Content raw\gap1-verdict.txt -Raw)
+          $g2 = (Get-Content raw\gap2-f14.txt -Raw)
+          "== GAP 1 (pidfile / kill acotado) ==" | Out-File raw\verdict.txt
+          $g1 | Out-File raw\verdict.txt -Append
+          "== GAP 2 (F14 doble frontera) ==" | Out-File raw\verdict.txt -Append
+          $g2 | Out-File raw\verdict.txt -Append
+          $fail = ($g1 -match "FAILED DISTROS") -or ($g2 -match "FAIL preservacion")
+          if ($fail) { "VERDICT GLOBAL: FAIL" | Out-File raw\verdict.txt -Append }
+          else { "VERDICT GLOBAL: PASS" | Out-File raw\verdict.txt -Append }
+          Get-Content raw\verdict.txt
+          if ($fail) { exit 1 }
+          exit 0
+
       - name: Upload raw evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: w3-evidence
