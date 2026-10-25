@@ -204,8 +204,7 @@ jobs:
             # Nota: en pwsh `&` NO es "job en background" (es el call
             # operator); por eso el background va DENTRO del script de la
             # distro y el host solo espera la senal.
-            & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 >
-              "raw\gap1-$tag-launch.txt" 2>&1
+            & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
             "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-launch.txt"
             # Margen para que el script arranque y cree el pidfile.
             Start-Sleep -Seconds 5
