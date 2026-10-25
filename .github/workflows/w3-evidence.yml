@@ -201,13 +201,20 @@ jobs:
             # hace spawn y retorna; el timeout es suyo). Si el harness
             # esperase, la invocacion terminaria al expirar el sleep y se
             # llevaria por delante al watcher y al TESTIGO.
-            $proc = Start-Process -FilePath wsl.exe -PassThru -NoNewWindow `
-              -ArgumentList @("-d", $d, "-e", "sh", "-c", $opScript, "sh", $dir, "sleep", "300") `
-              -RedirectStandardOutput "raw\gap1-$tag-launch.txt" `
-              -RedirectStandardError  "raw\gap1-$tag-launch-err.txt"
-            "host pid=$($proc.Id)" | Set-Content "raw\gap1-$tag-hostpid.txt"
+            # Start-Job pasa los argumentos como array nativo de pwsh (con
+            # eventos de shell, no conquoting .NET como Start-Process).
+            $job = Start-Job -ScriptBlock {
+              param($distro, $script, $dir)
+              & wsl.exe -d $distro -e sh -c $script sh $dir sleep 300
+            } -ArgumentList $d, $opScript, $dir
+            "started=$($job.Id)" | Set-Content "raw\gap1-$tag-hostpid.txt"
             # Margen para que el script arranque y cree el pidfile.
-            Start-Sleep -Seconds 3
+            Start-Sleep -Seconds 5
+            # La salida del job se recoge aqui (el job sigue vivo: el
+            # comando duerme 300 s, como el proceso del adaptador).
+            Receive-Job -Job $job -ErrorAction SilentlyContinue |
+              Out-File "raw\gap1-$tag-launch.txt" -Encoding utf8
+            "job state=$($job.State)" | Add-Content "raw\gap1-$tag-hostpid.txt"
             # PIDs reales
             & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid.txt" 2>&1
             & wsl.exe -d $d -- cat $dir/witness > "raw\gap1-$tag-witness.txt" 2>&1
