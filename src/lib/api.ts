@@ -96,4 +96,5 @@ export const api = {
   ) => invoke<void>('play_effect', { req: { kind, moment, ...rect } }),
   overlayDone: () => invoke<void>('overlay_done'),
   shortcutErrors: () => invoke<string[]>('shortcut_errors'),
+  shortcutWarnings: () => invoke<string[]>('shortcut_warnings'),
 };

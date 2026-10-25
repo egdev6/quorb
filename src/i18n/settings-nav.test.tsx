@@ -15,6 +15,7 @@ const navProps = (locale: Locale, navCollapsed = false) => ({
   onToggleNav: () => {},
   pendingProviders: 0,
   shortcutErrors: [],
+  shortcutWarnings: [],
 });
 
 describe('SettingsNav (SSR)', () => {
@@ -40,6 +41,28 @@ describe('SettingsNav (SSR)', () => {
     const html = renderToStaticMarkup(<SettingsNav {...navProps('en', true)} />);
     expect(html).toContain('aria-label="Providers"');
     expect(html).toContain('title="Providers"');
+  });
+
+  // #181 (punto 1): los avisos de Wayland también cuentan en el badge de
+  // «Atajos», sumados a los errores de registro.
+  it('counts shortcut warnings together with errors in the shortcuts nav badge', () => {
+    const html = renderToStaticMarkup(
+      <SettingsNav {...navProps('es')} {...{ shortcutErrors: ['Ctrl+Alt+U: no se pudo registrar'], shortcutWarnings: ['Mostrar / ocultar (Ctrl+Alt+H): vía X11/XWayland'] }} />,
+    );
+    expect(html).toContain('eg-menu__count">2</span>');
+    expect(html).not.toContain('eg-menu__count">1</span>');
+  });
+
+  it('shows a badge for warnings alone when there are no errors', () => {
+    const html = renderToStaticMarkup(
+      <SettingsNav {...navProps('es')} {...{ shortcutErrors: [], shortcutWarnings: ['a', 'b', 'c'] }} />,
+    );
+    expect(html).toContain('eg-menu__count">3</span>');
+  });
+
+  it('hides the shortcuts badge when there are neither errors nor warnings', () => {
+    const html = renderToStaticMarkup(<SettingsNav {...navProps('es')} />);
+    expect(html).not.toContain('eg-menu__count');
   });
 });
 

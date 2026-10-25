@@ -73,41 +73,90 @@ async fn set_widget_bounds(window: WebviewWindow, bounds: detail_geometry::Bound
     rx.recv().await.ok_or_else(|| "Widget bounds UI callback was dropped".to_string())?
 }
 
-/// Atajos registrados → acción, y errores del último registro (para Ajustes).
+/// Atajos registrados → acción, y errores y avisos del último registro
+/// (para Ajustes). Los `errors` son fallos de registro (parse o register);
+/// los `warnings` avisos no bloqueantes, p. ej. registro bajo Wayland vía
+/// X11/XWayland sin efecto global (issue #181).
 #[derive(Default)]
 struct Shortcuts {
     map: Mutex<Vec<(Shortcut, &'static str)>>,
     errors: Mutex<Vec<String>>,
+    warnings: Mutex<Vec<String>>,
 }
 
 /// (Re)registra los atajos globales según la config.
 fn apply_shortcuts(app: &AppHandle, cfg: &config::ShortcutsConfig) {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    let mut map = vec![];
-    let mut errors = vec![];
-    if cfg.enabled {
-        for (action, label, text) in [
-            ("toggle", "Mostrar / ocultar", &cfg.toggle),
-            ("open_peak", "Abrir el más cargado", &cfg.open_peak),
-            ("refresh", "Actualizar", &cfg.refresh),
-        ] {
-            if text.is_empty() {
-                continue;
-            }
-            match text.parse::<Shortcut>() {
-                Ok(sc) => match gs.register(sc) {
-                    Ok(()) => map.push((sc, action)),
-                    Err(e) => errors.push(format!("{label} ({text}): no se pudo registrar, ¿lo usa otra app? ({e})")),
-                },
-                Err(e) => errors.push(format!("{label} ({text}): combinación no válida ({e})")),
-            }
-        }
-    }
+    // #181 (punto 1): en Linux global-hotkey solo trae backend X11 (XGrabKey
+    // pasivo por XWayland); bajo Wayland register() devuelve Ok sin efecto
+    // global. La decisión (qué es error, qué es aviso, qué se conserva) vive
+    // en `compute_shortcuts`, pura y testeable; acá solo se inyecta el
+    // registro real y el estado de sesión.
+    let entries = [
+        ("toggle", "Mostrar / ocultar", cfg.toggle.as_str()),
+        ("open_peak", "Abrir el más cargado", cfg.open_peak.as_str()),
+        ("refresh", "Actualizar", cfg.refresh.as_str()),
+    ];
+    let (map, errors, warnings) = compute_shortcuts(cfg.enabled, wm_compat::is_wayland_session(), &entries, |sc| {
+        gs.register(sc.clone()).map_err(|e| e.to_string())
+    });
     if let Some(state) = app.try_state::<Shortcuts>() {
         *state.map.lock().unwrap() = map;
         *state.errors.lock().unwrap() = errors;
+        *state.warnings.lock().unwrap() = warnings;
     }
+}
+
+/// Entrada de atajo para `compute_shortcuts`: (acción, etiqueta, combinación).
+/// Acción y etiqueta son literales estáticos (van al map y a los mensajes);
+/// la combinación vive en la config prestada.
+type ShortcutEntry<'a> = (&'static str, &'static str, &'a str);
+
+/// Decisión pura de registro de atajos (issue #181, ajuste del mantenedor):
+/// dada la config, la sesión y el resultado de registrar cada atajo, arma el
+/// map y separa **errores reales** (combinación no válida o fallo de
+/// `register`) de **avisos de capacidad** (bajo Wayland el registro
+/// X11/XWayland puede no tener efecto global aunque `register()` devuelva
+/// `Ok`). Con `enabled: false` no hay registro ni falso aviso. Pura: los
+/// tests cubren la matriz completa sin `AppHandle`.
+fn compute_shortcuts(
+    enabled: bool,
+    wayland: bool,
+    entries: &[ShortcutEntry<'_>],
+    mut register: impl FnMut(&Shortcut) -> Result<(), String>,
+) -> (Vec<(Shortcut, &'static str)>, Vec<String>, Vec<String>) {
+    let mut map = vec![];
+    let mut errors = vec![];
+    let mut warnings = vec![];
+    if !enabled {
+        return (map, errors, warnings);
+    }
+    for &(action, label, text) in entries {
+        if text.is_empty() {
+            continue;
+        }
+        match text.parse::<Shortcut>() {
+            Ok(sc) => match register(&sc) {
+                Ok(()) => {
+                    map.push((sc, action));
+                    if wayland {
+                        warnings.push(wayland_shortcut_warning(label, text));
+                    }
+                },
+                Err(e) => errors.push(format!("{label} ({text}): no se pudo registrar, ¿lo usa otra app? ({e})")),
+            },
+            Err(e) => errors.push(format!("{label} ({text}): combinación no válida ({e})")),
+        }
+    }
+    (map, errors, warnings)
+}
+
+/// Aviso de atajo registrado bajo Wayland (issue #181): identifica el atajo y
+/// la combinación, explica la causa y nunca afirma activación — dice que puede
+/// no responder. Pura, para tests directos.
+fn wayland_shortcut_warning(label: &str, text: &str) -> String {
+    format!("{label} ({text}): en Wayland el registro se hace vía X11/XWayland y puede no tener efecto global; el atajo puede no responder.")
 }
 
 fn on_shortcut(app: &AppHandle, action: &str) {
@@ -129,6 +178,13 @@ fn on_shortcut(app: &AppHandle, action: &str) {
 #[tauri::command]
 fn shortcut_errors(state: State<'_, Shortcuts>) -> Vec<String> {
     state.errors.lock().unwrap().clone()
+}
+
+/// Avisos no bloqueantes del último registro de atajos (issue #181), espejo de
+/// `shortcut_errors` para el panel de Ajustes.
+#[tauri::command]
+fn shortcut_warnings(state: State<'_, Shortcuts>) -> Vec<String> {
+    state.warnings.lock().unwrap().clone()
 }
 
 struct AppState {
@@ -959,6 +1015,7 @@ pub fn run() {
             play_effect,
             overlay_done,
             shortcut_errors,
+            shortcut_warnings,
             wm_compat::get_wm_info,
         ]);
     #[cfg(target_os = "windows")]
@@ -1168,5 +1225,92 @@ mod tests {
         let msg = always_on_top_error("acceso denegado");
         assert!(msg.contains("siempre encima"));
         assert!(msg.contains("acceso denegado"));
+    }
+
+    /// #181 (punto 1): el aviso de atajo bajo Wayland identifica el atajo y la
+    /// combinación, explica la causa (registro vía X11/XWayland) y nunca afirma
+    /// activación: dice que «puede» no responder.
+    #[test]
+    fn wayland_shortcut_warning_identifies_shortcut_and_never_claims_activation() {
+        let msg = wayland_shortcut_warning("Mostrar / ocultar", "Ctrl+Alt+U");
+        assert!(msg.contains("Mostrar / ocultar"), "debe nombrar el atajo: {msg}");
+        assert!(msg.contains("Ctrl+Alt+U"), "debe mostrar la combinación: {msg}");
+        assert!(msg.contains("Wayland"), "debe explicar la sesión: {msg}");
+        assert!(msg.contains("X11/XWayland"), "debe explicar la causa: {msg}");
+        assert!(msg.contains("puede no tener efecto global"), "no debe prometer efecto: {msg}");
+        assert!(msg.contains("puede no responder"), "debe decir qué observar: {msg}");
+        assert!(!msg.to_lowercase().contains("activad"), "nunca afirma activación: {msg}");
+        assert!(!msg.to_lowercase().contains("funciona"), "nunca promete funcionamiento: {msg}");
+    }
+
+    // #181 (matriz de la aprobación del mantenedor): la decisión pura de
+    // registro cubre los caminos que antes quedaban dentro de apply_shortcuts.
+    fn entries() -> Vec<ShortcutEntry<'static>> {
+        vec![
+            ("toggle", "Mostrar / ocultar", "Ctrl+Alt+U"),
+            ("refresh", "Actualizar", "Ctrl+Alt+R"),
+        ]
+    }
+
+    #[test]
+    fn wayland_with_ok_registration_warns_limited_scope() {
+        let (map, errors, warnings) =
+            compute_shortcuts(true, true, &entries(), |_| Ok(()));
+        assert_eq!(map.len(), 2, "registro best-effort conservado");
+        assert!(errors.is_empty(), "sin errores reales: {errors:?}");
+        assert_eq!(warnings.len(), 2, "un aviso por atajo registrado");
+        assert!(warnings.iter().all(|w| w.contains("puede no responder")));
+    }
+
+    #[test]
+    fn x11_with_ok_registration_has_no_warning() {
+        let (map, errors, warnings) =
+            compute_shortcuts(true, false, &entries(), |_| Ok(()));
+        assert_eq!(map.len(), 2);
+        assert!(errors.is_empty());
+        assert!(warnings.is_empty(), "X11 no genera aviso de capacidad");
+    }
+
+    #[test]
+    fn disabled_shortcuts_produce_no_registration_nor_false_warning() {
+        let (map, errors, warnings) =
+            compute_shortcuts(false, true, &entries(), |_| Ok(()));
+        assert!(map.is_empty());
+        assert!(errors.is_empty());
+        assert!(warnings.is_empty(), "sin falso aviso con atajos desactivados");
+    }
+
+    #[test]
+    fn real_registration_errors_are_preserved_alongside_capacity_diagnosis() {
+        let (map, errors, warnings) =
+            compute_shortcuts(true, true, &entries(), |_| Err("ya en uso".to_string()));
+        assert!(map.is_empty(), "fallo de registro no agrega al map");
+        assert_eq!(errors.len(), 2, "errores reales intactos");
+        assert!(errors.iter().all(|e| e.contains("no se pudo registrar")));
+        assert!(warnings.is_empty(), "el fallo ya informa: sin aviso de capacidad");
+    }
+
+    #[test]
+    fn parse_errors_do_not_become_capacity_warnings() {
+        let bad = vec![("toggle", "Mostrar / ocultar", "no-es-un-atajo")];
+        let (map, errors, warnings) =
+            compute_shortcuts(true, true, &bad, |_| Ok(()));
+        assert!(map.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("combinación no válida"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn empty_shortcut_text_is_skipped_silently() {
+        let mixed = vec![
+            ("toggle", "Mostrar / ocultar", ""),
+            ("refresh", "Actualizar", "Ctrl+Alt+R"),
+        ];
+        let (map, errors, warnings) =
+            compute_shortcuts(true, false, &mixed, |_| Ok(()));
+        assert_eq!(map.len(), 1);
+        assert!(errors.is_empty());
+        assert!(warnings.is_empty());
     }
 }
