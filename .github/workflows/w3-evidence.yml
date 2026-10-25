@@ -197,8 +197,17 @@ jobs:
             # senal (`touch <dir>/kill`) y el watcher mata SOLO el proceso de
             # la operacion, comprobando ademas que el TESTIGO sigue vivo.
             $opScript = 'd="$1"; main=$$; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 0.2; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
-            & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
-            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-launch.txt"
+            # Se lanza en BACKGROUND como hace el adaptador (ProcessRunner
+            # hace spawn y retorna; el timeout es suyo). Si el harness
+            # esperase, la invocacion terminaria al expirar el sleep y se
+            # llevaria por delante al watcher y al TESTIGO.
+            $proc = Start-Process -FilePath wsl.exe -PassThru -NoNewWindow `
+              -ArgumentList @("-d", $d, "-e", "sh", "-c", $opScript, "sh", $dir, "sleep", "300") `
+              -RedirectStandardOutput "raw\gap1-$tag-launch.txt" `
+              -RedirectStandardError  "raw\gap1-$tag-launch-err.txt"
+            "host pid=$($proc.Id)" | Set-Content "raw\gap1-$tag-hostpid.txt"
+            # Margen para que el script arranque y cree el pidfile.
+            Start-Sleep -Seconds 3
             # PIDs reales
             & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid.txt" 2>&1
             & wsl.exe -d $d -- cat $dir/witness > "raw\gap1-$tag-witness.txt" 2>&1
@@ -315,9 +324,11 @@ jobs:
               # printf %s <b64>: el b64 es el dato posicional. Si llega
               # intacto, la doble frontera preservo la cadena de bytes.
               & wsl.exe -d $d -e sh -c $script sh printf %s $b64 > "raw\gap2-$tag-out.txt" 2>&1
-              "EXIT=$LASTEXITCODE" | Add-Content "raw\gap2-$tag-out.txt"
-              # La primera línea es el valor de printf; el EXIT va aparte.
-              $got = (Get-Content "raw\gap2-$tag-out.txt" | Select-Object -First 1).Trim()
+              "EXIT=$LASTEXITCODE" | Set-Content "raw\gap2-$tag-exit.txt"
+              # El valor va SOLO en out.txt (el EXIT a otro fichero): con el
+              # valor vacio, el fichero no tiene lineas y el "EXIT=" se
+              # colaba como primera linea.
+              $got = ((Get-Content "raw\gap2-$tag-out.txt" -Raw) -replace "[\r\n]", "")
               $all += [pscustomobject]@{
                 distro = $d
                 case   = $c.name
