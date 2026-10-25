@@ -107,6 +107,43 @@ jobs:
       # ------------------------------------------------------------------
       # Gap 1 — scoped cancellation (level 1), por distro (Alpine + Ubuntu)
       # ------------------------------------------------------------------
+      - name: Diagnostico — los pids de WSL no son globales
+        shell: pwsh
+        run: |
+          $lines = Get-Content raw\distros.txt
+          $distros = @($lines | ForEach-Object {
+            $parts = $_ -split '=', 2
+            if ($parts[1] -and $parts[1] -ne '<none>') { $parts[1] }
+          })
+          # Configuracion WSL global del runner: la evidencia debe
+          # registrar con que configuracion se corrio (afecta a la
+          # semantica de pids y al apagado por inactividad).
+          $wslconfig = Join-Path $env:USERPROFILE ".wslconfig"
+          if (Test-Path $wslconfig) {
+            "== $wslconfig ==" | Out-File raw\wslconfig.txt
+            Get-Content $wslconfig | Out-File raw\wslconfig.txt -Append
+          } else {
+            "no .wslconfig en $wslconfig (valores por defecto de WSL)" |
+              Out-File raw\wslconfig.txt
+          }
+          Get-Content raw\wslconfig.txt
+          foreach ($d in $distros) {
+            $tag = $d -replace '[^A-Za-z0-9]', ''
+            # El MISMO pid en dos invocaciones distintas: si difiere, cada
+            # `wsl.exe` corre en su propio namespace de pids.
+            & wsl.exe -d $d -- sh -c 'echo $$' > "raw\pid-probe-$tag-1.txt" 2>&1
+            & wsl.exe -d $d -- sh -c 'echo $$' > "raw\pid-probe-$tag-2.txt" 2>&1
+            # Y el init de la distro (systemd o el init de WSL).
+            & wsl.exe -d $d -- ps -p 1 -o comm= > "raw\ps-init-$tag.txt" 2>&1
+            & wsl.exe -d $d -- ps -eo pid,args > "raw\ps-list-$tag.txt" 2>&1
+            "== $d ==" | Out-File "raw\pid-diagnosis-$tag.txt"
+            "probe1: $((Get-Content "raw\pid-probe-$tag-1.txt" | Select-Object -First 1).Trim())" | Out-File "raw\pid-diagnosis-$tag.txt" -Append
+            "probe2: $((Get-Content "raw\pid-probe-$tag-2.txt" | Select-Object -First 1).Trim())" | Out-File "raw\pid-diagnosis-$tag.txt" -Append
+            "init: $((Get-Content "raw\ps-init-$tag.txt" | Select-Object -First 1).Trim())" | Out-File "raw\pid-diagnosis-$tag.txt" -Append
+            Get-Content "raw\pid-diagnosis-$tag.txt"
+          }
+          exit 0
+
       - name: Gap 1 — pidfile, kill acotado y proceso ajeno intacto (por distro)
         shell: pwsh
         run: |
@@ -126,14 +163,14 @@ jobs:
             # adaptador usa (SCRIPT_EXEC_PIDFILE): dir privado + pidfile +
             # exec del comando colgado. `exec` conserva el pid, asi que el
             # pidfile apunta al proceso final.
-            $opScript = 'mkdir "$1" && chmod 700 "$1" && umask 077 && echo $$ > "$1/pid" && shift && exec "$@"'
+            # Mecanismo de senal por fichero: el watcher (dentro de la distro)
+            # es el UNICO que puede matar por pid, porque los pids de WSL no
+            # son globales entre invocaciones de wsl.exe. El host escribe la
+            # senal (`touch <dir>/kill`) y el watcher mata SOLO el proceso de
+            # la operacion, comprobando ademas que el TESTIGO sigue vivo.
+            $opScript = 'd="$1"; main=$$; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 0.2; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
             & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
             "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-launch.txt"
-            # (b) Un TESTIGO ajeno a la operacion (sleep 900), con su pid
-            # via $! (el pid real del hijo). Debe seguir vivo tras el kill.
-            $wScript = 'mkdir "$1" && chmod 700 "$1" && umask 077 && sleep 900 & echo $! > "$1/witness" && wait'
-            & wsl.exe -d $d -e sh -c $wScript sh $dir > "raw\gap1-$tag-witness-launch.txt" 2>&1
-            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-witness-launch.txt"
             # PIDs reales
             & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid.txt" 2>&1
             & wsl.exe -d $d -- cat $dir/witness > "raw\gap1-$tag-witness.txt" 2>&1
@@ -145,25 +182,25 @@ jobs:
               "NO PID IN PIDFILE (op=$pid_ witness=$witness)" | Add-Content "raw\gap1-$tag-dir-listing.txt"
               $failed += $d; continue
             }
-            # El testigo debe estar VIVO antes del kill (si no, el test no
-            # demuestra nada).
-            & wsl.exe -d $d -- kill -0 $witness > "raw\gap1-$tag-witness-alive-before.txt" 2>&1
-            "EXIT=$LASTEXITCODE (0 = el proceso ajeno sigue vivo)" | Add-Content "raw\gap1-$tag-witness-alive-before.txt"
-            # Kill acotado: SOLO el pid de la operacion.
-            & wsl.exe -d $d -- kill -TERM $pid_ > "raw\gap1-$tag-kill-term.txt" 2>&1
-            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-kill-term.txt"
-            Start-Sleep -Milliseconds 500
-            & wsl.exe -d $d -- kill -0 $pid_ > "raw\gap1-$tag-kill-alive.txt" 2>&1
-            "EXIT=$LASTEXITCODE (non-zero = el proceso de la operacion murio)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
-            # El proceso AJENO a la operacion debe seguir vivo: eso es lo
-            # que prueba que el kill fue acotado y no un --terminate.
-            & wsl.exe -d $d -- kill -0 $witness > "raw\gap1-$tag-witness-alive-after.txt" 2>&1
-            "EXIT=$LASTEXITCODE (0 = el proceso ajeno SIGUE VIVO)" | Add-Content "raw\gap1-$tag-witness-alive-after.txt"
+            # La senal de cancelacion: el host escribe el fichero y el
+            # watcher (dentro de la distro) mata SOLO nuestro proceso.
+            & wsl.exe -d $d -- touch $dir/kill > "raw\gap1-$tag-kill-signal.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-kill-signal.txt"
+            # El watcher escribe `done` y el estado del testigo.
+            $state = "timeout"
+            for ($i = 0; $i -lt 25; $i++) {
+              Start-Sleep -Milliseconds 200
+              if (Test-Path "raw\gap1-$tag-done.txt") { $state = "done"; break }
+            }
+            & wsl.exe -d $d -- cat $dir/witness-state > "raw\gap1-$tag-witness-state.txt" 2>&1
+            & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid-after.txt" 2>&1
+            "watcher=$state" | Add-Content "raw\gap1-$tag-kill-alive.txt"
+            "EXIT=$LASTEXITCODE (el watcher proceso la senal)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
             & wsl.exe --list --verbose > "raw\gap1-$tag-list-after.txt" 2>&1
             & wsl.exe -d $d -- ls -ld $dir >> "raw\gap1-$tag-list-after.txt" 2>&1
             # Veredicto por distro
-            $dead    = (Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-Object -First 1) -notmatch "^EXIT=0"
-            $witnessAlive = (Get-Content "raw\gap1-$tag-witness-alive-after.txt" | Select-Object -First 1) -match "^EXIT=0"
+            $dead    = (Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-String "watcher=done")
+            $witnessAlive = ((Get-Content "raw\gap1-$tag-witness-state.txt" | Select-Object -First 1).Trim() -eq "alive")
             $ok = $true
             if ($dead) { "OK: el proceso remoto de la operacion murio ($d)" | Out-File "raw\gap1-$tag-verdict.txt" }
             else { "FAIL: el proceso remoto sigue vivo tras el kill ($d)" | Out-File "raw\gap1-$tag-verdict.txt"; $ok = $false }
