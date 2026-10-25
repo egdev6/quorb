@@ -196,7 +196,7 @@ jobs:
             # son globales entre invocaciones de wsl.exe. El host escribe la
             # senal (`touch <dir>/kill`) y el watcher mata SOLO el proceso de
             # la operacion, comprobando ademas que el TESTIGO sigue vivo.
-            $opScript = 'd="$1"; main=$$; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 0.2; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
+            $opScript = 'd="$1"; main=$$; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $main > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 0.2; done; kill -TERM $main 2>/dev/null; sleep 0.3; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exec "$@"'
             & wsl.exe -d $d -e sh -c $opScript sh $dir sleep 300 > "raw\gap1-$tag-launch.txt" 2>&1
             "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-launch.txt"
             # PIDs reales
