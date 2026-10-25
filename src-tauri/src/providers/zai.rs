@@ -94,17 +94,28 @@ pub(crate) struct Parsed {
 ///   `number` es el TAMAÑO de la ventana, no una cuota, así que se muestra solo
 ///   el % y el reinicio (mismo criterio que opencode-glm-quota). Las formas
 ///   antiguas (`number` = cuota en créditos) conservan su display.
-/// · `TIME_LIMIT` — cuota mensual de web search / reader / Zread (usos).
-/// Otros tipos se ignoran: si el formato cambia, `fetch` reporta Warning.
+/// · `TIME_LIMIT` — cuota mensual de web search / reader / Zread: el consumo
+///   viene en `currentValue`, el cupo en `usage` y `number` es la ventana
+///   (contrato real observado en #94, revisión de #182).
+/// Otros tipos se ignoran, y un límite reconocido sin % ni consumo tampoco
+///   emite medidor (un cupo solo no dibuja anillo): si el formato cambia o no
+///   trae datos de uso, `fetch` reporta Warning por el guard de medidores
+///   vacíos (checklist #94-3).
 pub(crate) fn parse_quota(v: &Value) -> Parsed {
     let data = v.get("data").unwrap_or(v);
     let plan = data.get("level").and_then(Value::as_str).map(pretty_level);
     let mut meters = vec![];
     for limit in data.get("limits").and_then(Value::as_array).into_iter().flatten() {
-        match limit.get("type").and_then(Value::as_str) {
-            Some("TOKENS_LIMIT") => meters.push(tokens_meter(limit)),
-            Some("TIME_LIMIT") => meters.push(meter(limit, "web_tools", "Web tools · mes", "usos", None)),
-            _ => {}
+        let meter = match limit.get("type").and_then(Value::as_str) {
+            Some("TOKENS_LIMIT") => tokens_meter(limit),
+            Some("TIME_LIMIT") => web_tools_meter(limit),
+            _ => continue,
+        };
+        // Reconocer el tipo no basta: sin % ni consumo el medidor quedaría
+        // vacío (el anillo lee `percent`; un cupo solo no se ve) y
+        // `meters.is_empty()` no degradaría a Warning (revisión #182).
+        if meter.percent.is_some() || meter.used.is_some() {
+            meters.push(meter);
         }
     }
     Parsed { plan, meters }
@@ -116,7 +127,7 @@ fn tokens_meter(limit: &Value) -> Meter {
     match (unit, number) {
         (Some(3), Some(5)) => window_meter(limit, "five_hour", "Cuota · 5 h", H5),
         (Some(6), Some(1)) => window_meter(limit, "weekly", "Cuota · semana", WEEK),
-        _ => meter(limit, "five_hour", "Cuota · 5 h", "créditos", Some(H5)),
+        _ => credits_meter(limit),
     }
 }
 
@@ -134,14 +145,35 @@ fn window_meter(limit: &Value, id: &str, label: &str, window: i64) -> Meter {
     }
 }
 
-/// Un `limit` del endpoint como medidor; los campos opcionales ausentes quedan en `None`.
-fn meter(limit: &Value, id: &str, label: &str, unit: &str, window: Option<i64>) -> Meter {
+/// Medidor `TIME_LIMIT` de web tools con el contrato REAL observado (captura
+/// de #94, revisión de #182): el consumo viene en `currentValue`, el cupo en
+/// `usage` y `number` describe la ventana mensual, no un límite de usos.
+fn web_tools_meter(limit: &Value) -> Meter {
+    let mut m = base_meter(limit, "web_tools", "Web tools · mes", "usos", None);
+    m.used = limit.get("currentValue").and_then(Value::as_f64);
+    m.limit = limit.get("usage").and_then(Value::as_f64);
+    m
+}
+
+/// Medidor legado de `TOKENS_LIMIT` en créditos: forma documentada por tools
+/// comunitarias (zaiusage, agent-usage-widget), donde `usage` es el consumo y
+/// `number` la cuota.
+fn credits_meter(limit: &Value) -> Meter {
+    let mut m = base_meter(limit, "five_hour", "Cuota · 5 h", "créditos", Some(H5));
+    m.used = limit.get("usage").and_then(Value::as_f64);
+    m.limit = limit.get("number").and_then(Value::as_f64);
+    m
+}
+
+/// Base común de medidor por `limit`: id, label, % y reinicio; las cantidades
+/// las fija el contrato particular de cada tipo.
+fn base_meter(limit: &Value, id: &str, label: &str, unit: &str, window: Option<i64>) -> Meter {
     Meter {
         id: id.into(),
         label: label.into(),
         percent: limit.get("percentage").and_then(Value::as_f64),
-        used: limit.get("usage").and_then(Value::as_f64),
-        limit: limit.get("number").and_then(Value::as_f64),
+        used: None,
+        limit: None,
         unit: Some(unit.into()),
         resets_at: next_reset(limit),
         window_seconds: window,
@@ -196,9 +228,8 @@ pub(crate) fn parse_available_resets(v: &Value) -> Option<u32> {
     let data = v.get("data")?.as_object()?;
     for key in ["lastFiveHourResetTime", "lastWeekResetTime"] {
         if let Some(s) = data.get(key).and_then(Value::as_str) {
-            if zai_timestamp(s).is_none() {
-                return None;
-            }
+            // Timestamp ilegible = esquema cambiado: el saldo degrada a None.
+            zai_timestamp(s)?;
         }
     }
     let groups = ["fiveHourResets", "weekResets"].map(|k| data.get(k).and_then(Value::as_array));
@@ -219,8 +250,10 @@ mod tests {
     use crate::model::Meter;
     use serde_json::json;
 
-    /// Fixture con la forma documentada por tools comunitarias
-    /// (zaiusage, agent-usage-widget) para este endpoint.
+    /// Fixture mixto: TOKENS_LIMIT en la forma de créditos documentada por
+    /// tools comunitarias (zaiusage, agent-usage-widget) y TIME_LIMIT con la
+    /// captura REAL de #94 (2026-10-13): `currentValue` = consumo, `usage` =
+    /// cupo, `number` = ventana.
     fn fixture() -> Value {
         json!({
             "msg": "ok",
@@ -241,14 +274,18 @@ mod tests {
                     },
                     {
                         "type": "TIME_LIMIT",
-                        "unit": 1,
-                        "number": 300,
-                        "usage": 120,
-                        "currentValue": 120,
-                        "remaining": 180,
-                        "percentage": 40,
+                        "unit": 5,
+                        "number": 1,
+                        "usage": 4000,
+                        "currentValue": 0,
+                        "remaining": 4000,
+                        "percentage": 0,
                         "nextResetTime": 1_762_000_000_000_i64,
-                        "usageDetails": []
+                        "usageDetails": [
+                            { "modelCode": "search-prime", "usage": 0 },
+                            { "modelCode": "web-reader", "usage": 0 },
+                            { "modelCode": "zread", "usage": 0 }
+                        ]
                     }
                 ]
             }
@@ -287,7 +324,7 @@ mod tests {
                 "limits": [
                     {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "usage": 1234567, "percentage": 61, "nextResetTime": 1_760_000_000_000_i64},
                     {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "usage": 23456789, "percentage": 42, "nextResetTime": 1_761_000_000_000_i64},
-                    {"type": "TIME_LIMIT", "unit": 1, "number": 300, "usage": 120, "percentage": 40, "nextResetTime": 1_762_000_000_000_i64}
+                    {"type": "TIME_LIMIT", "unit": 5, "number": 1, "usage": 4000, "currentValue": 0, "percentage": 0, "nextResetTime": 1_762_000_000_000_i64}
                 ]
             }
         });
@@ -312,13 +349,16 @@ mod tests {
 
     #[test]
     fn parses_monthly_web_tools_meter() {
+        // Contrato REAL del TIME_LIMIT (captura de #94, revisión de #182): el
+        // consumo viene en `currentValue`, el cupo en `usage` y `number` es el
+        // tamaño de la ventana (unit 5, number 1 = mensual), no un límite de usos.
         let p = parse_quota(&fixture());
         let m = &p.meters[1];
         assert_eq!(m.id, "web_tools");
         assert_eq!(m.label, "Web tools · mes");
-        assert_eq!(m.percent, Some(40.0));
-        assert_eq!(m.used, Some(120.0));
-        assert_eq!(m.limit, Some(300.0));
+        assert_eq!(m.percent, Some(0.0));
+        assert_eq!(m.used, Some(0.0), "el consumo real es `currentValue`");
+        assert_eq!(m.limit, Some(4000.0), "el cupo real es `usage`");
         assert_eq!(m.unit.as_deref(), Some("usos"));
         assert_eq!(m.resets_at, super::super::unix_to_rfc3339(1_762_000_000));
     }
@@ -350,15 +390,41 @@ mod tests {
     }
 
     #[test]
-    fn missing_optional_fields_do_not_panic() {
-        let v = json!({"data": {"limits": [{"type": "TOKENS_LIMIT"}]}});
-        let p = parse_quota(&v);
+    fn limit_without_consumption_data_emits_no_meter() {
+        // El anillo y las alertas leen solo `percent` (format.ts, alerts.ts): un
+        // cupo sin % ni consumo no dibuja nada, así que tampoco cuenta como dato
+        // utilizable y el guard debe degradar a Warning.
+        for v in [
+            json!({"data": {"limits": [{"type": "TIME_LIMIT", "unit": 5, "number": 1, "usage": 4000}]}}),
+            json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "unit": 0, "number": 120}]}}),
+        ] {
+            assert!(parse_quota(&v).meters.is_empty(), "solo cupo no es uso: {v}");
+        }
+        // Con consumo pero sin %, el medidor sí se emite (texto "0 usos").
+        let p = parse_quota(&json!({"data": {"limits": [{"type": "TIME_LIMIT", "usage": 4000, "currentValue": 0}]}}));
         assert_eq!(p.meters.len(), 1);
-        assert_eq!(p.meters[0].id, "five_hour");
-        assert_eq!(p.meters[0].percent, None);
-        assert_eq!(p.meters[0].resets_at, None);
-        assert_eq!(p.meters[0].used, None);
-        assert_eq!(p.meters[0].limit, None);
+        assert_eq!((p.meters[0].used, p.meters[0].limit), (Some(0.0), Some(4000.0)));
+    }
+
+    #[test]
+    fn bare_limit_types_without_usable_data_emit_no_meter() {
+        // Revisión de #182: reconocer el `type` no basta para emitir un medidor;
+        // sin % ni cantidades hay que dejar que el guard de `fetch` degrade a
+        // Warning en vez de mostrar un anillo vacío (checklist de #94, punto 3).
+        for v in [
+            json!({"data": {"limits": [{"type": "TOKENS_LIMIT"}]}}),
+            json!({"data": {"limits": [{"type": "TIME_LIMIT"}]}}),
+            json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "nextResetTime": 1_760_000_000_000_i64}]}}),
+            json!({"data": {"limits": [{"type": "TIME_LIMIT", "nextResetTime": 1_760_000_000_000_i64}]}}),
+        ] {
+            assert!(parse_quota(&v).meters.is_empty(), "sin datos de uso no hay medidor: {v}");
+        }
+        // Con un % presente el medidor sí se emite y los campos ausentes quedan
+        // en None sin pánico (cobertura del test que reemplaza este caso).
+        let p = parse_quota(&json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "percentage": 55}]}}));
+        assert_eq!(p.meters.len(), 1);
+        assert_eq!(p.meters[0].percent, Some(55.0));
+        assert!(p.meters[0].used.is_none() && p.meters[0].limit.is_none() && p.meters[0].resets_at.is_none());
     }
 
     #[test]
@@ -371,17 +437,18 @@ mod tests {
 
     #[test]
     fn limits_entries_with_wrong_field_types_are_skipped_fields() {
-        let p = parse_quota(&json!({"data": {"limits": ["x", 7, null, {"type": "TOKENS_LIMIT", "percentage": "80"}]}}));
+        let p = parse_quota(&json!({"data": {"limits": ["x", 7, null, {"type": "TOKENS_LIMIT", "percentage": "80", "usage": 12}]}}));
         assert_eq!(p.meters.len(), 1);
         assert_eq!(p.meters[0].percent, None);
+        assert_eq!(p.meters[0].used, Some(12.0));
     }
 
     #[test]
     fn next_reset_time_boundaries_yield_none() {
         let p = parse_quota(&json!({"data": {"limits": [
-            {"type": "TOKENS_LIMIT", "nextResetTime": -5},
-            {"type": "TIME_LIMIT", "nextResetTime": 0},
-            {"type": "TOKENS_LIMIT", "nextResetTime": 1.76e12},
+            {"type": "TOKENS_LIMIT", "percentage": 10, "nextResetTime": -5},
+            {"type": "TIME_LIMIT", "percentage": 20, "nextResetTime": 0},
+            {"type": "TOKENS_LIMIT", "percentage": 30, "nextResetTime": 1.76e12},
         ]}}));
         assert_eq!(p.meters.len(), 3);
         assert!(p.meters.iter().all(|m| m.resets_at.is_none()));
