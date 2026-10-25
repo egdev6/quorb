@@ -301,10 +301,17 @@ jobs:
             $s = 'd="$1"; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $$ > "$d/pid"; exec "$@"'
             $dir = "/tmp/quorb-wsl-timeout-$tag-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
             "dir=$dir" | Out-File "raw\g1b-$tag-dir.txt"
-            # A traves de Start-Process para tener el pid del wsl.exe host
-            # y matar SOLO ese proceso (el runner hace kill del arbol).
+            # El script va a un FICHERO: `sh -c <script>` con el quoting
+            # de .NET (Start-Process) perdia el script por sus comillas
+            # internas. Con un fichero no hay quoting que perder.
+            $scriptFile = Join-Path $PWD "g1b-$tag.sh"
+            Set-Content -Path $scriptFile -Value $s -Encoding utf8 -NoNewline
+            # La distro solo ve el disco del host por /mnt/<drive>/...:
+            # D:\a\x\y.sh -> /mnt/d/a/x/y.sh
+            $win = (Resolve-Path $scriptFile).Path
+            $wslScript = "/mnt/" + $win.Substring(0, 1).ToLower() + $win.Substring(2).Replace("\", "/")
             $p = Start-Process -FilePath wsl.exe -PassThru -NoNewWindow `
-              -ArgumentList @("-d", $d, "-e", "sh", "-c", $s, "sh", $dir, "sleep", "300") `
+              -ArgumentList @("-d", $d, "-e", "sh", $wslScript, "sh", $dir, "sleep", "300") `
               -RedirectStandardOutput "raw\g1b-$tag-launch.txt" `
               -RedirectStandardError "raw\g1b-$tag-launch-err.txt"
             Start-Sleep -Seconds 3
