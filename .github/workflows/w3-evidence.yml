@@ -402,7 +402,9 @@ jobs:
               # El valor va SOLO en out.txt (el EXIT a otro fichero): con el
               # valor vacio, el fichero no tiene lineas y el "EXIT=" se
               # colaba como primera linea.
-              $got = ((Get-Content "raw\gap2-$tag-out.txt" -Raw) -replace "[\r\n]", "")
+              # [string]: un fichero vacio devuelve $null en Get-Content -Raw,
+              # y $null -eq "" es False (el caso "empty" fallaba por eso).
+              $got = [string]((Get-Content "raw\gap2-$tag-out.txt" -Raw) -replace "[\r\n]", "")
               $all += [pscustomobject]@{
                 distro = $d
                 case   = $c.name
