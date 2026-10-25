@@ -84,58 +84,78 @@ jobs:
           Get-Content raw\wslconfig-written.txt
           exit 0
 
-      - name: Prepare pinned Alpine rootfs (sha256-verified) and import
+      - name: Import pinned Alpine + Ubuntu rootfs (sha256-verified)
         shell: pwsh
         run: |
-          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
-          Invoke-WebRequest -Uri $url -OutFile rootfs.tar.gz
-          # The sha256 comes from the published .sha256 file of the same
-          # release: the lab cannot pin a wrong or invented hash.
-          # (Se descarga a fichero: en PowerShell 7, `.Content` sin charset
-          # vuelve como byte[] y no tiene `.Trim()`.)
-          Invoke-WebRequest -Uri "$url.sha256" -OutFile rootfs.sha256
-          $expected = (((Get-Content rootfs.sha256 -Raw).Trim() -split '\s+')[0]).ToLower()
-          $actual = (Get-FileHash rootfs.tar.gz -Algorithm SHA256).Hash.ToLower()
-          "expected=$expected actual=$actual" | Set-Content raw/rootfs-sha256.txt
-          if ($expected -ne $actual) {
-            "sha256 MISMATCH" | Add-Content raw/rootfs-sha256.txt
-            exit 1
+          # Se importan DOS distros:
+          #  - quorb_w3: Alpine (sin systemd) -> el caso "sin init real".
+          #  - quorb_ubu: Ubuntu Server WSL rootfs (con systemd) -> el caso
+          #    "con init real", donde los pids SI son globales.
+          function Import-Rootfs($name, $url, $outRootfs, $tag) {
+            Invoke-WebRequest -Uri $url -OutFile $outRootfs
+            # The sha256 comes from the published .sha256 file of the same
+            # release (not hardcoded). Downloaded to file: PS7 `.Content` can
+            # come back as byte[] when there is no charset.
+            Invoke-WebRequest -Uri "$url.sha256" -OutFile "$outRootfs.sha256"
+            $expected = (((Get-Content "$outRootfs.sha256" -Raw).Trim() -split '\s+')[0]).ToLower()
+            $actual = (Get-FileHash $outRootfs -Algorithm SHA256).Hash.ToLower()
+            "$name expected=$expected actual=$actual" | Set-Content "raw\import-$tag.sha256.txt"
+            if ($expected -ne $actual) {
+              "$name sha256 MISMATCH" | Add-Content "raw\import-$tag.sha256.txt"
+              exit 1
+            }
+            # `wsl --import` fails with ERROR_PATH_NOT_FOUND if the install
+            # dir does not exist (verified by the lab). It is created under
+            # the workspace (C:\ is not writable by the runner user).
+            $installDir = Join-Path $PWD "wsl-$name"
+            New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+            & wsl.exe --import $name $installDir $outRootfs *>&1 |
+              Set-Content "raw\import-$tag.txt"
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\import-$tag.txt"
           }
-          # `wsl --import` falla con ERROR_PATH_NOT_FOUND si el directorio
-          # de instalación no existe (verificado por el lab). Se instala
-          # bajo el workspace del runner (C:\ no es escribible por el
-          # usuario del runner).
-          $installDir = Join-Path $PWD "wsl-q3"
-          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-          & wsl.exe --import quorb_w3 $installDir rootfs.tar.gz *>&1 |
-            Set-Content raw/import.txt
-          "EXIT=$LASTEXITCODE" | Add-Content raw/import.txt
-          # Ubuntu: el runner de GitHub trae una distro por defecto
-          # (normalmente Ubuntu). La mantenemos y la usamos tal cual; si no
-          # hay ninguna distro aparte de la Alpine, lo documentamos.
+          $alpine = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
+          $ubuntu = "https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-wsl-24.04-server-cloudimg-amd64-rootfs.tar.gz"
+          Import-Rootfs "quorb_w3"  $alpine "rootfs-alpine.tar.gz" "alpine"
+          Import-Rootfs "quorb_ubu" $ubuntu  "rootfs-ubuntu.tar.gz" "ubuntu"
           & wsl.exe --list --verbose > raw\list-after-import.txt 2>&1
-          "EXIT=$LASTEXITCODE" | Add-Content raw\list-after-import.txt
-          $ubuntu = (& wsl.exe --list --quiet 2>$null | Where-Object { $_.Trim() -and $_ -match 'Ubuntu|Debian' } | Select-Object -First 1)
-          if ($ubuntu) {
-            "ubuntu=$ubuntu" | Add-Content raw\list-after-import.txt
-          } else {
-            "ubuntu=<none — se valida solo con Alpine>" | Add-Content raw\list-after-import.txt
-          }
-          # Volcado al log: sha256, resultado del import y enumeración.
+          "EXIT=$LASTEXITCODE" | Add-Content raw/list-after-import.txt
           "---- import ----" | Out-File raw\import-detail.txt
-          Get-Content raw\rootfs-sha256.txt | Out-File raw\import-detail.txt -Append
-          Get-Content raw\import.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\import-alpine.sha256.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\import-alpine.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\import-ubuntu.sha256.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\import-ubuntu.txt | Out-File raw\import-detail.txt -Append
           Get-Content raw\list-after-import.txt | Out-File raw\import-detail.txt -Append
           Get-Content raw\import-detail.txt
+          exit 0
+
+      - name: Enable systemd in Ubuntu (init real -> pids globales)
+        shell: pwsh
+        run: |
+          # Sin systemd, WSL2 abre una sesion efimera por invocacion (pids
+          # no globales, el background muere al salir el lanzador). Con
+          # `[boot] systemd=true` en /etc/wsl.conf la distro arranca con
+          # /sbin/init real (WSL >= 0.67.6). El rootfs Ubuntu Server ya
+          # incluye systemd; solo falta la config y reiniciar.
+          & wsl.exe -d quorb_ubu -- sh -c 'printf "[boot]\nsystemd=true\n" > /etc/wsl.conf; cat /etc/wsl.conf; ls -l /sbin/init' > raw\systemd-config.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-config.txt
+          # Los cambios de configuracion aplican tras wsl --shutdown
+          # ("the 8 second rule"): se detiene el subsistema y se espera.
+          & wsl.exe --shutdown > raw\systemd-shutdown.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-shutdown.txt
+          Start-Sleep -Seconds 10
+          # Verificacion: pid 1 debe ser /sbin/init (systemd), no el /init de WSL.
+          & wsl.exe -d quorb_ubu -- ps -eo pid,args > raw\systemd-init.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-init.txt
+          Get-Content raw\systemd-config.txt
+          Get-Content raw\systemd-init.txt
           exit 0
 
       - name: Select target distros (Alpine lab + Ubuntu si existe)
         shell: pwsh
         run: |
-          # Distro objetivo fijada para el lab: la Alpine importada.
-          "alpine=quorb_w3" | Set-Content raw\distros.txt
-          $ubuntu = (& wsl.exe --list --quiet 2>$null | Where-Object { $_.Trim() -and $_ -match 'Ubuntu|Debian' } | Select-Object -First 1)
-          if ($ubuntu) { "ubuntu=$ubuntu" | Add-Content raw\distros.txt } else { "ubuntu=<none>" | Add-Content raw\distros.txt }
+          # Las dos distros del lab: Alpine (sin systemd) y Ubuntu (con).
+          "alpine=quorb_w3"  | Set-Content raw\distros.txt
+          "ubuntu=quorb_ubu" | Add-Content raw\distros.txt
           Get-Content raw\distros.txt
 
       # ------------------------------------------------------------------
@@ -202,7 +222,7 @@ jobs:
             # son globales entre invocaciones de wsl.exe. El host escribe la
             # senal (`touch <dir>/kill`) y el watcher mata SOLO el proceso de
             # la operacion, comprobando ademas que el TESTIGO sigue vivo.
-            $opScript = 'd="$1"; shift; mkdir "$d" && chmod 700 "$d" && umask 077 || exit 1; sleep 300 & op=$!; echo $op > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; ( while [ ! -e "$d/kill" ]; do sleep 1; done; kill -TERM $op 2>/dev/null; sleep 1; if kill -0 $witness 2>/dev/null; then echo alive > "$d/witness-state"; else echo dead > "$d/witness-state"; fi; echo done > "$d/done" ) & exit 0'
+            $opScript = 'd="$1"; shift; mkdir "$d" && chmod 700 "$d" && umask 077 || exit 1; sleep 300 & op=$!; echo $op > "$d/pid"; sleep 900 & witness=$!; echo $witness > "$d/witness"; exit 0'
             # El comando se deja en BACKGROUND DENTRO de la distro: el
             # `&` final lo deja corriendo y el shell remoto sale de
             # inmediato, asi que el host no queda esperando (mismo modelo
@@ -225,31 +245,27 @@ jobs:
               "NO PID IN PIDFILE (op=$pid_ witness=$witness)" | Add-Content "raw\gap1-$tag-dir-listing.txt"
               $failed += $d; continue
             }
-            # La senal de cancelacion: el host escribe el fichero y el
-            # watcher (dentro de la distro) mata SOLO nuestro proceso.
-            & wsl.exe -d $d -- touch $dir/kill > "raw\gap1-$tag-kill-signal.txt" 2>&1
-            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-kill-signal.txt"
-            # El watcher escribe `done` y el estado del testigo.
-            $state = "timeout"
-            for ($i = 0; $i -lt 25; $i++) {
-              Start-Sleep -Milliseconds 200
-              if (Test-Path "raw\gap1-$tag-done.txt") { $state = "done"; break }
-            }
-            & wsl.exe -d $d -- cat $dir/witness-state > "raw\gap1-$tag-witness-state.txt" 2>&1
-            # Diagnostico en vivo: que procesos quedan en la distro y que hay
-            # en el dir (el fichero de senal deberia estar).
+            # El kill ACOTADO por PID, desde el host (lo que hace el
+            # adaptador): kill -TERM de ESE pid, nunca de la distro.
+            & wsl.exe -d $d -- kill -TERM $pid_ > "raw\gap1-$tag-kill-term.txt" 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content "raw\gap1-$tag-kill-term.txt"
+            Start-Sleep -Milliseconds 500
+            # El proceso de la operacion debe estar muerto (kill -0 solo
+            # responde si el PID sigue vivo).
+            & wsl.exe -d $d -- kill -0 $pid_ > "raw\gap1-$tag-kill-alive.txt" 2>&1
+            "EXIT=$LASTEXITCODE (non-zero = el proceso de la operacion murio)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
+            # Y el proceso AJENO a la operacion debe seguir vivo: eso es
+            # lo que prueba que el kill fue acotado.
+            & wsl.exe -d $d -- kill -0 $witness > "raw\gap1-$tag-witness-alive.txt" 2>&1
+            "EXIT=$LASTEXITCODE (0 = el proceso ajeno SIGUE VIVO)" | Add-Content "raw\gap1-$tag-witness-alive.txt"
+            # Diagnostico en vivo: que procesos quedan y que hay en el dir.
             & wsl.exe -d $d -- ps -eo pid,args > "raw\gap1-$tag-ps-after.txt" 2>&1
             & wsl.exe -d $d -- ls -la $dir > "raw\gap1-$tag-ls-after.txt" 2>&1
             Get-Content "raw\gap1-$tag-ps-after.txt" | Out-File "raw\gap1-$tag-detail.txt"
             Get-Content "raw\gap1-$tag-ls-after.txt" | Out-File "raw\gap1-$tag-detail.txt" -Append
-            & wsl.exe -d $d -- cat $dir/pid > "raw\gap1-$tag-pid-after.txt" 2>&1
-            "watcher=$state" | Add-Content "raw\gap1-$tag-kill-alive.txt"
-            "EXIT=$LASTEXITCODE (el watcher proceso la senal)" | Add-Content "raw\gap1-$tag-kill-alive.txt"
-            & wsl.exe --list --verbose > "raw\gap1-$tag-list-after.txt" 2>&1
-            & wsl.exe -d $d -- ls -ld $dir >> "raw\gap1-$tag-list-after.txt" 2>&1
             # Veredicto por distro
-            $dead    = (Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-String "watcher=done")
-            $witnessAlive = ((Get-Content "raw\gap1-$tag-witness-state.txt" | Select-Object -First 1).Trim() -eq "alive")
+            $dead = (Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-Object -First 1) -notmatch "^EXIT=0"
+            $witnessAlive = (Get-Content "raw\gap1-$tag-witness-alive.txt" | Select-Object -First 1) -match "^EXIT=0"
             $ok = $true
             if ($dead) { "OK: el proceso remoto de la operacion murio ($d)" | Out-File "raw\gap1-$tag-verdict.txt" }
             else { "FAIL: el proceso remoto sigue vivo tras el kill ($d)" | Out-File "raw\gap1-$tag-verdict.txt"; $ok = $false }
