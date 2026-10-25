@@ -67,7 +67,13 @@ jobs:
             "sha256 MISMATCH" | Add-Content raw/rootfs-sha256.txt
             exit 1
           }
-          & wsl.exe --import quorb_w3 C:\wsl\q3 rootfs.tar.gz *>&1 |
+          # `wsl --import` falla con ERROR_PATH_NOT_FOUND si el directorio
+          # de instalación no existe (verificado por el lab). Se instala
+          # bajo el workspace del runner (C:\ no es escribible por el
+          # usuario del runner).
+          $installDir = Join-Path $PWD "wsl-q3"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          & wsl.exe --import quorb_w3 $installDir rootfs.tar.gz *>&1 |
             Set-Content raw/import.txt
           "EXIT=$LASTEXITCODE" | Add-Content raw/import.txt
           # Ubuntu: el runner de GitHub trae una distro por defecto
@@ -266,6 +272,8 @@ jobs:
             Get-Content "raw\gap2-$tag-shell-strategy.txt" | Add-Content raw\gap2-shell-and-home.txt
             Get-Content "raw\gap2-$tag-home.txt" | Add-Content raw\gap2-shell-and-home.txt
           }
+          Get-Content raw\gap2-shell-and-home.txt
+          exit 0
 
       - name: Global verdict (both gaps)
         shell: pwsh
