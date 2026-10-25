@@ -285,6 +285,53 @@ jobs:
           Get-Content raw\gap1-detail.txt
           exit 0
 
+      - name: Gap 1b — el timeout del host cancela la sesion remota (sin pidfile)
+        shell: pwsh
+        run: |
+          $lines = Get-Content raw\distros.txt
+          $distros = @($lines | ForEach-Object {
+            $parts = $_ -split '=', 2
+            if ($parts[1] -and $parts[1] -ne '<none>') { $parts[1] }
+          })
+          foreach ($d in $distros) {
+            $tag = $d -replace '[^A-Za-z0-9]', ''
+            # Comando que cuelga DENTRO de la sesion remota, en primer
+            # plano: la invocacion de wsl.exe no termina hasta que el
+            # proceso remoto lo hace.
+            $s = 'd="$1"; shift; mkdir "$d" && chmod 700 "$d" && umask 077 && echo $$ > "$d/pid"; exec "$@"'
+            $dir = "/tmp/quorb-wsl-timeout-$tag-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+            "dir=$dir" | Out-File "raw\g1b-$tag-dir.txt"
+            # A traves de Start-Process para tener el pid del wsl.exe host
+            # y matar SOLO ese proceso (el runner hace kill del arbol).
+            $p = Start-Process -FilePath wsl.exe -PassThru -NoNewWindow `
+              -ArgumentList @("-d", $d, "-e", "sh", "-c", $s, "sh", $dir, "sleep", "300") `
+              -RedirectStandardOutput "raw\g1b-$tag-launch.txt" `
+              -RedirectStandardError "raw\g1b-$tag-launch-err.txt"
+            Start-Sleep -Seconds 3
+            "host pid=$($p.Id)" | Set-Content "raw\g1b-$tag-hostpid.txt"
+            # El proceso remoto esta vivo y la distro corre.
+            & wsl.exe -d $d -- ps -eo pid,args > "raw\g1b-$tag-before.txt" 2>&1
+            # LO QUE HACE EL RUNNER EN EL TIMEOUT: matar el wsl.exe host.
+            Stop-Process -Id $p.Id -Force
+            Start-Sleep -Seconds 4
+            # La distro debe seguir viva (Running) y el proceso remoto
+            # muerto: la sesion se cerro con el lanzador.
+            & wsl.exe --list --verbose > "raw\g1b-$tag-list-after.txt" 2>&1
+            & wsl.exe -d $d -- ps -eo pid,args > "raw\g1b-$tag-after.txt" 2>&1
+            $after = Get-Content "raw\g1b-$tag-after.txt" -Raw
+            $sleepAlive = ($after -match "sleep 300")
+            $distro = (Get-Content "raw\g1b-$tag-list-after.txt" | Select-String $d | Select-Object -First 1)
+            "sleep_300_alive_after=$sleepAlive" | Out-File "raw\g1b-$tag-verdict.txt"
+            "distro_state= $distro" | Add-Content "raw\g1b-$tag-verdict.txt"
+            if (-not $sleepAlive) { "OK: el sleep 300 murio al matar el wsl.exe host (timeout)" | Add-Content "raw\g1b-$tag-verdict.txt" }
+            else { "FAIL: el sleep 300 sobrevivio al cierre de la sesion" | Add-Content "raw\g1b-$tag-verdict.txt" }
+            if ($distro -match "Running") { "OK: la distro sigue viva (no se uso --terminate)" | Add-Content "raw\g1b-$tag-verdict.txt" }
+            else { "INFO: estado de la distro: $distro" | Add-Content "raw\g1b-$tag-verdict.txt" }
+            Get-Content "raw\g1b-$tag-verdict.txt"
+            & wsl.exe -d $d -- rm -rf $dir 2>&1 | Out-Null
+          }
+          exit 0
+
       # ------------------------------------------------------------------
       # Gap 2 — F14 double frontier: literal preservation
       # ------------------------------------------------------------------
