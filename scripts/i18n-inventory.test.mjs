@@ -181,6 +181,8 @@ test('CLI writes a reproducible inventory and --check detects drift', () => {
     const shifted = run(dir, '--check', '--out', out);
     assert.equal(shifted.status, 1);
     assert.match(shifted.stderr, /docs\/i18n-inventory\.md is out of date/);
+    assert.match(shifted.stderr, /header tree hashes only/);
+    assert.match(shifted.stderr, /the listed texts still match/);
     assert.equal(run(dir, '--out', out).status, 0);
     const next = fs.readFileSync(path.join(dir, out), 'utf8');
     const body = (s) => s.slice(s.indexOf('## Summary'));
@@ -228,6 +230,8 @@ test('sections deduplicate and sort texts; --sites prints path:line rows; --chec
     const bad = run(dir, '--check', '--out', out);
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /docs\/i18n-inventory\.md is out of date/);
+    assert.match(bad.stderr, /regenerate with/);
+    assert.match(bad.stderr, /merge main/);
     assert.equal(fs.readFileSync(path.join(dir, out), 'utf8'), doctored, '--check must not rewrite the file');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

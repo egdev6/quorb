@@ -406,7 +406,13 @@ function main(argv) {
     // Line endings follow the checkout (core.autocrlf), not the content.
     const current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n') : null;
     if (current !== doc) {
-      process.stderr.write(`${out} is out of date; regenerate with: node scripts/i18n-inventory.mjs --out ${out}\n`);
+      const body = (s) => s.slice(s.indexOf('## Summary'));
+      if (current && body(current) === body(doc)) {
+        // Hashes-only drift: main moved the source trees without changing any text.
+        process.stderr.write(`${out} is out of date in its header tree hashes only (the listed texts still match); refresh them with: node scripts/i18n-inventory.mjs --out ${out}\n`);
+      } else {
+        process.stderr.write(`${out} is out of date; regenerate with: node scripts/i18n-inventory.mjs --out ${out}\nnote: CI validates the merge of this branch with main; if main changed texts under src/ or src-tauri/src/, merge main into the branch and regenerate\n`);
+      }
       return 1;
     }
     return 0;
