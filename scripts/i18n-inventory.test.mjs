@@ -101,6 +101,32 @@ function makeRepo() {
   return dir;
 }
 
+// A file whose texts appear out of sorted order and repeated across lines, to pin
+// the deduplication, the collation and the `path:line` rows of `--sites`.
+function makeMultiRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quorb-i18n-inventory-'));
+  git(dir, 'init', '-q');
+  git(dir, 'config', 'user.email', 'test@example.com');
+  git(dir, 'config', 'user.name', 'Test');
+  git(dir, 'config', 'core.autocrlf', 'false');
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'src-tauri', 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'App.tsx'), [
+    'export const A = () => (', // 1
+    '  <>', // 2
+    '    <p>Zebra</p>', // 3
+    '    <p>Alfa</p>', // 4
+    '    <p>Zebra</p>', // 5
+    '  </>', // 6
+    ');', // 7
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'src-tauri', 'src', 'lib.rs'), 'const M: &str = "Uno";\nconst N: &str = "Dos";\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'base');
+  return dir;
+}
+
 const run = (dir, ...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, encoding: 'utf8' });
 
 test('CLI writes a reproducible inventory and --check detects drift', () => {
@@ -115,12 +141,15 @@ test('CLI writes a reproducible inventory and --check detects drift', () => {
     assert.match(doc, new RegExp(`\`src/\` = \`${git(dir, 'rev-parse', 'HEAD:src')}\``));
     assert.match(doc, new RegExp(`\`src-tauri/src/\` = \`${git(dir, 'rev-parse', 'HEAD:src-tauri/src')}\``));
     assert.doesNotMatch(doc, new RegExp(sha));
-    assert.match(doc, /src\/App\.tsx/);
-    assert.match(doc, /\| 1 \| Abrir ajustes \|/);
-    assert.match(doc, /\| 1 \| Hola mundo \|/);
-    assert.match(doc, /src-tauri\/src\/lib\.rs/);
-    assert.match(doc, /\| 1 \| Salir de Quorb \|/);
+    // One section per file with the distinct texts; no per-row line numbers anywhere.
+    assert.match(doc, /## src\/App\.tsx/);
+    assert.match(doc, /- Abrir ajustes/);
+    assert.match(doc, /- Hola mundo/);
+    assert.match(doc, /## src-tauri\/src\/lib\.rs/);
+    assert.match(doc, /- Salir de Quorb/);
     assert.doesNotMatch(doc, /Texto de test/);
+    assert.doesNotMatch(doc, /Line \|/);
+    assert.doesNotMatch(doc, /^\| \d+ \|/m);
     assert.match(doc, /React \(`src\/`\) \| 2 \| 2/);
     assert.match(doc, /Rust \(`src-tauri\/src\/`\) \| 1 \| 1/);
 
@@ -144,12 +173,62 @@ test('CLI writes a reproducible inventory and --check detects drift', () => {
     const squashed = run(dir, '--check', '--out', out);
     assert.equal(squashed.status, 0, squashed.stderr);
 
+    // A pure line shift changes the src tree, so the header hash line moves and --check
+    // asks to regenerate; the body of distinct texts is byte-identical, so the diff is
+    // the hash line only, not per-row churn.
     fs.writeFileSync(path.join(dir, 'src-tauri', 'src', 'lib.rs'), '\nconst M: &str = "Salir de Quorb";\n');
     git(dir, 'commit', '-q', '-am', 'shift');
-    const drift = run(dir, '--check', '--out', out);
-    assert.equal(drift.status, 1);
-    assert.match(drift.stderr, /docs\/i18n-inventory\.md is out of date/);
-    assert.equal(fs.readFileSync(path.join(dir, out), 'utf8'), doc, '--check must not rewrite the file');
+    const shifted = run(dir, '--check', '--out', out);
+    assert.equal(shifted.status, 1);
+    assert.match(shifted.stderr, /docs\/i18n-inventory\.md is out of date/);
+    assert.equal(run(dir, '--out', out).status, 0);
+    const next = fs.readFileSync(path.join(dir, out), 'utf8');
+    const body = (s) => s.slice(s.indexOf('## Summary'));
+    assert.equal(body(next), body(doc));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('sections deduplicate and sort texts; --sites prints path:line rows; --check rejects a doctored doc', () => {
+  const dir = makeMultiRepo();
+  try {
+    const out = 'docs/i18n-inventory.md';
+    const gen = run(dir, '--out', out);
+    assert.equal(gen.status, 0, gen.stderr);
+    const doc = fs.readFileSync(path.join(dir, out), 'utf8');
+    // App.tsx holds Zebra, Alfa, Zebra across lines 3-5: one deduplicated, sorted section.
+    assert.match(doc, /## src\/App\.tsx\n\n- Alfa\n- Zebra\n/);
+    assert.match(doc, /## src-tauri\/src\/lib\.rs\n\n- Dos\n- Uno\n/);
+
+    // --sites keeps every occurrence with its line, in path order then line order.
+    const sites = run(dir, '--sites');
+    assert.equal(sites.status, 0, sites.stderr);
+    assert.equal(sites.stdout, [
+      'src-tauri/src/lib.rs:1 | Uno',
+      'src-tauri/src/lib.rs:2 | Dos',
+      'src/App.tsx:3 | Zebra',
+      'src/App.tsx:4 | Alfa',
+      'src/App.tsx:5 | Zebra',
+      '',
+    ].join('\n'));
+    // --sites works against any ref.
+    const refSites = run(dir, '--sites', '--ref', git(dir, 'rev-parse', 'HEAD'));
+    assert.equal(refSites.status, 0, refSites.stderr);
+    assert.equal(refSites.stdout, sites.stdout);
+
+    // --sites is a mode: it neither writes nor checks the document.
+    const clash = run(dir, '--sites', '--check');
+    assert.equal(clash.status, 2);
+    assert.match(clash.stderr, /--sites/);
+
+    // --check rejects a hand-edited document without rewriting it.
+    const doctored = doc.replace('- Alfa', '- Alfa editada');
+    fs.writeFileSync(path.join(dir, out), doctored);
+    const bad = run(dir, '--check', '--out', out);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /docs\/i18n-inventory\.md is out of date/);
+    assert.equal(fs.readFileSync(path.join(dir, out), 'utf8'), doctored, '--check must not rewrite the file');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
