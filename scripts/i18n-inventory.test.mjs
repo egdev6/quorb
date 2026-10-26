@@ -234,13 +234,151 @@ test('sections deduplicate and sort texts; --sites prints path:line rows; --chec
   }
 });
 
-test('CI checks the committed inventory after installing dependencies (#155)', () => {
+/**
+ * Structural parse of the GitHub Actions workflow subset we rely on: top-level
+ * `jobs:` -> job ids -> `steps:` -> step keys, capturing `run` commands both
+ * inline (`run: npm ci`) and as block scalars (`run: |` followed by deeper
+ * indented lines). Returns { [jobId]: string[] } with the job's run commands
+ * in execution order (steps flattened).
+ */
+function parseWorkflowRuns(yaml) {
+  const jobs = {};
+  let inJobs = false;
+  let job = null;
+  let step = null;
+  let block = null; // { cmds, keyIndent } while inside a `run: |` block scalar
+
+  const parseStepKey = (text, keyIndent) => {
+    const run = /^run:\s*(.*)$/.exec(text);
+    if (!run) return; // name/uses/with/working-directory: irrelevant to the command sequence
+    const value = run[1].trim();
+    if (value === '|' || value === '>' || value === '|-' || value === '>-') {
+      block = { cmds: step.cmds, keyIndent };
+    } else if (value) {
+      step.cmds.push(value);
+    }
+  };
+
+  for (const raw of yaml.split('\n')) {
+    const stripped = raw.trim();
+    const indent = raw.length - raw.trimStart().length;
+    if (block) {
+      if (indent > block.keyIndent) {
+        if (stripped && !stripped.startsWith('#')) block.cmds.push(stripped);
+        continue;
+      }
+      block = null; // this line is less indented: the block ended
+    }
+    if (!stripped || stripped.startsWith('#')) continue;
+    if (indent === 0) {
+      inJobs = stripped === 'jobs:';
+      job = null;
+      step = null;
+      continue;
+    }
+    if (indent === 2 && stripped.endsWith(':')) {
+      job = inJobs ? stripped.slice(0, -1) : null;
+      if (job) jobs[job] = [];
+      step = null;
+      continue;
+    }
+    if (job === null) continue;
+    if (indent === 4) {
+      step = null; // job-level keys (steps:, runs-on:, timeout-minutes:...)
+      continue;
+    }
+    if (indent === 6 && stripped.startsWith('- ')) {
+      step = { cmds: [] };
+      jobs[job].push(step);
+      parseStepKey(stripped.slice(2), 8);
+      continue;
+    }
+    if (indent >= 8 && step) parseStepKey(stripped, 8);
+  }
+  return Object.fromEntries(Object.entries(jobs).map(([id, steps]) => [id, steps.flatMap((s) => s.cmds)]));
+}
+
+const INSTALL_CMD = /^npm (ci|install)(\s|$)/;
+const CHECK_CMD = /\bnode scripts\/i18n-inventory\.mjs --check\b/;
+
+/** A job installs dependencies and runs the inventory check afterwards (command order). */
+const runsCheckAfterInstall = (jobs) =>
+  Object.values(jobs).some((cmds) => {
+    const install = cmds.findIndex((c) => INSTALL_CMD.test(c));
+    const check = cmds.findIndex((c) => CHECK_CMD.test(c));
+    return install >= 0 && check > install;
+  });
+
+test('CI checks the committed inventory after installing dependencies (#155, structural since #160)', () => {
   const root = path.resolve(path.dirname(SCRIPT), '..');
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8').replace(/\r\n/g, '\n');
-  const install = workflow.indexOf('run: npm ci');
-  const check = workflow.indexOf('run: node scripts/i18n-inventory.mjs --check');
-  assert.ok(install >= 0, 'ci.yml installs dependencies');
-  assert.ok(check > install, 'ci.yml runs the inventory --check after npm ci');
+  const jobs = parseWorkflowRuns(workflow);
+  assert.ok(Object.keys(jobs).length > 0, 'ci.yml has jobs');
+  assert.ok(runsCheckAfterInstall(jobs), 'a job runs npm ci and, later in command order, the inventory --check');
+});
+
+test('the structural contract survives cosmetic reorders and block runs', () => {
+  const blockRun = [
+    'name: CI',
+    'jobs:',
+    '  checks:',
+    '    steps:',
+    '      - name: Everything',
+    '        run: |',
+    '          npm ci',
+    '          node scripts/i18n-inventory.mjs --check',
+    '  ',
+  ].join('\n');
+  assert.equal(runsCheckAfterInstall(parseWorkflowRuns(blockRun)), true, 'same-step block run in order counts');
+
+  const reorderedKeys = [
+    'jobs:',
+    '  checks:',
+    '    timeout-minutes: 30',
+    '    steps:',
+    '      - run: npm test',
+    '        name: Tests first',
+    '      - run: node scripts/i18n-inventory.mjs --check',
+    '      - run: npm ci',
+    '  ',
+  ].join('\n');
+  assert.equal(
+    runsCheckAfterInstall(parseWorkflowRuns(reorderedKeys)),
+    false,
+    'check before install in command order is rejected even with keys cosmetically reordered',
+  );
+});
+
+test('the structural contract rejects cross-job and non-run false positives that indexOf accepted', () => {
+  const crossJob = [
+    'name: CI',
+    'jobs:',
+    '  build:',
+    '    steps:',
+    '      - run: npm ci',
+    '  audit:',
+    '    steps:',
+    '      - run: node scripts/i18n-inventory.mjs --check',
+    '  ',
+  ].join('\n');
+  assert.equal(runsCheckAfterInstall(parseWorkflowRuns(crossJob)), false, 'check in a different job than npm ci is rejected');
+  // The legacy indexOf contract accepted exactly this broken workflow: pin why it had to go.
+  assert.ok(
+    crossJob.indexOf('run: npm ci') >= 0 && crossJob.indexOf('run: node scripts/i18n-inventory.mjs --check') > crossJob.indexOf('run: npm ci'),
+    'documentation: the replaced indexOf assertion would have passed this workflow',
+  );
+
+  const commentOnly = [
+    'name: CI',
+    'jobs:',
+    '  checks:',
+    '    steps:',
+    '      - run: npm ci',
+    '      - name: node scripts/i18n-inventory.mjs --check',
+    '        run: npm test',
+    '  ',
+  ].join('\n');
+  assert.equal(runsCheckAfterInstall(parseWorkflowRuns(commentOnly)), false, 'the check named but never run is rejected');
 });
 
 test('CLI rejects unknown arguments without writing', () => {
