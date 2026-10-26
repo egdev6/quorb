@@ -319,13 +319,32 @@ function parseWorkflowRuns(yaml) {
 }
 
 const INSTALL_CMD = /^npm (ci|install)(\s|$)/;
-const CHECK_CMD = /\bnode scripts\/i18n-inventory\.mjs --check\b/;
+
+/**
+ * Narrow execution contract for the exact command form the workflow uses. A
+ * segment runs the check only when its command word is `node`, its first
+ * argument is the script path and `--check` is among the remaining arguments;
+ * a mention inside `echo`, another command's arguments or a comment never
+ * matches. This is deliberately not a shell parser: extend the supported
+ * subset only together with a fixture proving the new form is real execution
+ * (note that `node --check <path>` only syntax-checks and is rejected by order).
+ */
+const unwrapQuotes = (word) => word.replace(/^(['"])(.*)\1$/, '$2');
+
+/** True when a single shell segment (separators already split out) executes the check. */
+const segmentRunsCheck = (segment) => {
+  const words = segment.trim().split(/\s+/).map(unwrapQuotes);
+  return words[0] === 'node' && words[1] === 'scripts/i18n-inventory.mjs' && words.includes('--check');
+};
+
+/** True when a run command executes the check in any of its shell segments. */
+const runsCheck = (cmd) => cmd.split(/&&|\|\||;|\||\n/).some(segmentRunsCheck);
 
 /** A job installs dependencies and runs the inventory check afterwards (command order). */
 const runsCheckAfterInstall = (jobs) =>
   Object.values(jobs).some((cmds) => {
     const install = cmds.findIndex((c) => INSTALL_CMD.test(c));
-    const check = cmds.findIndex((c) => CHECK_CMD.test(c));
+    const check = cmds.findIndex(runsCheck);
     return install >= 0 && check > install;
   });
 
@@ -399,6 +418,38 @@ test('the structural contract rejects cross-job and non-run false positives that
     '  ',
   ].join('\n');
   assert.equal(runsCheckAfterInstall(parseWorkflowRuns(commentOnly)), false, 'the check named but never run is rejected');
+});
+
+test('echoing the check command is not executing it (#160)', () => {
+  const echoOnly = [
+    'name: CI',
+    'jobs:',
+    '  checks:',
+    '    steps:',
+    '      - run: npm ci',
+    '      - run: echo "node scripts/i18n-inventory.mjs --check"',
+    '  ',
+  ].join('\n');
+  assert.equal(runsCheckAfterInstall(parseWorkflowRuns(echoOnly)), false, 'printing the check cannot accredit its execution');
+  // The substring contract accepted exactly this workflow: pin why it had to go.
+  assert.ok(
+    /\bnode scripts\/i18n-inventory\.mjs --check\b/.test(echoOnly),
+    'documentation: the replaced substring regex matched the echo mention',
+  );
+
+  const compound = [
+    'jobs:',
+    '  checks:',
+    '    steps:',
+    '      - run: npm ci',
+    '      - run: echo "inventory gate" && node scripts/i18n-inventory.mjs --check',
+    '  ',
+  ].join('\n');
+  assert.equal(
+    runsCheckAfterInstall(parseWorkflowRuns(compound)),
+    true,
+    'a real check segment after && in the same command still counts as execution',
+  );
 });
 
 test('CLI rejects unknown arguments without writing', () => {
