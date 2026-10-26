@@ -272,6 +272,8 @@ jobs:
             & wsl.exe -d $d -- ls -la $dir > "raw\gap1-$tag-ls-after.txt" 2>&1
             Get-Content "raw\gap1-$tag-ps-after.txt" | Out-File "raw\gap1-$tag-detail.txt"
             Get-Content "raw\gap1-$tag-ls-after.txt" | Out-File "raw\gap1-$tag-detail.txt" -Append
+            # Estado de la distro tras el kill (se lee en el veredicto).
+            & wsl.exe --list --verbose > "raw\gap1-$tag-list-after.txt" 2>&1
             # Veredicto por distro
             $dead = (Get-Content "raw\gap1-$tag-kill-alive.txt" | Select-Object -First 1) -notmatch "^EXIT=0"
             $witnessAlive = (Get-Content "raw\gap1-$tag-witness-alive.txt" | Select-Object -First 1) -match "^EXIT=0"
