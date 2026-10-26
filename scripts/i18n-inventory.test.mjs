@@ -233,6 +233,22 @@ test('sections deduplicate and sort texts; --sites prints path:line rows; --chec
     assert.match(bad.stderr, /regenerate with/);
     assert.match(bad.stderr, /merge main/);
     assert.equal(fs.readFileSync(path.join(dir, out), 'utf8'), doctored, '--check must not rewrite the file');
+
+    // Only the tree-hash line may be called hashes-only drift: an edited header prose
+    // with identical texts is a real difference, not a mechanical refresh.
+    const prose = doc.replace('Do not edit by hand', 'Please do not edit by hand');
+    fs.writeFileSync(path.join(dir, out), prose);
+    const proseCheck = run(dir, '--check', '--out', out);
+    assert.equal(proseCheck.status, 1);
+    assert.doesNotMatch(proseCheck.stderr, /hashes only/);
+    assert.match(proseCheck.stderr, /regenerate with/);
+
+    // A document without a Summary section is never mistaken for hashes-only drift.
+    fs.writeFileSync(path.join(dir, out), 'not an inventory\n');
+    const garbage = run(dir, '--check', '--out', out);
+    assert.equal(garbage.status, 1);
+    assert.doesNotMatch(garbage.stderr, /hashes only/);
+    assert.match(garbage.stderr, /regenerate with/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
