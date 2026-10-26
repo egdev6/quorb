@@ -84,78 +84,86 @@ jobs:
           Get-Content raw\wslconfig-written.txt
           exit 0
 
-      - name: Import pinned Alpine + Ubuntu rootfs (sha256-verified)
+      - name: Import Alpine (sha256) + install Ubuntu via wsl --install
         shell: pwsh
         run: |
-          # Se importan DOS distros:
-          #  - quorb_w3: Alpine (sin systemd) -> el caso "sin init real".
-          #  - quorb_ubu: Ubuntu Server WSL rootfs (con systemd) -> el caso
-          #    "con init real", donde los pids SI son globales.
-          function Import-Rootfs($name, $url, $outRootfs, $tag) {
-            Invoke-WebRequest -Uri $url -OutFile $outRootfs
-            # The sha256 comes from the published .sha256 file of the same
-            # release (not hardcoded). Downloaded to file: PS7 `.Content` can
-            # come back as byte[] when there is no charset.
-            Invoke-WebRequest -Uri "$url.sha256" -OutFile "$outRootfs.sha256"
-            $expected = (((Get-Content "$outRootfs.sha256" -Raw).Trim() -split '\s+')[0]).ToLower()
-            $actual = (Get-FileHash $outRootfs -Algorithm SHA256).Hash.ToLower()
-            "$name expected=$expected actual=$actual" | Set-Content "raw\import-$tag.sha256.txt"
-            if ($expected -ne $actual) {
-              "$name sha256 MISMATCH" | Add-Content "raw\import-$tag.sha256.txt"
-              exit 1
-            }
-            # `wsl --import` fails with ERROR_PATH_NOT_FOUND if the install
-            # dir does not exist (verified by the lab). It is created under
-            # the workspace (C:\ is not writable by the runner user).
-            $installDir = Join-Path $PWD "wsl-$name"
-            New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-            & wsl.exe --import $name $installDir $outRootfs *>&1 |
-              Set-Content "raw\import-$tag.txt"
-            "EXIT=$LASTEXITCODE" | Add-Content "raw\import-$tag.txt"
+          # DOS distros, dos caminos (a proposito):
+          #  - quorb_w3: Alpine importada con `--import` (sha256 del .sha256
+          #    publicado). SIN systemd -> sesion efimera por invocacion.
+          #  - Ubuntu: instalada con `wsl --install <Distro>` (Microsoft
+          #    doc, Method 1). Ubuntu instalada asi viene CON systemd por
+          #    defecto -> init real y pids globales.
+          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile rootfs-alpine.tar.gz
+          # The sha256 comes from the published .sha256 file of the same
+          # release (not hardcoded). Downloaded to file: PS7 `.Content` can
+          # come back as byte[] when there is no charset.
+          Invoke-WebRequest -Uri "$url.sha256" -OutFile rootfs-alpine.tar.gz.sha256
+          $expected = (((Get-Content rootfs-alpine.tar.gz.sha256 -Raw).Trim() -split '\s+')[0]).ToLower()
+          $actual = (Get-FileHash rootfs-alpine.tar.gz -Algorithm SHA256).Hash.ToLower()
+          "quorb_w3 expected=$expected actual=$actual" | Set-Content raw\import-alpine.sha256.txt
+          if ($expected -ne $actual) {
+            "quorb_w3 sha256 MISMATCH" | Add-Content raw\import-alpine.sha256.txt
+            exit 1
           }
-          $alpine = "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz"
-          $ubuntu = "https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-wsl-24.04-server-cloudimg-amd64-rootfs.tar.gz"
-          Import-Rootfs "quorb_w3"  $alpine "rootfs-alpine.tar.gz" "alpine"
-          Import-Rootfs "quorb_ubu" $ubuntu  "rootfs-ubuntu.tar.gz" "ubuntu"
+          # `wsl --import` fails with ERROR_PATH_NOT_FOUND if the install dir
+          # does not exist (verified by the lab). Under the workspace
+          # (C:\ is not writable by the runner user).
+          $installDir = Join-Path $PWD "wsl-quorb_w3"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          & wsl.exe --import quorb_w3 $installDir rootfs-alpine.tar.gz *>&1 |
+            Set-Content raw\import-alpine.txt
+          "EXIT=$LASTEXITCODE" | Add-Content raw\import-alpine.txt
+
+          # Ubuntu por la via documentada (Microsoft: Method 1, `wsl
+          # --list --online` / `wsl --install <Distro>`). `--no-launch` evita
+          # que arranque la distro al instalarla (y pida crear usuario).
+          # Ubuntu instalada asi viene con systemd por defecto.
+          & wsl.exe --list --online > raw\list-online.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\list-online.txt
+          & wsl.exe --install Ubuntu-24.04 --no-launch *>&1 |
+            Set-Content raw\install-ubuntu.txt
+          "EXIT=$LASTEXITCODE" | Add-Content raw\install-ubuntu.txt
           & wsl.exe --list --verbose > raw\list-after-import.txt 2>&1
           "EXIT=$LASTEXITCODE" | Add-Content raw/list-after-import.txt
           "---- import ----" | Out-File raw\import-detail.txt
           Get-Content raw\import-alpine.sha256.txt | Out-File raw\import-detail.txt -Append
           Get-Content raw\import-alpine.txt | Out-File raw\import-detail.txt -Append
-          Get-Content raw\import-ubuntu.sha256.txt | Out-File raw\import-detail.txt -Append
-          Get-Content raw\import-ubuntu.txt | Out-File raw\import-detail.txt -Append
+          Get-Content raw\install-ubuntu.txt | Out-File raw\import-detail.txt -Append
           Get-Content raw\list-after-import.txt | Out-File raw\import-detail.txt -Append
           Get-Content raw\import-detail.txt
           exit 0
 
-      - name: Enable systemd in Ubuntu (init real -> pids globales)
+      - name: Verify Ubuntu runs with systemd (init real -> pids globales)
         shell: pwsh
         run: |
-          # Sin systemd, WSL2 abre una sesion efimera por invocacion (pids
-          # no globales, el background muere al salir el lanzador). Con
-          # `[boot] systemd=true` en /etc/wsl.conf la distro arranca con
-          # /sbin/init real (WSL >= 0.67.6). El rootfs Ubuntu Server ya
-          # incluye systemd; solo falta la config y reiniciar.
-          & wsl.exe -d quorb_ubu -- sh -c 'printf "[boot]\nsystemd=true\n" > /etc/wsl.conf; cat /etc/wsl.conf; ls -l /sbin/init' > raw\systemd-config.txt 2>&1
-          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-config.txt
-          # Los cambios de configuracion aplican tras wsl --shutdown
-          # ("the 8 second rule"): se detiene el subsistema y se espera.
-          & wsl.exe --shutdown > raw\systemd-shutdown.txt 2>&1
-          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-shutdown.txt
-          Start-Sleep -Seconds 10
-          # Verificacion: pid 1 debe ser /sbin/init (systemd), no el /init de WSL.
-          & wsl.exe -d quorb_ubu -- ps -eo pid,args > raw\systemd-init.txt 2>&1
+          # Ubuntu instalada con `wsl --install` ya viene con systemd por
+          # defecto (Microsoft Learn). Se verifica: pid 1 debe ser
+          # /sbin/init (systemd), no el /init de WSL. Si no lo fuera, se
+          # habilita con [boot] systemd=true en /etc/wsl.conf y se reinicia
+          # el subsistema ("the 8 second rule").
+          & wsl.exe -d Ubuntu-24.04 -- ps -eo pid,args > raw\systemd-init.txt 2>&1
           "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-init.txt
-          Get-Content raw\systemd-config.txt
-          Get-Content raw\systemd-init.txt
+          $init = (Get-Content raw\systemd-init.txt | Select-Object -First 1).Trim()
+          "init_line=$init" | Set-Content raw\systemd-check.txt
+          if ($init -notmatch "sbin/init|systemd") {
+            "no parece systemd: se habilita [boot] systemd=true" | Add-Content raw\systemd-check.txt
+            & wsl.exe -d Ubuntu-24.04 -- sh -c 'printf "[boot]\nsystemd=true\n" > /etc/wsl.conf; cat /etc/wsl.conf' >> raw\systemd-check.txt 2>&1
+            & wsl.exe --shutdown > raw\systemd-shutdown.txt 2>&1
+            "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-shutdown.txt
+            Start-Sleep -Seconds 10
+            & wsl.exe -d Ubuntu-24.04 -- ps -eo pid,args > raw\systemd-init.txt 2>&1
+          }
+          Get-Content raw\systemd-check.txt
+          Get-Content raw\systemd-init.txt | Select-Object -First 3
           exit 0
 
       - name: Select target distros (Alpine lab + Ubuntu si existe)
         shell: pwsh
         run: |
           # Las dos distros del lab: Alpine (sin systemd) y Ubuntu (con).
-          "alpine=quorb_w3"  | Set-Content raw\distros.txt
-          "ubuntu=quorb_ubu" | Add-Content raw\distros.txt
+          "alpine=quorb_w3"     | Set-Content raw\distros.txt
+          "ubuntu=Ubuntu-24.04" | Add-Content raw\distros.txt
           Get-Content raw\distros.txt
 
       # ------------------------------------------------------------------
