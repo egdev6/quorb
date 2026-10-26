@@ -134,28 +134,29 @@ jobs:
           Get-Content raw\import-detail.txt
           exit 0
 
-      - name: Verify Ubuntu runs with systemd (init real -> pids globales)
+      - name: Disable Ubuntu OOBE and verify systemd (init real -> pids globales)
         shell: pwsh
         run: |
-          # Ubuntu instalada con `wsl --install` ya viene con systemd por
-          # defecto (Microsoft Learn). Se verifica: pid 1 debe ser
-          # /sbin/init (systemd), no el /init de WSL. Si no lo fuera, se
-          # habilita con [boot] systemd=true en /etc/wsl.conf y se reinicia
-          # el subsistema ("the 8 second rule").
-          & wsl.exe -d Ubuntu-24.04 -- ps -eo pid,args > raw\systemd-init.txt 2>&1
+          # El primer arranque de Ubuntu-24.04 ejecuta el OOBE (wsl-setup)
+          # que pide crear un usuario interactivamente y BLOQUEA la
+          # invocacion (causa del timeout de 30 min del run anterior).
+          # Para CI se desactiva el [oobe] command y se arranca con -u root.
+          # (Fuentes: ubuntu.com/wsl/docs custom-ubuntu-distro — el OOBE se
+          # configura en /etc/wsl-distribution.conf; microsoft/WSL#13071,
+          # #13051 muestran el bloqueo.)
+          & wsl.exe -d Ubuntu-24.04 -u root -- sh -c 'printf "[oobe]\ncommand = /bin/true\n" > /etc/wsl-distribution.conf; cat /etc/wsl-distribution.conf; readlink /sbin/init || ls -l /sbin/init' > raw\systemd-config.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-config.txt
+          # Los cambios de configuracion aplican tras wsl --shutdown
+          # ("the 8 second rule").
+          & wsl.exe --shutdown > raw\systemd-shutdown.txt 2>&1
+          "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-shutdown.txt
+          Start-Sleep -Seconds 10
+          # Verificacion: pid 1 debe ser /sbin/init (systemd), no el /init
+          # de WSL. Sin el OOBE, el primer arranque no se cuelga.
+          & wsl.exe -d Ubuntu-24.04 -u root -- ps -eo pid,args > raw\systemd-init.txt 2>&1
           "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-init.txt
-          $init = (Get-Content raw\systemd-init.txt | Select-Object -First 1).Trim()
-          "init_line=$init" | Set-Content raw\systemd-check.txt
-          if ($init -notmatch "sbin/init|systemd") {
-            "no parece systemd: se habilita [boot] systemd=true" | Add-Content raw\systemd-check.txt
-            & wsl.exe -d Ubuntu-24.04 -- sh -c 'printf "[boot]\nsystemd=true\n" > /etc/wsl.conf; cat /etc/wsl.conf' >> raw\systemd-check.txt 2>&1
-            & wsl.exe --shutdown > raw\systemd-shutdown.txt 2>&1
-            "EXIT=$LASTEXITCODE" | Add-Content raw\systemd-shutdown.txt
-            Start-Sleep -Seconds 10
-            & wsl.exe -d Ubuntu-24.04 -- ps -eo pid,args > raw\systemd-init.txt 2>&1
-          }
-          Get-Content raw\systemd-check.txt
-          Get-Content raw\systemd-init.txt | Select-Object -First 3
+          Get-Content raw\systemd-config.txt
+          Get-Content raw\systemd-init.txt | Select-Object -First 4
           exit 0
 
       - name: Select target distros (Alpine lab + Ubuntu si existe)
