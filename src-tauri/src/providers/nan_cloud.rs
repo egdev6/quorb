@@ -42,7 +42,8 @@ pub async fn login_request(http: &reqwest::Client, email: &str) -> Result<(), St
 
 /// Paso 2: abre el enlace del correo (sin navegador) y devuelve la cabecera `Cookie` de la sesión.
 pub async fn login_complete(link: &str) -> Result<String, String> {
-    let mut url = reqwest::Url::parse(link.trim()).map_err(|_| "Eso no parece un enlace".to_string())?;
+    let mut url =
+        reqwest::Url::parse(link.trim()).map_err(|_| "Eso no parece un enlace".to_string())?;
     if !is_nan_host(&url) {
         return Err("El enlace debe ser de nan.builders".into());
     }
@@ -67,7 +68,13 @@ pub async fn login_complete(link: &str) -> Result<String, String> {
         if !res.status().is_redirection() {
             break;
         }
-        let Some(loc) = res.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()) else { break };
+        let Some(loc) = res
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            break;
+        };
         let next = url.join(loc).map_err(|e| e.to_string())?;
         // Solo seguimos dentro de nan.builders: nunca mandamos nada a otro dominio.
         if !is_nan_host(&next) {
@@ -107,8 +114,14 @@ pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, C
     Ok(CloudUsage {
         meters: parse_quota(&quota),
         daily: metrics.as_ref().map(parse_daily).unwrap_or_default(),
-        last24h: metrics.as_ref().and_then(|m| m.pointer("/last24h/totalTokens")).and_then(Value::as_f64),
-        month: metrics.as_ref().and_then(|m| m.pointer("/monthToDate/totalTokens")).and_then(Value::as_f64),
+        last24h: metrics
+            .as_ref()
+            .and_then(|m| m.pointer("/last24h/totalTokens"))
+            .and_then(Value::as_f64),
+        month: metrics
+            .as_ref()
+            .and_then(|m| m.pointer("/monthToDate/totalTokens"))
+            .and_then(Value::as_f64),
     })
 }
 
@@ -121,14 +134,20 @@ async fn get_json(http: &reqwest::Client, cookie: &str, path: &str) -> Result<Va
         .await
         .map_err(|e| CloudError::Other(net_error(e)))?;
     match res.status().as_u16() {
-        200 => res.json().await.map_err(|e| CloudError::Other(format!("respuesta no JSON: {e}"))),
+        200 => res
+            .json()
+            .await
+            .map_err(|e| CloudError::Other(format!("respuesta no JSON: {e}"))),
         401 | 403 => Err(CloudError::Expired),
         code => Err(CloudError::Other(format!("HTTP {code} en {path}"))),
     }
 }
 
 fn is_nan_host(u: &reqwest::Url) -> bool {
-    u.scheme() == "https" && u.host_str().map(|h| h == "nan.builders" || h.ends_with(".nan.builders")).unwrap_or(false)
+    u.scheme() == "https"
+        && u.host_str()
+            .map(|h| h == "nan.builders" || h.ends_with(".nan.builders"))
+            .unwrap_or(false)
 }
 
 /// `name=value; Path=/; HttpOnly` → (name, value)
@@ -143,7 +162,10 @@ pub(crate) fn parse_set_cookie(h: &str) -> Option<(String, String)> {
 }
 
 pub(crate) fn cookie_header(jar: &BTreeMap<String, String>) -> String {
-    jar.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ")
+    jar.iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Un medidor por modelo con tokens usados (ordenados por %, el mayor primero).
@@ -192,22 +214,35 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
             })
         })
         .collect();
-    out.sort_by(|a, b| b.percent.partial_cmp(&a.percent).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.percent
+            .partial_cmp(&a.percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
 /// Tokens por día (todas las familias de modelo sumadas) de `timeSeries`.
 pub(crate) fn parse_daily(v: &Value) -> Vec<Daily> {
     let mut days: BTreeMap<String, f64> = BTreeMap::new();
-    for p in v.get("timeSeries").and_then(Value::as_array).into_iter().flatten() {
-        let Some(date) = p.get("date").and_then(Value::as_str) else { continue };
+    for p in v
+        .get("timeSeries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(date) = p.get("date").and_then(Value::as_str) else {
+            continue;
+        };
         let t = ["inputTokens", "outputTokens"]
             .iter()
             .filter_map(|k| p.get(*k).and_then(Value::as_f64))
             .sum::<f64>();
         *days.entry(date.to_string()).or_default() += t;
     }
-    days.into_iter().map(|(date, value)| Daily { date, value }).collect()
+    days.into_iter()
+        .map(|(date, value)| Daily { date, value })
+        .collect()
 }
 
 #[cfg(test)]
@@ -250,22 +285,48 @@ mod tests {
             {"date": "2026-10-06", "model": "a", "inputTokens": 7, "outputTokens": 0}
         ]});
         let d = parse_daily(&v);
-        assert_eq!(d, vec![Daily { date: "2026-10-05".into(), value: 17.0 }, Daily { date: "2026-10-06".into(), value: 7.0 }]);
+        assert_eq!(
+            d,
+            vec![
+                Daily {
+                    date: "2026-10-05".into(),
+                    value: 17.0
+                },
+                Daily {
+                    date: "2026-10-06".into(),
+                    value: 7.0
+                }
+            ]
+        );
     }
 
     #[test]
     fn cookies() {
-        assert_eq!(parse_set_cookie("session=abc.def; Path=/; HttpOnly; Secure"), Some(("session".into(), "abc.def".into())));
+        assert_eq!(
+            parse_set_cookie("session=abc.def; Path=/; HttpOnly; Secure"),
+            Some(("session".into(), "abc.def".into()))
+        );
         assert_eq!(parse_set_cookie("; Path=/"), None);
-        let jar = BTreeMap::from([("a".to_string(), "1".to_string()), ("b".to_string(), "2".to_string())]);
+        let jar = BTreeMap::from([
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "2".to_string()),
+        ]);
         assert_eq!(cookie_header(&jar), "a=1; b=2");
     }
 
     #[test]
     fn only_nan_hosts() {
-        assert!(is_nan_host(&reqwest::Url::parse("https://cloud-api.nan.builders/x").unwrap()));
-        assert!(is_nan_host(&reqwest::Url::parse("https://nan.builders/x").unwrap()));
-        assert!(!is_nan_host(&reqwest::Url::parse("https://evil-nan.builders.com/x").unwrap()));
-        assert!(!is_nan_host(&reqwest::Url::parse("http://cloud.nan.builders/x").unwrap()));
+        assert!(is_nan_host(
+            &reqwest::Url::parse("https://cloud-api.nan.builders/x").unwrap()
+        ));
+        assert!(is_nan_host(
+            &reqwest::Url::parse("https://nan.builders/x").unwrap()
+        ));
+        assert!(!is_nan_host(
+            &reqwest::Url::parse("https://evil-nan.builders.com/x").unwrap()
+        ));
+        assert!(!is_nan_host(
+            &reqwest::Url::parse("http://cloud.nan.builders/x").unwrap()
+        ));
     }
 }

@@ -81,6 +81,7 @@ export const ACCOUNT_SECRETS: Record<AccountProvider, SecretKey[]> = {
   copilot: ['github_token'],
   nan: ['nan_api_key', 'nan_session'],
   openrouter: ['openrouter_api_key'],
+  zai: ['zai_api_key'],
   anthropic_api: ['anthropic_admin_key'],
   openai_api: ['openai_admin_key'],
   // Los sub-proveedores de 9Router comparten la sesión del dashboard (no scoped).

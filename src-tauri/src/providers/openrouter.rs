@@ -14,10 +14,18 @@ const API: &str = "https://openrouter.ai/api/v1";
 pub async fn fetch(_cfg: &OpenRouterConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let report = who.report("OpenRouter", Kind::Api);
     let Some(key) = who.secret(secrets::OPENROUTER_API_KEY) else {
-        return report.fail(Status::Unconfigured, "Añade tu API key de OpenRouter en Ajustes.");
+        return report.fail(
+            Status::Unconfigured,
+            "Añade tu API key de OpenRouter en Ajustes.",
+        );
     };
 
-    let res = match http.get(format!("{API}/key")).bearer_auth(&key).send().await {
+    let res = match http
+        .get(format!("{API}/key"))
+        .bearer_auth(&key)
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => return report.fail(Status::Error, net_error(e)),
     };
@@ -31,7 +39,12 @@ pub async fn fetch(_cfg: &OpenRouterConfig, who: Who<'_>, http: &reqwest::Client
         Err(e) => return report.fail(Status::Error, format!("Respuesta inesperada: {e}")),
     };
     // El saldo es opcional: algunas keys no pueden leerlo.
-    let credits = match http.get(format!("{API}/credits")).bearer_auth(&key).send().await {
+    let credits = match http
+        .get(format!("{API}/credits"))
+        .bearer_auth(&key)
+        .send()
+        .await
+    {
         Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
         _ => None,
     };
@@ -55,7 +68,10 @@ pub(crate) struct Parsed {
 }
 
 fn num(v: Option<&Value>) -> Option<f64> {
-    v.and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok())))
+    v.and_then(|x| {
+        x.as_f64()
+            .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+    })
 }
 
 pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
@@ -75,7 +91,11 @@ pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
         };
         let (id, label, window) = match reset {
             Some("daily") => ("key_limit_daily", "Límite diario de la key", Some(86_400)),
-            Some("weekly") => ("key_limit_weekly", "Límite semanal de la key", Some(7 * 86_400)),
+            Some("weekly") => (
+                "key_limit_weekly",
+                "Límite semanal de la key",
+                Some(7 * 86_400),
+            ),
             Some("monthly") => ("key_limit_monthly", "Límite mensual de la key", None),
             _ => ("key_limit", "Límite de la key", None),
         };
@@ -128,8 +148,14 @@ pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
         budget: None,
     });
     let daily = num(d.get("usage_daily"));
-    let message = match (daily, cd.and_then(|c| num(c.get("total_credits"))).zip(cd.and_then(|c| num(c.get("total_usage"))))) {
-        (Some(day), Some((t, u))) => Some(format!("Hoy {day:.2} $ · saldo {:.2} $", (t - u).max(0.0))),
+    let message = match (
+        daily,
+        cd.and_then(|c| num(c.get("total_credits")))
+            .zip(cd.and_then(|c| num(c.get("total_usage")))),
+    ) {
+        (Some(day), Some((t, u))) => {
+            Some(format!("Hoy {day:.2} $ · saldo {:.2} $", (t - u).max(0.0)))
+        }
         (Some(day), None) => Some(format!("Hoy {day:.2} $")),
         (None, Some((t, u))) => Some(format!("Saldo {:.2} $", (t - u).max(0.0))),
         _ => None,
@@ -139,22 +165,41 @@ pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
         Some(false) => Some("Créditos".into()),
         None => None,
     };
-    let validity = d.get("expires_at").and_then(Value::as_str)
+    let validity = d
+        .get("expires_at")
+        .and_then(Value::as_str)
         .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| Validity { at: at.to_rfc3339(), kind: ValidityKind::Key });
-    Parsed { meters, spend, plan, message, validity }
+        .map(|at| Validity {
+            at: at.to_rfc3339(),
+            kind: ValidityKind::Key,
+        });
+    Parsed {
+        meters,
+        spend,
+        plan,
+        message,
+        validity,
+    }
 }
 
 fn next_utc_midnight() -> String {
     let now = chrono::Utc::now();
-    (now.date_naive() + chrono::Days::new(1)).and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339()
+    (now.date_naive() + chrono::Days::new(1))
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .to_rfc3339()
 }
 
 fn next_utc_monday() -> String {
     use chrono::Datelike;
     let now = chrono::Utc::now();
     let days = 7 - now.weekday().num_days_from_monday() as u64;
-    (now.date_naive() + chrono::Days::new(days)).and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339()
+    (now.date_naive() + chrono::Days::new(days))
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .to_rfc3339()
 }
 
 #[cfg(test)]
@@ -171,7 +216,10 @@ mod tests {
         assert_eq!(p.meters.len(), 2);
         assert_eq!(p.meters[0].percent, Some(30.0));
         assert_eq!(p.meters[0].label, "Límite mensual de la key");
-        assert_eq!(p.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["key_limit_monthly", "balance_spent"]);
+        assert_eq!(
+            p.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["key_limit_monthly", "balance_spent"]
+        );
         assert!(p.meters[0].resets_at.is_some());
         assert!((p.meters[1].percent.unwrap() - 26.15).abs() < 0.01);
         assert_eq!(p.spend.as_ref().map(|s| s.amount), Some(30.0));
@@ -181,14 +229,26 @@ mod tests {
 
     #[test]
     fn reads_only_explicit_valid_key_expiration() {
-        let p = parse(&json!({"data": {"expires_at": "2030-02-01T00:00:00Z"}}), None);
+        let p = parse(
+            &json!({"data": {"expires_at": "2030-02-01T00:00:00Z"}}),
+            None,
+        );
         let validity = p.validity.unwrap();
         assert_eq!(validity.kind, crate::model::ValidityKind::Key);
         assert_eq!(validity.at, "2030-02-01T00:00:00+00:00");
-        for value in [json!(null), json!("not a date"), json!(123), json!("2030-02-30T00:00:00Z")] {
-            assert!(parse(&json!({"data": {"expires_at": value}}), None).validity.is_none());
+        for value in [
+            json!(null),
+            json!("not a date"),
+            json!(123),
+            json!("2030-02-30T00:00:00Z"),
+        ] {
+            assert!(parse(&json!({"data": {"expires_at": value}}), None)
+                .validity
+                .is_none());
         }
-        assert!(parse(&json!({"data": {"limit_reset": "monthly"}}), None).validity.is_none());
+        assert!(parse(&json!({"data": {"limit_reset": "monthly"}}), None)
+            .validity
+            .is_none());
     }
 
     #[test]
@@ -199,14 +259,20 @@ mod tests {
             (json!("monthly"), "key_limit_monthly"),
             (json!(null), "key_limit"),
         ] {
-            let p = parse(&json!({"data": {"usage": 5.0, "limit": 10, "limit_reset": reset}}), None);
+            let p = parse(
+                &json!({"data": {"usage": 5.0, "limit": 10, "limit_reset": reset}}),
+                None,
+            );
             assert_eq!(p.meters[0].id, id);
         }
     }
 
     #[test]
     fn key_without_limit_has_no_limit_meter() {
-        let p = parse(&json!({"data": {"usage": 3.0, "limit": null, "usage_monthly": 3.0}}), None);
+        let p = parse(
+            &json!({"data": {"usage": 3.0, "limit": null, "usage_monthly": 3.0}}),
+            None,
+        );
         assert!(p.meters.is_empty());
         assert_eq!(p.spend.map(|s| s.amount), Some(3.0));
     }

@@ -6,7 +6,10 @@
 use std::sync::Mutex;
 
 /// Captura la configuración y el ticket que autoriza persistir tras la red.
-pub(crate) fn snapshot_with_ticket<T: Clone, U>(config: &Mutex<T>, ticket: impl FnOnce() -> U) -> (T, U) {
+pub(crate) fn snapshot_with_ticket<T: Clone, U>(
+    config: &Mutex<T>,
+    ticket: impl FnOnce() -> U,
+) -> (T, U) {
     let guard = config.lock().unwrap();
     (guard.clone(), ticket())
 }
@@ -35,7 +38,10 @@ pub(crate) fn with_locked<T, U>(config: &Mutex<T>, action: impl FnOnce() -> U) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{atomic::{AtomicU64, Ordering}, mpsc};
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    };
     use std::thread;
 
     #[test]
@@ -47,12 +53,14 @@ mod tests {
         thread::scope(|scope| {
             let config = &config;
             let generation = &generation;
-            let login = scope.spawn(move || snapshot_with_ticket(config, || {
-                // Pausa exactamente después de clonar la config, antes del ticket.
-                captured_tx.send(()).unwrap();
-                resume_rx.recv().unwrap();
-                generation.load(Ordering::SeqCst)
-            }));
+            let login = scope.spawn(move || {
+                snapshot_with_ticket(config, || {
+                    // Pausa exactamente después de clonar la config, antes del ticket.
+                    captured_tx.send(()).unwrap();
+                    resume_rx.recv().unwrap();
+                    generation.load(Ordering::SeqCst)
+                })
+            });
             captured_rx.recv().unwrap();
             // Otro comando intenta guardar B en ese punto, sin esperar un reloj.
             let switched = match config.try_lock() {
@@ -67,8 +75,14 @@ mod tests {
             let (base, ticket) = login.join().unwrap();
             assert!(!switched, "no se debe intercalar B entre config y ticket");
             assert_eq!((base, ticket), ("A", 0));
-            with_locked(&config, || { generation.fetch_add(1, Ordering::SeqCst); });
-            assert_ne!(ticket, generation.load(Ordering::SeqCst), "logout invalida el ticket capturado");
+            with_locked(&config, || {
+                generation.fetch_add(1, Ordering::SeqCst);
+            });
+            assert_ne!(
+                ticket,
+                generation.load(Ordering::SeqCst),
+                "logout invalida el ticket capturado"
+            );
         });
     }
 
@@ -81,26 +95,47 @@ mod tests {
         thread::scope(|scope| {
             let config = &config;
             let generation = &generation;
-            let save = scope.spawn(move || update(config, |_| "B", |_, _| {
-                generation.fetch_add(1, Ordering::SeqCst);
-                invalidated_tx.send(()).unwrap();
-                resume_rx.recv().unwrap();
-                Ok::<_, String>(())
-            }, |_| Ok(())));
+            let save = scope.spawn(move || {
+                update(
+                    config,
+                    |_| "B",
+                    |_, _| {
+                        generation.fetch_add(1, Ordering::SeqCst);
+                        invalidated_tx.send(()).unwrap();
+                        resume_rx.recv().unwrap();
+                        Ok::<_, String>(())
+                    },
+                    |_| Ok(()),
+                )
+            });
             invalidated_rx.recv().unwrap();
             // Login no debe observar A con la generación ya invalidada para B.
-            let intermediate = config.try_lock().ok().map(|guard| (*guard, generation.load(Ordering::SeqCst)));
+            let intermediate = config
+                .try_lock()
+                .ok()
+                .map(|guard| (*guard, generation.load(Ordering::SeqCst)));
             resume_tx.send(()).unwrap();
             save.join().unwrap().unwrap();
-            assert_eq!(intermediate, None, "no publicar una frontera intermedia (A, generación de B)");
-            assert_eq!(snapshot_with_ticket(&config, || generation.load(Ordering::SeqCst)), ("B", 1));
+            assert_eq!(
+                intermediate, None,
+                "no publicar una frontera intermedia (A, generación de B)"
+            );
+            assert_eq!(
+                snapshot_with_ticket(&config, || generation.load(Ordering::SeqCst)),
+                ("B", 1)
+            );
         });
     }
 
     #[test]
     fn failed_invalidation_does_not_persist_or_publish() {
         let config = Mutex::new("A");
-        let result = update(&config, |_| "B", |_, _| Err("store locked"), |_| panic!("no persistir B"));
+        let result = update(
+            &config,
+            |_| "B",
+            |_, _| Err("store locked"),
+            |_| panic!("no persistir B"),
+        );
         assert_eq!(result, Err("store locked"));
         assert_eq!(*config.lock().unwrap(), "A");
     }
@@ -110,10 +145,15 @@ mod tests {
         let config = Mutex::new("A");
         let generation = AtomicU64::new(0);
         let (_, old_ticket) = snapshot_with_ticket(&config, || generation.load(Ordering::SeqCst));
-        let result = update(&config, |_| "B", |_, _| {
-            generation.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }, |_| Err("disk full"));
+        let result = update(
+            &config,
+            |_| "B",
+            |_, _| {
+                generation.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            |_| Err("disk full"),
+        );
         assert_eq!(result, Err("disk full"));
         assert_eq!(*config.lock().unwrap(), "A");
         assert_ne!(old_ticket, generation.load(Ordering::SeqCst));

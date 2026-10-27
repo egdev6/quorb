@@ -1,7 +1,8 @@
-//! Ejecución de procesos hijos para el instalador asistido.
+//! Ejecución de procesos hijos con contención y captura acotadas.
 //!
-//! Este módulo aísla el único punto donde Quorb lanza procesos: el par
-//! Node/npm y el binario nativo. Dos garantías importan aquí:
+//! Este módulo aísla los puntos donde Quorb lanza procesos: el par
+//! Node/npm y el binario nativo del instalador, y las sondas de
+//! diagnóstico de escritorio (`wm_compat`). Tres garantías importan aquí:
 //!
 //! 1. **Contención fail-closed**: cada hijo se crea dentro de un Job Object con
 //!    `KILL_ON_JOB_CLOSE` (Windows) o de su propio grupo de procesos (Unix), de
@@ -11,9 +12,12 @@
 //! 2. **Captura acotada**: nunca se lee sin límite. Como mucho `MAX_CAPTURE_BYTES`
 //!    por stream; el resto se drena y descarta, así una salida maliciosa no puede
 //!    agotar la memoria. `npm` y `codex.exe` nunca vuelcan su stdout/stderr a la UI.
+//! 3. **Cota dura total**: `timeout + 2 * DRAIN_GRACE` sobre espera, reap y
+//!    drenaje; nunca hay lectura ni espera sin límite.
 //!
 //! La política del instalador (rutas, argumentos fijos, lista blanca de entorno)
-//! vive en `codex_setup.rs`; aquí solo se ejecuta lo que ya se decidió.
+//! vive en `codex_setup.rs`; las sondas heredan el entorno de la app vía
+//! `run_inherited_env`. Aquí solo se ejecuta lo que ya se decidió.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -64,67 +68,111 @@ impl CommandRunner for ProcessRunner {
         timeout: Duration,
     ) -> Result<CommandOutput, RunError> {
         let mut child = spawn_child(program, args, env, cwd)?;
+        run_pipelined(child, timeout)
+    }
+}
 
-        // Contención antes de leer nada: si no se puede asignar, se mata al hijo y
-        // se falla en cerrado (nunca se deja un proceso sin contención).
-        let containment = match platform::Containment::attach(&child) {
-            Ok(containment) => containment,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = reap(&mut child, Instant::now() + DRAIN_GRACE);
-                return Err(error);
-            }
-        };
+/// Lanza un comando heredando el entorno de la app y sin cambiar de cwd, con
+/// la misma contención, captura acotada y cota dura total que `ProcessRunner`.
+/// Para sondas de diagnóstico que necesitan el entorno de sesión (p. ej.
+/// `DBUS_SESSION_BUS_ADDRESS` para `gdbus`).
+pub fn run_inherited_env(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<CommandOutput, RunError> {
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    // Grupo propio en Unix para poder matar a todos los descendientes de una vez.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let child = cmd.spawn().map_err(|_| RunError::Spawn)?;
+    run_pipelined(child, timeout)
+}
 
-        let stdout = child.stdout.take().map(BoundedReader::spawn);
-        let stderr = child.stderr.take().map(BoundedReader::spawn);
+/// Pipeline compartido de ejecución acotada: contención, espera con deadline,
+/// terminación del árbol completo, reap acotado y drenaje acotado. La cota
+/// dura total es `timeout + 2 * DRAIN_GRACE`.
+fn run_pipelined(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> Result<CommandOutput, RunError> {
+    // Contención antes de leer nada: si no se puede asignar, se mata al hijo y
+    // se falla en cerrado (nunca se deja un proceso sin contención).
+    let containment = match platform::Containment::attach(&child) {
+        Ok(containment) => containment,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = reap(&mut child, Instant::now() + DRAIN_GRACE);
+            return Err(error);
+        }
+    };
 
-        let wait_deadline = Instant::now() + timeout;
-        let mut timed_out = false;
-        let mut wait_error = false;
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) => {
-                    if Instant::now() >= wait_deadline {
-                        timed_out = true;
-                        break;
-                    }
-                    std::thread::sleep(POLL_INTERVAL);
-                }
-                Err(_) => {
-                    wait_error = true;
+    let stdout = child.stdout.take().map(BoundedReader::spawn);
+    let stderr = child.stderr.take().map(BoundedReader::spawn);
+
+    let wait_deadline = Instant::now() + timeout;
+    let mut timed_out = false;
+    let mut wait_error = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= wait_deadline {
+                    timed_out = true;
                     break;
                 }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            Err(_) => {
+                wait_error = true;
+                break;
             }
         }
-
-        // Terminar SIEMPRE el árbol completo: en timeout y también en la salida
-        // normal, para que ningún nieto que heredó las tuberías bloquee la lectura.
-        containment.terminate();
-
-        // Reap acotado del hijo directo (ya debería estar muerto o a punto de serlo).
-        let status = reap(&mut child, Instant::now() + DRAIN_GRACE);
-        drop(containment);
-
-        // Drenaje acotado. Si un proceso escapado retuviera una tubería, no se
-        // espera indefinidamente (el hilo lector queda desasociado como último recurso).
-        let drain_deadline = Instant::now() + DRAIN_GRACE;
-        let stdout = stdout.map(|reader| reader.finish(drain_deadline)).unwrap_or_default();
-        let stderr = stderr.map(|reader| reader.finish(drain_deadline)).unwrap_or_default();
-
-        if timed_out {
-            return Err(RunError::Timeout);
-        }
-        if wait_error || status.is_none() {
-            return Err(RunError::Io);
-        }
-        Ok(CommandOutput {
-            code: status.and_then(|s| s.code()).unwrap_or(-1),
-            stdout,
-            stderr,
-        })
     }
+
+    // Terminar SIEMPRE el árbol completo: en timeout y también en la salida
+    // normal, para que ningún nieto que heredó las tuberías bloquee la lectura.
+    containment.terminate();
+
+    // Reap acotado del hijo directo (ya debería estar muerto o a punto de serlo).
+    let status = reap(&mut child, Instant::now() + DRAIN_GRACE);
+    drop(containment);
+
+    // Drenaje acotado. Si un proceso escapado retuviera una tubería, no se
+    // espera indefinidamente (el hilo lector queda desasociado como último recurso).
+    let drain_deadline = Instant::now() + DRAIN_GRACE;
+    let stdout = stdout
+        .map(|reader| reader.finish(drain_deadline))
+        .unwrap_or_default();
+    let stderr = stderr
+        .map(|reader| reader.finish(drain_deadline))
+        .unwrap_or_default();
+
+    if timed_out {
+        return Err(RunError::Timeout);
+    }
+    if wait_error || status.is_none() {
+        return Err(RunError::Io);
+    }
+    Ok(CommandOutput {
+        code: status.and_then(|s| s.code()).unwrap_or(-1),
+        stdout,
+        stderr,
+    })
 }
 
 fn spawn_child(
@@ -642,7 +690,10 @@ mod tests {
         ));
 
         let mut env = fixture_env("grandchild");
-        env.insert(MARKER_ENV.to_string(), marker.to_string_lossy().into_owned());
+        env.insert(
+            MARKER_ENV.to_string(),
+            marker.to_string_lossy().into_owned(),
+        );
 
         let started = Instant::now();
         let result = ProcessRunner.run(

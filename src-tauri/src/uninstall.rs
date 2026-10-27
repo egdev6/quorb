@@ -277,7 +277,10 @@ mod tests {
         assert!(authorized(&flags(STABLE.identifier), STABLE.identifier));
         assert!(!authorized(&flags(FOREIGN.identifier), STABLE.identifier));
         for len in 0..4 {
-            assert!(!authorized(&flags(STABLE.identifier)[..len], STABLE.identifier));
+            assert!(!authorized(
+                &flags(STABLE.identifier)[..len],
+                STABLE.identifier
+            ));
         }
         for switch in ["/UPDATE", "/P", "/S", "_?=C:\\fixture"] {
             let mut extra = flags(STABLE.identifier);

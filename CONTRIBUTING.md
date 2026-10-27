@@ -38,6 +38,12 @@ These are the scripts declared in `package.json`:
 | `npm run app:dev` | Run the desktop app with hot reload |
 | `npm run app:build` | Build a local (unsigned) installer |
 
+### Rust formatting
+
+Rust formatting is checked by CI (`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` in `ci.yml` and `linux-pr-ci.yml`). Locally: `cd src-tauri && cargo fmt --all`, then commit the result as a formatting-only commit such as `chore(style): cargo fmt`, so functional changes stay reviewable.
+
+The formatter is deliberately mobile: both workflows install `stable` via `dtolnay/rust-toolchain`, and `stable` is resolved at run time, so a rustfmt update can change formatting without any change in this repository. The format gate catches that on the integrated tree: if CI fails after a `stable` bump, run `cargo fmt --manifest-path src-tauri/Cargo.toml --all` and land the diff as its own formatting-only commit; if a PR is open, coordinate before rebasing on that diff. No `rustfmt.toml`: defaults apply.
+
 `docs/i18n-inventory.md` lists every user-facing text with its `path:line`, read from the committed `src/` and `src-tauri/src/` trees. Because each row carries a line number, it goes stale whenever a pull request changes text **or shifts lines** in those folders. CI fails with the exact command to run: commit your change, then run `node scripts/i18n-inventory.mjs` and commit the regenerated document. If `main` moved meanwhile, update your branch first and regenerate again; never edit the document by hand.
 
 ### Contributing with ODD
@@ -180,6 +186,12 @@ Estos son los scripts declarados en `package.json`:
 | `cd src-tauri; cargo test` | Tests de Rust |
 | `npm run app:dev` | Ejecutar la app de escritorio con hot reload |
 | `npm run app:build` | Compilar un instalador local (sin firma) |
+
+### Formato de Rust
+
+El formato de Rust se controla en CI (`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` en `ci.yml` y `linux-pr-ci.yml`). Localmente: `cd src-tauri && cargo fmt --all` y commiteá el resultado como commit solo-formato, por ejemplo `chore(style): cargo fmt`, para que los cambios funcionales sigan siendo revisables.
+
+El formatter es deliberadamente móvil: ambos workflows instalan `stable` vía `dtolnay/rust-toolchain`, y `stable` se resuelve en tiempo de ejecución, así que una actualización de rustfmt puede cambiar el formato sin ningún cambio en este repositorio. El gate de formato lo detecta sobre el árbol integrado: si CI falla tras un cambio de `stable`, corré `cargo fmt --manifest-path src-tauri/Cargo.toml --all` y aterrizá ese diff como su propio commit solo-formato; si hay una PR abierta, coordiná antes de rebasar sobre él. Sin `rustfmt.toml`: valen los defaults.
 
 ### Contribuir con ODD
 

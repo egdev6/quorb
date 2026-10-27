@@ -30,7 +30,12 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     let candidates = vec![home().join(".gemini").join("oauth_creds.json")];
     let path = match resolve_path(cfg.credentials_path.as_deref(), &candidates) {
         Ok(p) => p,
-        Err(e) => return report.fail(Status::NeedsLogin, format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google.")),
+        Err(e) => {
+            return report.fail(
+                Status::NeedsLogin,
+                format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+            )
+        }
     };
     let creds = match read_json(&path) {
         Ok(v) => v,
@@ -80,14 +85,21 @@ fn token_needs_refresh(creds: &Value, now_ms: i64) -> bool {
     if !usable {
         return true;
     }
-    let expiry = creds.get("expiry_date").and_then(Value::as_i64).unwrap_or(0);
+    let expiry = creds
+        .get("expiry_date")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
     expiry - 60_000 <= now_ms
 }
 
 async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp_millis();
     if !token_needs_refresh(creds, now) {
-        return Ok(creds.get("access_token").and_then(Value::as_str).unwrap().to_string());
+        return Ok(creds
+            .get("access_token")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string());
     }
     let refresh = creds
         .get("refresh_token")
@@ -111,16 +123,31 @@ async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, S
         .await
         .map_err(net_error)?;
     if !res.status().is_success() {
-        return Err("Google no ha renovado la sesión de Gemini CLI. Ábrelo e inicia sesión de nuevo.".into());
+        return Err(
+            "Google no ha renovado la sesión de Gemini CLI. Ábrelo e inicia sesión de nuevo."
+                .into(),
+        );
     }
     let v: Value = res.json().await.map_err(|e| e.to_string())?;
-    let t = v.get("access_token").and_then(Value::as_str).ok_or("Respuesta de Google sin access_token")?.to_string();
+    let t = v
+        .get("access_token")
+        .and_then(Value::as_str)
+        .ok_or("Respuesta de Google sin access_token")?
+        .to_string();
     let exp = now + v.get("expires_in").and_then(Value::as_i64).unwrap_or(3600) * 1000;
-    CACHED.lock().unwrap().insert(refresh.to_string(), (t.clone(), exp));
+    CACHED
+        .lock()
+        .unwrap()
+        .insert(refresh.to_string(), (t.clone(), exp));
     Ok(t)
 }
 
-async fn post(http: &reqwest::Client, token: &str, method: &str, body: &Value) -> Result<Value, (Status, String)> {
+async fn post(
+    http: &reqwest::Client,
+    token: &str,
+    method: &str,
+    body: &Value,
+) -> Result<Value, (Status, String)> {
     let res = http
         .post(format!("{API}:{method}"))
         .bearer_auth(token)
@@ -129,12 +156,21 @@ async fn post(http: &reqwest::Client, token: &str, method: &str, body: &Value) -
         .await
         .map_err(|e| (Status::Error, net_error(e)))?;
     match res.status().as_u16() {
-        200 => res.json().await.map_err(|e| (Status::Error, format!("Respuesta inesperada: {e}"))),
+        200 => res
+            .json()
+            .await
+            .map_err(|e| (Status::Error, format!("Respuesta inesperada: {e}"))),
         401 => {
             CACHED.lock().unwrap().clear();
-            Err((Status::NeedsLogin, "Sesión de Gemini rechazada. Abre Gemini CLI para renovarla.".into()))
+            Err((
+                Status::NeedsLogin,
+                "Sesión de Gemini rechazada. Abre Gemini CLI para renovarla.".into(),
+            ))
         }
-        429 => Err((Status::Warning, "El endpoint de cuotas está limitando peticiones.".into())),
+        429 => Err((
+            Status::Warning,
+            "El endpoint de cuotas está limitando peticiones.".into(),
+        )),
         code => Err((Status::Error, format!("HTTP {code} en {method}"))),
     }
 }
@@ -147,7 +183,10 @@ pub(crate) fn project_id(v: &Value) -> Option<String> {
 }
 
 pub(crate) fn tier_name(v: &Value) -> Option<String> {
-    let t = v.get("paidTier").filter(|t| t.is_object()).or_else(|| v.get("currentTier"))?;
+    let t = v
+        .get("paidTier")
+        .filter(|t| t.is_object())
+        .or_else(|| v.get("currentTier"))?;
     t.get("name")
         .or_else(|| t.get("id"))
         .and_then(Value::as_str)
@@ -157,9 +196,18 @@ pub(crate) fn tier_name(v: &Value) -> Option<String> {
 /// Un medidor por modelo (el % gastado es 1 − remainingFraction), el más gastado primero.
 pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
     let mut by_model: BTreeMap<String, Meter> = BTreeMap::new();
-    for b in v.get("buckets").and_then(Value::as_array).into_iter().flatten() {
-        let Some(model) = b.get("modelId").and_then(Value::as_str) else { continue };
-        let Some(remaining) = b.get("remainingFraction").and_then(Value::as_f64) else { continue };
+    for b in v
+        .get("buckets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(model) = b.get("modelId").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(remaining) = b.get("remainingFraction").and_then(Value::as_f64) else {
+            continue;
+        };
         // Variantes «_vertex» y similares: nos quedamos con la más gastada de cada modelo.
         let name = model.split("_vertex").next().unwrap_or(model).to_string();
         let pct = ((1.0 - remaining) * 100.0).clamp(0.0, 100.0);
@@ -170,16 +218,26 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
             used: None,
             limit: None,
             unit: None,
-            resets_at: b.get("resetTime").and_then(Value::as_str).map(str::to_string),
+            resets_at: b
+                .get("resetTime")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             window_seconds: Some(86_400),
         };
-        let keep = by_model.get(&name).map(|m| m.percent < meter.percent).unwrap_or(true);
+        let keep = by_model
+            .get(&name)
+            .map(|m| m.percent < meter.percent)
+            .unwrap_or(true);
         if keep {
             by_model.insert(name, meter);
         }
     }
     let mut out: Vec<Meter> = by_model.into_values().collect();
-    out.sort_by(|a, b| b.percent.partial_cmp(&a.percent).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.percent
+            .partial_cmp(&a.percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -210,7 +268,10 @@ mod tests {
             "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}});
         assert_eq!(project_id(&v).as_deref(), Some("my-proj-123"));
         assert_eq!(tier_name(&v).as_deref(), Some("Google AI Pro"));
-        assert_eq!(project_id(&json!({"cloudaicompanionProject": {"id": "p2"}})).as_deref(), Some("p2"));
+        assert_eq!(
+            project_id(&json!({"cloudaicompanionProject": {"id": "p2"}})).as_deref(),
+            Some("p2")
+        );
     }
 
     /// Sesión real de Gemini CLI: el fixture es la estructura que escribe
@@ -223,13 +284,25 @@ mod tests {
     fn parses_real_session_fixture_returns_valid_token_without_http() {
         let raw = include_str!("fixtures/gemini-oauth_creds.json");
         let v: Value = serde_json::from_str(raw).expect("fixture gemini válido");
-        assert_eq!(v.get("access_token").and_then(Value::as_str), Some("example-access-token-gemini"));
+        assert_eq!(
+            v.get("access_token").and_then(Value::as_str),
+            Some("example-access-token-gemini")
+        );
         // Ahora (2026) muy por debajo de expiry_date: NO necesita refresh.
         let now = 1_800_000_000_000;
-        assert!(!token_needs_refresh(&v, now), "token del fixture sigue vigente");
+        assert!(
+            !token_needs_refresh(&v, now),
+            "token del fixture sigue vigente"
+        );
         // Si ya pasó la expiry, el fixture obliga a refrescar (no usa el token).
-        assert!(token_needs_refresh(&v, 2_100_000_000_000), "token expirado exige refresh");
+        assert!(
+            token_needs_refresh(&v, 2_100_000_000_000),
+            "token expirado exige refresh"
+        );
         // Sin access_token → siempre hay que refrescar.
-        assert!(token_needs_refresh(&json!({"refresh_token": "r"}), now), "sin token, hay que refrescar");
+        assert!(
+            token_needs_refresh(&json!({"refresh_token": "r"}), now),
+            "sin token, hay que refrescar"
+        );
     }
 }

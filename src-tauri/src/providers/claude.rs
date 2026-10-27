@@ -62,7 +62,10 @@ async fn keychain_fallback() -> KeychainOutcome {
 /// `any(test, macos)` rompería el build de producción en Windows/Linux
 /// (detectado en revisión de #112).
 fn should_fallback_keychain(credentials_path: Option<&str>) -> bool {
-    credentials_path.map(str::trim).filter(|s| !s.is_empty()).is_none()
+    credentials_path
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none()
 }
 
 /// Lanzamiento y espera acotada del proceso `security`. Corre en hilo propio
@@ -71,7 +74,12 @@ fn should_fallback_keychain(credentials_path: Option<&str>) -> bool {
 fn keychain_sync(timeout: std::time::Duration) -> KeychainOutcome {
     use std::process::{Command, Stdio};
     let child = match Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .stdin(Stdio::null())
@@ -156,7 +164,9 @@ fn parse_keychain_secret(raw: &str) -> Option<Credentials> {
     if trimmed.is_empty() {
         return None;
     }
-    serde_json::from_str::<Value>(trimmed).ok().and_then(|v| Credentials::parse(&v).ok())
+    serde_json::from_str::<Value>(trimmed)
+        .ok()
+        .and_then(|v| Credentials::parse(&v).ok())
 }
 
 pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
@@ -229,7 +239,10 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     report.meters = parse_usage(&body);
     if report.meters.is_empty() {
-        return report.fail(Status::Warning, "Respuesta sin datos de uso (¿ha cambiado el formato?)");
+        return report.fail(
+            Status::Warning,
+            "Respuesta sin datos de uso (¿ha cambiado el formato?)",
+        );
     }
     report
 }
@@ -243,7 +256,9 @@ pub(crate) struct Credentials {
 
 impl Credentials {
     pub fn parse(v: &Value) -> Result<Self, String> {
-        let o = v.get("claudeAiOauth").ok_or("Credenciales sin «claudeAiOauth» (¿login con API key?)")?;
+        let o = v
+            .get("claudeAiOauth")
+            .ok_or("Credenciales sin «claudeAiOauth» (¿login con API key?)")?;
         let access_token = o
             .get("accessToken")
             .and_then(Value::as_str)
@@ -262,7 +277,9 @@ impl Credentials {
 
     pub fn is_expired(&self, now_ms: i64) -> bool {
         // 60 s de margen
-        self.expires_at_ms.map(|e| e - 60_000 <= now_ms).unwrap_or(false)
+        self.expires_at_ms
+            .map(|e| e - 60_000 <= now_ms)
+            .unwrap_or(false)
     }
 }
 
@@ -288,18 +305,28 @@ pub(crate) fn parse_usage(v: &Value) -> Vec<Meter> {
     ];
     let mut out = vec![];
     for (key, id, label, secs) in WINDOWS {
-        let Some(w) = v.get(key).filter(|w| w.is_object()) else { continue };
-        let Some(pct) = w.get("utilization").and_then(Value::as_f64) else { continue };
+        let Some(w) = v.get(key).filter(|w| w.is_object()) else {
+            continue;
+        };
+        let Some(pct) = w.get("utilization").and_then(Value::as_f64) else {
+            continue;
+        };
         out.push(Meter {
             id: id.into(),
             label: label.into(),
             percent: Some(pct),
-            resets_at: w.get("resets_at").and_then(Value::as_str).map(str::to_string),
+            resets_at: w
+                .get("resets_at")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             window_seconds: Some(secs),
             ..Default::default()
         });
     }
-    if let Some(extra) = v.get("extra_usage").filter(|e| e.get("is_enabled").and_then(Value::as_bool) == Some(true)) {
+    if let Some(extra) = v
+        .get("extra_usage")
+        .filter(|e| e.get("is_enabled").and_then(Value::as_bool) == Some(true))
+    {
         out.push(Meter {
             id: "extra_usage".into(),
             label: "Uso extra (mes)".into(),
@@ -345,10 +372,17 @@ mod tests {
         assert_eq!(c.access_token, "example-access-token-abcdef");
         assert_eq!(c.plan.as_deref(), Some("Pro"));
         let exp = c.expires_at_ms.expect("el fixture trae expiresAt");
-        assert!(!c.is_expired(1_800_000_000_000), "no caduca antes de su expiry");
+        assert!(
+            !c.is_expired(1_800_000_000_000),
+            "no caduca antes de su expiry"
+        );
         assert!(c.is_expired(exp), "caduca en su expiry");
         // Un token sin expiresAt no se considera caducado (no inventamos expiración).
-        let sin_expiry = Credentials { access_token: "t".into(), expires_at_ms: None, plan: None };
+        let sin_expiry = Credentials {
+            access_token: "t".into(),
+            expires_at_ms: None,
+            plan: None,
+        };
         assert!(!sin_expiry.is_expired(exp));
     }
 
@@ -379,7 +413,10 @@ mod tests {
             "seven_day_oauth_apps": {"utilization": 5.0, "resets_at": null},
             "extra_usage": {"is_enabled": true, "utilization": 6.0}
         });
-        let ids: Vec<_> = parse_usage(&v).into_iter().map(|m| (m.id, m.label)).collect();
+        let ids: Vec<_> = parse_usage(&v)
+            .into_iter()
+            .map(|m| (m.id, m.label))
+            .collect();
         assert_eq!(
             ids,
             [
@@ -414,8 +451,12 @@ mod tests {
     fn keychain_fallback_only_for_main_session_without_explicit_path() {
         assert!(should_fallback_keychain(None));
         assert!(should_fallback_keychain(Some("  ")));
-        assert!(!should_fallback_keychain(Some("/cuenta/extra/.credentials.json")));
-        assert!(!should_fallback_keychain(Some(" ~/.claude/.credentials.json ")));
+        assert!(!should_fallback_keychain(Some(
+            "/cuenta/extra/.credentials.json"
+        )));
+        assert!(!should_fallback_keychain(Some(
+            " ~/.claude/.credentials.json "
+        )));
     }
 
     /// Regresión P2 (revisión #112): la espera es acotada — un proceso que no
@@ -435,8 +476,14 @@ mod tests {
             .stdin(Stdio::null())
             .spawn()
             .expect("sleep disponible");
-        assert!(matches!(wait_bounded(hung, Duration::from_millis(150)), WaitOutcome::TimedOut));
-        assert!(start.elapsed() < Duration::from_secs(3), "la espera colgada se mata acotada");
+        assert!(matches!(
+            wait_bounded(hung, Duration::from_millis(150)),
+            WaitOutcome::TimedOut
+        ));
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "la espera colgada se mata acotada"
+        );
 
         let quick = Command::new("true")
             .stdout(Stdio::piped())
@@ -458,6 +505,9 @@ mod tests {
             .stdin(Stdio::null())
             .spawn()
             .expect("false disponible");
-        assert!(matches!(wait_bounded(failing, Duration::from_secs(5)), WaitOutcome::Failed));
+        assert!(matches!(
+            wait_bounded(failing, Duration::from_secs(5)),
+            WaitOutcome::Failed
+        ));
     }
 }

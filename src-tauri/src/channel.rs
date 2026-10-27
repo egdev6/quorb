@@ -8,7 +8,12 @@ pub struct Profile {
     pub migrate_legacy: bool,
 }
 
-pub const STABLE: Profile = Profile { identifier: "es.egdev.quorb", name: "Quorb", home_dir: ".quorb", migrate_legacy: true };
+pub const STABLE: Profile = Profile {
+    identifier: "es.egdev.quorb",
+    name: "Quorb",
+    home_dir: ".quorb",
+    migrate_legacy: true,
+};
 
 pub fn current() -> &'static Profile {
     match option_env!("QUORB_IDENTIFIER").unwrap_or(STABLE.identifier) {
@@ -17,7 +22,9 @@ pub fn current() -> &'static Profile {
     }
 }
 
-pub fn home_root(home: &Path) -> PathBuf { home.join(current().home_dir) }
+pub fn home_root(home: &Path) -> PathBuf {
+    home.join(current().home_dir)
+}
 
 #[cfg(test)]
 mod tests {
@@ -31,6 +38,9 @@ mod tests {
     }
     #[test]
     fn runtime_owned_paths_follow_build_identity() {
-        assert_eq!(home_root(Path::new("/home/test")), Path::new("/home/test").join(current().home_dir));
+        assert_eq!(
+            home_root(Path::new("/home/test")),
+            Path::new("/home/test").join(current().home_dir)
+        );
     }
 }

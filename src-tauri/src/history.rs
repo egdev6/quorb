@@ -33,7 +33,10 @@ impl History {
             .ok()
             .and_then(|s| serde_json::from_str::<Vec<Sample>>(&s).ok())
             .unwrap_or_default();
-        Self { path, samples: Mutex::new(samples) }
+        Self {
+            path,
+            samples: Mutex::new(samples),
+        }
     }
 
     /// Añade las lecturas correctas de un ciclo y guarda en disco si ha cambiado algo.
@@ -61,12 +64,21 @@ impl History {
 /// sin asserts: es la vía para probar el respaldo; `append` sí vigila con
 /// `debug_assert!` que los medidores nuevos traigan id.
 pub(crate) fn sample_key(m: &Meter) -> String {
-    if m.id.is_empty() { m.label.clone() } else { m.id.clone() }
+    if m.id.is_empty() {
+        m.label.clone()
+    } else {
+        m.id.clone()
+    }
 }
 
 pub(crate) fn append(samples: &mut Vec<Sample>, reports: &[UsageReport], now: i64) -> bool {
     let mut changed = false;
-    for r in reports.iter().filter(|r| matches!(r.status, crate::model::Status::Ok | crate::model::Status::Warning)) {
+    for r in reports.iter().filter(|r| {
+        matches!(
+            r.status,
+            crate::model::Status::Ok | crate::model::Status::Warning
+        )
+    }) {
         let points = r
             .meters
             .iter()
@@ -91,7 +103,12 @@ pub(crate) fn append(samples: &mut Vec<Sample>, reports: &[UsageReport], now: i6
                 Some(l) => now - l.t >= MIN_GAP_SECS || (v - l.v).abs() >= 1.0,
             };
             if keep {
-                samples.push(Sample { t: now, p: r.id.clone(), l: label, v });
+                samples.push(Sample {
+                    t: now,
+                    p: r.id.clone(),
+                    l: label,
+                    v,
+                });
                 changed = true;
             }
         }
@@ -107,7 +124,11 @@ fn save(path: &Path, samples: &[Sample]) -> Result<(), String> {
     }
     // Escritura atómica: primero a .tmp y luego renombrar.
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string(samples).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string(samples).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
@@ -118,7 +139,12 @@ mod tests {
 
     fn report(pct: f64) -> UsageReport {
         let mut r = UsageReport::new("claude", "Claude", Kind::Subscription);
-        r.meters.push(Meter { id: "session".into(), label: "Sesión · 5 h".into(), percent: Some(pct), ..Default::default() });
+        r.meters.push(Meter {
+            id: "session".into(),
+            label: "Sesión · 5 h".into(),
+            percent: Some(pct),
+            ..Default::default()
+        });
         r
     }
 
@@ -143,9 +169,16 @@ mod tests {
     /// `sample_key`, porque `append` paniquea en debug con un medidor sin id.
     #[test]
     fn sample_key_falls_back_to_label_for_legacy_meters() {
-        let with_id = Meter { id: "session".into(), label: "Sesión · 5 h".into(), ..Default::default() };
+        let with_id = Meter {
+            id: "session".into(),
+            label: "Sesión · 5 h".into(),
+            ..Default::default()
+        };
         assert_eq!(sample_key(&with_id), "session");
-        let legacy = Meter { label: "Sin id".into(), ..Default::default() };
+        let legacy = Meter {
+            label: "Sin id".into(),
+            ..Default::default()
+        };
         assert_eq!(sample_key(&legacy), "Sin id");
     }
 
@@ -154,10 +187,18 @@ mod tests {
     #[test]
     fn new_samples_store_the_meter_id_and_throttle_by_it() {
         let mut r = UsageReport::new("claude", "Claude", Kind::Subscription);
-        r.meters.push(Meter { id: "session".into(), label: "Sesión · 5 h".into(), percent: Some(10.0), ..Default::default() });
+        r.meters.push(Meter {
+            id: "session".into(),
+            label: "Sesión · 5 h".into(),
+            percent: Some(10.0),
+            ..Default::default()
+        });
         let mut s = vec![];
         assert!(append(&mut s, &[r.clone()], 5));
-        assert_eq!(s.iter().map(|x| x.l.as_str()).collect::<Vec<_>>(), ["session"]);
+        assert_eq!(
+            s.iter().map(|x| x.l.as_str()).collect::<Vec<_>>(),
+            ["session"]
+        );
         // El throttle va por id: una etiqueta traducida no duplica el punto.
         r.meters[0].label = "Session · 5 h".into();
         assert!(!append(&mut s, &[r], 65));
@@ -167,10 +208,23 @@ mod tests {
     #[test]
     fn records_spend_and_skips_errors() {
         let mut api = UsageReport::new("openai_api", "OpenAI API", Kind::Api);
-        api.spend = Some(Spend { amount: 3.5, currency: "USD".into(), period_label: "Este mes".into(), budget: None });
+        api.spend = Some(Spend {
+            amount: 3.5,
+            currency: "USD".into(),
+            period_label: "Este mes".into(),
+            budget: None,
+        });
         let bad = report(50.0).fail(Status::Error, "x");
         let mut s = vec![];
         append(&mut s, &[api, bad], 0);
-        assert_eq!(s, vec![Sample { t: 0, p: "openai_api".into(), l: "spend".into(), v: 3.5 }]);
+        assert_eq!(
+            s,
+            vec![Sample {
+                t: 0,
+                p: "openai_api".into(),
+                l: "spend".into(),
+                v: 3.5
+            }]
+        );
     }
 }

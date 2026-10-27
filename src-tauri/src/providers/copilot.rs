@@ -43,17 +43,28 @@ pub async fn fetch(cfg: &CopilotConfig, who: Who<'_>, http: &reqwest::Client) ->
     let (default_allowance, plan_label) = plan_allowance(&cfg.plan);
     report.plan = Some(plan_label.into());
     let Some(token) = who.secret(secrets::GITHUB_TOKEN) else {
-        return report.fail(Status::Unconfigured, "Añade un token de GitHub (fine-grained, permiso «Plan»: lectura) en Ajustes.");
+        return report.fail(
+            Status::Unconfigured,
+            "Añade un token de GitHub (fine-grained, permiso «Plan»: lectura) en Ajustes.",
+        );
     };
     let user = cfg.username.trim();
     if user.is_empty() {
-        return report.fail(Status::Unconfigured, "Indica tu usuario de GitHub en Ajustes.");
+        return report.fail(
+            Status::Unconfigured,
+            "Indica tu usuario de GitHub en Ajustes.",
+        );
     }
 
     let now = chrono::Utc::now();
     let res = http
-        .get(format!("https://api.github.com/users/{user}/settings/billing/premium_request/usage"))
-        .query(&[("year", now.year().to_string()), ("month", now.month().to_string())])
+        .get(format!(
+            "https://api.github.com/users/{user}/settings/billing/premium_request/usage"
+        ))
+        .query(&[
+            ("year", now.year().to_string()),
+            ("month", now.month().to_string()),
+        ])
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
@@ -66,9 +77,24 @@ pub async fn fetch(cfg: &CopilotConfig, who: Who<'_>, http: &reqwest::Client) ->
     match res.status().as_u16() {
         200 => {}
         401 => return report.fail(Status::Unconfigured, "Token de GitHub rechazado."),
-        403 => return report.fail(Status::Unconfigured, "El token no tiene el permiso «Plan» (lectura)."),
-        404 => return report.fail(Status::Unconfigured, "Usuario de GitHub no encontrado o sin acceso a su facturación."),
-        code => return report.fail(Status::Error, format!("HTTP {code} en la API de facturación")),
+        403 => {
+            return report.fail(
+                Status::Unconfigured,
+                "El token no tiene el permiso «Plan» (lectura).",
+            )
+        }
+        404 => {
+            return report.fail(
+                Status::Unconfigured,
+                "Usuario de GitHub no encontrado o sin acceso a su facturación.",
+            )
+        }
+        code => {
+            return report.fail(
+                Status::Error,
+                format!("HTTP {code} en la API de facturación"),
+            )
+        }
     }
     let body: Value = match res.json().await {
         Ok(v) => v,
@@ -76,9 +102,15 @@ pub async fn fetch(cfg: &CopilotConfig, who: Who<'_>, http: &reqwest::Client) ->
     };
 
     let usage = parse(&body);
-    let allowance = cfg.custom_allowance.map(f64::from).filter(|a| *a > 0.0).or(default_allowance);
+    let allowance = cfg
+        .custom_allowance
+        .map(f64::from)
+        .filter(|a| *a > 0.0)
+        .or(default_allowance);
     let (reset, window) = month_window(now);
-    report.meters.push(premium_meter(usage.requests, allowance, reset, window));
+    report
+        .meters
+        .push(premium_meter(usage.requests, allowance, reset, window));
     if usage.extra_amount > 0.0 {
         report.spend = Some(Spend {
             amount: usage.extra_amount,
@@ -107,7 +139,11 @@ pub(crate) fn parse(v: &Value) -> CopilotUsage {
         .into_iter()
         .flatten()
         .filter(|i| {
-            let p = i.get("product").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+            let p = i
+                .get("product")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
             p.is_empty() || p.contains("copilot")
         })
         .collect();
@@ -116,7 +152,11 @@ pub(crate) fn parse(v: &Value) -> CopilotUsage {
     let extra_amount = items.iter().map(|i| f(*i, "netAmount")).sum::<f64>();
     let mut by_model: Vec<(String, f64)> = vec![];
     for i in &items {
-        let m = i.get("model").and_then(Value::as_str).unwrap_or("").to_string();
+        let m = i
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         if m.is_empty() {
             continue;
         }
@@ -129,7 +169,11 @@ pub(crate) fn parse(v: &Value) -> CopilotUsage {
     CopilotUsage {
         requests,
         extra_amount,
-        top_models: by_model.into_iter().take(3).map(|(m, q)| format!("{m} ({q:.0})")).collect(),
+        top_models: by_model
+            .into_iter()
+            .take(3)
+            .map(|(m, q)| format!("{m} ({q:.0})"))
+            .collect(),
     }
 }
 
@@ -166,7 +210,13 @@ mod tests {
         let u = parse(&v);
         assert_eq!(u.requests, 320.0);
         assert!((u.extra_amount - 0.8).abs() < 1e-9);
-        assert_eq!(u.top_models, vec!["GPT-5 (200)".to_string(), "Claude Sonnet 4.6 (120)".to_string()]);
+        assert_eq!(
+            u.top_models,
+            vec![
+                "GPT-5 (200)".to_string(),
+                "Claude Sonnet 4.6 (120)".to_string()
+            ]
+        );
     }
 
     #[test]

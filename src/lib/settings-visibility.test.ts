@@ -19,6 +19,15 @@ describe('obsolete hidden-circles block (#98)', () => {
     expect(source.includes('label="Mostrar en el widget"')).toBe(true);
   });
 
+  it('routes every "Mostrar en el widget" toggle through the visibility helpers', () => {
+    // Un toggle con `set(...)` directo no saca el id de `hiddenProviders`: un
+    // círculo ocultado desde el widget quedaría marcado e irrecuperable (#182).
+    const toggles = [...source.matchAll(/<Toggle\s+label="Mostrar en el widget"[\s\S]*?\/>/g)].map((m) => m[0]);
+    expect(toggles.length).toBeGreaterThan(0);
+    for (const t of toggles) expect(t).toMatch(/onChange=\{(onVisibility|\(v\) => setVisibility\()/);
+    expect(source).toContain("checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)}");
+  });
+
   it('shows an enabled but hidden circle as unchecked, without disabling polling', () => {
     const cfg = fixture();
     expect(isAccountVisible(cfg, 'claude', true)).toBe(false);

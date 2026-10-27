@@ -33,7 +33,13 @@ fn normalize_hex(s: &str) -> Option<String> {
     }
     match h.len() {
         6 => Some(format!("#{}", h.to_ascii_lowercase())),
-        3 => Some(format!("#{}", h.chars().flat_map(|c| [c, c]).collect::<String>().to_ascii_lowercase())),
+        3 => Some(format!(
+            "#{}",
+            h.chars()
+                .flat_map(|c| [c, c])
+                .collect::<String>()
+                .to_ascii_lowercase()
+        )),
         _ => None,
     }
 }
@@ -82,6 +88,7 @@ pub struct AppConfig {
     pub openrouter: OpenRouterConfig,
     pub anthropic_api: ApiCostConfig,
     pub openai_api: ApiCostConfig,
+    pub zai: ZaiConfig,
     pub nan: NanConfig,
     pub minimax: MiniMaxConfig,
     pub nine_router: NineRouterConfig,
@@ -168,7 +175,7 @@ impl AppConfig {
 /// Proveedores que admiten cuentas adicionales (todos).
 /// En 9Router las «cuentas» son sus sub-proveedores (`nine_router:claude`…); el
 /// backend las descubre solo, pero el id debe validar como cuenta.
-pub const ACCOUNT_PROVIDERS: [&str; 10] = [
+pub const ACCOUNT_PROVIDERS: [&str; 11] = [
     "claude",
     "codex",
     "gemini",
@@ -179,6 +186,7 @@ pub const ACCOUNT_PROVIDERS: [&str; 10] = [
     "anthropic_api",
     "openai_api",
     "nine_router",
+    "zai",
 ];
 
 /// `<proveedor>:<sufijo>`, con sufijo de 1–64 caracteres `[a-z0-9-]`.
@@ -188,7 +196,9 @@ pub fn is_account_id(id: &str) -> bool {
         Some((provider, suffix)) => {
             ACCOUNT_PROVIDERS.contains(&provider)
                 && (1..=64).contains(&suffix.len())
-                && suffix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                && suffix
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         }
         None => false,
     }
@@ -226,7 +236,9 @@ impl Account {
     pub fn session_dir(&self, home: &Path) -> std::path::PathBuf {
         match self.config_dir.as_deref() {
             Some(d) => std::path::PathBuf::from(d),
-            None => crate::channel::home_root(home).join("accounts").join(format!("{}-{}", self.provider, self.suffix())),
+            None => crate::channel::home_root(home)
+                .join("accounts")
+                .join(format!("{}-{}", self.provider, self.suffix())),
         }
     }
 
@@ -303,6 +315,7 @@ impl Default for AppConfig {
             shortcuts: ShortcutsConfig::default(),
             anthropic_api: ApiCostConfig::default(),
             openai_api: ApiCostConfig::default(),
+            zai: ZaiConfig::default(),
             nan: NanConfig::default(),
             minimax: MiniMaxConfig::default(),
             nine_router: NineRouterConfig::default(),
@@ -350,7 +363,12 @@ pub struct CopilotConfig {
 
 impl Default for CopilotConfig {
     fn default() -> Self {
-        Self { enabled: false, username: String::new(), plan: "pro".into(), custom_allowance: None }
+        Self {
+            enabled: false,
+            username: String::new(),
+            plan: "pro".into(),
+            custom_allowance: None,
+        }
     }
 }
 
@@ -358,6 +376,14 @@ impl Default for CopilotConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OpenRouterConfig {
+    pub enabled: bool,
+}
+
+/// z.ai — GLM Coding Plan: se conecta con una API key (z.ai/manage-apikey),
+/// pero lo que muestra es la cuota de la suscripción, no un gasto por uso.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ZaiConfig {
     pub enabled: bool,
 }
 
@@ -453,7 +479,10 @@ pub struct MiniMaxConfig {
 
 impl Default for MiniMaxConfig {
     fn default() -> Self {
-        Self { enabled: false, base_url: "https://api.minimax.io".into() }
+        Self {
+            enabled: false,
+            base_url: "https://api.minimax.io".into(),
+        }
     }
 }
 
@@ -529,10 +558,15 @@ impl AppConfig {
     /// Corrige valores fuera de rango.
     pub fn sanitized(mut self) -> Self {
         let locale = self.locale.trim().to_ascii_lowercase();
-        self.locale = if LOCALES.contains(&locale.as_str()) { locale } else { LOCALE_DEFAULT.into() };
+        self.locale = if LOCALES.contains(&locale.as_str()) {
+            locale
+        } else {
+            LOCALE_DEFAULT.into()
+        };
         self.refresh_minutes = self.refresh_minutes.clamp(1, 120);
         self.orb_size = self.orb_size.clamp(ORB_SIZE_MIN, ORB_SIZE_MAX);
-        self.accent_color = normalize_hex(&self.accent_color).unwrap_or_else(|| ACCENT_DEFAULT.into());
+        self.accent_color =
+            normalize_hex(&self.accent_color).unwrap_or_else(|| ACCENT_DEFAULT.into());
         if !self.opacity.is_finite() {
             self.opacity = 0.94;
         }
@@ -540,7 +574,11 @@ impl AppConfig {
         if !matches!(self.dock_edge.as_str(), "top" | "bottom" | "left" | "right") {
             self.dock_edge = "top".into();
         }
-        self.dock_offset = if self.dock_offset.is_finite() { self.dock_offset.clamp(0.0, 1.0) } else { 0.5 };
+        self.dock_offset = if self.dock_offset.is_finite() {
+            self.dock_offset.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
         for p in [
             &mut self.claude.credentials_path,
             &mut self.codex.credentials_path,
@@ -559,19 +597,37 @@ impl AppConfig {
         if self.minimax.base_url.trim().is_empty() {
             self.minimax.base_url = MiniMaxConfig::default().base_url;
         }
-        self.minimax.base_url = self.minimax.base_url.trim().trim_end_matches('/').to_string();
+        self.minimax.base_url = self
+            .minimax
+            .base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
         self.nan.billing_day = self.nan.billing_day.clamp(1, 28);
         if self.nine_router.base_url.trim().is_empty() {
             self.nine_router.base_url = NineRouterConfig::default().base_url;
         }
-        self.nine_router.base_url = self.nine_router.base_url.trim().trim_end_matches('/').to_string();
+        self.nine_router.base_url = self
+            .nine_router
+            .base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
         if !NINE_ROUTER_PERIODS.contains(&self.nine_router.period.as_str()) {
             self.nine_router.period = NineRouterConfig::default().period;
         }
         let min_spend = self.nine_router.min_spend_usd;
-        self.nine_router.min_spend_usd = if min_spend.is_finite() { min_spend.max(0.0) } else { 0.0 };
+        self.nine_router.min_spend_usd = if min_spend.is_finite() {
+            min_spend.max(0.0)
+        } else {
+            0.0
+        };
         let a = &mut self.alerts;
-        a.threshold = if a.threshold.is_finite() { a.threshold.clamp(1.0, 100.0) } else { 90.0 };
+        a.threshold = if a.threshold.is_finite() {
+            a.threshold.clamp(1.0, 100.0)
+        } else {
+            90.0
+        };
         for e in [&mut a.exceeded_effect, &mut a.reset_effect] {
             if e.as_str() == "video" {
                 *e = "custom".into();
@@ -588,18 +644,36 @@ impl AppConfig {
         if !MEDIA_SIZES.contains(&a.media_size.as_str()) {
             a.media_size = "medium".into();
         }
-        self.copilot.username = self.copilot.username.trim().trim_start_matches('@').to_string();
-        for sc in [&mut self.shortcuts.toggle, &mut self.shortcuts.open_peak, &mut self.shortcuts.refresh] {
+        self.copilot.username = self
+            .copilot
+            .username
+            .trim()
+            .trim_start_matches('@')
+            .to_string();
+        for sc in [
+            &mut self.shortcuts.toggle,
+            &mut self.shortcuts.open_peak,
+            &mut self.shortcuts.refresh,
+        ] {
             *sc = sc.trim().to_string();
         }
         let mut ids = std::collections::HashSet::new();
-        self.accounts.retain(|a| is_account_id(&a.id) && a.id.starts_with(&format!("{}:", a.provider)) && ids.insert(a.id.clone()));
+        self.accounts.retain(|a| {
+            is_account_id(&a.id)
+                && a.id.starts_with(&format!("{}:", a.provider))
+                && ids.insert(a.id.clone())
+        });
         for (i, a) in self.accounts.iter_mut().enumerate() {
             a.label = a.label.trim().to_string();
             if a.label.is_empty() {
                 a.label = format!("Cuenta {}", i + 2);
             }
-            if a.config_dir.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            if a.config_dir
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
                 a.config_dir = None;
             }
             a.username = a.username.trim().trim_start_matches('@').to_string();
@@ -648,14 +722,18 @@ mod tests {
         assert_eq!(encoded.get("showResets"), Some(&serde_json::json!(false)));
         let mut restored: AppConfig = serde_json::from_value(encoded).unwrap();
         restored.apply_widget_patch(WidgetPatch::default());
-        assert_eq!(serde_json::to_value(&restored).unwrap()["showResets"], false);
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap()["showResets"],
+            false
+        );
         restored.apply_widget_patch(serde_json::from_str(r#"{"showResets":true}"#).unwrap());
         assert_eq!(restored, original);
     }
 
     #[test]
     fn partial_json_fills_defaults() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"refreshMinutes": 0, "nan": {"enabled": true}}"#).unwrap();
+        let cfg: AppConfig =
+            serde_json::from_str(r#"{"refreshMinutes": 0, "nan": {"enabled": true}}"#).unwrap();
         let cfg = cfg.sanitized();
         assert_eq!(cfg.refresh_minutes, 1);
         assert!(cfg.nan.enabled);
@@ -666,7 +744,8 @@ mod tests {
 
     #[test]
     fn invalid_dock_is_fixed() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"dockEdge": "middle", "dockOffset": 3.0}"#).unwrap();
+        let cfg: AppConfig =
+            serde_json::from_str(r#"{"dockEdge": "middle", "dockOffset": 3.0}"#).unwrap();
         let cfg = cfg.sanitized();
         assert_eq!(cfg.dock_edge, "top");
         assert_eq!(cfg.dock_offset, 1.0);
@@ -694,7 +773,14 @@ mod tests {
         assert_eq!(a.reset_media, None);
         assert_eq!(a.media_size, "medium");
         let d = AppConfig::default().alerts;
-        assert_eq!((d.exceeded_effect.as_str(), d.reset_effect.as_str(), d.threshold), ("confetti", "confetti", 90.0));
+        assert_eq!(
+            (
+                d.exceeded_effect.as_str(),
+                d.reset_effect.as_str(),
+                d.threshold
+            ),
+            ("confetti", "confetti", 90.0)
+        );
         assert!(!AppConfig::default().auto_hide);
         assert!(AppConfig::default().auto_update);
     }
@@ -702,13 +788,19 @@ mod tests {
     #[test]
     fn new_providers_default_off_and_shortcuts_on() {
         let cfg = AppConfig::default();
-        assert!(!cfg.gemini.enabled && !cfg.cursor.enabled && !cfg.copilot.enabled && !cfg.openrouter.enabled);
+        assert!(
+            !cfg.gemini.enabled
+                && !cfg.cursor.enabled
+                && !cfg.copilot.enabled
+                && !cfg.openrouter.enabled
+        );
         assert_eq!(cfg.gemini.login_command, "gemini");
         assert_eq!(cfg.shortcuts.toggle, "Ctrl+Alt+U");
         assert!(cfg.shortcuts.enabled);
         assert!(cfg.claude.enabled);
         assert!(cfg.codex.enabled);
-        let c: AppConfig = serde_json::from_str(r#"{"copilot": {"username": " @egdev6 "}}"#).unwrap();
+        let c: AppConfig =
+            serde_json::from_str(r#"{"copilot": {"username": " @egdev6 "}}"#).unwrap();
         assert_eq!(c.sanitized().copilot.username, "egdev6");
     }
 
@@ -735,19 +827,35 @@ mod tests {
         .unwrap();
         let a = cfg.sanitized().accounts;
         assert_eq!(a.len(), 2);
-        assert_eq!((a[0].label.as_str(), a[0].config_dir.clone()), ("Cuenta 2", None));
-        assert_eq!((a[1].label.as_str(), a[1].username.as_str()), ("Otra", "otra"));
+        assert_eq!(
+            (a[0].label.as_str(), a[0].config_dir.clone()),
+            ("Cuenta 2", None)
+        );
+        assert_eq!(
+            (a[1].label.as_str(), a[1].username.as_str()),
+            ("Otra", "otra")
+        );
     }
 
     #[test]
     fn account_session_files() {
         let home = Path::new("/h");
-        let mut a = Account { id: "gemini:w1".into(), provider: "gemini".into(), ..Default::default() };
-        assert_eq!(a.credentials_file(home).unwrap(), crate::channel::home_root(home).join("accounts/gemini-w1/.gemini/oauth_creds.json"));
+        let mut a = Account {
+            id: "gemini:w1".into(),
+            provider: "gemini".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            a.credentials_file(home).unwrap(),
+            crate::channel::home_root(home).join("accounts/gemini-w1/.gemini/oauth_creds.json")
+        );
         assert_eq!(a.session_env(), Some("GEMINI_CLI_HOME"));
         a.provider = "claude".into();
         a.config_dir = Some("/w/.claude-work".into());
-        assert_eq!(a.credentials_file(home).unwrap(), Path::new("/w/.claude-work/.credentials.json"));
+        assert_eq!(
+            a.credentials_file(home).unwrap(),
+            Path::new("/w/.claude-work/.credentials.json")
+        );
         a.provider = "openrouter".into();
         assert_eq!(a.credentials_file(home), None);
     }
@@ -767,8 +875,10 @@ mod tests {
         )
         .unwrap();
         // El widget traía un snapshot obsoleto (sin esa cuenta) pero solo manda campos suyos.
-        let patch: WidgetPatch =
-            serde_json::from_str(r#"{"dockEdge":"left","dockOffset":0.25,"providerOrder":["claude"]}"#).unwrap();
+        let patch: WidgetPatch = serde_json::from_str(
+            r#"{"dockEdge":"left","dockOffset":0.25,"providerOrder":["claude"]}"#,
+        )
+        .unwrap();
         let mut next = saved.clone();
         next.apply_widget_patch(patch);
         let next = next.sanitized();
@@ -788,7 +898,8 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.dock_monitor = Some("DELL".into());
         cfg.hidden_providers = vec!["nan".into()];
-        let patch: WidgetPatch = serde_json::from_str(r#"{"dockMonitor":null,"hiddenProviders":[]}"#).unwrap();
+        let patch: WidgetPatch =
+            serde_json::from_str(r#"{"dockMonitor":null,"hiddenProviders":[]}"#).unwrap();
         cfg.apply_widget_patch(patch);
         let cfg = cfg.sanitized();
         assert_eq!(cfg.dock_monitor, None);
@@ -824,8 +935,11 @@ mod tests {
 
     #[test]
     fn widget_patch_applies_boolean_transitions_to_false() {
-        let mut base: AppConfig = serde_json::from_str(r#"{"compact":true,"alwaysOnTop":true,"autoHide":true}"#).unwrap();
-        let patch: WidgetPatch = serde_json::from_str(r#"{"compact":false,"alwaysOnTop":false,"autoHide":false}"#).unwrap();
+        let mut base: AppConfig =
+            serde_json::from_str(r#"{"compact":true,"alwaysOnTop":true,"autoHide":true}"#).unwrap();
+        let patch: WidgetPatch =
+            serde_json::from_str(r#"{"compact":false,"alwaysOnTop":false,"autoHide":false}"#)
+                .unwrap();
         base.apply_widget_patch(patch);
         let next = base.sanitized();
         assert!(!next.compact);
@@ -871,7 +985,8 @@ mod tests {
     fn widget_patch_out_of_range_live_values_are_sanitized() {
         let mut cfg = AppConfig::default();
         cfg.opacity = 0.94;
-        let patch: WidgetPatch = serde_json::from_str(r#"{"opacity":0.0,"orbSize":4,"accentColor":"rojo"}"#).unwrap();
+        let patch: WidgetPatch =
+            serde_json::from_str(r#"{"opacity":0.0,"orbSize":4,"accentColor":"rojo"}"#).unwrap();
         cfg.apply_widget_patch(patch);
         let cfg = cfg.sanitized();
         assert_eq!(cfg.opacity, 0.3);
@@ -891,7 +1006,10 @@ mod tests {
         assert!(n.show_sub_providers);
         // Base vacía: se restaura la de por defecto.
         let blank: AppConfig = serde_json::from_str(r#"{"nineRouter":{"baseUrl":"  "}}"#).unwrap();
-        assert_eq!(blank.sanitized().nine_router.base_url, "http://localhost:20128");
+        assert_eq!(
+            blank.sanitized().nine_router.base_url,
+            "http://localhost:20128"
+        );
         assert!(!AppConfig::default().nine_router.enabled);
     }
 
@@ -916,7 +1034,8 @@ mod tests {
 
     #[test]
     fn legacy_config_without_locale_uses_es_and_keeps_its_data() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"refreshMinutes": 7, "dockEdge": "left"}"#).unwrap();
+        let cfg: AppConfig =
+            serde_json::from_str(r#"{"refreshMinutes": 7, "dockEdge": "left"}"#).unwrap();
         let cfg = cfg.sanitized();
         assert_eq!(locale_of(&cfg), "es");
         assert_eq!(cfg.refresh_minutes, 7);
@@ -925,7 +1044,13 @@ mod tests {
 
     #[test]
     fn supported_locales_are_kept_and_normalized() {
-        for (raw, expected) in [("es", "es"), ("en", "en"), ("EN", "en"), (" en ", "en"), ("Es", "es")] {
+        for (raw, expected) in [
+            ("es", "es"),
+            ("en", "en"),
+            ("EN", "en"),
+            (" en ", "en"),
+            ("Es", "es"),
+        ] {
             let json = serde_json::json!({ "locale": raw });
             let cfg: AppConfig = serde_json::from_value(json).unwrap();
             assert_eq!(locale_of(&cfg.sanitized()), expected, "locale {raw:?}");
@@ -944,7 +1069,13 @@ mod tests {
     #[test]
     fn null_or_non_string_locale_falls_back_to_es_without_losing_config() {
         // Un `locale` con tipo inesperado no puede tirar el parseo de todo config.json.
-        for raw in [r#"null"#, r#"42"#, r#"true"#, r#"["en"]"#, r#"{"code":"en"}"#] {
+        for raw in [
+            r#"null"#,
+            r#"42"#,
+            r#"true"#,
+            r#"["en"]"#,
+            r#"{"code":"en"}"#,
+        ] {
             let text = format!(r#"{{"locale": {raw}, "refreshMinutes": 9, "compact": true}}"#);
             let path = temp_config_path(&format!("odd-{}", raw.len()));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();

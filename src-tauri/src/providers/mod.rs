@@ -8,15 +8,19 @@ pub mod copilot;
 pub mod cursor;
 pub mod gemini;
 pub mod grok;
-pub mod nan;
 pub mod minimax;
+pub mod nan;
 pub mod nan_cloud;
 pub mod nine_router;
 pub mod nine_router_creds;
 pub mod openai_api;
 pub mod openrouter;
+pub mod zai;
 
-use crate::config::{Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenRouterConfig, SubscriptionConfig};
+use crate::config::{
+    Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenRouterConfig,
+    SubscriptionConfig, ZaiConfig,
+};
 use crate::model::{Kind, UsageReport};
 use crate::secrets;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
@@ -38,7 +42,10 @@ impl<'a> Who<'a> {
     }
 
     pub fn extra(a: &'a Account) -> Self {
-        Self { id: &a.id, label: Some(&a.label) }
+        Self {
+            id: &a.id,
+            label: Some(&a.label),
+        }
     }
 
     pub fn is_main(&self) -> bool {
@@ -65,22 +72,38 @@ impl<'a> Who<'a> {
 pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageReport> {
     let mut jobs: Vec<BoxFuture<'_, Vec<UsageReport>>> = vec![];
     if cfg.claude.enabled {
-        jobs.push(async move { vec![claude::fetch(&cfg.claude, Who::main("claude"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![claude::fetch(&cfg.claude, Who::main("claude"), http).await] }
+                .boxed(),
+        );
     }
     if cfg.codex.enabled {
-        jobs.push(async move { vec![codex::fetch(&cfg.codex, Who::main("codex"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![codex::fetch(&cfg.codex, Who::main("codex"), http).await] }.boxed(),
+        );
     }
     if cfg.gemini.enabled {
-        jobs.push(async move { vec![gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await] }
+                .boxed(),
+        );
     }
     if cfg.grok.enabled {
-        jobs.push(async move { vec![grok::fetch(&cfg.grok, Who::main("grok"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![grok::fetch(&cfg.grok, Who::main("grok"), http).await] }.boxed(),
+        );
     }
     if cfg.cursor.enabled {
-        jobs.push(async move { vec![cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await] }
+                .boxed(),
+        );
     }
     if cfg.copilot.enabled {
-        jobs.push(async move { vec![copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await] }
+                .boxed(),
+        );
     }
     if cfg.nan.enabled {
         jobs.push(async move { vec![nan::fetch(&cfg.nan, Who::main("nan"), http).await] }.boxed());
@@ -89,7 +112,10 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
         jobs.push(async move { vec![openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await] }.boxed());
     }
     if cfg.minimax.enabled {
-        jobs.push(async move { vec![minimax::fetch(&cfg.minimax, Who::main("minimax"), http).await] }.boxed());
+        jobs.push(
+            async move { vec![minimax::fetch(&cfg.minimax, Who::main("minimax"), http).await] }
+                .boxed(),
+        );
     }
     if cfg.nine_router.enabled {
         // 9Router lleva su propio registro de uso; ademas del orbe agregado,
@@ -97,21 +123,39 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
         jobs.push(nine_router_all(cfg, http));
     }
     if cfg.anthropic_api.enabled {
-        jobs.push(async move { vec![anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await] }.boxed());
+        jobs.push(
+            async move {
+                vec![
+                    anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http)
+                        .await,
+                ]
+            }
+            .boxed(),
+        );
     }
     if cfg.openai_api.enabled {
         jobs.push(async move { vec![openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await] }.boxed());
     }
+    if cfg.zai.enabled {
+        jobs.push(async move { vec![zai::fetch(&cfg.zai, Who::main("zai"), http).await] }.boxed());
+    }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
         jobs.push(async move { vec![fetch_account(cfg, a, http).await] }.boxed());
     }
-    futures::future::join_all(jobs).await.into_iter().flatten().collect()
+    futures::future::join_all(jobs)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Orbe de 9Router más un informe por cada sub-proveedor que haya visto
 /// (Claude, Kiro, GLM…). Los sub-proveedores se descubren desde el propio
 /// historial de uso de 9Router: no se configuran a mano.
-fn nine_router_all<'a>(cfg: &'a AppConfig, http: &'a reqwest::Client) -> BoxFuture<'a, Vec<UsageReport>> {
+fn nine_router_all<'a>(
+    cfg: &'a AppConfig,
+    http: &'a reqwest::Client,
+) -> BoxFuture<'a, Vec<UsageReport>> {
     // Una sola lectura de stats alimenta el orbe agregado y todos los sub-orbes.
     async move { nine_router::fetch_all(&cfg.nine_router, http).await }.boxed()
 }
@@ -132,8 +176,11 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         "openrouter" => openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await,
         "minimax" => minimax::fetch(&cfg.minimax, Who::main("minimax"), http).await,
         "nine_router" => nine_router::fetch(&cfg.nine_router, Who::main("nine_router"), http).await,
-        "anthropic_api" => anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await,
+        "anthropic_api" => {
+            anthropic_api::fetch(&cfg.anthropic_api, Who::main("anthropic_api"), http).await
+        }
         "openai_api" => openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await,
+        "zai" => zai::fetch(&cfg.zai, Who::main("zai"), http).await,
         _ => return None,
     })
 }
@@ -145,25 +192,41 @@ pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
     if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
         return a.credentials_file(home);
     }
-    let main = |c: &SubscriptionConfig, default: PathBuf| match c.credentials_path.as_deref().map(str::trim) {
+    let main = |c: &SubscriptionConfig, default: PathBuf| match c
+        .credentials_path
+        .as_deref()
+        .map(str::trim)
+    {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => default,
     };
     match id {
-        "claude" => Some(main(&cfg.claude, home.join(".claude").join(".credentials.json"))),
+        "claude" => Some(main(
+            &cfg.claude,
+            home.join(".claude").join(".credentials.json"),
+        )),
         "codex" => codex::resolved_auth_path(cfg.codex.credentials_path.as_deref()).ok(),
-        "gemini" => Some(main(&cfg.gemini, home.join(".gemini").join("oauth_creds.json"))),
+        "gemini" => Some(main(
+            &cfg.gemini,
+            home.join(".gemini").join("oauth_creds.json"),
+        )),
         "grok" => grok::resolved_auth_path(cfg.grok.credentials_path.as_deref()).ok(),
         _ => None,
     }
 }
 
 /// Consulta una cuenta adicional con la config de su proveedor adaptada a ella.
-fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Client) -> BoxFuture<'a, UsageReport> {
+fn fetch_account<'a>(
+    cfg: &'a AppConfig,
+    a: &'a Account,
+    http: &'a reqwest::Client,
+) -> BoxFuture<'a, UsageReport> {
     let who = Who::extra(a);
     let session = |main: &SubscriptionConfig| SubscriptionConfig {
         enabled: true,
-        credentials_path: a.credentials_file(&home()).map(|p| p.to_string_lossy().into_owned()),
+        credentials_path: a
+            .credentials_file(&home())
+            .map(|p| p.to_string_lossy().into_owned()),
         login_command: main.login_command.clone(),
     };
     match a.provider.as_str() {
@@ -172,12 +235,18 @@ fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Clie
         "gemini" => async move { gemini::fetch(&session(&cfg.gemini), who, http).await }.boxed(),
         "grok" => async move { grok::fetch(&session(&cfg.grok), who, http).await }.boxed(),
         // Solo con su token: la sesión de la app de Cursor es la de la cuenta principal.
-        "cursor" => async move { cursor::fetch(&SubscriptionConfig::default(), who, http).await }.boxed(),
+        "cursor" => {
+            async move { cursor::fetch(&SubscriptionConfig::default(), who, http).await }.boxed()
+        }
         "copilot" => {
             let c = CopilotConfig {
                 enabled: true,
                 username: a.username.clone(),
-                plan: if a.plan.is_empty() { CopilotConfig::default().plan } else { a.plan.clone() },
+                plan: if a.plan.is_empty() {
+                    CopilotConfig::default().plan
+                } else {
+                    a.plan.clone()
+                },
                 custom_allowance: a.custom_allowance,
             };
             async move { copilot::fetch(&c, who, http).await }.boxed()
@@ -189,11 +258,20 @@ fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Clie
             }
             async move { nan::fetch(&c, who, http).await }.boxed()
         }
-        "openrouter" => async move { openrouter::fetch(&OpenRouterConfig { enabled: true }, who, http).await }.boxed(),
+        "openrouter" => {
+            async move { openrouter::fetch(&OpenRouterConfig { enabled: true }, who, http).await }
+                .boxed()
+        }
         // Sub-proveedor de 9Router (`nine_router:claude`): filtra su uso en las stats.
-        "nine_router" => async move { nine_router::fetch(&cfg.nine_router, who, http).await }.boxed(),
+        "nine_router" => {
+            async move { nine_router::fetch(&cfg.nine_router, who, http).await }.boxed()
+        }
+        "zai" => async move { zai::fetch(&ZaiConfig { enabled: true }, who, http).await }.boxed(),
         "anthropic_api" | "openai_api" => {
-            let c = ApiCostConfig { enabled: true, monthly_budget_usd: a.monthly_budget_usd };
+            let c = ApiCostConfig {
+                enabled: true,
+                monthly_budget_usd: a.monthly_budget_usd,
+            };
             if a.provider == "anthropic_api" {
                 async move { anthropic_api::fetch(&c, who, http).await }.boxed()
             } else {
@@ -201,7 +279,10 @@ fn fetch_account<'a>(cfg: &'a AppConfig, a: &'a Account, http: &'a reqwest::Clie
             }
         }
         other => {
-            let r = who.report(other, Kind::Subscription).fail(crate::model::Status::Error, format!("Proveedor desconocido: {other}"));
+            let r = who.report(other, Kind::Subscription).fail(
+                crate::model::Status::Error,
+                format!("Proveedor desconocido: {other}"),
+            );
             async move { r }.boxed()
         }
     }
@@ -216,8 +297,14 @@ pub(crate) fn month_start(now: DateTime<Utc>) -> DateTime<Utc> {
 
 /// Primer instante del mes siguiente (UTC).
 pub(crate) fn next_month_start(now: DateTime<Utc>) -> DateTime<Utc> {
-    let (y, m) = if now.month() == 12 { (now.year() + 1, 1) } else { (now.year(), now.month() + 1) };
-    Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().unwrap_or(now)
+    let (y, m) = if now.month() == 12 {
+        (now.year() + 1, 1)
+    } else {
+        (now.year(), now.month() + 1)
+    };
+    Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0)
+        .single()
+        .unwrap_or(now)
 }
 
 /// Reinicio y duración del mes natural en curso, para medidores mensuales.
@@ -232,7 +319,10 @@ pub(crate) fn unix_to_rfc3339(secs: i64) -> Option<String> {
 }
 
 /// Ruta explícita si existe; si no, la primera candidata que exista.
-pub(crate) fn resolve_path(explicit: Option<&str>, candidates: &[PathBuf]) -> Result<PathBuf, String> {
+pub(crate) fn resolve_path(
+    explicit: Option<&str>,
+    candidates: &[PathBuf],
+) -> Result<PathBuf, String> {
     if let Some(p) = explicit {
         let p = PathBuf::from(p.trim());
         return if p.is_file() {
@@ -252,7 +342,8 @@ pub(crate) fn resolve_path(explicit: Option<&str>, candidates: &[PathBuf]) -> Re
 }
 
 pub(crate) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("No puedo leer {}: {e}", path.display()))?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("No puedo leer {}: {e}", path.display()))?;
     serde_json::from_str(&raw).map_err(|e| format!("JSON inválido en {}: {e}", path.display()))
 }
 
@@ -262,13 +353,20 @@ pub(crate) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
 /// sin que la app toque los tokens.
 pub fn session_stamp(cfg: &AppConfig) -> u64 {
     let h = home();
-    let main = |c: &SubscriptionConfig, default: PathBuf| match c.credentials_path.as_deref().map(str::trim) {
+    let main = |c: &SubscriptionConfig, default: PathBuf| match c
+        .credentials_path
+        .as_deref()
+        .map(str::trim)
+    {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => default,
     };
     let mut files: Vec<PathBuf> = vec![];
     if cfg.claude.enabled {
-        files.push(main(&cfg.claude, h.join(".claude").join(".credentials.json")));
+        files.push(main(
+            &cfg.claude,
+            h.join(".claude").join(".credentials.json"),
+        ));
     }
     if cfg.codex.enabled {
         // Mismo resolver que `codex::fetch`: así el sello observa el fichero
@@ -278,7 +376,10 @@ pub fn session_stamp(cfg: &AppConfig) -> u64 {
         }
     }
     if cfg.gemini.enabled {
-        files.push(main(&cfg.gemini, h.join(".gemini").join("oauth_creds.json")));
+        files.push(main(
+            &cfg.gemini,
+            h.join(".gemini").join("oauth_creds.json"),
+        ));
     }
     if cfg.grok.enabled {
         // Mismo resolver que `grok::fetch`: el sello observa el fichero que de
@@ -287,7 +388,12 @@ pub fn session_stamp(cfg: &AppConfig) -> u64 {
             files.push(p);
         }
     }
-    files.extend(cfg.accounts.iter().filter(|a| a.enabled).filter_map(|a| a.credentials_file(&h)));
+    files.extend(
+        cfg.accounts
+            .iter()
+            .filter(|a| a.enabled)
+            .filter_map(|a| a.credentials_file(&h)),
+    );
     files
         .iter()
         .filter_map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
@@ -316,7 +422,8 @@ mod tests {
 
     /// Carpeta temporal propia de cada prueba, sin tocar el HOME real.
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("quorb-session-file-{}-{tag}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("quorb-session-file-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -336,30 +443,54 @@ mod tests {
         let home = temp_dir("home");
         let claude_dir = home.join("claude-w1");
         std::fs::create_dir_all(&claude_dir).unwrap();
-        let cfg = AppConfig { accounts: vec![extra_account("claude", &claude_dir)], ..Default::default() };
+        let cfg = AppConfig {
+            accounts: vec![extra_account("claude", &claude_dir)],
+            ..Default::default()
+        };
         // Cuenta adicional: fichero del CLI dentro de su propia carpeta.
-        assert_eq!(session_file(&cfg, "claude:w1", &home), Some(claude_dir.join(".credentials.json")));
+        assert_eq!(
+            session_file(&cfg, "claude:w1", &home),
+            Some(claude_dir.join(".credentials.json"))
+        );
 
         // Cuenta adicional de Codex: `auth.json` de su carpeta.
         let codex_dir = home.join("codex-w1");
         std::fs::create_dir_all(&codex_dir).unwrap();
-        let cfg = AppConfig { accounts: vec![extra_account("codex", &codex_dir)], ..Default::default() };
-        assert_eq!(session_file(&cfg, "codex:w1", &home), Some(codex_dir.join("auth.json")));
+        let cfg = AppConfig {
+            accounts: vec![extra_account("codex", &codex_dir)],
+            ..Default::default()
+        };
+        assert_eq!(
+            session_file(&cfg, "codex:w1", &home),
+            Some(codex_dir.join("auth.json"))
+        );
 
         // Cuenta adicional de Grok: mismo `auth.json` en su carpeta.
         let grok_dir = home.join("grok-w1");
         std::fs::create_dir_all(&grok_dir).unwrap();
-        let cfg = AppConfig { accounts: vec![extra_account("grok", &grok_dir)], ..Default::default() };
-        assert_eq!(session_file(&cfg, "grok:w1", &home), Some(grok_dir.join("auth.json")));
+        let cfg = AppConfig {
+            accounts: vec![extra_account("grok", &grok_dir)],
+            ..Default::default()
+        };
+        assert_eq!(
+            session_file(&cfg, "grok:w1", &home),
+            Some(grok_dir.join("auth.json"))
+        );
 
         // Proveedor sin login por CLI: nunca hay fichero de sesión.
         let or_dir = home.join("openrouter-w1");
         std::fs::create_dir_all(&or_dir).unwrap();
-        let cfg = AppConfig { accounts: vec![extra_account("openrouter", &or_dir)], ..Default::default() };
+        let cfg = AppConfig {
+            accounts: vec![extra_account("openrouter", &or_dir)],
+            ..Default::default()
+        };
         assert_eq!(session_file(&cfg, "openrouter:w1", &home), None);
 
         // Id que no existe en la config.
-        assert_eq!(session_file(&AppConfig::default(), "claude:otra", &home), None);
+        assert_eq!(
+            session_file(&AppConfig::default(), "claude:otra", &home),
+            None
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -368,17 +499,29 @@ mod tests {
     fn session_file_main_uses_credentials_path_or_home_default() {
         let home = temp_dir("main");
         let cfg = AppConfig::default();
-        assert_eq!(session_file(&cfg, "claude", &home), Some(home.join(".claude").join(".credentials.json")));
-        assert_eq!(session_file(&cfg, "gemini", &home), Some(home.join(".gemini").join("oauth_creds.json")));
+        assert_eq!(
+            session_file(&cfg, "claude", &home),
+            Some(home.join(".claude").join(".credentials.json"))
+        );
+        assert_eq!(
+            session_file(&cfg, "gemini", &home),
+            Some(home.join(".gemini").join("oauth_creds.json"))
+        );
         assert_eq!(session_file(&cfg, "cursor", &home), None);
         assert_eq!(session_file(&cfg, "desconocido", &home), None);
 
         let mut cfg = AppConfig::default();
         cfg.claude.credentials_path = Some("/tmp/creds/claude.json".into());
-        assert_eq!(session_file(&cfg, "claude", &home), Some(PathBuf::from("/tmp/creds/claude.json")));
+        assert_eq!(
+            session_file(&cfg, "claude", &home),
+            Some(PathBuf::from("/tmp/creds/claude.json"))
+        );
         // Ruta explícita vacía o solo espacios: se usa la de siempre.
         cfg.claude.credentials_path = Some("   ".into());
-        assert_eq!(session_file(&cfg, "claude", &home), Some(home.join(".claude").join(".credentials.json")));
+        assert_eq!(
+            session_file(&cfg, "claude", &home),
+            Some(home.join(".claude").join(".credentials.json"))
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -387,22 +530,30 @@ mod tests {
     fn session_file_preserves_paths_with_spaces_and_non_ascii() {
         let home = temp_dir("spaces");
         let mut cfg = AppConfig::default();
-        cfg.claude.credentials_path = Some("/tmp/mi configuración/.claude/.credentials.json".into());
+        cfg.claude.credentials_path =
+            Some("/tmp/mi configuración/.claude/.credentials.json".into());
         assert_eq!(
             session_file(&cfg, "claude", &home),
-            Some(PathBuf::from("/tmp/mi configuración/.claude/.credentials.json"))
+            Some(PathBuf::from(
+                "/tmp/mi configuración/.claude/.credentials.json"
+            ))
         );
         cfg.gemini.credentials_path = Some("/home/usuario/Configuración ñ/oauth_creds.json".into());
         assert_eq!(
             session_file(&cfg, "gemini", &home),
-            Some(PathBuf::from("/home/usuario/Configuración ñ/oauth_creds.json"))
+            Some(PathBuf::from(
+                "/home/usuario/Configuración ñ/oauth_creds.json"
+            ))
         );
         let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
     fn resolve_path_error_lists_candidate_paths() {
-        let candidates = [PathBuf::from("/home/u/.claude/.credentials.json"), PathBuf::from("/var/lib/creds x.json")];
+        let candidates = [
+            PathBuf::from("/home/u/.claude/.credentials.json"),
+            PathBuf::from("/var/lib/creds x.json"),
+        ];
         let err = resolve_path(Some("/no existe/ruta con espacios.json"), &candidates).unwrap_err();
         // La ruta con espacios y la lista de candidatos aparecen en el mensaje.
         assert!(err.contains("/no existe/ruta con espacios.json"));
@@ -413,7 +564,10 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 10, 6, 15, 30, 0).unwrap();
         assert_eq!(month_start(now).to_rfc3339(), "2026-10-01T00:00:00+00:00");
         let dec = Utc.with_ymd_and_hms(2026, 12, 20, 0, 0, 0).unwrap();
-        assert_eq!(next_month_start(dec).to_rfc3339(), "2027-01-01T00:00:00+00:00");
+        assert_eq!(
+            next_month_start(dec).to_rfc3339(),
+            "2027-01-01T00:00:00+00:00"
+        );
         assert_eq!(month_window(now).1, 31 * 86400);
     }
 }

@@ -39,6 +39,7 @@ const LINKS = {
   openrouterKeys: 'https://openrouter.ai/settings/keys',
   minimaxKeys: 'https://www.minimax.io/',
   minimaxKeysCn: 'https://www.minimaxi.com/',
+  zaiKeys: 'https://z.ai/manage-apikey/apikey-list',
   geminiCli: 'https://github.com/google-gemini/gemini-cli',
   grokCli: 'https://x.ai/',
   releases: 'https://github.com/egdev6/quorb/releases',
@@ -993,6 +994,22 @@ function AccountEditor({
           </>
         )}
 
+        {a.provider === 'zai' && (
+          <>
+            <li data-done={has('zai_api_key') || undefined}>
+              <b>API key</b>
+              <SecretInput
+                id={key('zai_api_key')}
+                label="API key"
+                configured={has('zai_api_key')}
+                onSaved={onSecrets}
+                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+              />
+            </li>
+            {check}
+          </>
+        )}
+
         {(a.provider === 'anthropic_api' || a.provider === 'openai_api') && (
           <>
             <li data-done={has(adminKey) || undefined}>
@@ -1051,9 +1068,8 @@ const PROVIDER_TABS = [
   { id: 'openrouter', name: 'OpenRouter', group: 'api', desc: 'Saldo y gasto por clave' },
   { id: 'anthropic_api', name: 'Anthropic API', group: 'api', desc: 'Gasto del mes con clave de admin' },
   { id: 'openai_api', name: 'OpenAI API', group: 'api', desc: 'Gasto del mes con clave de admin' },
-
   { id: 'nine_router', name: '9Router', group: 'api', desc: 'Pasarela local · uso y gasto agregados' },
-
+  { id: 'zai', name: 'z.ai', group: 'sub', desc: 'GLM Coding Plan · cuotas de 5 h, semanales y web tools' },
 ] as const;
 /** Secciones de Ajustes, una por responsabilidad (rediseño de Quorb en Claude Design). */
 const PAGES = [
@@ -1101,6 +1117,28 @@ function providerState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): Provid
   return main === 'off' && extras.length > 0 ? 'on' : main;
 }
 
+/** Errores y avisos del último registro de atajos, para el panel de «Atajos».
+ *  Extraída igual que SettingsNav para poder renderizarla en pruebas sin montar
+ *  la ventana completa. Los errores son fallos de registro (rojo, alert); los
+ *  avisos son degradación informada — p. ej. registro vía X11/XWayland bajo
+ *  Wayland (#181) — y se muestran neutros, sin afirmar activación. */
+export function ShortcutNotices({ errors, warnings }: { errors: string[]; warnings: string[] }) {
+  return (
+    <>
+      {errors.map((e) => (
+        <div key={e} className="eg-notice eg-notice--danger eg-notice--sm" role="alert">
+          <span className="eg-notice__text">{e}</span>
+        </div>
+      ))}
+      {warnings.map((w) => (
+        <div key={w} className="eg-notice eg-notice--warning eg-notice--sm" role="status">
+          <span className="eg-notice__text">{w}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderState {
   const on = (enabled: boolean, ready = true): ProviderState => (!enabled ? 'off' : ready ? 'on' : 'warn');
   switch (id) {
@@ -1129,6 +1167,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.openaiApi.enabled, !!s.openai_admin_key);
     case 'nine_router':
       return on(cfg.nineRouter.enabled, !!s.nine_router_password);
+    case 'zai':
+      return on(cfg.zai.enabled, !!s.zai_api_key);
   }
 }
 
@@ -1166,6 +1206,7 @@ export function SettingsNav({
   onToggleNav,
   pendingProviders,
   shortcutErrors,
+  shortcutWarnings,
 }: {
   appName: string | null;
   section: PageId;
@@ -1175,6 +1216,7 @@ export function SettingsNav({
   onToggleNav: () => void;
   pendingProviders: number;
   shortcutErrors: string[];
+  shortcutWarnings: string[];
 }) {
   return (
     <aside className="q-settings__nav" aria-label="Quorb">
@@ -1204,7 +1246,9 @@ export function SettingsNav({
                 {p.id === 'providers' && pendingProviders > 0 && (
                   <span className="eg-menu__count" title="Activos pero sin configurar">{pendingProviders}</span>
                 )}
-                {p.id === 'shortcuts' && shortcutErrors.length > 0 && <span className="eg-menu__count">{shortcutErrors.length}</span>}
+                {p.id === 'shortcuts' && shortcutErrors.length + shortcutWarnings.length > 0 && (
+                  <span className="eg-menu__count">{shortcutErrors.length + shortcutWarnings.length}</span>
+                )}
               </button>
             </li>
           ))}
@@ -1355,6 +1399,7 @@ export function Settings() {
     document.querySelector('.q-settings__main')?.scrollTo({ top: 0 });
   };
   const [shortcutErrors, setShortcutErrors] = useState<string[]>([]);
+  const [shortcutWarnings, setShortcutWarnings] = useState<string[]>([]);
   const savedTimer = useRef<number | undefined>(undefined);
   // Ciclo de vida: en `false` no se actualiza la UI ni se recrean timers.
   const aliveRef = useRef(true);
@@ -1402,6 +1447,7 @@ export function Settings() {
       .catch(console.error);
     loadSecrets();
     api.shortcutErrors().then(setShortcutErrors).catch(() => {});
+    api.shortcutWarnings().then(setShortcutWarnings).catch(() => {});
   }, []);
 
   // Ciclo de vida del autostart (simétrico para StrictMode): la lectura inicial
@@ -1553,14 +1599,16 @@ export function Settings() {
         // No descartes ediciones hechas mientras se guardaba: adopta lo canónico
         // del backend salvo en los campos que el usuario tocó después.
         setCfg((latest) => (latest ? reconcileSaved(snapshot, savedCfg, latest) : savedCfg));
-        const [errors, status] = await Promise.all([
+        const [errors, warnings, status] = await Promise.all([
           api.shortcutErrors().catch(() => []),
+          api.shortcutWarnings().catch(() => []),
           // secret_status solo enumera cuentas persistidas: sin releerlo, una key
           // guardada antes de crear la cuenta deja el proveedor en «Falta conectar».
           reloadSecretsAfterSave(result.config, () => api.secretStatus()).catch(() => null),
         ]);
         if (!aliveRef.current) return false;
         setShortcutErrors(errors);
+        setShortcutWarnings(warnings);
         if (status) setSecrets(status);
       }
       // Mensaje explícito por parte: nunca un «Guardado ✓» conjunto falso.
@@ -1666,6 +1714,7 @@ export function Settings() {
         onToggleNav={toggleNav}
         pendingProviders={pendingProviders}
         shortcutErrors={shortcutErrors}
+        shortcutWarnings={shortcutWarnings}
       />
 
       <main className="q-settings__main">
@@ -2025,6 +2074,26 @@ export function Settings() {
         </Section>
       )}
 
+      {tab === 'zai' && (
+        <Section kicker="Suscripción · GLM Coding Plan" title="z.ai">
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
+          <p className="q-note">Cuotas de coding de las últimas 5 h y de la semana, y cuota mensual de web tools del Coding Plan.</p>
+          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
+            <li data-done={!!secrets.zai_api_key || undefined}>
+              <b>API key</b>
+              <SecretInput
+                id="zai_api_key"
+                label="API key"
+                configured={!!secrets.zai_api_key}
+                onSaved={loadSecrets}
+                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+              />
+            </li>
+            <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
+          </ol>
+        </Section>
+      )}
+
       {tab === 'nan' && (
         <Section kicker="Suscripción · cuenta o API key" title="NaN Builders">
           <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
@@ -2379,11 +2448,7 @@ export function Settings() {
                       </tbody>
                     </table>
                   </div>
-                  {shortcutErrors.map((e) => (
-                    <div key={e} className="eg-notice eg-notice--danger eg-notice--sm" role="alert">
-                      <span className="eg-notice__text">{e}</span>
-                    </div>
-                  ))}
+                  <ShortcutNotices errors={shortcutErrors} warnings={shortcutWarnings} />
                   <small className="eg-field__hint">Pulsa un atajo o «Cambiar» y teclea la combinación. Se aplican al guardar.</small>
                 </>
               )}
