@@ -370,24 +370,34 @@ const yamlScalar = (value) => {
 };
 
 /**
- * Narrow execution contract for the exact command form the workflow uses. This
- * is deliberately not a shell parser: it accredits only a small subset and
- * anything outside it accredits nothing, so extending the subset needs a
- * fixture proving the new form is real execution.
+ * Canonical gate contract, narrowed after the #186 review. This is
+ * deliberately not a shell parser: it accredits one exact command form as a
+ * statement of its own, and anything outside it accredits nothing, so
+ * extending the subset needs a fixture proving the new form is real execution.
  *
  * - Operators (`&&`, `||`, `;`, `|`, `&`, newline) count only outside quotes
  *   and comments; `&` inside a redirection (`2>&1`, `&>`) is not an operator.
  * - A run whose syntax leaves the subset accredits nothing: unterminated
  *   quotes, ANSI-C $'...' quoting, line continuations, heredocs, command
- *   substitution, control flow
- *   or function definitions, exit/exec/eval/source/trap/alias, `set +...`.
- * - The check is the simple command `node scripts/i18n-inventory.mjs ... --check`
- *   (so `node --check <path>`, which only syntax-checks, never matches). It
- *   counts only when its failure fails the step: not after `||`, not before
- *   `||`, `|` or `&`. The steps run under GitHub's default `bash -e`/`sh -e`,
- *   so a step or job with `if:`, a `continue-on-error` other than `false`, or
- *   a shell other than bash/sh is not a gate either.
- * - The install is the simple command `npm ci` or `npm install`, under the same rules.
+ *   substitution, control flow or function definitions, exit/exec/eval/
+ *   source/trap/alias, `set +...`.
+ * - The check is the literal command `node scripts/i18n-inventory.mjs --check`
+ *   — exactly those three words (single-word quoting aside). No other word,
+ *   flag or redirection accredits it: `--out --check` makes the CLI consume
+ *   `--check` as the output file name, so searching for the word among the
+ *   arguments would accredit an invocation that never verifies anything.
+ * - The check counts only in statement position: the separator before and
+ *   after it must be '', ';' or a newline. Not after `&&`/`||` (execution is
+ *   conditional: under GitHub's `bash -e`, a failing left side silently skips
+ *   it and later statements can leave the step green) and not before `&&`,
+ *   `||`, `|` or `&` (a later operator can mask its failure). Statement
+ *   position is what the workflow already uses: a dedicated step running the
+ *   canonical command.
+ * - The steps run under GitHub's default `bash -e`/`sh -e`, so a step or job
+ *   with `if:`, a `continue-on-error` other than `false`, or a shell other
+ *   than bash/sh is not a gate either.
+ * - The install is the command `npm ci` or `npm install` (leading words), as a
+ *   statement of its own under the same rules.
  */
 const unwrapQuotes = (word) => word.replace(/^(['"])(.*)\1$/, '$2');
 
@@ -461,6 +471,12 @@ const leavesSubset = ([first, ...args]) =>
   /^[({]|\)$/.test(first) ||
   (first === 'set' && args.some((a) => a.startsWith('+')));
 
+/** Separators that make a command a statement of its own: unconditional execution, failure not masked. */
+const STATEMENT_SEPARATORS = new Set(['', ';', '\n']);
+
+/** The only command the workflow admits as the verification gate. */
+const CHECK_COMMAND = ['node', 'scripts/i18n-inventory.mjs', '--check'];
+
 /** Ordered 'install'/'check' events a run command performs as gates. */
 const runEvents = (cmd) => {
   const commands = splitShellCommands(cmd);
@@ -468,9 +484,10 @@ const runEvents = (cmd) => {
   const parsed = commands.map((c, i) => ({ words: commandWords(c.text), before: i > 0 ? commands[i - 1].op : '', after: c.op }));
   if (parsed.some(({ words }) => leavesSubset(words))) return [];
   return parsed
-    .filter(({ before, after }) => before !== '||' && !['||', '|', '&'].includes(after))
+    .filter(({ before, after }) => STATEMENT_SEPARATORS.has(before) && STATEMENT_SEPARATORS.has(after))
     .map(({ words }) => {
-      if (words[0] === 'node' && words[1] === 'scripts/i18n-inventory.mjs' && words.includes('--check')) return 'check';
+      const isCheck = words.length === CHECK_COMMAND.length && CHECK_COMMAND.every((w, i) => words[i] === w);
+      if (isCheck) return 'check';
       if (words[0] === 'npm' && (words[1] === 'ci' || words[1] === 'install')) return 'install';
       return null;
     })
@@ -593,8 +610,8 @@ test('echoing the check command is not executing it (#160)', () => {
   ].join('\n');
   assert.equal(
     runsCheckAfterInstall(parseWorkflowRuns(compound)),
-    true,
-    'a real check segment after && in the same command still counts as execution',
+    false,
+    'a check after && runs only if echo succeeds: not a gate (#186 review)',
   );
 });
 
@@ -621,8 +638,8 @@ test('separators inside quotes or comments do not fabricate a check segment (#16
   );
   assert.equal(
     runsCheck('echo "texto" && node scripts/i18n-inventory.mjs --check'),
-    true,
-    'a real check after a closed quote and && still counts',
+    false,
+    'after && the check is conditional execution, quotes closed or not (#186 review)',
   );
 
   const quotedInWorkflow = [
@@ -669,14 +686,43 @@ test('control flow that may skip the check does not accredit it (#160)', () => {
   assert.equal(runsCheck(`echo $'a\\' ; ${CHECK} ; \\'' x`), false, 'ANSI-C quoting keeps an escaped quote open');
 });
 
+test('a check after && is conditional execution and accredits nothing (#186 review)', () => {
+  // Maintainer repro: under GitHub's default `bash -e`, `false` is exempt from
+  // errexit as a non-final `&&` member, node never runs, and the trailing echo
+  // leaves the step green. Being after `&&` does not accredit execution.
+  assert.equal(runsCheck(`false && ${CHECK}\necho terminado`), false, 'a && guard can skip the check and stay green');
+  assert.equal(
+    accredits(workflowWith('      - run: |', `          false && ${CHECK}`, '          echo terminado')),
+    false,
+    'end to end: the guarded check leaves no gate',
+  );
+});
+
+test('a --check word consumed as the value of --out is not the check (#186 review)', () => {
+  // `--out` takes the next token, so `--out --check` writes the document to a
+  // file named `--check` instead of verifying anything. Finding the word among
+  // the arguments accredits an invocation that never checks.
+  assert.equal(runsCheck('node scripts/i18n-inventory.mjs --out --check'), false, 'the flag must be parsed as argv, not searched');
+  assert.equal(
+    accredits(workflowWith('      - run: node scripts/i18n-inventory.mjs --out --check')),
+    false,
+    'end to end: only the literal canonical invocation is a gate',
+  );
+});
+
 test('a check whose failure cannot fail the step does not accredit it (#160)', () => {
   assert.equal(accredits(workflowWith(`      - run: ${CHECK} || true`)), false, '|| true masks the failure');
   assert.equal(accredits(workflowWith(`      - run: ${CHECK} | tee out.txt`)), false, 'a pipe reports the exit code of tee');
   assert.equal(accredits(workflowWith(`      - run: ${CHECK} &`)), false, 'a background check is never awaited');
   assert.equal(accredits(workflowWith('      - run: |', '          set +e', `          ${CHECK}`)), false, 'set +e lets the step pass after a failed check');
-  assert.equal(accredits(workflowWith(`      - run: ${CHECK} && echo ok`)), true, 'a check followed by && still fails the step');
-  assert.equal(accredits(workflowWith(`      - run: ${CHECK} 2>&1`)), true, 'a redirection is not a background operator');
-  assert.equal(accredits(workflowWith(`      - run: ${CHECK} > report.txt`)), true, 'an output redirection keeps the exit code');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} && echo ok`)), false, 'a check before && can be masked by later statements; only statement position accredits (#186 review)');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} 2>&1`)), false, 'only the literal canonical command accredits; extra words are not the gate (#186 review)');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} > report.txt`)), false, 'an output redirection is not the canonical invocation (#186 review)');
+});
+
+test('compound runs still accredit the check in statement position (#186 review)', () => {
+  assert.equal(accredits(workflowWith(`      - run: npm test; ${CHECK}`)), true, 'a ;-separated check runs unconditionally and fails the step under bash -e');
+  assert.equal(accredits(workflowWith('      - run: |', `          ${CHECK}`, '          echo done')), true, 'a failed plain check still fails the step before any later statement');
 });
 
 test('step and job settings that skip or tolerate the check do not accredit it (#160)', () => {
@@ -720,6 +766,18 @@ test('CLI rejects unknown arguments without writing', () => {
     assert.equal(res.status, 2);
     assert.match(res.stderr, /unknown argument: --nope/);
     assert.equal(fs.existsSync(path.join(dir, 'docs')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI: --out consumes the next token, so `--out --check` writes, never checks (#186 review)', () => {
+  const dir = makeRepo();
+  try {
+    const res = run(dir, '--out', '--check');
+    assert.equal(res.status, 0, 'the invocation writes the document');
+    assert.equal(fs.existsSync(path.join(dir, '--check')), true, '--check became the output file name');
+    assert.equal(fs.existsSync(path.join(dir, 'docs/i18n-inventory.md')), false, 'the default output was not verified');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
