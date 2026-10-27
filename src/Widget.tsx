@@ -1018,6 +1018,7 @@ export function Widget() {
               size={orbSize}
               active={hovered === r.id}
               account={tags[r.id]}
+              locale={locale}
               showResets={config?.showResets ?? true}
               threshold={config?.alerts.threshold}
               dragging={reorder?.id === r.id}

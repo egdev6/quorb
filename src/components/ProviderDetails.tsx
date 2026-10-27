@@ -13,14 +13,14 @@ const RANGES = [
   { hours: 24 * 30, key: 'details.range30d' },
 ] as const;
 
-function untilText(d: Date): string {
-  return formatResetIn(d.toISOString()) ?? '';
+function untilText(d: Date, locale: Locale): string {
+  return formatResetIn(d.toISOString(), new Date(), locale) ?? '';
 }
 
 function paceText(p: Pace, locale: Locale): string {
   if (p.ratio == null) return t(locale, 'details.windowJustStarted');
   const r = p.ratio.toLocaleString(intlLocale(locale), { maximumFractionDigits: 1 });
-  if (p.status === 'over' && p.exhaustAt) return t(locale, 'details.paceBurnsOut', { pace: r, when: untilText(p.exhaustAt) });
+  if (p.status === 'over' && p.exhaustAt) return t(locale, 'details.paceBurnsOut', { pace: r, when: untilText(p.exhaustAt, locale) });
   if (p.status === 'over') return t(locale, 'details.paceWontLast', { pace: r });
   return t(locale, 'details.paceProjected', { pace: r, pct: Math.round(p.projected ?? 0) });
 }
@@ -144,8 +144,8 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
           <span className="eg-notice__text">
             <b>{t(locale, 'details.atThisPace')}</b>{' '}
             {t(locale, 'details.paceNotice', {
-              label: shortLabel(risk.m.label, risk.m.id),
-              when: risk.pace.exhaustAt ? ` ${untilText(risk.pace.exhaustAt)}` : '',
+              label: shortLabel(risk.m.label, risk.m.id, locale),
+              when: risk.pace.exhaustAt ? ` ${untilText(risk.pace.exhaustAt, locale)}` : '',
             })}
           </span>
         </div>
@@ -163,7 +163,7 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
               pace && (
                 <div key={m.id || m.label} className="pace" data-status={pace.status}>
                   <span className="pace__row">
-                    <span className="pace__label">{shortLabel(m.label, m.id)}</span>
+                    <span className="pace__label">{shortLabel(m.label, m.id, locale)}</span>
                     <span className="pace__txt">{paceText(pace, locale)}</span>
                   </span>
                   <PaceBar pace={pace} color={color} locale={locale} />

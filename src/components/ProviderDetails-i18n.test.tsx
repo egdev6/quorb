@@ -14,6 +14,21 @@ const report: UsageReport = {
 
 const render = (locale: 'es' | 'en') => renderToStaticMarkup(<ProviderDetails report={report} locale={locale} />);
 
+describe('ProviderDetails meter short label (T2c-S1)', () => {
+  const withMeter: UsageReport = {
+    ...report,
+    meters: [{ id: 'weekly', label: 'Semana · todos', percent: 40, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: 604800 }],
+  };
+  const renderMeter = (locale: 'es' | 'en') => renderToStaticMarkup(<ProviderDetails report={withMeter} locale={locale} />);
+
+  it('shortens known meter labels per locale', () => {
+    // La fila de ritmo es la única vía pública que imprime la etiqueta corta:
+    // con ventana semanal (604800 s) meterPace devuelve un ritmo y la fila se pinta.
+    expect(renderMeter('en')).toContain('Week');
+    expect(renderMeter('es')).toContain('Semana');
+  });
+});
+
 describe('ProviderDetails i18n (SSR)', () => {
   it('renders the Spanish labels verbatim from the current literals for es', () => {
     const html = render('es');

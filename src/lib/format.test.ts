@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCompact, formatResetIn, levelFor, mergeReports, peakMeter, sessionsLost, shortLabel, trayTooltip } from './format';
+import { formatCompact, formatResetIn, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
 import type { UsageReport } from './types';
 
 const base: UsageReport = {
@@ -17,6 +17,38 @@ const base: UsageReport = {
   action: null,
   fetchedAt: '2026-10-06T10:00:00Z',
 };
+
+describe('localized meter shorts, reset times and summary (T2c-S1)', () => {
+  it('shortLabel follows the locale by meter id', () => {
+    expect(shortLabel('Semana · todos', 'weekly', 'en')).toBe('Week');
+    expect(shortLabel('Presupuesto mensual', 'budget_monthly', 'en')).toBe('Budget');
+    expect(shortLabel('Peticiones (ventana)', 'rate_requests', 'en')).toBe('Requests');
+    expect(shortLabel('Semana · todos', 'weekly', 'es')).toBe('Semana');
+    expect(shortLabel('Presupuesto mensual', 'budget_monthly', 'es')).toBe('Presupuesto');
+    // Datos antiguos sin id: la etiqueta es dato y se conserva tal cual.
+    expect(shortLabel('Sesión · 5 h', '', 'en')).toBe('Sesión 5 h');
+  });
+
+  it('formatResetIn follows the locale', () => {
+    const now = new Date('2026-10-06T10:00:00Z');
+    expect(formatResetIn('2026-10-06T10:45:00Z', now, 'en')).toBe('in 45 min');
+    expect(formatResetIn('2026-10-06T12:13:00Z', now, 'en')).toBe('in 2 h 13 min');
+    expect(formatResetIn('2026-10-09T14:00:00Z', now, 'en')).toBe('in 3 d 4 h');
+    expect(formatResetIn('2026-10-06T09:00:00Z', now, 'en')).toBe('now');
+    expect(formatResetIn('2026-10-06T10:45:00Z', now, 'es')).toBe('en 45 min');
+    expect(formatResetIn('2026-10-06T09:00:00Z', now, 'es')).toBe('ahora');
+  });
+
+  it('reportSummary localizes the reset suffix', () => {
+    const r: UsageReport = {
+      ...base,
+      meters: [{ id: 'weekly', label: 'Semana · todos', percent: 50, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: null }],
+    };
+    const now = new Date('2026-10-06T10:00:00Z');
+    expect(reportSummary(r, now, 'en')).toContain('(resets in 45 min)');
+    expect(reportSummary(r, now, 'es')).toContain('(reinicia en 45 min)');
+  });
+});
 
 describe('format', () => {
   it('formats reset distance', () => {
