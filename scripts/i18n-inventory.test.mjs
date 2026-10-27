@@ -256,26 +256,46 @@ test('sections deduplicate and sort texts; --sites prints path:line rows; --chec
 
 /**
  * Structural parse of the GitHub Actions workflow subset we rely on: top-level
- * `jobs:` -> job ids -> `steps:` -> step keys, capturing `run` commands both
- * inline (`run: npm ci`) and as block scalars (`run: |` followed by deeper
- * indented lines). Returns { [jobId]: string[] } with the job's run commands
- * in execution order (steps flattened).
+ * `jobs:` -> job ids -> `steps:` -> step keys. Each step keeps its `run`
+ * command as the shell receives it (plain or YAML-quoted inline scalar, `|`
+ * block joined by newlines, `>` block folded with spaces) together with the
+ * settings that decide whether it runs and whether its failure fails the job:
+ * `if`, `continue-on-error` and the effective `shell` (step, else job
+ * `defaults`, else workflow `defaults`). Keys of nested maps such as `with:`
+ * are not step keys. Returns { [jobId]: { if, continueOnError, steps } } with
+ * steps in execution order.
  */
 function parseWorkflowRuns(yaml) {
   const jobs = {};
-  let inJobs = false;
+  let workflowShell = null;
+  let top = null; // current top-level key
   let job = null;
+  let jobKey = null; // current job-level key (steps, defaults, ...)
   let step = null;
-  let block = null; // { cmds, keyIndent } while inside a `run: |` block scalar
+  let block = null; // { step, folded, lines, contentIndent } inside a run block scalar
 
-  const parseStepKey = (text, keyIndent) => {
-    const run = /^run:\s*(.*)$/.exec(text);
-    if (!run) return; // name/uses/with/working-directory: irrelevant to the command sequence
-    const value = run[1].trim();
-    if (value === '|' || value === '>' || value === '|-' || value === '>-') {
-      block = { cmds: step.cmds, keyIndent };
-    } else if (value) {
-      step.cmds.push(value);
+  const endBlock = () => {
+    const { lines } = block;
+    while (lines.length && lines.at(-1) === '') lines.pop();
+    block.step.run = block.folded ? lines.filter(Boolean).join(' ') : lines.join('\n');
+    block = null;
+  };
+
+  const parseStepKey = (text) => {
+    const kv = /^([\w-]+):\s*(.*)$/.exec(text);
+    if (!kv) return;
+    const [, key, raw] = kv;
+    const value = raw.trim();
+    if (key === 'run' && BLOCK_SCALAR.test(value)) {
+      block = { step, folded: value.startsWith('>'), lines: [], contentIndent: null };
+    } else if (key === 'run') {
+      step.run = yamlScalar(value);
+    } else if (key === 'if') {
+      step.if = true;
+    } else if (key === 'continue-on-error') {
+      step.continueOnError = yamlScalar(value);
+    } else if (key === 'shell') {
+      step.shell = yamlScalar(value);
     }
   };
 
@@ -283,69 +303,195 @@ function parseWorkflowRuns(yaml) {
     const stripped = raw.trim();
     const indent = raw.length - raw.trimStart().length;
     if (block) {
-      if (indent > block.keyIndent) {
-        if (stripped && !stripped.startsWith('#')) block.cmds.push(stripped);
+      // Block content is indented past the step keys (column 8); blank lines belong to it.
+      if (!stripped || indent > 8) {
+        if (stripped && block.contentIndent === null) block.contentIndent = indent;
+        block.lines.push(stripped ? raw.slice(Math.min(indent, block.contentIndent)) : '');
         continue;
       }
-      block = null; // this line is less indented: the block ended
+      endBlock();
     }
     if (!stripped || stripped.startsWith('#')) continue;
+    const kv = /^([\w-]+):\s*(.*)$/.exec(stripped);
     if (indent === 0) {
-      inJobs = stripped === 'jobs:';
+      top = kv ? kv[1] : null;
       job = null;
       step = null;
       continue;
     }
-    if (indent === 2 && stripped.endsWith(':')) {
-      job = inJobs ? stripped.slice(0, -1) : null;
-      if (job) jobs[job] = [];
+    if (top === 'defaults') {
+      if (kv && kv[1] === 'shell') workflowShell = yamlScalar(kv[2].trim());
+      continue;
+    }
+    if (top !== 'jobs') continue;
+    if (indent === 2) {
+      job = stripped.endsWith(':') ? { if: false, continueOnError: null, shell: null, steps: [] } : null;
+      if (job) jobs[stripped.slice(0, -1)] = job;
+      jobKey = null;
       step = null;
       continue;
     }
     if (job === null) continue;
     if (indent === 4) {
-      step = null; // job-level keys (steps:, runs-on:, timeout-minutes:...)
+      step = null;
+      jobKey = kv ? kv[1] : null;
+      if (jobKey === 'if') job.if = true;
+      else if (jobKey === 'continue-on-error') job.continueOnError = yamlScalar(kv[2].trim());
       continue;
     }
+    if (jobKey === 'defaults') {
+      if (kv && kv[1] === 'shell') job.shell = yamlScalar(kv[2].trim());
+      continue;
+    }
+    if (jobKey !== 'steps') continue;
     if (indent === 6 && stripped.startsWith('- ')) {
-      step = { cmds: [] };
-      jobs[job].push(step);
-      parseStepKey(stripped.slice(2), 8);
+      step = { run: null, if: false, continueOnError: null, shell: null };
+      job.steps.push(step);
+      parseStepKey(stripped.slice(2));
       continue;
     }
-    if (indent >= 8 && step) parseStepKey(stripped, 8);
+    if (indent === 8 && step) parseStepKey(stripped);
   }
-  return Object.fromEntries(Object.entries(jobs).map(([id, steps]) => [id, steps.flatMap((s) => s.cmds)]));
+  if (block) endBlock();
+  for (const j of Object.values(jobs)) {
+    for (const s of j.steps) s.shell = s.shell ?? j.shell ?? workflowShell;
+  }
+  return jobs;
 }
 
-const INSTALL_CMD = /^npm (ci|install)(\s|$)/;
+/** `|`/`>` block scalar header with optional indentation/chomping indicators. */
+const BLOCK_SCALAR = /^[|>](?:[1-9]?[-+]?|[-+][1-9])(?:\s+#.*)?$/;
+
+/** Value of an inline YAML scalar: unquote quoted forms, drop a plain scalar's ` #` comment. */
+const yamlScalar = (value) => {
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replace(/''/g, "'");
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replace(/\\(["\\])/g, '$1');
+  return value.replace(/(^|\s)#.*$/, '').trim();
+};
 
 /**
- * Narrow execution contract for the exact command form the workflow uses. A
- * segment runs the check only when its command word is `node`, its first
- * argument is the script path and `--check` is among the remaining arguments;
- * a mention inside `echo`, another command's arguments or a comment never
- * matches. This is deliberately not a shell parser: extend the supported
- * subset only together with a fixture proving the new form is real execution
- * (note that `node --check <path>` only syntax-checks and is rejected by order).
+ * Narrow execution contract for the exact command form the workflow uses. This
+ * is deliberately not a shell parser: it accredits only a small subset and
+ * anything outside it accredits nothing, so extending the subset needs a
+ * fixture proving the new form is real execution.
+ *
+ * - Operators (`&&`, `||`, `;`, `|`, `&`, newline) count only outside quotes
+ *   and comments; `&` inside a redirection (`2>&1`, `&>`) is not an operator.
+ * - A run whose syntax leaves the subset accredits nothing: unterminated
+ *   quotes, ANSI-C $'...' quoting, line continuations, heredocs, command
+ *   substitution, control flow
+ *   or function definitions, exit/exec/eval/source/trap/alias, `set +...`.
+ * - The check is the simple command `node scripts/i18n-inventory.mjs ... --check`
+ *   (so `node --check <path>`, which only syntax-checks, never matches). It
+ *   counts only when its failure fails the step: not after `||`, not before
+ *   `||`, `|` or `&`. The steps run under GitHub's default `bash -e`/`sh -e`,
+ *   so a step or job with `if:`, a `continue-on-error` other than `false`, or
+ *   a shell other than bash/sh is not a gate either.
+ * - The install is the simple command `npm ci` or `npm install`, under the same rules.
  */
 const unwrapQuotes = (word) => word.replace(/^(['"])(.*)\1$/, '$2');
 
-/** True when a single shell segment (separators already split out) executes the check. */
-const segmentRunsCheck = (segment) => {
-  const words = segment.trim().split(/\s+/).map(unwrapQuotes);
-  return words[0] === 'node' && words[1] === 'scripts/i18n-inventory.mjs' && words.includes('--check');
+const CONTROL_WORDS = new Set([
+  'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select',
+  'function', '{', '}', '!', 'exit', 'return', 'exec', 'eval', 'source', '.', 'trap', 'alias',
+]);
+
+/**
+ * Split a run command into simple commands, each with the operator after it
+ * ('' at the end). Returns null when the command leaves the supported subset.
+ */
+const splitShellCommands = (cmd) => {
+  const commands = [];
+  let current = '';
+  let quote = null;
+  let invalid = false;
+  const push = (op) => {
+    if (current.trim()) commands.push({ text: current, op });
+    else if (op !== '\n' && op !== '') invalid = true; // an operator with no command before it
+    current = '';
+  };
+  for (let i = 0; i < cmd.length && !invalid; i += 1) {
+    const ch = cmd[i];
+    const next = cmd[i + 1];
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      current += ch;
+      continue;
+    }
+    if (ch === '`' || (ch === '$' && next === '(')) return null; // command substitution
+    if (ch === '$' && next === "'") return null; // ANSI-C quoting, where \' does not close the quote
+    if (ch === '\\') {
+      if (next === undefined || next === '\n') return null; // line continuation
+      current += ch + next;
+      i += 1;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+    } else if (ch === '#' && (current === '' || /\s$/.test(current))) {
+      while (i + 1 < cmd.length && cmd[i + 1] !== '\n') i += 1;
+    } else if (ch === '<' && next === '<') {
+      return null; // heredoc or here-string
+    } else if ((ch === '&' || ch === '|') && next === ch) {
+      push(ch + ch);
+      i += 1;
+    } else if (ch === '&' && (next === '>' || current.endsWith('>'))) {
+      current += ch; // redirection, not background
+    } else if (ch === ';' || ch === '\n' || ch === '|' || ch === '&') {
+      push(ch);
+    } else {
+      current += ch;
+    }
+  }
+  if (quote || invalid) return null;
+  push('');
+  return commands;
 };
 
-/** True when a run command executes the check in any of its shell segments. */
-const runsCheck = (cmd) => cmd.split(/&&|\|\||;|\||\n/).some(segmentRunsCheck);
+const commandWords = (text) => text.trim().split(/\s+/).map(unwrapQuotes);
+
+const leavesSubset = ([first, ...args]) =>
+  CONTROL_WORDS.has(first) ||
+  /^[({]|\)$/.test(first) ||
+  (first === 'set' && args.some((a) => a.startsWith('+')));
+
+/** Ordered 'install'/'check' events a run command performs as gates. */
+const runEvents = (cmd) => {
+  const commands = splitShellCommands(cmd);
+  if (!commands) return [];
+  const parsed = commands.map((c, i) => ({ words: commandWords(c.text), before: i > 0 ? commands[i - 1].op : '', after: c.op }));
+  if (parsed.some(({ words }) => leavesSubset(words))) return [];
+  return parsed
+    .filter(({ before, after }) => before !== '||' && !['||', '|', '&'].includes(after))
+    .map(({ words }) => {
+      if (words[0] === 'node' && words[1] === 'scripts/i18n-inventory.mjs' && words.includes('--check')) return 'check';
+      if (words[0] === 'npm' && (words[1] === 'ci' || words[1] === 'install')) return 'install';
+      return null;
+    })
+    .filter(Boolean);
+};
+
+/** True when a run command executes the check as a gate. */
+const runsCheck = (cmd) => runEvents(cmd).includes('check');
+
+const failsTheJob = (continueOnError) => continueOnError === null || continueOnError === 'false';
+const isShellStep = (shell) => shell === null || ['bash', 'sh'].includes(shell.split(/\s+/)[0]);
 
 /** A job installs dependencies and runs the inventory check afterwards (command order). */
 const runsCheckAfterInstall = (jobs) =>
-  Object.values(jobs).some((cmds) => {
-    const install = cmds.findIndex((c) => INSTALL_CMD.test(c));
-    const check = cmds.findIndex(runsCheck);
-    return install >= 0 && check > install;
+  Object.values(jobs).some((job) => {
+    if (job.if || !failsTheJob(job.continueOnError)) return false;
+    const events = job.steps
+      .filter((s) => s.run !== null && !s.if && failsTheJob(s.continueOnError) && isShellStep(s.shell))
+      .flatMap((s) => runEvents(s.run));
+    const install = events.indexOf('install');
+    return install >= 0 && events.indexOf('check', install + 1) > install;
   });
 
 test('CI checks the committed inventory after installing dependencies (#155, structural since #160)', () => {
@@ -450,6 +596,121 @@ test('echoing the check command is not executing it (#160)', () => {
     true,
     'a real check segment after && in the same command still counts as execution',
   );
+});
+
+test('separators inside quotes or comments do not fabricate a check segment (#160)', () => {
+  assert.equal(
+    runsCheck('echo "texto; node scripts/i18n-inventory.mjs --check ;fin"'),
+    false,
+    'a ; inside a quoted echo argument is data, not a separator',
+  );
+  assert.equal(
+    runsCheck("echo 'texto; node scripts/i18n-inventory.mjs --check'"),
+    false,
+    'a ; inside a single-quoted argument is data, not a separator',
+  );
+  assert.equal(
+    runsCheck('# texto; node scripts/i18n-inventory.mjs --check'),
+    false,
+    'a ; inside a comment is not a separator',
+  );
+  assert.equal(
+    runsCheck('npm test # then; node scripts/i18n-inventory.mjs --check'),
+    false,
+    'a trailing comment cannot accredit the check',
+  );
+  assert.equal(
+    runsCheck('echo "texto" && node scripts/i18n-inventory.mjs --check'),
+    true,
+    'a real check after a closed quote and && still counts',
+  );
+
+  const quotedInWorkflow = [
+    'jobs:',
+    '  checks:',
+    '    steps:',
+    '      - run: npm ci',
+    '      - run: echo "texto; node scripts/i18n-inventory.mjs --check ;fin"',
+    '  ',
+  ].join('\n');
+  assert.equal(runsCheckAfterInstall(parseWorkflowRuns(quotedInWorkflow)), false, 'the quoted mention is rejected end to end');
+});
+
+/** One job that installs and then runs the given step lines (6-space `- ` indent). */
+const workflowWith = (...stepLines) =>
+  ['jobs:', '  checks:', '    steps:', '      - run: npm ci', ...stepLines, '  '].join('\n');
+const accredits = (yaml) => runsCheckAfterInstall(parseWorkflowRuns(yaml));
+const CHECK = 'node scripts/i18n-inventory.mjs --check';
+
+test('block runs keep their shell meaning across lines (#160)', () => {
+  const quoteAcrossLines = workflowWith('      - run: |', '          echo "inicio', `          ${CHECK}`, '          fin"');
+  assert.equal(accredits(quoteAcrossLines), false, 'a quote spanning lines keeps the check as data');
+  const continuation = workflowWith('      - run: |', '          echo \\', `          ${CHECK}`);
+  assert.equal(accredits(continuation), false, 'a line continuation makes the check an echo argument');
+  const heredoc = workflowWith('      - run: |', '          cat <<EOF', `          ${CHECK}`, '          EOF');
+  assert.equal(accredits(heredoc), false, 'heredoc content is data');
+  const folded = workflowWith('      - run: >', '          npm test', `          ${CHECK}`);
+  assert.equal(accredits(folded), false, 'a folded block joins the lines into one npm command');
+  const blankLine = workflowWith('      - run: |', '          # gate', '', `          ${CHECK}`);
+  assert.equal(accredits(blankLine), true, 'comment and blank lines inside a literal block do not hide a real check');
+});
+
+test('control flow that may skip the check does not accredit it (#160)', () => {
+  const ifFalse = workflowWith('      - run: |', '          if false; then', `            ${CHECK}`, '          fi');
+  assert.equal(accredits(ifFalse), false, 'a check inside an if body may never run');
+  const fn = workflowWith('      - run: |', '          gate() {', `            ${CHECK}`, '          }');
+  assert.equal(accredits(fn), false, 'a function defined but never called runs nothing');
+  const exitFirst = workflowWith('      - run: |', '          exit 0', `          ${CHECK}`);
+  assert.equal(accredits(exitFirst), false, 'a check after exit never runs');
+  assert.equal(accredits(workflowWith(`      - run: true || ${CHECK}`)), false, 'a check after || runs only when the left side fails');
+  assert.equal(accredits(workflowWith('      - run: |', '          true ||', `          ${CHECK}`)), false, '|| continues across a newline');
+  assert.equal(accredits(workflowWith(`      - run: echo "$(${CHECK})"`)), false, 'command substitution discards the exit code');
+  assert.equal(accredits(workflowWith(`      - run: echo \`${CHECK}\``)), false, 'backtick substitution discards the exit code');
+  assert.equal(runsCheck(`echo $'a\\' ; ${CHECK} ; \\'' x`), false, 'ANSI-C quoting keeps an escaped quote open');
+});
+
+test('a check whose failure cannot fail the step does not accredit it (#160)', () => {
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} || true`)), false, '|| true masks the failure');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} | tee out.txt`)), false, 'a pipe reports the exit code of tee');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} &`)), false, 'a background check is never awaited');
+  assert.equal(accredits(workflowWith('      - run: |', '          set +e', `          ${CHECK}`)), false, 'set +e lets the step pass after a failed check');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} && echo ok`)), true, 'a check followed by && still fails the step');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} 2>&1`)), true, 'a redirection is not a background operator');
+  assert.equal(accredits(workflowWith(`      - run: ${CHECK} > report.txt`)), true, 'an output redirection keeps the exit code');
+});
+
+test('step and job settings that skip or tolerate the check do not accredit it (#160)', () => {
+  const step = (...keys) => workflowWith(`      - run: ${CHECK}`, ...keys.map((k) => `        ${k}`));
+  assert.equal(accredits(step("if: github.event_name == 'push'")), false, 'a conditional step may be skipped');
+  assert.equal(accredits(step('continue-on-error: true')), false, 'a step allowed to fail is not a gate');
+  assert.equal(accredits(step('continue-on-error: false')), true, 'continue-on-error: false keeps the gate');
+  assert.equal(accredits(step('shell: python')), false, 'a python step does not run shell commands');
+  assert.equal(accredits(step('shell: bash')), true, 'an explicit bash shell keeps the gate');
+
+  const job = (key) => ['jobs:', '  checks:', `    ${key}`, '    steps:', '      - run: npm ci', `      - run: ${CHECK}`, '  '].join('\n');
+  assert.equal(accredits(job('if: false')), false, 'a conditional job may be skipped');
+  assert.equal(accredits(job('continue-on-error: true')), false, 'a job allowed to fail is not a gate');
+
+  const jobDefaults = ['jobs:', '  checks:', '    defaults:', '      run:', '        shell: pwsh', '    steps:', '      - run: npm ci', `      - run: ${CHECK}`, '  '].join('\n');
+  assert.equal(accredits(jobDefaults), false, 'a job default shell outside bash/sh is not the supported subset');
+  const workflowDefaults = ['defaults:', '  run:', '    shell: python', 'jobs:', '  checks:', '    steps:', '      - run: npm ci', `      - run: ${CHECK}`, '  '].join('\n');
+  assert.equal(accredits(workflowDefaults), false, 'a workflow default shell outside bash/sh is not the supported subset');
+
+  const actionInput = workflowWith('      - uses: some/action@v1', '        with:', `          run: ${CHECK}`);
+  assert.equal(accredits(actionInput), false, 'a run input of an action is not a run step');
+});
+
+test('YAML-quoted run scalars are unquoted before the shell sees them (#160)', () => {
+  assert.equal(accredits(workflowWith(`      - run: "${CHECK}"`)), true, 'a double-quoted YAML scalar is the plain command');
+  assert.equal(accredits(workflowWith(`      - run: "echo 'x; ${CHECK}'"`)), false, 'the shell quotes inside a YAML scalar still hold');
+  assert.equal(accredits(workflowWith(`      - run: 'echo "x; ${CHECK}"'`)), false, 'the shell quotes inside a single-quoted YAML scalar still hold');
+});
+
+test('mentioning npm ci is not installing (#160)', () => {
+  const mentioned = (cmd) => ['jobs:', '  checks:', '    steps:', `      - run: ${cmd}`, `      - run: ${CHECK}`, '  '].join('\n');
+  assert.equal(accredits(mentioned('echo "npm ci"')), false, 'echoing npm ci installs nothing');
+  assert.equal(accredits(mentioned('npm test # npm ci')), false, 'a commented npm ci installs nothing');
+  assert.equal(accredits(mentioned('npm ci')), true, 'a real npm ci before the check counts');
 });
 
 test('CLI rejects unknown arguments without writing', () => {
