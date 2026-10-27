@@ -28,7 +28,10 @@ pub enum RouterError {
 impl RouterError {
     fn message(self) -> String {
         match self {
-            RouterError::Expired => "La sesión de 9Router ha caducado. Vuelve a introducir la contraseña en Ajustes.".into(),
+            RouterError::Expired => {
+                "La sesión de 9Router ha caducado. Vuelve a introducir la contraseña en Ajustes."
+                    .into()
+            }
             RouterError::Other(m) => m,
         }
     }
@@ -47,10 +50,13 @@ pub fn same_destination(saved: &str, draft: Option<&str>) -> bool {
     }
 }
 
-
 /// Inicia sesión en el dashboard local y devuelve la cabecera `Cookie` resultante.
 /// `POST /api/auth/login { "password": … }` → `Set-Cookie: auth_token=…`.
-pub async fn login(http: &reqwest::Client, base_url: &str, password: &str) -> Result<String, String> {
+pub async fn login(
+    http: &reqwest::Client,
+    base_url: &str,
+    password: &str,
+) -> Result<String, String> {
     if password.trim().is_empty() {
         return Err("Escribe la contraseña del dashboard de 9Router".into());
     }
@@ -83,7 +89,10 @@ pub async fn login(http: &reqwest::Client, base_url: &str, password: &str) -> Re
 
 /// Inicia sesión con la contraseña guardada y guarda la cookie resultante.
 /// `None` si no hay contraseña, otro destino, o las credenciales cambiaron durante el `.await`.
-pub async fn login_with_saved(http: &reqwest::Client, base_url: &str) -> Result<Option<String>, String> {
+pub async fn login_with_saved(
+    http: &reqwest::Client,
+    base_url: &str,
+) -> Result<Option<String>, String> {
     use super::nine_router_creds::{password_ticket_for_base, persist_if_generation, PersistError};
     let Some((generation, password)) = password_ticket_for_base(base_url) else {
         return Ok(None);
@@ -98,16 +107,27 @@ pub async fn login_with_saved(http: &reqwest::Client, base_url: &str) -> Result<
 
 /// `GET` con la cookie de sesión; `Expired` si 401/403. Sin cookie (login del
 /// dashboard desactivado) se omite la cabecera.
-async fn get_json(http: &reqwest::Client, base_url: &str, path: &str, cookie: &str) -> Result<Value, RouterError> {
+async fn get_json(
+    http: &reqwest::Client,
+    base_url: &str,
+    path: &str,
+    cookie: &str,
+) -> Result<Value, RouterError> {
     let mut req = http
         .get(format!("{}{}", base_url.trim_end_matches('/'), path))
         .header(reqwest::header::ACCEPT, "application/json");
     if !cookie.trim().is_empty() {
         req = req.header(reqwest::header::COOKIE, cookie);
     }
-    let res = req.send().await.map_err(|e| RouterError::Other(net_error(e)))?;
+    let res = req
+        .send()
+        .await
+        .map_err(|e| RouterError::Other(net_error(e)))?;
     match res.status().as_u16() {
-        200 => res.json().await.map_err(|e| RouterError::Other(format!("respuesta no JSON: {e}"))),
+        200 => res
+            .json()
+            .await
+            .map_err(|e| RouterError::Other(format!("respuesta no JSON: {e}"))),
         401 | 403 => Err(RouterError::Expired),
         code => Err(RouterError::Other(format!("HTTP {code} en {path}"))),
     }
@@ -116,8 +136,16 @@ async fn get_json(http: &reqwest::Client, base_url: &str, path: &str, cookie: &s
 /// Comprueba que el 9Router responde y hay sesión; devuelve el JSON de stats en crudo
 /// (para el botón «Probar» de Ajustes). Reintenta con la contraseña si la sesión caducó.
 /// `base_override` permite probar contra la URL del borrador de Ajustes sin guardarla.
-pub async fn probe(http: &reqwest::Client, cfg: &NineRouterConfig, base_override: Option<&str>) -> Result<String, String> {
-    let base = base_override.map(str::trim).filter(|b| !b.is_empty()).unwrap_or(&cfg.base_url).trim_end_matches('/');
+pub async fn probe(
+    http: &reqwest::Client,
+    cfg: &NineRouterConfig,
+    base_override: Option<&str>,
+) -> Result<String, String> {
+    let base = base_override
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or(&cfg.base_url)
+        .trim_end_matches('/');
     // ¿Está vivo? (endpoint público, con CORS abierto)
     http.get(format!("{base}/api/health"))
         .send()
@@ -155,7 +183,12 @@ pub async fn probe(http: &reqwest::Client, cfg: &NineRouterConfig, base_override
 /// borrador cuando difiere de la persistida: así una prueba contra otro servidor
 /// no deja sus credenciales guardadas (que luego A usaría contra su propio
 /// destino). No lee ni escribe los secretos globales.
-pub async fn probe_with_password(http: &reqwest::Client, cfg: &NineRouterConfig, base: &str, password: &str) -> Result<String, String> {
+pub async fn probe_with_password(
+    http: &reqwest::Client,
+    cfg: &NineRouterConfig,
+    base: &str,
+    password: &str,
+) -> Result<String, String> {
     let base = base.trim_end_matches('/');
     // ¿Está vivo? (endpoint público, con CORS abierto)
     http.get(format!("{base}/api/health"))
@@ -170,8 +203,19 @@ pub async fn probe_with_password(http: &reqwest::Client, cfg: &NineRouterConfig,
         .map_err(RouterError::message)
 }
 
-async fn get_stats(http: &reqwest::Client, base: &str, period: &str, cookie: &str) -> Result<Value, RouterError> {
-    get_json(http, base, &format!("/api/usage/stats?period={period}"), cookie).await
+async fn get_stats(
+    http: &reqwest::Client,
+    base: &str,
+    period: &str,
+    cookie: &str,
+) -> Result<Value, RouterError> {
+    get_json(
+        http,
+        base,
+        &format!("/api/usage/stats?period={period}"),
+        cookie,
+    )
+    .await
 }
 
 /// Fallo al obtener las stats, ya resuelto el tema de la sesión.
@@ -210,7 +254,9 @@ async fn read_stats(
         Err(RouterError::Expired) => match login_with_saved(http, base).await {
             Ok(Some(c)) => {
                 *cookie = Some(c.clone());
-                get_stats(http, base, period, &c).await.map_err(StatsError::Other)
+                get_stats(http, base, period, &c)
+                    .await
+                    .map_err(StatsError::Other)
             }
             Ok(None) => Err(StatsError::NeedsLogin),
             Err(e) => Err(StatsError::Other(RouterError::Other(e))),
@@ -238,12 +284,29 @@ pub(crate) struct SubProvider {
 /// tira se llenaría de ceros. Se conserva la clave original para poder buscar en
 /// `byProvider` (que distingue mayúsculas: `Kiro` ≠ `kiro`). `node_names` traduce
 /// el id técnico de un nodo personalizado a su nombre visible.
-fn sub_providers_from(stats: &Value, min_spend: f64, node_names: &BTreeMap<String, String>) -> Vec<SubProvider> {
-    let threshold = if min_spend.is_finite() { min_spend.max(0.0) } else { 0.0 };
+fn sub_providers_from(
+    stats: &Value,
+    min_spend: f64,
+    node_names: &BTreeMap<String, String>,
+) -> Vec<SubProvider> {
+    let threshold = if min_spend.is_finite() {
+        min_spend.max(0.0)
+    } else {
+        0.0
+    };
     let mut entries: Vec<(String, f64)> = stats
         .get("byProvider")
         .and_then(Value::as_object)
-        .map(|m| m.iter().map(|(id, v)| (id.trim().to_string(), v.get("cost").and_then(Value::as_f64).unwrap_or(0.0))).collect())
+        .map(|m| {
+            m.iter()
+                .map(|(id, v)| {
+                    (
+                        id.trim().to_string(),
+                        v.get("cost").and_then(Value::as_f64).unwrap_or(0.0),
+                    )
+                })
+                .collect()
+        })
         .unwrap_or_default();
     entries.retain(|(key, cost)| {
         // Estrictamente por encima del umbral: con 0 se exige algo de gasto.
@@ -255,8 +318,16 @@ fn sub_providers_from(stats: &Value, min_spend: f64, node_names: &BTreeMap<Strin
         .into_iter()
         .map(|(key, _)| {
             let account_id = format!("nine_router:{}", normalize_sub_id(&key));
-            let label = node_names.get(&key).cloned().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| key.clone());
-            SubProvider { key, account_id, label }
+            let label = node_names
+                .get(&key)
+                .cloned()
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| key.clone());
+            SubProvider {
+                key,
+                account_id,
+                label,
+            }
         })
         .collect()
 }
@@ -267,7 +338,13 @@ fn normalize_sub_id(key: &str) -> String {
     key.trim()
         .to_ascii_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -275,11 +352,27 @@ fn normalize_sub_id(key: &str) -> String {
 /// (`openai-compatible-responses-<uuid>` → «QWEN - Alibaba»). `byProvider` los
 /// etiqueta con el id técnico; este endpoint da el nombre con el que el usuario
 /// los creó. Si falla, se devuelve un mapa vacío y se muestra la clave tal cual.
-async fn fetch_node_names(http: &reqwest::Client, base: &str, cookie: &str) -> BTreeMap<String, String> {
-    let Ok(v) = get_json(http, base, "/api/provider-nodes", cookie).await else { return BTreeMap::new() };
+async fn fetch_node_names(
+    http: &reqwest::Client,
+    base: &str,
+    cookie: &str,
+) -> BTreeMap<String, String> {
+    let Ok(v) = get_json(http, base, "/api/provider-nodes", cookie).await else {
+        return BTreeMap::new();
+    };
     let mut map = BTreeMap::new();
-    for node in v.get("nodes").and_then(Value::as_array).into_iter().flatten() {
-        let (Some(id), Some(name)) = (node.get("id").and_then(Value::as_str), node.get("name").and_then(Value::as_str)) else { continue };
+    for node in v
+        .get("nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (Some(id), Some(name)) = (
+            node.get("id").and_then(Value::as_str),
+            node.get("name").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
         let name = name.trim();
         if !id.trim().is_empty() && !name.is_empty() {
             map.insert(id.trim().to_string(), name.to_string());
@@ -293,13 +386,25 @@ pub async fn fetch(cfg: &NineRouterConfig, who: Who<'_>, http: &reqwest::Client)
     // El orbe agregado + sus sub-proveedores comparten una única lectura de stats;
     // aquí solo devolvemos el report que pida `who` (la cuenta extra es del fetch_all).
     match who.label {
-        None => fetch_all(cfg, http).await.into_iter().next().unwrap_or_else(|| {
-            Who::main("nine_router").report("9Router", Kind::Api).fail(Status::Error, "Sin datos de 9Router")
-        }),
-        Some(_) => fetch_all(cfg, http).await.into_iter().find(|r| r.id == who.id).unwrap_or_else(|| {
-            who.report("9Router", Kind::Api)
-                .fail(Status::Warning, "9Router aún no ha registrado uso de este proveedor en el periodo.")
-        }),
+        None => fetch_all(cfg, http)
+            .await
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| {
+                Who::main("nine_router")
+                    .report("9Router", Kind::Api)
+                    .fail(Status::Error, "Sin datos de 9Router")
+            }),
+        Some(_) => fetch_all(cfg, http)
+            .await
+            .into_iter()
+            .find(|r| r.id == who.id)
+            .unwrap_or_else(|| {
+                who.report("9Router", Kind::Api).fail(
+                    Status::Warning,
+                    "9Router aún no ha registrado uso de este proveedor en el periodo.",
+                )
+            }),
     }
 }
 
@@ -332,7 +437,9 @@ pub async fn fetch_all(cfg: &NineRouterConfig, http: &reqwest::Client) -> Vec<Us
         Err(e) => {
             let status = e.status();
             let message = match e {
-                StatsError::NeedsLogin => "La sesión de 9Router caducó y no hay contraseña guardada.".to_string(),
+                StatsError::NeedsLogin => {
+                    "La sesión de 9Router caducó y no hay contraseña guardada.".to_string()
+                }
                 StatsError::Other(err) => err.message(),
             };
             return vec![main_report.fail(status, message)];
@@ -340,9 +447,14 @@ pub async fn fetch_all(cfg: &NineRouterConfig, http: &reqwest::Client) -> Vec<Us
     };
 
     // Serie opcional para el historial; si falla, seguimos sin ella.
-    let chart = get_json(http, base, &format!("/api/usage/chart?period={}", cfg.period), cookie.as_deref().unwrap_or(""))
-        .await
-        .ok();
+    let chart = get_json(
+        http,
+        base,
+        &format!("/api/usage/chart?period={}", cfg.period),
+        cookie.as_deref().unwrap_or(""),
+    )
+    .await
+    .ok();
 
     // Instante de referencia: se inyecta en el parseo de la serie para que cada
     // bucket se feche según la ventana real del período (24h cruza medianoche,
@@ -360,7 +472,14 @@ pub async fn fetch_all(cfg: &NineRouterConfig, http: &reqwest::Client) -> Vec<Us
                 enabled: true,
                 ..Default::default()
             };
-            out.push(build_sub(&Who::extra(&account).report("9Router", Kind::Api), &stats, &sub.key, chart.as_ref(), &cfg.period, now));
+            out.push(build_sub(
+                &Who::extra(&account).report("9Router", Kind::Api),
+                &stats,
+                &sub.key,
+                chart.as_ref(),
+                &cfg.period,
+                now,
+            ));
         }
     }
     out
@@ -374,10 +493,21 @@ fn status_for(e: &RouterError) -> Status {
 }
 
 /// Sub-proveedor concreto de 9Router (cuenta adicional `nine_router:<id>`).
-fn build_sub(report: &UsageReport, stats: &Value, provider: &str, chart: Option<&Value>, period: &str, now: chrono::DateTime<chrono::Local>) -> UsageReport {
+fn build_sub(
+    report: &UsageReport,
+    stats: &Value,
+    provider: &str,
+    chart: Option<&Value>,
+    period: &str,
+    now: chrono::DateTime<chrono::Local>,
+) -> UsageReport {
     let mut report = report.clone();
 
-    let Some(entry) = stats.get("byProvider").and_then(|b| b.get(provider)).cloned() else {
+    let Some(entry) = stats
+        .get("byProvider")
+        .and_then(|b| b.get(provider))
+        .cloned()
+    else {
         return report.fail(
             Status::Warning,
             format!("9Router aún no ha registrado uso de «{provider}» en este periodo."),
@@ -390,13 +520,21 @@ fn build_sub(report: &UsageReport, stats: &Value, provider: &str, chart: Option<
     // La serie `/api/usage/chart` es agregada (todos los proveedores): no se puede
     // atribuir a un sub-proveedor sin un desglose por proveedor. Antes de exponer
     // datos de otros, se omite; si la chart trae un campo por proveedor, se usa.
-    report.daily = chart.map(|c| parse_daily_for(c, Some(provider), period, now)).unwrap_or_default();
+    report.daily = chart
+        .map(|c| parse_daily_for(c, Some(provider), period, now))
+        .unwrap_or_default();
     report.message = p.message;
     report
 }
 
 /// Orbe agregador: totales del periodo + sub-proveedores activos.
-fn build_main(cfg: &NineRouterConfig, report: &UsageReport, stats: &Value, chart: Option<&Value>, now: chrono::DateTime<chrono::Local>) -> UsageReport {
+fn build_main(
+    cfg: &NineRouterConfig,
+    report: &UsageReport,
+    stats: &Value,
+    chart: Option<&Value>,
+    now: chrono::DateTime<chrono::Local>,
+) -> UsageReport {
     let mut report = report.clone();
     let totals = parse_totals(stats);
 
@@ -424,8 +562,15 @@ fn build_main(cfg: &NineRouterConfig, report: &UsageReport, stats: &Value, chart
         window_seconds: None,
     });
 
-    let providers = stats.get("byProvider").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0);
-    report.plan = Some(format!("{providers} proveedor{}", if providers == 1 { "" } else { "es" }));
+    let providers = stats
+        .get("byProvider")
+        .and_then(Value::as_object)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    report.plan = Some(format!(
+        "{providers} proveedor{}",
+        if providers == 1 { "" } else { "es" }
+    ));
     report.meters = meters;
     report.spend = Some(Spend {
         amount: totals.cost,
@@ -433,7 +578,9 @@ fn build_main(cfg: &NineRouterConfig, report: &UsageReport, stats: &Value, chart
         period_label: period_label(&cfg.period),
         budget: cfg.monthly_budget_usd,
     });
-    report.daily = chart.map(|c| parse_daily(c, &cfg.period, now)).unwrap_or_default();
+    report.daily = chart
+        .map(|c| parse_daily(c, &cfg.period, now))
+        .unwrap_or_default();
     report.message = Some(format!(
         "{} peticiones · {} tokens · {:.2} $",
         totals.requests, totals.tokens, totals.cost
@@ -509,14 +656,22 @@ fn parse_daily(chart: &Value, period: &str, now: chrono::DateTime<chrono::Local>
 /// Igual que `parse_daily`, pero para un sub-proveedor: si la chart trae un
 /// desglose por proveedor, se usa el del indicado; si no, se devuelve vacío en
 /// vez de exponer la serie agregada (que incluiría a los demás).
-fn parse_daily_for(chart: &Value, provider: Option<&str>, period: &str, now: chrono::DateTime<chrono::Local>) -> Vec<Daily> {
+fn parse_daily_for(
+    chart: &Value,
+    provider: Option<&str>,
+    period: &str,
+    now: chrono::DateTime<chrono::Local>,
+) -> Vec<Daily> {
     let entries: Vec<&Value> = chart.as_array().into_iter().flatten().collect();
     let mut by_day: BTreeMap<String, f64> = BTreeMap::new();
     for (i, e) in entries.iter().enumerate() {
         // La fecha sale de la posición del bucket (ventana del período + `now`).
         // El label solo se usa como último recurso si el índice no da fecha.
-        let date = bucket_date(period, i, entries.len(), now)
-            .or_else(|| e.get("label").and_then(Value::as_str).and_then(normalize_iso_day));
+        let date = bucket_date(period, i, entries.len(), now).or_else(|| {
+            e.get("label")
+                .and_then(Value::as_str)
+                .and_then(normalize_iso_day)
+        });
         let Some(date) = date else { continue };
         let value = match provider {
             None => e.get("tokens").and_then(Value::as_f64).unwrap_or(0.0),
@@ -527,7 +682,10 @@ fn parse_daily_for(chart: &Value, provider: Option<&str>, period: &str, now: chr
         };
         *by_day.entry(date).or_insert(0.0) += value;
     }
-    by_day.into_iter().map(|(date, value)| Daily { date, value }).collect()
+    by_day
+        .into_iter()
+        .map(|(date, value)| Daily { date, value })
+        .collect()
 }
 
 /// Fecha `YYYY-MM-DD` del bucket `i` de `n` de la chart, replicando la
@@ -538,7 +696,12 @@ fn parse_daily_for(chart: &Value, provider: Option<&str>, period: &str, now: chr
 ///   · `all`   → `n` días consecutivos que acaban hoy (9Router arranca en la
 ///     primera lectura; mantener la misma cadencia día a día es lo correcto).
 /// Devuelve `None` si el período no describe una serie posicional conocida.
-fn bucket_date(period: &str, i: usize, n: usize, now: chrono::DateTime<chrono::Local>) -> Option<String> {
+fn bucket_date(
+    period: &str,
+    i: usize,
+    n: usize,
+    now: chrono::DateTime<chrono::Local>,
+) -> Option<String> {
     use chrono::Duration;
     match period {
         // 24 buckets horarios desde la medianoche de hoy.
@@ -546,12 +709,21 @@ fn bucket_date(period: &str, i: usize, n: usize, now: chrono::DateTime<chrono::L
         // 24 buckets horarios hacia atrás: el bucket final es la hora actual.
         "24h" => {
             let hours_ago = (n.saturating_sub(1).saturating_sub(i)) as i64;
-            Some((now - Duration::hours(hours_ago)).date_naive().format("%Y-%m-%d").to_string())
+            Some(
+                (now - Duration::hours(hours_ago))
+                    .date_naive()
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            )
         }
         // `n` días consecutivos que acaban hoy (el último bucket es hoy).
         "7d" | "30d" | "60d" | "all" => {
             let days_ago = (n.saturating_sub(1).saturating_sub(i)) as i64;
-            Some((now.date_naive() - Duration::days(days_ago)).format("%Y-%m-%d").to_string())
+            Some(
+                (now.date_naive() - Duration::days(days_ago))
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            )
         }
         _ => None,
     }
@@ -576,7 +748,9 @@ fn is_iso_date(s: &str) -> bool {
     s.len() == 10
         && s.as_bytes()[4] == b'-'
         && s.as_bytes()[7] == b'-'
-        && s.chars().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+        && s.chars()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 fn period_label(period: &str) -> String {
@@ -609,7 +783,8 @@ mod tests {
 
     #[test]
     fn provider_breakdown_maps_to_meter_and_spend() {
-        let entry = json!({"requests": 100, "promptTokens": 1000, "completionTokens": 500, "cost": 1.25});
+        let entry =
+            json!({"requests": 100, "promptTokens": 1000, "completionTokens": 500, "cost": 1.25});
         let p = parse_provider(&entry);
         assert_eq!(p.meters[0].used, Some(1500.0));
         assert_eq!(p.meters[0].unit.as_deref(), Some("tokens"));
@@ -624,7 +799,9 @@ mod tests {
         // período), no del label: con 4 buckets y `7d`, los índices 0..3 son los
         // días now-3, now-2, now-1 y now (17, 18, 19 y 20). Todos los tokens
         // cuentan; el label no decide la fecha.
-        let now = chrono::Local.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 10, 20, 12, 0, 0)
+            .unwrap();
         let chart = json!([
             {"label": "Oct 14", "tokens": 120},
             {"label": "Oct 19", "tokens": 30},
@@ -633,13 +810,23 @@ mod tests {
         ]);
         let d = parse_daily(&chart, "7d", now);
         // Todas las claves son YYYY-MM-DD y cada índice cae en su día.
-        assert!(d.iter().all(|x| x.date.len() == 10 && x.date.as_bytes()[4] == b'-'));
+        assert!(d
+            .iter()
+            .all(|x| x.date.len() == 10 && x.date.as_bytes()[4] == b'-'));
         let total: f64 = d.iter().map(|x| x.value).sum();
         assert!((total - 1154.0).abs() < 1e-6, "total inesperado: {total}");
-        assert!(d.iter().any(|x| x.date == "2026-10-20" && (x.value - 999.0).abs() < 1e-6));
-        assert!(d.iter().any(|x| x.date == "2026-10-19" && (x.value - 5.0).abs() < 1e-6));
-        assert!(d.iter().any(|x| x.date == "2026-10-18" && (x.value - 30.0).abs() < 1e-6));
-        assert!(d.iter().any(|x| x.date == "2026-10-17" && (x.value - 120.0).abs() < 1e-6));
+        assert!(d
+            .iter()
+            .any(|x| x.date == "2026-10-20" && (x.value - 999.0).abs() < 1e-6));
+        assert!(d
+            .iter()
+            .any(|x| x.date == "2026-10-19" && (x.value - 5.0).abs() < 1e-6));
+        assert!(d
+            .iter()
+            .any(|x| x.date == "2026-10-18" && (x.value - 30.0).abs() < 1e-6));
+        assert!(d
+            .iter()
+            .any(|x| x.date == "2026-10-17" && (x.value - 120.0).abs() < 1e-6));
     }
 
     #[test]
@@ -647,7 +834,9 @@ mod tests {
         // Regresión del punto 2 (P2): con la referencia 2026-01-02 15:00, la serie
         // de 24 h arranca ayer 16:00. El bucket «18:00» es del 1 de enero, no del
         // 2; la hora actual (último bucket) sí es de hoy.
-        let now = chrono::Local.with_ymd_and_hms(2026, 1, 2, 15, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 1, 2, 15, 0, 0)
+            .unwrap();
         let mut buckets: Vec<serde_json::Value> = Vec::new();
         for h in 0..24 {
             // Etiquetas tal cual las emite 9Router (hora local del bucket).
@@ -657,10 +846,20 @@ mod tests {
         let chart = serde_json::Value::Array(buckets);
         let d = parse_daily(&chart, "24h", now);
         // El bucket de las 18:00 pertenece al 1 de enero (ayer), no al 2.
-        assert!(d.iter().any(|x| x.date == "2026-01-01"), "falta el 2026-01-01: {d:?}");
-        assert!(d.iter().any(|x| x.date == "2026-01-02"), "falta el 2026-01-02: {d:?}");
+        assert!(
+            d.iter().any(|x| x.date == "2026-01-01"),
+            "falta el 2026-01-01: {d:?}"
+        );
+        assert!(
+            d.iter().any(|x| x.date == "2026-01-02"),
+            "falta el 2026-01-02: {d:?}"
+        );
         // Y no colapsa todo en el día de referencia.
-        assert_eq!(d.len(), 2, "la serie 24 h debe repartirse en dos días: {d:?}");
+        assert_eq!(
+            d.len(),
+            2,
+            "la serie 24 h debe repartirse en dos días: {d:?}"
+        );
     }
 
     #[test]
@@ -676,17 +875,28 @@ mod tests {
         }
         let chart = serde_json::Value::Array(buckets);
         let d = parse_daily(&chart, "60d", now);
-        assert!(d.iter().any(|x| x.date == "2025-12-31"), "falta el 2025-12-31: {d:?}");
-        assert!(d.iter().any(|x| x.date == "2026-01-02"), "falta el 2026-01-02: {d:?}");
+        assert!(
+            d.iter().any(|x| x.date == "2025-12-31"),
+            "falta el 2025-12-31: {d:?}"
+        );
+        assert!(
+            d.iter().any(|x| x.date == "2026-01-02"),
+            "falta el 2026-01-02: {d:?}"
+        );
         // 60 días consecutivos, sin colisión de año.
         assert_eq!(d.len(), 60, "la serie 60 d debe tener 60 días distintos");
-        assert!(!d.iter().any(|x| x.date == "2026-12-31"), "bucket mal asignado a 2026-12-31");
+        assert!(
+            !d.iter().any(|x| x.date == "2026-12-31"),
+            "bucket mal asignado a 2026-12-31"
+        );
     }
 
     #[test]
     fn chart_today_buckets_stay_on_reference_day() {
         // `today` son 24 horas del mismo día: todos los buckets van a `now`.
-        let now = chrono::Local.with_ymd_and_hms(2026, 1, 2, 15, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 1, 2, 15, 0, 0)
+            .unwrap();
         let chart = json!([{"label": "00:00", "tokens": 1}, {"label": "23:00", "tokens": 2}]);
         let d = parse_daily(&chart, "today", now);
         assert_eq!(d.len(), 1);
@@ -698,9 +908,17 @@ mod tests {
     fn iso_labels_are_kept_when_index_gives_no_date() {
         // Con un período desconocido (sin serie posicional) se conserva una fecha
         // ISO explícita; las etiquetas ambiguas (hora, mes/día) se descartan.
-        let now = chrono::Local.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
-        assert_eq!(normalize_iso_day("2025-12-31 23:59").as_deref(), Some("2025-12-31"));
-        assert_eq!(normalize_iso_day("2026-10-05").as_deref(), Some("2026-10-05"));
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 10, 20, 12, 0, 0)
+            .unwrap();
+        assert_eq!(
+            normalize_iso_day("2025-12-31 23:59").as_deref(),
+            Some("2025-12-31")
+        );
+        assert_eq!(
+            normalize_iso_day("2026-10-05").as_deref(),
+            Some("2026-10-05")
+        );
         assert_eq!(normalize_iso_day("14:00"), None);
         assert_eq!(normalize_iso_day("Oct 5"), None);
         assert_eq!(normalize_iso_day("vaya"), None);
@@ -714,14 +932,18 @@ mod tests {
     #[test]
     fn sub_series_is_empty_without_per_provider_breakdown() {
         // La chart es agregada: un sub-proveedor no debe mostrar tokens de otros.
-        let now = chrono::Local.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 10, 20, 12, 0, 0)
+            .unwrap();
         let chart = json!([{"label": "Oct 5", "tokens": 120}]);
         assert!(parse_daily_for(&chart, Some("claude"), "7d", now).is_empty());
     }
 
     #[test]
     fn sub_series_uses_per_provider_field_when_present() {
-        let now = chrono::Local.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 10, 20, 12, 0, 0)
+            .unwrap();
         let chart = json!([
             {"label": "Oct 20", "tokens": 120, "provider": "claude"},
             {"label": "Oct 20", "tokens": 80, "provider": "kiro"}
@@ -746,7 +968,10 @@ mod tests {
         // Otro servidor (B) → destino distinto: prueba aislada, sin persistir.
         assert!(!same_destination(saved, Some("http://localhost:3000")));
         assert!(!same_destination(saved, Some("http://otro-host:20128")));
-        assert!(!same_destination("http://localhost:20128", Some("https://localhost:20128")));
+        assert!(!same_destination(
+            "http://localhost:20128",
+            Some("https://localhost:20128")
+        ));
     }
 
     #[test]
@@ -765,7 +990,10 @@ mod tests {
         // Regresión del punto 3: sin credenciales y con el servidor exigiendo
         // sesión, el orbe pide login (no «falta configurar»); un fallo de red es Error.
         assert_eq!(StatsError::NeedsLogin.status(), Status::NeedsLogin);
-        assert_eq!(StatsError::Other(RouterError::Other("x".into())).status(), Status::Error);
+        assert_eq!(
+            StatsError::Other(RouterError::Other("x".into())).status(),
+            Status::Error
+        );
     }
 
     #[test]
@@ -776,12 +1004,24 @@ mod tests {
 
     #[test]
     fn main_meter_uses_budget_when_set() {
-        let cfg = NineRouterConfig { monthly_budget_usd: Some(100.0), ..Default::default() };
+        let cfg = NineRouterConfig {
+            monthly_budget_usd: Some(100.0),
+            ..Default::default()
+        };
         let stats = json!({"totalRequests": 10, "totalPromptTokens": 400, "totalCompletionTokens": 100, "totalCost": 50.0,
             "byProvider": {"claude": {}, "kiro": {}}});
-        let r = build_main(&cfg, &UsageReport::new("nine_router", "9Router", Kind::Api), &stats, None, chrono::Local::now());
+        let r = build_main(
+            &cfg,
+            &UsageReport::new("nine_router", "9Router", Kind::Api),
+            &stats,
+            None,
+            chrono::Local::now(),
+        );
         assert_eq!(r.meters[0].label, "Gasto (periodo)");
-        assert_eq!(r.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["spend_period", "tokens"]);
+        assert_eq!(
+            r.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["spend_period", "tokens"]
+        );
         assert_eq!(r.meters[0].percent, Some(50.0));
         assert_eq!(r.plan.as_deref(), Some("2 proveedores"));
     }
@@ -813,7 +1053,11 @@ mod tests {
         let subs = sub_providers_from(&stats, 0.0, &BTreeMap::new());
         assert_eq!(
             account_ids(&subs),
-            vec!["nine_router:bad-id-".to_string(), "nine_router:claude".to_string(), "nine_router:kiro".to_string()]
+            vec![
+                "nine_router:bad-id-".to_string(),
+                "nine_router:claude".to_string(),
+                "nine_router:kiro".to_string()
+            ]
         );
     }
 
@@ -826,7 +1070,10 @@ mod tests {
             "nodO Personal": {"cost": 1.0}
         }});
         let subs = sub_providers_from(&stats, 0.0, &BTreeMap::new());
-        let kiro = subs.iter().find(|s| s.account_id == "nine_router:kiro").expect("kiro descubierto");
+        let kiro = subs
+            .iter()
+            .find(|s| s.account_id == "nine_router:kiro")
+            .expect("kiro descubierto");
         assert_eq!(kiro.key, "Kiro");
         assert_eq!(kiro.label, "Kiro");
         // `build_sub` con la clave original encuentra el desglose (no cae en Warning).
@@ -858,9 +1105,22 @@ mod tests {
         assert_eq!(subs[0].key, id);
         assert_eq!(subs[0].label, "QWEN - Alibaba");
         // El id de cuenta se sanea (minúsculas y guiones), pero sigue buscando por el id real.
-        assert_eq!(subs[0].account_id, format!("nine_router:{}", "openai-compatible-responses-1855f0b7-4442-4046-8368-4d11dda27b96"));
+        assert_eq!(
+            subs[0].account_id,
+            format!(
+                "nine_router:{}",
+                "openai-compatible-responses-1855f0b7-4442-4046-8368-4d11dda27b96"
+            )
+        );
         let base = UsageReport::new(&subs[0].account_id, "9Router · QWEN", Kind::Api);
-        let r = build_sub(&base, &stats, &subs[0].key, None, "7d", chrono::Local::now());
+        let r = build_sub(
+            &base,
+            &stats,
+            &subs[0].key,
+            None,
+            "7d",
+            chrono::Local::now(),
+        );
         assert_eq!(r.status, Status::Ok);
         assert_eq!(r.spend.as_ref().map(|s| s.amount), Some(6.72));
     }
@@ -886,10 +1146,16 @@ mod tests {
             "barato": {"cost": 0.5},
             "gratis": {"cost": 0.0}
         }});
-        assert_eq!(account_ids(&sub_providers_from(&stats, 1.0, &BTreeMap::new())), vec!["nine_router:caro".to_string()]);
+        assert_eq!(
+            account_ids(&sub_providers_from(&stats, 1.0, &BTreeMap::new())),
+            vec!["nine_router:caro".to_string()]
+        );
         assert_eq!(
             account_ids(&sub_providers_from(&stats, 0.0, &BTreeMap::new())),
-            vec!["nine_router:caro".to_string(), "nine_router:barato".to_string()]
+            vec![
+                "nine_router:caro".to_string(),
+                "nine_router:barato".to_string()
+            ]
         );
     }
 }

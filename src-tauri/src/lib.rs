@@ -10,24 +10,27 @@ mod login;
 mod model;
 mod providers;
 mod secrets;
-mod wm_compat;
 mod uninstall;
 mod window_clip;
 #[cfg(target_os = "windows")]
 mod windows_backdrop;
+mod wm_compat;
 
 use config::AppConfig;
 use model::UsageReport;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
-use tauri::{PhysicalPosition, PhysicalSize};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
+};
+use tauri::{PhysicalPosition, PhysicalSize};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 const WIDGET: &str = "widget";
 const SETTINGS: &str = "settings";
@@ -40,37 +43,59 @@ const DETAIL: &str = "detail";
 const TRAY_ID: &str = "main";
 
 #[tauri::command]
-async fn set_surface_clip(window: WebviewWindow, clip: window_clip::Clip, backdrop: Option<bool>) -> Result<(), String> {
+async fn set_surface_clip(
+    window: WebviewWindow,
+    clip: window_clip::Clip,
+    backdrop: Option<bool>,
+) -> Result<(), String> {
     // Only plain wire geometry and a window handle cross the async boundary.
     // The compositor, queue, visuals and completion actions stay on the UI thread.
     let (tx, mut rx) = tauri::async_runtime::channel(1);
     let ui_window = window.clone();
-    window.run_on_main_thread(move || {
-        let result = window_clip::apply(&ui_window, clip, backdrop.unwrap_or(true));
-        // Cancellation needs no native cleanup: the UI-owned cache retains the layer.
-        let _ = tx.try_send(result);
-    }).map_err(|e| e.to_string())?;
-    rx.recv().await.ok_or_else(|| "Surface clip UI callback was dropped".to_string())?
+    window
+        .run_on_main_thread(move || {
+            let result = window_clip::apply(&ui_window, clip, backdrop.unwrap_or(true));
+            // Cancellation needs no native cleanup: the UI-owned cache retains the layer.
+            let _ = tx.try_send(result);
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv()
+        .await
+        .ok_or_else(|| "Surface clip UI callback was dropped".to_string())?
 }
 
 #[tauri::command]
-async fn set_detail_bounds(window: WebviewWindow, bounds: detail_geometry::Bounds) -> Result<(), String> {
+async fn set_detail_bounds(
+    window: WebviewWindow,
+    bounds: detail_geometry::Bounds,
+) -> Result<(), String> {
     let (tx, mut rx) = tauri::async_runtime::channel(1);
     let ui_window = window.clone();
-    window.run_on_main_thread(move || {
-        let _ = tx.try_send(detail_geometry::apply(&ui_window, bounds));
-    }).map_err(|e| e.to_string())?;
-    rx.recv().await.ok_or_else(|| "Detail bounds UI callback was dropped".to_string())?
+    window
+        .run_on_main_thread(move || {
+            let _ = tx.try_send(detail_geometry::apply(&ui_window, bounds));
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv()
+        .await
+        .ok_or_else(|| "Detail bounds UI callback was dropped".to_string())?
 }
 
 #[tauri::command]
-async fn set_widget_bounds(window: WebviewWindow, bounds: detail_geometry::Bounds) -> Result<(), String> {
+async fn set_widget_bounds(
+    window: WebviewWindow,
+    bounds: detail_geometry::Bounds,
+) -> Result<(), String> {
     let (tx, mut rx) = tauri::async_runtime::channel(1);
     let ui_window = window.clone();
-    window.run_on_main_thread(move || {
-        let _ = tx.try_send(detail_geometry::apply_widget(&ui_window, bounds));
-    }).map_err(|e| e.to_string())?;
-    rx.recv().await.ok_or_else(|| "Widget bounds UI callback was dropped".to_string())?
+    window
+        .run_on_main_thread(move || {
+            let _ = tx.try_send(detail_geometry::apply_widget(&ui_window, bounds));
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv()
+        .await
+        .ok_or_else(|| "Widget bounds UI callback was dropped".to_string())?
 }
 
 /// Atajos registrados → acción, y errores y avisos del último registro
@@ -98,9 +123,12 @@ fn apply_shortcuts(app: &AppHandle, cfg: &config::ShortcutsConfig) {
         ("open_peak", "Abrir el más cargado", cfg.open_peak.as_str()),
         ("refresh", "Actualizar", cfg.refresh.as_str()),
     ];
-    let (map, errors, warnings) = compute_shortcuts(cfg.enabled, wm_compat::is_wayland_session(), &entries, |sc| {
-        gs.register(sc.clone()).map_err(|e| e.to_string())
-    });
+    let (map, errors, warnings) = compute_shortcuts(
+        cfg.enabled,
+        wm_compat::is_wayland_session(),
+        &entries,
+        |sc| gs.register(sc.clone()).map_err(|e| e.to_string()),
+    );
     if let Some(state) = app.try_state::<Shortcuts>() {
         *state.map.lock().unwrap() = map;
         *state.errors.lock().unwrap() = errors;
@@ -143,8 +171,10 @@ fn compute_shortcuts(
                     if wayland {
                         warnings.push(wayland_shortcut_warning(label, text));
                     }
-                },
-                Err(e) => errors.push(format!("{label} ({text}): no se pudo registrar, ¿lo usa otra app? ({e})")),
+                }
+                Err(e) => errors.push(format!(
+                    "{label} ({text}): no se pudo registrar, ¿lo usa otra app? ({e})"
+                )),
             },
             Err(e) => errors.push(format!("{label} ({text}): combinación no válida ({e})")),
         }
@@ -298,13 +328,17 @@ fn run_locale_relabel(
 /// ventanas nativas. Silencioso: un fallo nativo puntual (p. ej. una ventana ya
 /// cerrada) no debe abortar el guardado de la config.
 fn apply_locale(app: &AppHandle, old: &str, new: &str) {
-    let Some(plan) = locale_relabel(old, new, channel::current().name) else { return };
+    let Some(plan) = locale_relabel(old, new, channel::current().name) else {
+        return;
+    };
     run_locale_relabel(
         &plan,
         |labels| {
             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 match tray_menu(app, labels) {
-                    Ok(menu) => { let _ = tray.set_menu(Some(menu)); }
+                    Ok(menu) => {
+                        let _ = tray.set_menu(Some(menu));
+                    }
                     Err(e) => eprintln!("No pude reconstruir el menú de la bandeja: {e}"),
                 }
             }
@@ -321,7 +355,11 @@ fn apply_locale(app: &AppHandle, old: &str, new: &str) {
 
 #[tauri::command]
 fn updater_mode() -> &'static str {
-    if cfg!(target_os = "macos") { "manual" } else { "native" }
+    if cfg!(target_os = "macos") {
+        "manual"
+    } else {
+        "native"
+    }
 }
 
 #[tauri::command]
@@ -349,18 +387,27 @@ fn update_config(
                 &old.nine_router.base_url,
                 &next.nine_router.base_url,
                 forget_nine_router_secrets,
-            ).map(|_| ())
+            )
+            .map(|_| ())
         },
         |next| config::save(&state.config_path, next),
     )
 }
 
 #[tauri::command]
-fn save_config(app: AppHandle, state: State<'_, AppState>, config: AppConfig) -> Result<AppConfig, String> {
+fn save_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    config: AppConfig,
+) -> Result<AppConfig, String> {
     let (old, config) = update_config(&state, |current| *current = config)?;
     // La invalidación de 9Router ya ocurrió dentro de la transacción de config.
     // Las cuentas eliminadas se llevan sus secretos del almacén del sistema.
-    for gone in old.accounts.iter().filter(|a| !config.accounts.iter().any(|b| b.id == a.id)) {
+    for gone in old
+        .accounts
+        .iter()
+        .filter(|a| !config.accounts.iter().any(|b| b.id == a.id))
+    {
         secrets::forget_account(gone);
     }
     let old_shortcuts = old.shortcuts;
@@ -380,7 +427,8 @@ fn save_config(app: AppHandle, state: State<'_, AppState>, config: AppConfig) ->
 /// los espacios. Cuando cambia, las credenciales guardadas (del destino anterior)
 /// dejan de ser válidas para el nuevo y hay que invalidarlas.
 fn nine_router_destination_changed(old_base: &str, new_base: &str) -> bool {
-    providers::nine_router::normalize_base(old_base) != providers::nine_router::normalize_base(new_base)
+    providers::nine_router::normalize_base(old_base)
+        != providers::nine_router::normalize_base(new_base)
 }
 
 /// Orden fail-safe al cambiar destino: invalidar secretos y solo entonces permitir
@@ -407,15 +455,26 @@ fn forget_nine_router_secrets() -> Result<(), String> {
 /// cuentas ni secretos, así un snapshot obsoleto no puede borrar una cuenta.
 /// Devuelve la config persistida junto al posible fallo del efecto nativo.
 #[tauri::command]
-fn patch_config(app: AppHandle, state: State<'_, AppState>, patch: config::WidgetPatch) -> Result<ConfigPatchOutcome, String> {
+fn patch_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    patch: config::WidgetPatch,
+) -> Result<ConfigPatchOutcome, String> {
     let apply_top = patch_touches_always_on_top(&patch);
     let (old, config) = update_config(&state, |current| current.apply_widget_patch(patch))?;
-    let native_error = if apply_top { apply_always_on_top(&app, config.always_on_top) } else { None };
+    let native_error = if apply_top {
+        apply_always_on_top(&app, config.always_on_top)
+    } else {
+        None
+    };
     // Hoy el patch no incluye `locale`, pero si algún día lo cambiara aquí se
     // re-etiqueta igual que en `save_config` (mismo espejo de efectos nativos).
     apply_locale(&app, &old.locale, &config.locale);
     let _ = app.emit("config-changed", &config);
-    Ok(ConfigPatchOutcome { config, native_error })
+    Ok(ConfigPatchOutcome {
+        config,
+        native_error,
+    })
 }
 
 #[tauri::command]
@@ -429,7 +488,9 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
     // P2: las claves de 9Router solo mutan vía el coordinador (login/logout/save URL).
     // El setter genérico saltaría el lock y la generación.
     if providers::nine_router_creds::is_managed_key(&key) {
-        return Err("Las credenciales de 9Router solo se gestionan al conectar o desconectar.".into());
+        return Err(
+            "Las credenciales de 9Router solo se gestionan al conectar o desconectar.".into(),
+        );
     }
     secrets::set(&key, &value)?;
     let _ = app.emit("config-changed", ());
@@ -440,7 +501,9 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
 async fn fetch_usage(state: State<'_, AppState>) -> Result<Vec<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let reports = providers::fetch_all(&cfg, &state.http).await;
-    state.history.record(&reports, chrono::Utc::now().timestamp());
+    state
+        .history
+        .record(&reports, chrono::Utc::now().timestamp());
     Ok(reports)
 }
 
@@ -467,7 +530,12 @@ async fn nan_probe(state: State<'_, AppState>) -> Result<String, String> {
 /// bajo el mismo lock que el guardado y logout; tras la red la generación debe
 /// seguir vigente. Ningún lock de configuración se mantiene durante el `.await`.
 #[tauri::command]
-async fn nine_router_login(app: AppHandle, state: State<'_, AppState>, password: String, base_url: Option<String>) -> Result<String, String> {
+async fn nine_router_login(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    password: String,
+    base_url: Option<String>,
+) -> Result<String, String> {
     let (cfg, ticket) = config_transaction::snapshot_with_ticket(
         &state.config,
         providers::nine_router_creds::begin_write_ticket,
@@ -481,10 +549,13 @@ async fn nine_router_login(app: AppHandle, state: State<'_, AppState>, password:
         // Ticket antes del await: si hay logout / otro destino / otra conexión,
         // la respuesta de A no debe restaurar ni sobrescribir (persist_if_generation).
         let cookie = providers::nine_router::login(&state.http, &base, &password).await?;
-        match providers::nine_router_creds::persist_if_generation(&base, &password, &cookie, ticket) {
+        match providers::nine_router_creds::persist_if_generation(&base, &password, &cookie, ticket)
+        {
             Ok(()) => {}
             Err(providers::nine_router_creds::PersistError::Stale) => {
-                return Err("La sesión de 9Router cambió durante el login. Vuelve a conectar.".into());
+                return Err(
+                    "La sesión de 9Router cambió durante el login. Vuelve a conectar.".into(),
+                );
             }
             Err(providers::nine_router_creds::PersistError::Store(e)) => return Err(e),
         }
@@ -497,7 +568,8 @@ async fn nine_router_login(app: AppHandle, state: State<'_, AppState>, password:
         providers::nine_router::probe(&state.http, &cfg.nine_router, Some(&base)).await
     } else {
         // Destino del borrador ≠ persistido: prueba aislada, sin persistir nada.
-        providers::nine_router::probe_with_password(&state.http, &cfg.nine_router, &base, &password).await
+        providers::nine_router::probe_with_password(&state.http, &cfg.nine_router, &base, &password)
+            .await
     }
 }
 
@@ -522,14 +594,26 @@ async fn nan_login_request(state: State<'_, AppState>, email: String) -> Result<
 /// NaN: usa el enlace pegado para abrir sesión, la guarda en el almacén seguro y devuelve el usuario.
 /// `account`: id de una cuenta adicional de NaN; sin él, la sesión es la de la principal.
 #[tauri::command]
-async fn nan_login_complete(app: AppHandle, state: State<'_, AppState>, link: String, account: Option<String>) -> Result<String, String> {
+async fn nan_login_complete(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    link: String,
+    account: Option<String>,
+) -> Result<String, String> {
     let cookie = providers::nan_cloud::login_complete(&link).await?;
-    let who = providers::nan_cloud::whoami(&state.http, &cookie).await.map_err(|e| match e {
-        providers::nan_cloud::CloudError::Expired => "NaN no ha aceptado la sesión del enlace. Pide otro e inténtalo de nuevo.".to_string(),
-        providers::nan_cloud::CloudError::Other(m) => m,
-    })?;
+    let who = providers::nan_cloud::whoami(&state.http, &cookie)
+        .await
+        .map_err(|e| match e {
+            providers::nan_cloud::CloudError::Expired => {
+                "NaN no ha aceptado la sesión del enlace. Pide otro e inténtalo de nuevo."
+                    .to_string()
+            }
+            providers::nan_cloud::CloudError::Other(m) => m,
+        })?;
     let key = match account.as_deref() {
-        Some(id) if id.starts_with("nan:") && config::is_account_id(id) => secrets::scoped(secrets::NAN_SESSION, id),
+        Some(id) if id.starts_with("nan:") && config::is_account_id(id) => {
+            secrets::scoped(secrets::NAN_SESSION, id)
+        }
         Some(_) => return Err("Cuenta de NaN no válida".into()),
         None => secrets::NAN_SESSION.to_string(),
     };
@@ -565,9 +649,15 @@ struct EffectPayload {
 
 /// Lanza un efecto a pantalla completa en la ventana overlay (transparente y que deja pasar los clics).
 #[tauri::command]
-fn play_effect(app: AppHandle, state: State<'_, AppState>, req: EffectRequest) -> Result<(), String> {
+fn play_effect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: EffectRequest,
+) -> Result<(), String> {
     let cfg = state.config.lock().unwrap().clone();
-    let w = app.get_webview_window(OVERLAY).ok_or("No existe la ventana de efectos")?;
+    let w = app
+        .get_webview_window(OVERLAY)
+        .ok_or("No existe la ventana de efectos")?;
     let mut media_path = None;
     if req.kind == "custom" {
         let path = cfg
@@ -576,11 +666,15 @@ fn play_effect(app: AppHandle, state: State<'_, AppState>, req: EffectRequest) -
             .map(str::to_string)
             .ok_or("No hay archivo para el efecto propio de este aviso")?;
         // Solo ese archivo queda accesible desde el webview (asset protocol).
-        app.asset_protocol_scope().allow_file(&path).map_err(|e| e.to_string())?;
+        app.asset_protocol_scope()
+            .allow_file(&path)
+            .map_err(|e| e.to_string())?;
         media_path = Some(path);
     }
-    w.set_position(PhysicalPosition::new(req.x, req.y)).map_err(|e| e.to_string())?;
-    w.set_size(PhysicalSize::new(req.width.max(1), req.height.max(1))).map_err(|e| e.to_string())?;
+    w.set_position(PhysicalPosition::new(req.x, req.y))
+        .map_err(|e| e.to_string())?;
+    w.set_size(PhysicalSize::new(req.width.max(1), req.height.max(1)))
+        .map_err(|e| e.to_string())?;
     // `show()` primero: tao 0.37.1 hace `window.window().unwrap()` en
     // `set_ignore_cursor_events`, y hasta que la ventana se mapea (show) no
     // existe el GdkWindow → panic en Wayland (tao#1204). Si el click-through
@@ -619,7 +713,10 @@ fn session_stamp(state: State<'_, AppState>) -> u64 {
 /// Comprueba la conexión de una cuenta (principal o adicional) con la config guardada,
 /// aunque esté oculta en el widget. `None` si el id no existe.
 #[tauri::command]
-async fn check_provider(state: State<'_, AppState>, id: String) -> Result<Option<UsageReport>, String> {
+async fn check_provider(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     Ok(providers::fetch_one(&cfg, &id, &state.http).await)
 }
@@ -653,28 +750,40 @@ fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String
     // `unwrap_or_else(into_inner)`: si otro hanco pánicara con el lock tomado,
     // el mutex queda envenenado y con `unwrap` todos los `open_login` futuros
     // paniquearían en cascada. Con `into_inner` seguimos operando el set.
-    let mut inflight = state.login_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+    let mut inflight = state
+        .login_in_flight
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     if !inflight.insert(provider.clone()) {
         return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
     }
     drop(inflight); // no mantener el lock mientras spawn_terminal corre
     let cfg = state.config.lock().unwrap().clone();
     let r = login::open(&provider, &cfg);
-    state.login_in_flight.lock().unwrap_or_else(|p| p.into_inner()).remove(&provider);
+    state
+        .login_in_flight
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&provider);
     r
 }
 
 /// Estado de solo lectura de la instalación asistida de Codex (sin procesos).
 /// `async` lo saca del hilo principal: hace lecturas de FS/registro al sondear.
 #[tauri::command(async)]
-fn codex_setup_status(state: State<'_, codex_setup::CodexSetupState>) -> codex_setup::CodexSetupStatus {
+fn codex_setup_status(
+    state: State<'_, codex_setup::CodexSetupState>,
+) -> codex_setup::CodexSetupStatus {
     codex_setup::status(state.inner())
 }
 
 /// Instala el CLI de Codex en la carpeta gestionada de Quorb. Solo desde Ajustes,
 /// con confirmación nativa previa y rechazo de invocaciones concurrentes.
 #[tauri::command]
-async fn install_codex(app: AppHandle, window: WebviewWindow) -> Result<codex_setup::CodexInstallResult, String> {
+async fn install_codex(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<codex_setup::CodexInstallResult, String> {
     let label = window.label().to_string();
     if !codex_setup::settings_window_ok(&label) {
         return Err(codex_setup::MSG_WRONG_WINDOW.to_string());
@@ -695,7 +804,10 @@ async fn install_codex(app: AppHandle, window: WebviewWindow) -> Result<codex_se
                 .message(codex_setup::consent_message(locale))
                 .title(i18n::text(locale, i18n::Msg::CodexConsentTitle))
                 .kind(MessageDialogKind::Info)
-                .buttons(MessageDialogButtons::OkCancelCustom(install_label.into(), cancel_label.into()))
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    install_label.into(),
+                    cancel_label.into(),
+                ))
                 // Dueño nativo: la confirmación se ancla a la ventana de Ajustes.
                 .parent(&window)
                 .blocking_show()
@@ -723,11 +835,15 @@ async fn open_settings(app: AppHandle) -> Result<(), String> {
 /// Never show a detached panel while its widget is hidden (including an in-flight hover).
 #[tauri::command]
 fn show_detail(app: AppHandle) -> Result<bool, String> {
-    let widget = app.get_webview_window(WIDGET).ok_or("No existe el widget")?;
+    let widget = app
+        .get_webview_window(WIDGET)
+        .ok_or("No existe el widget")?;
     if !widget.is_visible().map_err(|e| e.to_string())? {
         return Ok(false);
     }
-    let detail = app.get_webview_window(DETAIL).ok_or("No existe el panel de detalle")?;
+    let detail = app
+        .get_webview_window(DETAIL)
+        .ok_or("No existe el panel de detalle")?;
     detail.show().map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -756,7 +872,10 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
         .map(|m| m.size().height as f64 / m.scale_factor() - 96.0)
         .map_or(SETTINGS_HEIGHT, |max| SETTINGS_HEIGHT.min(max).max(520.0));
     let win = WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("index.html".into()))
-        .title(i18n::settings_title(current_locale(app), channel::current().name))
+        .title(i18n::settings_title(
+            current_locale(app),
+            channel::current().name,
+        ))
         .inner_size(1040.0, height)
         .min_inner_size(480.0, 520.0)
         .center()
@@ -789,7 +908,9 @@ fn toggle_widget(app: &AppHandle) {
 /// La app se llamaba «egdev AI Usage» (identificador `es.egdev.ai-usage`).
 /// Si existe un fichero de entonces y aún no hay uno nuevo, se copia.
 fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
-    if !channel::current().migrate_legacy { return; }
+    if !channel::current().migrate_legacy {
+        return;
+    }
     let target = dir.join(file);
     if target.exists() {
         return;
@@ -909,34 +1030,36 @@ pub fn run() {
 
             // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
             let locale = i18n::locale_from_config(&cfg.locale);
-            let detail_builder = WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
-                .title(i18n::detail_title(locale, channel::current().name))
-                .inner_size(330.0, 260.0)
-                .decorations(false)
-                .transparent(true)
-                .shadow(false)
-                .always_on_top(cfg.always_on_top)
-                .skip_taskbar(true)
-                .resizable(false)
-                .focused(false)
-                .visible(false);
+            let detail_builder =
+                WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
+                    .title(i18n::detail_title(locale, channel::current().name))
+                    .inner_size(330.0, 260.0)
+                    .decorations(false)
+                    .transparent(true)
+                    .shadow(false)
+                    .always_on_top(cfg.always_on_top)
+                    .skip_taskbar(true)
+                    .resizable(false)
+                    .focused(false)
+                    .visible(false);
             #[cfg(target_os = "windows")]
             let detail_builder = detail_builder.no_redirection_bitmap(true);
             detail_builder.build()?;
 
             // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
-            let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
-                .title(i18n::overlay_title(locale, channel::current().name))
-                .decorations(false)
-                .transparent(true)
-                .shadow(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
-                .resizable(false)
-                .focused(false)
-                .focusable(false)
-                .visible(false)
-                .build()?;
+            let _overlay =
+                WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
+                    .title(i18n::overlay_title(locale, channel::current().name))
+                    .decorations(false)
+                    .transparent(true)
+                    .shadow(false)
+                    .always_on_top(true)
+                    .skip_taskbar(true)
+                    .resizable(false)
+                    .focused(false)
+                    .focusable(false)
+                    .visible(false)
+                    .build()?;
             // Sin `set_ignore_cursor_events` aquí: la ventana aún está oculta
             // y no tiene GdkWindow → tao 0.37.1 panicea (`window.window()
             // .unwrap()` en `CursorIgnoreEvents`, bug tao#1204). Se aplica en
@@ -1020,17 +1143,25 @@ pub fn run() {
         ]);
     #[cfg(target_os = "windows")]
     {
-        let app = builder.build(tauri::generate_context!()).expect("error al arrancar Quorb");
+        let app = builder
+            .build(tauri::generate_context!())
+            .expect("error al arrancar Quorb");
         let exit_code = app.run_return(|_, event| {
-            if matches!(event, tauri::RunEvent::Exit) { windows_backdrop::begin_shutdown(); }
+            if matches!(event, tauri::RunEvent::Exit) {
+                windows_backdrop::begin_shutdown();
+            }
         });
         // Tauri has returned its UI thread to us. Finish an owned queue shutdown
         // with a bounded native message pump, then release our WinRT apartment.
         windows_backdrop::finish_shutdown();
-        if exit_code != 0 { std::process::exit(exit_code); }
+        if exit_code != 0 {
+            std::process::exit(exit_code);
+        }
     }
     #[cfg(not(target_os = "windows"))]
-    builder.run(tauri::generate_context!()).expect("error al arrancar Quorb");
+    builder
+        .run(tauri::generate_context!())
+        .expect("error al arrancar Quorb");
 }
 
 #[cfg(test)]
@@ -1043,15 +1174,35 @@ mod tests {
         assert!(locale_relabel("es", "es", "Quorb").is_none());
         assert!(locale_relabel("en", "en", "Quorb").is_none());
         let plan = locale_relabel("es", "en", "Quorb").expect("es -> en relabels");
-        assert_eq!(plan.tray, ["Show / hide widget", "Refresh now", "Settings…", "Quit"]);
         assert_eq!(
-            plan.titles.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
+            plan.tray,
+            ["Show / hide widget", "Refresh now", "Settings…", "Quit"]
+        );
+        assert_eq!(
+            plan.titles
+                .iter()
+                .map(|(label, _)| *label)
+                .collect::<Vec<_>>(),
             vec![SETTINGS, DETAIL, OVERLAY]
         );
-        assert_eq!(plan.titles[0].1, i18n::settings_title(i18n::Locale::En, "Quorb"));
+        assert_eq!(
+            plan.titles[0].1,
+            i18n::settings_title(i18n::Locale::En, "Quorb")
+        );
         let back = locale_relabel("en", "es", "Quorb").expect("en -> es relabels");
-        assert_eq!(back.tray, ["Mostrar / ocultar widget", "Actualizar ahora", "Ajustes…", "Salir"]);
-        assert_eq!(back.titles[0].1, i18n::settings_title(i18n::Locale::Es, "Quorb"));
+        assert_eq!(
+            back.tray,
+            [
+                "Mostrar / ocultar widget",
+                "Actualizar ahora",
+                "Ajustes…",
+                "Salir"
+            ]
+        );
+        assert_eq!(
+            back.titles[0].1,
+            i18n::settings_title(i18n::Locale::Es, "Quorb")
+        );
     }
 
     #[test]
@@ -1059,13 +1210,23 @@ mod tests {
         let plan = locale_relabel("es", "en", "Quorb Beta").unwrap();
         let mut trays = Vec::new();
         let mut titles = Vec::new();
-        run_locale_relabel(&plan, |labels| trays.push(labels), |label, title| titles.push((label.to_string(), title.to_string())));
+        run_locale_relabel(
+            &plan,
+            |labels| trays.push(labels),
+            |label, title| titles.push((label.to_string(), title.to_string())),
+        );
         assert_eq!(trays, vec![plan.tray]);
         assert_eq!(
             titles,
-            plan.titles.iter().map(|(l, t)| (l.to_string(), t.clone())).collect::<Vec<_>>()
+            plan.titles
+                .iter()
+                .map(|(l, t)| (l.to_string(), t.clone()))
+                .collect::<Vec<_>>()
         );
-        assert!(titles.iter().all(|(_, t)| t.contains("Quorb Beta")), "titles keep the channel name: {titles:?}");
+        assert!(
+            titles.iter().all(|(_, t)| t.contains("Quorb Beta")),
+            "titles keep the channel name: {titles:?}"
+        );
     }
 
     #[test]
@@ -1084,13 +1245,31 @@ mod tests {
     #[test]
     fn saving_a_new_nine_router_base_url_invalidates_old_secrets() {
         // Mismo destino (con o sin barra final/espacios): los secretos siguen valiendo.
-        assert!(!nine_router_destination_changed("http://localhost:20128", "http://localhost:20128"));
-        assert!(!nine_router_destination_changed("http://localhost:20128/", "http://localhost:20128"));
-        assert!(!nine_router_destination_changed("  http://localhost:20128  ", "http://localhost:20128/"));
+        assert!(!nine_router_destination_changed(
+            "http://localhost:20128",
+            "http://localhost:20128"
+        ));
+        assert!(!nine_router_destination_changed(
+            "http://localhost:20128/",
+            "http://localhost:20128"
+        ));
+        assert!(!nine_router_destination_changed(
+            "  http://localhost:20128  ",
+            "http://localhost:20128/"
+        ));
         // Otro destino: hay que invalidar (se borran contraseña y cookie).
-        assert!(nine_router_destination_changed("http://localhost:20128", "http://localhost:3000"));
-        assert!(nine_router_destination_changed("http://localhost:20128", "http://otro-host:20128"));
-        assert!(nine_router_destination_changed("http://localhost:20128", "https://localhost:20128"));
+        assert!(nine_router_destination_changed(
+            "http://localhost:20128",
+            "http://localhost:3000"
+        ));
+        assert!(nine_router_destination_changed(
+            "http://localhost:20128",
+            "http://otro-host:20128"
+        ));
+        assert!(nine_router_destination_changed(
+            "http://localhost:20128",
+            "https://localhost:20128"
+        ));
     }
 
     /// P1 (5º feedback): si el almacén rechaza el borrado, no se puede publicar B.
@@ -1147,16 +1326,27 @@ mod tests {
     /// P2 (review consolidado): el setter genérico no debe tocar secretos de 9Router.
     #[test]
     fn generic_secret_setter_rejects_nine_router_keys() {
-        assert!(providers::nine_router_creds::is_managed_key(secrets::NINE_ROUTER_PASSWORD));
-        assert!(providers::nine_router_creds::is_managed_key(secrets::NINE_ROUTER_SESSION));
-        assert!(providers::nine_router_creds::is_managed_key(secrets::NINE_ROUTER_BOUND_URL));
-        assert!(!providers::nine_router_creds::is_managed_key(secrets::NAN_API_KEY));
+        assert!(providers::nine_router_creds::is_managed_key(
+            secrets::NINE_ROUTER_PASSWORD
+        ));
+        assert!(providers::nine_router_creds::is_managed_key(
+            secrets::NINE_ROUTER_SESSION
+        ));
+        assert!(providers::nine_router_creds::is_managed_key(
+            secrets::NINE_ROUTER_BOUND_URL
+        ));
+        assert!(!providers::nine_router_creds::is_managed_key(
+            secrets::NAN_API_KEY
+        ));
     }
 
     /// Carpeta temporal propia de cada prueba: sin dependencias nuevas y sin
     /// tocar ninguna ruta real del usuario.
     fn temp_home(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("quorb-account-session-{}-{tag}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "quorb-account-session-{}-{tag}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -1174,8 +1364,15 @@ mod tests {
     #[test]
     fn account_session_ignores_unknown_accounts() {
         let home = temp_home("unknown");
-        assert!(!account_session_file_found(&AppConfig::default(), "claude:w1", &home));
-        let cfg = AppConfig { accounts: vec![account_with_dir("claude", &home)], ..Default::default() };
+        assert!(!account_session_file_found(
+            &AppConfig::default(),
+            "claude:w1",
+            &home
+        ));
+        let cfg = AppConfig {
+            accounts: vec![account_with_dir("claude", &home)],
+            ..Default::default()
+        };
         assert!(!account_session_file_found(&cfg, "claude:otra", &home));
     }
 
@@ -1184,7 +1381,10 @@ mod tests {
         let home = temp_home("presence");
         let dir = home.join("claude-w1");
         std::fs::create_dir_all(&dir).unwrap();
-        let cfg = AppConfig { accounts: vec![account_with_dir("claude", &dir)], ..Default::default() };
+        let cfg = AppConfig {
+            accounts: vec![account_with_dir("claude", &dir)],
+            ..Default::default()
+        };
         let file = dir.join(".credentials.json");
 
         // Sin fichero: no hay nada.
@@ -1203,7 +1403,10 @@ mod tests {
         let home = temp_home("nocreds");
         let dir = home.join("openrouter-w1");
         std::fs::create_dir_all(&dir).unwrap();
-        let cfg = AppConfig { accounts: vec![account_with_dir("openrouter", &dir)], ..Default::default() };
+        let cfg = AppConfig {
+            accounts: vec![account_with_dir("openrouter", &dir)],
+            ..Default::default()
+        };
         // OpenRouter no usa sesión de CLI: ni con ficheros en la carpeta hay presencia.
         std::fs::write(dir.join("auth.json"), b"{}").unwrap();
         assert!(!account_session_file_found(&cfg, "openrouter:w1", &home));
@@ -1233,14 +1436,35 @@ mod tests {
     #[test]
     fn wayland_shortcut_warning_identifies_shortcut_and_never_claims_activation() {
         let msg = wayland_shortcut_warning("Mostrar / ocultar", "Ctrl+Alt+U");
-        assert!(msg.contains("Mostrar / ocultar"), "debe nombrar el atajo: {msg}");
-        assert!(msg.contains("Ctrl+Alt+U"), "debe mostrar la combinación: {msg}");
+        assert!(
+            msg.contains("Mostrar / ocultar"),
+            "debe nombrar el atajo: {msg}"
+        );
+        assert!(
+            msg.contains("Ctrl+Alt+U"),
+            "debe mostrar la combinación: {msg}"
+        );
         assert!(msg.contains("Wayland"), "debe explicar la sesión: {msg}");
-        assert!(msg.contains("X11/XWayland"), "debe explicar la causa: {msg}");
-        assert!(msg.contains("puede no tener efecto global"), "no debe prometer efecto: {msg}");
-        assert!(msg.contains("puede no responder"), "debe decir qué observar: {msg}");
-        assert!(!msg.to_lowercase().contains("activad"), "nunca afirma activación: {msg}");
-        assert!(!msg.to_lowercase().contains("funciona"), "nunca promete funcionamiento: {msg}");
+        assert!(
+            msg.contains("X11/XWayland"),
+            "debe explicar la causa: {msg}"
+        );
+        assert!(
+            msg.contains("puede no tener efecto global"),
+            "no debe prometer efecto: {msg}"
+        );
+        assert!(
+            msg.contains("puede no responder"),
+            "debe decir qué observar: {msg}"
+        );
+        assert!(
+            !msg.to_lowercase().contains("activad"),
+            "nunca afirma activación: {msg}"
+        );
+        assert!(
+            !msg.to_lowercase().contains("funciona"),
+            "nunca promete funcionamiento: {msg}"
+        );
     }
 
     // #181 (matriz de la aprobación del mantenedor): la decisión pura de
@@ -1254,8 +1478,7 @@ mod tests {
 
     #[test]
     fn wayland_with_ok_registration_warns_limited_scope() {
-        let (map, errors, warnings) =
-            compute_shortcuts(true, true, &entries(), |_| Ok(()));
+        let (map, errors, warnings) = compute_shortcuts(true, true, &entries(), |_| Ok(()));
         assert_eq!(map.len(), 2, "registro best-effort conservado");
         assert!(errors.is_empty(), "sin errores reales: {errors:?}");
         assert_eq!(warnings.len(), 2, "un aviso por atajo registrado");
@@ -1264,8 +1487,7 @@ mod tests {
 
     #[test]
     fn x11_with_ok_registration_has_no_warning() {
-        let (map, errors, warnings) =
-            compute_shortcuts(true, false, &entries(), |_| Ok(()));
+        let (map, errors, warnings) = compute_shortcuts(true, false, &entries(), |_| Ok(()));
         assert_eq!(map.len(), 2);
         assert!(errors.is_empty());
         assert!(warnings.is_empty(), "X11 no genera aviso de capacidad");
@@ -1273,11 +1495,13 @@ mod tests {
 
     #[test]
     fn disabled_shortcuts_produce_no_registration_nor_false_warning() {
-        let (map, errors, warnings) =
-            compute_shortcuts(false, true, &entries(), |_| Ok(()));
+        let (map, errors, warnings) = compute_shortcuts(false, true, &entries(), |_| Ok(()));
         assert!(map.is_empty());
         assert!(errors.is_empty());
-        assert!(warnings.is_empty(), "sin falso aviso con atajos desactivados");
+        assert!(
+            warnings.is_empty(),
+            "sin falso aviso con atajos desactivados"
+        );
     }
 
     #[test]
@@ -1287,14 +1511,16 @@ mod tests {
         assert!(map.is_empty(), "fallo de registro no agrega al map");
         assert_eq!(errors.len(), 2, "errores reales intactos");
         assert!(errors.iter().all(|e| e.contains("no se pudo registrar")));
-        assert!(warnings.is_empty(), "el fallo ya informa: sin aviso de capacidad");
+        assert!(
+            warnings.is_empty(),
+            "el fallo ya informa: sin aviso de capacidad"
+        );
     }
 
     #[test]
     fn parse_errors_do_not_become_capacity_warnings() {
         let bad = vec![("toggle", "Mostrar / ocultar", "no-es-un-atajo")];
-        let (map, errors, warnings) =
-            compute_shortcuts(true, true, &bad, |_| Ok(()));
+        let (map, errors, warnings) = compute_shortcuts(true, true, &bad, |_| Ok(()));
         assert!(map.is_empty());
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("combinación no válida"));
@@ -1307,8 +1533,7 @@ mod tests {
             ("toggle", "Mostrar / ocultar", ""),
             ("refresh", "Actualizar", "Ctrl+Alt+R"),
         ];
-        let (map, errors, warnings) =
-            compute_shortcuts(true, false, &mixed, |_| Ok(()));
+        let (map, errors, warnings) = compute_shortcuts(true, false, &mixed, |_| Ok(()));
         assert_eq!(map.len(), 1);
         assert!(errors.is_empty());
         assert!(warnings.is_empty());

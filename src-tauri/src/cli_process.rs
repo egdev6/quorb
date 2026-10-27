@@ -690,7 +690,10 @@ mod tests {
         ));
 
         let mut env = fixture_env("grandchild");
-        env.insert(MARKER_ENV.to_string(), marker.to_string_lossy().into_owned());
+        env.insert(
+            MARKER_ENV.to_string(),
+            marker.to_string_lossy().into_owned(),
+        );
 
         let started = Instant::now();
         let result = ProcessRunner.run(

@@ -23,7 +23,10 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     let token = match who.secret(secrets::CURSOR_TOKEN) {
         Some(t) => t,
         None if !who.is_main() => {
-            return report.fail(Status::Unconfigured, "Pega el token de esta cuenta de Cursor en Ajustes.");
+            return report.fail(
+                Status::Unconfigured,
+                "Pega el token de esta cuenta de Cursor en Ajustes.",
+            );
         }
         None => match read_app_token(cfg.credentials_path.as_deref()) {
             Ok(t) => t,
@@ -32,7 +35,10 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     let token = jwt_from_cookie(&token);
     let Some(user_id) = user_id_from_jwt(&token) else {
-        return report.fail(Status::Error, "No reconozco el token de Cursor (¿formato cambiado?).");
+        return report.fail(
+            Status::Error,
+            "No reconozco el token de Cursor (¿formato cambiado?).",
+        );
     };
     let cookie = format!("WorkosCursorSessionToken={user_id}%3A%3A{token}");
 
@@ -48,7 +54,12 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return report.fail(Status::NeedsLogin, "Sesión de Cursor caducada. Abre Cursor para renovarla."),
+        401 | 403 => {
+            return report.fail(
+                Status::NeedsLogin,
+                "Sesión de Cursor caducada. Abre Cursor para renovarla.",
+            )
+        }
         code => return report.fail(Status::Error, format!("HTTP {code} en usage-summary")),
     }
     let body: Value = match res.json().await {
@@ -82,7 +93,10 @@ fn default_db() -> PathBuf {
 fn read_app_token(explicit: Option<&str>) -> Result<String, String> {
     let path = explicit.map(PathBuf::from).unwrap_or_else(default_db);
     if !path.is_file() {
-        return Err(format!("No encuentro la sesión de Cursor en {}. Inicia sesión en Cursor.", path.display()));
+        return Err(format!(
+            "No encuentro la sesión de Cursor en {}. Inicia sesión en Cursor.",
+            path.display()
+        ));
     }
     // `immutable=1`: no toca los bloqueos de Cursor aunque esté abierto.
     let p = path
@@ -91,7 +105,11 @@ fn read_app_token(explicit: Option<&str>) -> Result<String, String> {
         .replace('%', "%25")
         .replace('?', "%3F")
         .replace('#', "%23");
-    let p = if p.starts_with('/') { p } else { format!("/{p}") };
+    let p = if p.starts_with('/') {
+        p
+    } else {
+        format!("/{p}")
+    };
     let uri = format!("file://{p}?immutable=1");
     let conn = rusqlite::Connection::open_with_flags(
         uri,
@@ -99,7 +117,11 @@ fn read_app_token(explicit: Option<&str>) -> Result<String, String> {
     )
     .map_err(|e| format!("No puedo abrir la base de datos de Cursor: {e}"))?;
     let value: rusqlite::types::Value = conn
-        .query_row("SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'", [], |r| r.get(0))
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'",
+            [],
+            |r| r.get(0),
+        )
         .map_err(|_| "Cursor no tiene sesión iniciada.".to_string())?;
     // Según la versión de Cursor el valor es texto o BLOB.
     let raw = match value {
@@ -115,7 +137,13 @@ fn read_app_token(explicit: Option<&str>) -> Result<String, String> {
 /// (`<userId>%3A%3A<token>`), que es lo que se copia del navegador.
 pub(crate) fn jwt_from_cookie(raw: &str) -> String {
     let raw = raw.trim();
-    raw.rsplit("%3A%3A").next().unwrap_or(raw).rsplit("::").next().unwrap_or(raw).to_string()
+    raw.rsplit("%3A%3A")
+        .next()
+        .unwrap_or(raw)
+        .rsplit("::")
+        .next()
+        .unwrap_or(raw)
+        .to_string()
 }
 
 pub(crate) fn user_id_from_jwt(token: &str) -> Option<String> {
@@ -137,8 +165,14 @@ pub(crate) struct Parsed {
 }
 
 pub(crate) fn parse(v: &Value) -> Parsed {
-    let start = v.get("billingCycleStart").and_then(Value::as_str).and_then(|s| DateTime::parse_from_rfc3339(s).ok());
-    let end = v.get("billingCycleEnd").and_then(Value::as_str).and_then(|s| DateTime::parse_from_rfc3339(s).ok());
+    let start = v
+        .get("billingCycleStart")
+        .and_then(Value::as_str)
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
+    let end = v
+        .get("billingCycleEnd")
+        .and_then(Value::as_str)
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
     let window = match (start, end) {
         (Some(s), Some(e)) if e > s => Some((e - s).num_seconds()),
         _ => None,
@@ -146,13 +180,18 @@ pub(crate) fn parse(v: &Value) -> Parsed {
     let resets_at = end.map(|e| e.with_timezone(&chrono::Utc).to_rfc3339());
     let plan = v.get("membershipType").and_then(Value::as_str).map(|m| {
         let mut c = m.chars();
-        c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+        c.next()
+            .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+            .unwrap_or_default()
     });
 
     let p = v.pointer("/individualUsage/plan");
     let n = |k: &str| p.and_then(|p| p.get(k)).and_then(Value::as_f64);
     let mut meters = vec![];
-    let unlimited = v.get("isUnlimited").and_then(Value::as_bool).unwrap_or(false);
+    let unlimited = v
+        .get("isUnlimited")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if !unlimited {
         let total = n("totalPercentUsed").or_else(|| match (n("used"), n("limit")) {
             (Some(u), Some(l)) if l > 0.0 => Some(u / l * 100.0),
@@ -170,7 +209,10 @@ pub(crate) fn parse(v: &Value) -> Parsed {
                 window_seconds: window,
             });
         }
-        for (key, id, label) in [("autoPercentUsed", "plan_auto", "Plan · Auto"), ("apiPercentUsed", "plan_api", "Plan · modelos API")] {
+        for (key, id, label) in [
+            ("autoPercentUsed", "plan_auto", "Plan · Auto"),
+            ("apiPercentUsed", "plan_api", "Plan · modelos API"),
+        ] {
             if let Some(pct) = n(key) {
                 meters.push(Meter {
                     id: id.into(),
@@ -189,18 +231,33 @@ pub(crate) fn parse(v: &Value) -> Parsed {
     // On-demand: dólares fuera del plan (vienen en céntimos en algunas cuentas).
     let od = v.pointer("/individualUsage/onDemand");
     let od_used = od.and_then(|o| o.get("used")).and_then(Value::as_f64);
-    let spend = match (od.and_then(|o| o.get("enabled")).and_then(Value::as_bool), od_used) {
+    let spend = match (
+        od.and_then(|o| o.get("enabled")).and_then(Value::as_bool),
+        od_used,
+    ) {
         (Some(true), Some(u)) if u > 0.0 => Some(Spend {
             amount: if u > 1000.0 { u / 100.0 } else { u },
             currency: "USD".into(),
             period_label: "On-demand".into(),
-            budget: od.and_then(|o| o.get("limit")).and_then(Value::as_f64).map(|l| if l > 1000.0 { l / 100.0 } else { l }),
+            budget: od
+                .and_then(|o| o.get("limit"))
+                .and_then(Value::as_f64)
+                .map(|l| if l > 1000.0 { l / 100.0 } else { l }),
         }),
         _ => None,
     };
     let message = unlimited.then(|| "Plan sin límite de uso".to_string());
-    let validity = end.map(|at| Validity { at: at.to_rfc3339(), kind: ValidityKind::Period });
-    Parsed { plan, meters, spend, message, validity }
+    let validity = end.map(|at| Validity {
+        at: at.to_rfc3339(),
+        kind: ValidityKind::Period,
+    });
+    Parsed {
+        plan,
+        meters,
+        spend,
+        message,
+        validity,
+    }
 }
 
 #[cfg(test)]
@@ -232,9 +289,15 @@ mod tests {
         assert_eq!(p.meters.len(), 3);
         assert_eq!(p.meters[0].percent, Some(60.0));
         assert_eq!(p.meters[0].window_seconds, Some(30 * 86_400));
-        assert_eq!(p.meters[0].resets_at.as_deref(), Some("2026-10-20T10:00:00+00:00"));
+        assert_eq!(
+            p.meters[0].resets_at.as_deref(),
+            Some("2026-10-20T10:00:00+00:00")
+        );
         assert_eq!(p.meters[2].label, "Plan · modelos API");
-        assert_eq!(p.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["plan_total", "plan_auto", "plan_api"]);
+        assert_eq!(
+            p.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["plan_total", "plan_auto", "plan_api"]
+        );
         assert_eq!(p.spend.map(|s| s.amount), Some(4.2));
     }
 
@@ -245,8 +308,12 @@ mod tests {
         assert_eq!(validity.kind, crate::model::ValidityKind::Period);
         assert_eq!(validity.at, "2030-02-01T00:00:00+00:00");
         assert!(parse(&json!({})).validity.is_none());
-        assert!(parse(&json!({"billingCycleEnd": "invalid"})).validity.is_none());
-        assert!(parse(&json!({"billingCycleEnd": "2030-02-30T00:00:00Z"})).validity.is_none());
+        assert!(parse(&json!({"billingCycleEnd": "invalid"}))
+            .validity
+            .is_none());
+        assert!(parse(&json!({"billingCycleEnd": "2030-02-30T00:00:00Z"}))
+            .validity
+            .is_none());
     }
 
     #[test]
@@ -258,7 +325,8 @@ mod tests {
     #[test]
     fn extracts_user_id_from_jwt() {
         // {"sub":"auth0|user_01ABC","exp":1}
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"sub":"auth0|user_01ABC","exp":1}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"sub":"auth0|user_01ABC","exp":1}"#);
         let token = format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig");
         assert_eq!(user_id_from_jwt(&token).as_deref(), Some("user_01ABC"));
         assert_eq!(user_id_from_jwt("nope"), None);

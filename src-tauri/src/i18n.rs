@@ -215,7 +215,12 @@ mod tests {
     fn tray_labels_match_locale() {
         assert_eq!(
             tray_labels(Locale::Es),
-            ["Mostrar / ocultar widget", "Actualizar ahora", "Ajustes…", "Salir"]
+            [
+                "Mostrar / ocultar widget",
+                "Actualizar ahora",
+                "Ajustes…",
+                "Salir"
+            ]
         );
         assert_eq!(
             tray_labels(Locale::En),
@@ -256,13 +261,31 @@ mod tests {
         // ambos textos sustituyen por las mismas anclas.
         for locale in [Locale::Es, Locale::En] {
             let msg = codex_consent_message(locale, "Quorb Beta", ".quorb-beta");
-            assert!(!msg.contains("solo para Quorb."), "{locale:?}: canal sin sustituir");
-            assert!(!msg.contains("only for Quorb."), "{locale:?}: canal sin sustituir");
-            assert!(!msg.contains("~/.quorb/"), "{locale:?}: carpeta sin sustituir");
-            assert!(msg.contains("~/.quorb-beta/tools/"), "{locale:?}: carpeta sustituida");
+            assert!(
+                !msg.contains("solo para Quorb."),
+                "{locale:?}: canal sin sustituir"
+            );
+            assert!(
+                !msg.contains("only for Quorb."),
+                "{locale:?}: canal sin sustituir"
+            );
+            assert!(
+                !msg.contains("~/.quorb/"),
+                "{locale:?}: carpeta sin sustituir"
+            );
+            assert!(
+                msg.contains("~/.quorb-beta/tools/"),
+                "{locale:?}: carpeta sustituida"
+            );
         }
         let en = codex_consent_message(Locale::En, "Quorb Beta", ".quorb-beta");
-        assert!(en.contains("only for Quorb Beta."), "inglés sin canal sustituido");
-        assert!(en.contains("Install Codex now?"), "inglés sin pregunta final");
+        assert!(
+            en.contains("only for Quorb Beta."),
+            "inglés sin canal sustituido"
+        );
+        assert!(
+            en.contains("Install Codex now?"),
+            "inglés sin pregunta final"
+        );
     }
 }

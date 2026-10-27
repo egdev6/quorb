@@ -17,18 +17,36 @@ use serde_json::Value;
 pub async fn fetch(cfg: &MiniMaxConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let report = who.report("MiniMax", Kind::Subscription);
     let Some(key) = who.secret(secrets::MINIMAX_SUBSCRIPTION_KEY) else {
-        return report.fail(Status::Unconfigured, "Añade tu Subscription Key de MiniMax en Ajustes.");
+        return report.fail(
+            Status::Unconfigured,
+            "Añade tu Subscription Key de MiniMax en Ajustes.",
+        );
     };
     let base = cfg.base_url.trim_end_matches('/');
 
-    let res = match http.get(format!("{base}/v1/token_plan/remains")).bearer_auth(&key).send().await {
+    let res = match http
+        .get(format!("{base}/v1/token_plan/remains"))
+        .bearer_auth(&key)
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => return report.fail(Status::Error, net_error(e)),
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return report.fail(Status::Unconfigured, "Subscription Key de MiniMax rechazada."),
-        code => return report.fail(Status::Error, format!("HTTP {code} en /v1/token_plan/remains")),
+        401 | 403 => {
+            return report.fail(
+                Status::Unconfigured,
+                "Subscription Key de MiniMax rechazada.",
+            )
+        }
+        code => {
+            return report.fail(
+                Status::Error,
+                format!("HTTP {code} en /v1/token_plan/remains"),
+            )
+        }
     }
     let plan: Value = match res.json().await {
         Ok(v) => v,
@@ -73,7 +91,12 @@ pub(crate) struct Parsed {
 /// informe del plan intacto. No reintenta ni distingue causas, porque ninguna
 /// cambia lo que el usuario ve.
 async fn balance(http: &reqwest::Client, base: &str, api_key: &str) -> Option<Value> {
-    let res = http.get(format!("{base}/account/query_balance")).bearer_auth(api_key).send().await.ok()?;
+    let res = http
+        .get(format!("{base}/account/query_balance"))
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .ok()?;
     if !res.status().is_success() {
         return None;
     }
@@ -102,7 +125,10 @@ fn envelope(v: &Value) -> Result<(), String> {
             .get("status_msg")
             .and_then(Value::as_str)
             .filter(|m| !m.is_empty())
-            .map_or_else(|| format!("MiniMax rechazó la consulta (status_code {code})"), |m| format!("MiniMax: {m}"))),
+            .map_or_else(
+                || format!("MiniMax rechazó la consulta (status_code {code})"),
+                |m| format!("MiniMax: {m}"),
+            )),
         // Sin código no hay veredicto: no se inventa un fallo ni un éxito.
         None => Ok(()),
     }
@@ -111,9 +137,11 @@ fn envelope(v: &Value) -> Result<(), String> {
 /// Los importes de MiniMax llegan como cadenas decimales en varios endpoints y
 /// como números en otros. Aceptamos ambos sin adivinar.
 fn num(v: Option<&Value>) -> Option<f64> {
-    v.and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.trim().parse().ok())))
+    v.and_then(|x| {
+        x.as_f64()
+            .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+    })
 }
-
 
 /// Las dos ventanas del Token Plan.
 ///
@@ -166,14 +194,29 @@ pub(crate) fn parse(plan: &Value, balance: Option<&Value>, payg_configured: bool
     // **restante**. Los contadores `_usage_count` / `_total_count` existen pero no
     // son fiables (en `general` vienen a 0 con el 81 % restante), así que
     // dividirlos daría un anillo en cero con la cuota realmente consumida.
-    for entry in plan.get("model_remains").and_then(Value::as_array).into_iter().flatten() {
-        let Some(model) = entry.get("model_name").and_then(Value::as_str) else { continue };
+    for entry in plan
+        .get("model_remains")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(model) = entry.get("model_name").and_then(Value::as_str) else {
+            continue;
+        };
         let slug: String = model
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
             .collect();
         for window in WINDOWS {
-            let Some(remaining) = num(entry.get(window.remaining)) else { continue };
+            let Some(remaining) = num(entry.get(window.remaining)) else {
+                continue;
+            };
             let start = millis(entry.get(window.start));
             let end = millis(entry.get(window.end));
             meters.push(Meter {
@@ -185,7 +228,9 @@ pub(crate) fn parse(plan: &Value, balance: Option<&Value>, payg_configured: bool
                 used: None,
                 limit: None,
                 unit: None,
-                resets_at: end.and_then(|at| chrono::DateTime::from_timestamp(at, 0)).map(|at| at.to_rfc3339()),
+                resets_at: end
+                    .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
+                    .map(|at| at.to_rfc3339()),
                 window_seconds: start.zip(end).map(|(s, e)| e - s),
             });
         }
@@ -213,7 +258,11 @@ pub(crate) fn parse(plan: &Value, balance: Option<&Value>, payg_configured: bool
     let worst = meters
         .iter()
         .filter(|m| m.percent.is_some())
-        .max_by(|a, b| a.percent.partial_cmp(&b.percent).unwrap_or(std::cmp::Ordering::Equal));
+        .max_by(|a, b| {
+            a.percent
+                .partial_cmp(&b.percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     let plan = worst.map(|m| format!("{} {:.0}%", m.label, m.percent.unwrap_or(0.0)));
     // Con la API key puesta y el saldo sin llegar, el usuario no puede
     // distinguir «no lo configuré» de «lo configuré y falla». Decírselo es la
@@ -242,7 +291,10 @@ mod tests {
     fn ok(mut body: Value) -> Value {
         body.as_object_mut()
             .expect("el fixture debe ser un objeto")
-            .insert("base_resp".into(), json!({"status_code": 0, "status_msg": "success"}));
+            .insert(
+                "base_resp".into(),
+                json!({"status_code": 0, "status_msg": "success"}),
+            );
         body
     }
 
@@ -281,17 +333,47 @@ mod tests {
     fn lee_el_porcentaje_del_payload_real_y_no_de_los_contadores_a_cero() {
         let p = parse(&real(), None, false);
         // Los contadores de `general` valen 0/0; si el parser los usara daría 0 %.
-        let general = p.meters.iter().find(|m| m.id == "token_plan_general_5h").expect("medidor de general");
-        assert_eq!(general.percent, Some(19.0), "81 % restante = 19 % consumido");
-        assert_eq!(general.used, None, "el payload no da totales en unidades utilizables");
+        let general = p
+            .meters
+            .iter()
+            .find(|m| m.id == "token_plan_general_5h")
+            .expect("medidor de general");
+        assert_eq!(
+            general.percent,
+            Some(19.0),
+            "81 % restante = 19 % consumido"
+        );
+        assert_eq!(
+            general.used, None,
+            "el payload no da totales en unidades utilizables"
+        );
         assert_eq!(general.limit, None);
         // 5 h y semanal, por cada categoría.
         assert_eq!(
             p.meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            ["token_plan_general_5h", "token_plan_general_weekly", "token_plan_video_5h", "token_plan_video_weekly"]
+            [
+                "token_plan_general_5h",
+                "token_plan_general_weekly",
+                "token_plan_video_5h",
+                "token_plan_video_weekly"
+            ]
         );
-        assert_eq!(p.meters.iter().find(|m| m.id == "token_plan_general_weekly").unwrap().percent, Some(5.0));
-        assert_eq!(p.meters.iter().find(|m| m.id == "token_plan_video_5h").unwrap().percent, Some(0.0));
+        assert_eq!(
+            p.meters
+                .iter()
+                .find(|m| m.id == "token_plan_general_weekly")
+                .unwrap()
+                .percent,
+            Some(5.0)
+        );
+        assert_eq!(
+            p.meters
+                .iter()
+                .find(|m| m.id == "token_plan_video_5h")
+                .unwrap()
+                .percent,
+            Some(0.0)
+        );
         // El peor medidor manda en el mensaje: general 5 h al 19 %, no video al 0 %.
         assert_eq!(p.message.as_deref(), Some("general · 5 h 19%"));
     }
@@ -300,9 +382,19 @@ mod tests {
     fn interpreta_los_tiempos_como_milisegundos() {
         let p = parse(&real(), None, false);
         let general = &p.meters[0];
-        assert_eq!(general.resets_at.as_deref(), Some("2026-10-22T20:00:00+00:00"));
-        assert_eq!(general.window_seconds, Some(18_000), "la ventana de 5 h son 5 horas, no 5 millones");
-        assert_eq!(p.meters[1].resets_at.as_deref(), Some("2026-10-26T00:00:00+00:00"));
+        assert_eq!(
+            general.resets_at.as_deref(),
+            Some("2026-10-22T20:00:00+00:00")
+        );
+        assert_eq!(
+            general.window_seconds,
+            Some(18_000),
+            "la ventana de 5 h son 5 horas, no 5 millones"
+        );
+        assert_eq!(
+            p.meters[1].resets_at.as_deref(),
+            Some("2026-10-26T00:00:00+00:00")
+        );
     }
 
     #[test]
@@ -310,7 +402,11 @@ mod tests {
         let p = parse(&real(), None, false);
         // 4 medidores: 2 categorías x 2 ventanas. Ni uno de más.
         assert_eq!(p.meters.len(), 4);
-        let vacio = parse(&json!({"model_remains": [], "base_resp": {"status_code": 0}}), None, false);
+        let vacio = parse(
+            &json!({"model_remains": [], "base_resp": {"status_code": 0}}),
+            None,
+            false,
+        );
         assert!(vacio.meters.is_empty());
         let sin_array = parse(&ok(json!({})), None, false);
         assert!(sin_array.meters.is_empty() && sin_array.message.is_none());
@@ -321,32 +417,67 @@ mod tests {
         let v = json!({"base_resp": {"status_code": 1004, "status_msg": "invalid api key"}});
         assert_eq!(envelope(&v).unwrap_err(), "MiniMax: invalid api key");
         let sin_mensaje = json!({"base_resp": {"status_code": 1008}});
-        assert_eq!(envelope(&sin_mensaje).unwrap_err(), "MiniMax rechazó la consulta (status_code 1008)");
-        assert!(envelope(&real()).is_ok(), "una respuesta real de éxito trae base_resp con status_code 0");
-        assert!(envelope(&json!({"model_remains": []})).is_err(), "sin sobre no se afirma un éxito sin verificar");
+        assert_eq!(
+            envelope(&sin_mensaje).unwrap_err(),
+            "MiniMax rechazó la consulta (status_code 1008)"
+        );
+        assert!(
+            envelope(&real()).is_ok(),
+            "una respuesta real de éxito trae base_resp con status_code 0"
+        );
+        assert!(
+            envelope(&json!({"model_remains": []})).is_err(),
+            "sin sobre no se afirma un éxito sin verificar"
+        );
         assert!(envelope(&json!({"base_resp": null})).is_err());
-        assert!(envelope(&json!({"base_resp": {}})).is_ok(), "sin código no hay veredicto en ninguna dirección");
+        assert!(
+            envelope(&json!({"base_resp": {}})).is_ok(),
+            "sin código no hay veredicto en ninguna dirección"
+        );
     }
 
     #[test]
     fn saldo_payg_es_un_valor_y_nunca_una_anillo() {
         let p = parse(
             &real(),
-            Some(&ok(json!({"available_amount": "12.50", "cash_balance": "10.00", "voucher_balance": "2.50"}))),
+            Some(&ok(
+                json!({"available_amount": "12.50", "cash_balance": "10.00", "voucher_balance": "2.50"}),
+            )),
             true,
         );
-        let balance = p.meters.iter().find(|m| m.id == "payg_balance").expect("medidor de saldo");
-        assert_eq!(balance.percent, None, "un saldo no es un porcentaje consumido");
+        let balance = p
+            .meters
+            .iter()
+            .find(|m| m.id == "payg_balance")
+            .expect("medidor de saldo");
+        assert_eq!(
+            balance.percent, None,
+            "un saldo no es un porcentaje consumido"
+        );
         assert_eq!(balance.used, Some(12.50));
         assert_eq!(balance.unit.as_deref(), Some("USD"));
-        assert_eq!(p.message.as_deref(), Some("general · 5 h 19% · saldo 12.50 $"));
+        assert_eq!(
+            p.message.as_deref(),
+            Some("general · 5 h 19% · saldo 12.50 $")
+        );
     }
 
     #[test]
     fn distingue_saldo_sin_configurar_de_configurado_y_fallido() {
-        assert_eq!(parse(&real(), None, false).message.as_deref(), Some("general · 5 h 19%"));
-        assert_eq!(parse(&real(), None, true).message.as_deref(), Some("general · 5 h 19% · saldo no disponible"));
-        assert_eq!(parse(&ok(json!({"model_remains": []})), None, true).message.as_deref(), Some("saldo no disponible"));
+        assert_eq!(
+            parse(&real(), None, false).message.as_deref(),
+            Some("general · 5 h 19%")
+        );
+        assert_eq!(
+            parse(&real(), None, true).message.as_deref(),
+            Some("general · 5 h 19% · saldo no disponible")
+        );
+        assert_eq!(
+            parse(&ok(json!({"model_remains": []})), None, true)
+                .message
+                .as_deref(),
+            Some("saldo no disponible")
+        );
     }
 
     #[test]
@@ -356,7 +487,15 @@ mod tests {
             {"model_name": "general", "current_interval_remaining_percent": -20, "current_weekly_remaining_percent": 140}
         ], "base_resp": {"status_code": 0}});
         let p = parse(&sucio, None, false);
-        assert_eq!(p.meters[0].percent, Some(100.0), "restante negativo satura a 100 % consumido");
-        assert_eq!(p.meters[1].percent, Some(0.0), "restante > 100 no produce un negativo");
+        assert_eq!(
+            p.meters[0].percent,
+            Some(100.0),
+            "restante negativo satura a 100 % consumido"
+        );
+        assert_eq!(
+            p.meters[1].percent,
+            Some(0.0),
+            "restante > 100 no produce un negativo"
+        );
     }
 }
