@@ -211,6 +211,20 @@ describe('mixedSaveMessage', () => {
   const osFailed: MixedSaveResult['autostart'] = { status: 'failed', outcome: failure('denied') };
   const skipped = { status: 'skipped' as const };
 
+  it('localizes every outcome in English without leaking Spanish (T2c-S2 PR-B)', () => {
+    expect(mixedSaveMessage(result(cfgSaved, skipped), 'en')).toBe('Saved ✓');
+    expect(mixedSaveMessage(result(cfgSaved, osFailed), 'en')).toBe('Settings saved · Start at login not saved: denied');
+    expect(mixedSaveMessage(result(cfgFailed, osConfirmed), 'en')).toBe('Start at login saved · Settings not saved: write failed');
+    expect(mixedSaveMessage(result(cfgFailed, osFailed), 'en')).toBe('Settings not saved: write failed · Start at login not saved: denied');
+    expect(mixedSaveMessage(result(skipped, skipped), 'en')).toBeNull();
+  });
+
+  it('keeps the Spanish texts verbatim when the locale is es', () => {
+    expect(mixedSaveMessage(result(cfgSaved, skipped), 'es')).toBe('Guardado ✓');
+    expect(mixedSaveMessage(result(cfgSaved, osFailed), 'es')).toBe('Configuración guardada · Inicio al iniciar sesión no guardado: denied');
+    expect(mixedSaveMessage(result(cfgFailed, osConfirmed), 'es')).toBe('Inicio al iniciar sesión guardado · Configuración no guardada: write failed');
+  });
+
   it('names the saved config and the failed Windows part in a mixed result', () => {
     const message = mixedSaveMessage(result(cfgSaved, osFailed));
     expect(message).toMatch(/Configuración guardada/);

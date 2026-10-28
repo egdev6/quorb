@@ -28,6 +28,21 @@ describe('desktop-compat', () => {
     expect(rows[1]).toMatchObject({ state: 'limited', note: 'limitado' });
   });
 
+  it('names the surfaces in English when the locale is en, keeping the backend note (T2c-S2 PR-B)', () => {
+    const rows = desktopCompatRows(surfaces, 'en');
+    expect(rows.map((r) => r.label)).toEqual([
+      'Always on top',
+      'Click-through gaps',
+      'Tray icon',
+      'Global shortcuts',
+      'Start at login',
+      'Notifications',
+      'Transparency',
+    ]);
+    // La nota la redacta el backend: es dato y se conserva tal cual.
+    expect(rows[1]).toMatchObject({ state: 'limited', note: 'limitado' });
+  });
+
   it('detecta cuando alguna superficie tiene límites declarados', () => {
     expect(hasLimitedSurfaces(surfaces)).toBe(true);
     expect(hasLimitedSurfaces({ ...surfaces, clickThrough: { state: 'ok', note: '' }, globalShortcuts: { state: 'ok', note: '' } })).toBe(
