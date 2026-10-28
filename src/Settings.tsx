@@ -7,7 +7,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { useAppName } from './lib/app-identity';
 import { api } from './lib/api';
 import { configKeyFor, isAccountVisible, setAccountVisibility } from './lib/settings-visibility';
-import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AppConfig, type Effect, type Locale, type MediaSize, type NineRouterPeriod, type ScopedSecretKey, type SecretKey, type SecretStatus, type UsageReport } from './lib/types';
+import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AlertsConfig, type AppConfig, type Effect, type Locale, type MediaSize, type NineRouterPeriod, type ScopedSecretKey, type SecretKey, type SecretStatus, type ShortcutsConfig, type UsageReport } from './lib/types';
 import { ACCOUNT_SECRETS, CLI_INSTALL, SESSION_DIR, accountReady, accountsOf, defaultSessionDir, newAccount, secretKey } from './lib/accounts';
 import { ACCENT_PRESETS, DEFAULT_ACCENT, derivePalette, normalizeHex } from './lib/palette';
 import { isDirty, isSettingsDirty, reconcileLive, reconcileSaved, withCanonicalLive } from './lib/settings-dirty';
@@ -26,7 +26,7 @@ import { ProviderLogo } from './components/ProviderLogo';
 import { CodexInstall } from './components/CodexInstall';
 import quorbLogo from './assets/quorb-logo.png';
 import { useUpdater } from './lib/useUpdater';
-import { t } from './i18n';
+import { t, type MessageKey } from './i18n';
 import { changeLocale as applyLocaleChange, useLocale } from './i18n/use-locale';
 import { formatMoney, formatPercent, peakMeter } from './lib/format';
 
@@ -74,7 +74,7 @@ function Section({ title, kicker, id, children }: { title: string; kicker?: stri
   );
 }
 
-function UpdatesSection({ auto, onAuto }: { auto: boolean; onAuto: (v: boolean) => void }) {
+export function UpdatesSection({ auto, onAuto, locale = 'es' }: { auto: boolean; onAuto: (v: boolean) => void; locale?: Locale }) {
   const appName = useAppName();
   const [version, setVersion] = useState<string>('');
   const { mode, state, check, install } = useUpdater(auto);
@@ -83,18 +83,18 @@ function UpdatesSection({ auto, onAuto }: { auto: boolean; onAuto: (v: boolean) 
   }, []);
 
   if (mode !== 'native') return (
-    <Section title="Versión actual">
+    <Section title={t(locale, 'settings.updates.versionCurrent')}>
       <p className="q-note">{appName ?? '…'} <b>{version ? `v${version}` : ''}</b></p>
       <p className="q-note" role="status">
-        {mode === 'manual' ? 'Actualización manual en macOS. No se buscan ni se instalan actualizaciones desde la app.'
-          : mode === 'error' ? 'No se pudo determinar el modo de actualización. Reinicia Quorb para reintentar.'
-          : 'Consultando el modo de actualización…'}
+        {mode === 'manual' ? t(locale, 'settings.updates.manualMode')
+          : mode === 'error' ? t(locale, 'settings.updates.modeError')
+          : t(locale, 'settings.updates.modeChecking')}
       </p>
     </Section>
   );
 
   return (
-    <Section title="Versión instalada">
+    <Section title={t(locale, 'settings.updates.installedTitle')}>
       {(state.phase === 'available' || state.phase === 'installing') && (
         <div className="eg-notice eg-notice--info" role="status">
           <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -104,11 +104,11 @@ function UpdatesSection({ auto, onAuto }: { auto: boolean; onAuto: (v: boolean) 
             <path d="M8 16H3v5" />
           </svg>
           <span className="eg-notice__text">
-            <b>Hay una versión nueva: {state.info.version}.</b> Se descarga, se comprueba la firma y Quorb se reinicia.
+            <b>{t(locale, 'settings.updates.available', { version: state.info.version })}</b> {t(locale, 'settings.updates.availableDetail')}
           </span>
           <span className="eg-notice__actions">
             <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={state.phase === 'installing'} onClick={install}>
-              {state.phase === 'installing' ? `Instalando${state.progress != null ? ` · ${state.progress} %` : '…'}` : 'Instalar y reiniciar'}
+              {state.phase === 'installing' ? `${t(locale, 'settings.updates.installing')}${state.progress != null ? ` · ${state.progress} %` : '…'}` : t(locale, 'settings.updates.installNow')}
             </button>
           </span>
         </div>
@@ -122,22 +122,22 @@ function UpdatesSection({ auto, onAuto }: { auto: boolean; onAuto: (v: boolean) 
       <div className="q-inline">
         <span className="q-note">
           {appName ?? '…'} <b>{version ? `v${version}` : ''}</b>
-          {state.phase === 'none' && ' · estás en la última versión'}
+          {state.phase === 'none' && t(locale, 'settings.updates.upToDate')}
         </span>
         <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" disabled={state.phase === 'checking' || state.phase === 'installing'} onClick={() => check()}>
-          {state.phase === 'checking' ? 'Buscando…' : 'Buscar ahora'}
+          {state.phase === 'checking' ? t(locale, 'settings.updates.checking') : t(locale, 'settings.updates.checkNow')}
         </button>
       </div>
       {state.phase === 'error' && <div className="eg-notice eg-notice--warning eg-notice--sm"><span className="eg-notice__text">{state.message}</span></div>}
       <Rows>
-        <Toggle label="Buscar actualizaciones solo" hint="Al arrancar y cada 6 h. Si hay una nueva, aparece un icono de descarga en la tira." checked={auto} onChange={onAuto} />
+        <Toggle label={t(locale, 'settings.updates.autoLabel')} hint={t(locale, 'settings.updates.autoHint')} checked={auto} onChange={onAuto} />
       </Rows>
       <small className="eg-field__hint">
-        Llegan firmadas desde{' '}
+        {t(locale, 'settings.updates.signedIntro')}{' '}
         <button type="button" className="q-link" onClick={() => openUrl(LINKS.releases)}>
           GitHub Releases
         </button>
-        ; si la firma no coincide, no se instalan.
+        {t(locale, 'settings.updates.signedOutro')}
       </small>
     </Section>
   );
@@ -192,7 +192,7 @@ function Link({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-function SecretInput({ id, label, configured, onSaved, hint }: { id: ScopedSecretKey; label: string; configured: boolean; onSaved: () => void; hint?: ReactNode }) {
+export function SecretInput({ id, label, configured, onSaved, hint, locale = 'es' }: { id: ScopedSecretKey; label: string; configured: boolean; onSaved: () => void; hint?: ReactNode; locale?: Locale }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -203,7 +203,7 @@ function SecretInput({ id, label, configured, onSaved, hint }: { id: ScopedSecre
     try {
       await api.setSecret(id, v);
       setValue('');
-      setMsg(v ? 'Guardada en el almacén seguro del sistema' : 'Eliminada');
+      setMsg(v ? t(locale, 'settings.common.keyringSaved') : t(locale, 'settings.common.keyringRemoved'));
       onSaved();
     } catch (e) {
       // Si el backend falla por falta de llavero (Secret Service / libsecret en
@@ -221,16 +221,16 @@ function SecretInput({ id, label, configured, onSaved, hint }: { id: ScopedSecre
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={configured ? '•••••••• (configurada)' : 'Pega aquí la key'}
+          placeholder={configured ? t(locale, 'settings.common.secretConfigured') : t(locale, 'settings.common.secretPlaceholder')}
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
         <button className="eg-btn eg-btn--primary" disabled={busy || !value.trim()} onClick={() => save(value)}>
-          Guardar
+          {t(locale, 'settings.common.save')}
         </button>
         {configured && (
-          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title="Eliminar key">
-            Quitar
+          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title={t(locale, 'settings.common.deleteKeyTitle')}>
+            {t(locale, 'settings.common.remove')}
           </button>
         )}
       </div>
@@ -414,11 +414,11 @@ function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolea
   );
 }
 
-const EFFECT_OPTIONS: { value: Effect; label: string }[] = [
-  { value: 'confetti', label: 'Confeti' },
-  { value: 'glow', label: 'Glow de peligro' },
-  { value: 'custom', label: 'Efecto propio (vídeo o imagen animada)' },
-  { value: 'none', label: 'Ninguno' },
+const EFFECT_OPTIONS: { value: Effect; key: MessageKey }[] = [
+  { value: 'confetti', key: 'settings.alerts.effectConfetti' },
+  { value: 'glow', key: 'settings.alerts.effectGlow' },
+  { value: 'custom', key: 'settings.alerts.effectCustom' },
+  { value: 'none', key: 'settings.alerts.effectNone' },
 ];
 
 async function testEffect(kind: Effect, moment: AlertMoment, alerts: AppConfig['alerts'], persist: (alerts: AppConfig['alerts']) => Promise<void>) {
@@ -430,12 +430,13 @@ async function testEffect(kind: Effect, moment: AlertMoment, alerts: AppConfig['
   await api.playEffect(kind, moment, { x: m.position.x, y: m.position.y, width: m.size.width, height: m.size.height });
 }
 
-const MEDIA_FILTERS = [{ name: 'Vídeo o imagen animada', extensions: ['webm', 'mp4', 'gif', 'webp', 'png', 'apng'] }];
+/** Filtros del selector de archivo del efecto propio; el nombre se traduce. */
+const mediaFilters = (locale: Locale) => [{ name: t(locale, 'settings.alerts.mediaFilter'), extensions: ['webm', 'mp4', 'gif', 'webp', 'png', 'apng'] }];
 
 const fileName = (p: string | null) => (p ? p.split(/[\\/]/).pop() : null);
 
 /** Un momento de aviso: efecto + archivo propio + botón de prueba. */
-function MomentEffect({
+export function MomentEffect({
   moment,
   effect,
   media,
@@ -444,6 +445,7 @@ function MomentEffect({
   onMedia,
   onPersist,
   onError,
+  locale = 'es',
 }: {
   moment: AlertMoment;
   effect: Effect;
@@ -453,16 +455,17 @@ function MomentEffect({
   onMedia: (p: string | null) => void;
   onPersist: (alerts: AppConfig['alerts']) => Promise<void>;
   onError: (msg: string) => void;
+  locale?: Locale;
 }) {
   return (
     <>
       <div className="q-inline">
         <label className="eg-field">
-          <span className="eg-field__label">Efecto</span>
+          <span className="eg-field__label">{t(locale, 'settings.alerts.effect')}</span>
           <select value={effect} onChange={(e) => onEffect(e.target.value as Effect)}>
             {EFFECT_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
-                {o.label}
+                {t(locale, o.key)}
               </option>
             ))}
           </select>
@@ -472,26 +475,26 @@ function MomentEffect({
           disabled={effect === 'none' || (effect === 'custom' && !media)}
           onClick={() => testEffect(effect, moment, alerts, onPersist).catch((e) => onError(String(e)))}
         >
-          Probar
+          {t(locale, 'settings.alerts.test')}
         </button>
       </div>
       {effect === 'custom' && (
         <div className="eg-field">
-          <span className="eg-field__label">Archivo</span>
+          <span className="eg-field__label">{t(locale, 'settings.alerts.file')}</span>
           <div className="q-inline">
-            <input type="text" readOnly value={fileName(media) ?? ''} placeholder="Ningún archivo" title={media ?? ''} />
+            <input type="text" readOnly value={fileName(media) ?? ''} placeholder={t(locale, 'settings.alerts.noFile')} title={media ?? ''} />
             <button
               className="eg-btn eg-btn--ghost"
               onClick={async () => {
-                const file = await openDialog({ multiple: false, directory: false, filters: MEDIA_FILTERS });
+                const file = await openDialog({ multiple: false, directory: false, filters: mediaFilters(locale) });
                 if (typeof file === 'string') onMedia(file);
               }}
             >
-              Elegir…
+              {t(locale, 'settings.alerts.choose')}
             </button>
             {media && (
               <button className="eg-btn eg-btn--ghost" onClick={() => onMedia(null)}>
-                Quitar
+                {t(locale, 'settings.common.remove')}
               </button>
             )}
           </div>
@@ -502,7 +505,7 @@ function MomentEffect({
 }
 
 /** Fila de la tabla de atajos: pulsa el atajo (o «Cambiar») y teclea la combinación nueva. */
-function ShortcutRow({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+export function ShortcutRow({ label, value, onChange, locale = 'es' }: { label: string; value: string; onChange: (v: string) => void; locale?: Locale }) {
   const [rec, setRec] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   return (
@@ -514,7 +517,7 @@ function ShortcutRow({ label, value, onChange }: { label: string; value: string;
           type="button"
           className="q-kbd-btn"
           data-recording={rec || undefined}
-          aria-label={`${label}: ${value ? prettyCombo(value) : 'sin atajo'}. Pulsa para cambiarlo`}
+          aria-label={t(locale, 'settings.shortcuts.rowAria', { label, value: value ? prettyCombo(value) : t(locale, 'settings.shortcuts.missing') })}
           onClick={() => setRec(true)}
           onBlur={() => setRec(false)}
           onKeyDown={(e) => {
@@ -531,16 +534,16 @@ function ShortcutRow({ label, value, onChange }: { label: string; value: string;
             }
           }}
         >
-          {rec ? 'Pulsa la combinación… (Esc cancela)' : value ? prettyCombo(value).split(' + ').map((k) => <kbd key={k} className="eg-kbd">{k}</kbd>) : 'Sin atajo'}
+          {rec ? t(locale, 'settings.shortcuts.recording') : value ? prettyCombo(value).split(' + ').map((k) => <kbd key={k} className="eg-kbd">{k}</kbd>) : t(locale, 'settings.shortcuts.none')}
         </button>
       </td>
       <td className="eg-table__acts">
         <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => { setRec(true); btn.current?.focus(); }}>
-          Cambiar
+          {t(locale, 'settings.shortcuts.change')}
         </button>
         {value && (
           <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => onChange('')}>
-            Quitar
+            {t(locale, 'settings.common.remove')}
           </button>
         )}
       </td>
@@ -1092,11 +1095,11 @@ function loadSection(): PageId {
   }
 }
 
-const EDGES: { id: AppConfig['dockEdge']; label: string }[] = [
-  { id: 'left', label: 'Izquierda' },
-  { id: 'right', label: 'Derecha' },
-  { id: 'top', label: 'Arriba' },
-  { id: 'bottom', label: 'Abajo' },
+const EDGES: { id: AppConfig['dockEdge']; key: MessageKey }[] = [
+  { id: 'left', key: 'settings.look.edgeLeft' },
+  { id: 'right', key: 'settings.look.edgeRight' },
+  { id: 'top', key: 'settings.look.edgeTop' },
+  { id: 'bottom', key: 'settings.look.edgeBottom' },
 ];
 
 type ProviderTab = (typeof PROVIDER_TABS)[number]['id'];
@@ -1136,6 +1139,208 @@ export function ShortcutNotices({ errors, warnings }: { errors: string[]; warnin
         </div>
       ))}
     </>
+  );
+}
+
+/** Sección «Apariencia»: anillos, color de acento y tira. Extraída igual que
+ *  SettingsNav para poder renderizarla en pruebas de i18n con el locale
+ *  explícito sin montar la ventana completa. */
+export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiveChange, onRetry }: {
+  locale: Locale;
+  cfg: AppConfig;
+  liveError: string | null;
+  onOrbSize: (v: number) => void;
+  onAccent: (hex: string) => void;
+  onLiveChange: (patch: Partial<AppConfig>) => void;
+  onRetry: () => void;
+}) {
+  const palette = derivePalette(cfg.accentColor);
+  return (
+    <>
+      <Section title={t(locale, 'settings.look.rings')}>
+        <div className="q-preview">
+          <span className="eg-gauge" role="img" aria-label={t(locale, 'settings.look.previewAria', { size: cfg.orbSize })} style={{ '--size': `${cfg.orbSize}px` } as CSSProperties}>
+            <span className="eg-gauge__ring" style={{ '--p': 0.82 } as CSSProperties} />
+            {!cfg.compact && <span className="eg-gauge__ring" style={{ '--p': 0.46 } as CSSProperties} />}
+            {!cfg.compact && cfg.orbSize >= 40 && <span className="eg-gauge__ring" style={{ '--p': 0.31 } as CSSProperties} />}
+            <span className="eg-gauge__logo logo">
+              <ProviderLogo id="claude" name="Claude" />
+            </span>
+          </span>
+          <Field label={t(locale, 'settings.look.ringSize')} value={`${cfg.orbSize} px`} hint={<button type="button" className="q-link" onClick={() => onOrbSize(ORB_SIZE.default)}>{t(locale, 'settings.look.resetSize', { size: ORB_SIZE.default })}</button>}>
+            <input type="range" min={ORB_SIZE.min} max={ORB_SIZE.max} step={2} value={cfg.orbSize} style={rangeFill(cfg.orbSize, ORB_SIZE.min, ORB_SIZE.max)} onChange={(e) => onOrbSize(Number(e.target.value))} />
+          </Field>
+        </div>
+        <div className="eg-field">
+          <span className="eg-field__label">{t(locale, 'settings.look.accent')}</span>
+          <div className="q-swatches">
+            {ACCENT_PRESETS.map((c) => (
+              <button key={c} type="button" className="q-swatch" style={{ background: c }} aria-label={t(locale, 'settings.look.useSwatch', { color: c })} aria-pressed={normalizeHex(cfg.accentColor) === c} onClick={() => onAccent(c)} />
+            ))}
+            <label className="q-swatch q-swatch--picker" title={t(locale, 'settings.look.pickAnyColor')}>
+              <input type="color" value={normalizeHex(cfg.accentColor)} onChange={(e) => onAccent(e.target.value)} />
+              <span aria-hidden="true">+</span>
+            </label>
+          </div>
+          <span className="q-palette" aria-label={t(locale, 'settings.look.palette')}>
+            {palette.map((c, i) => (
+              <span key={i}>
+                <i style={{ background: c }} />
+                {c}
+              </span>
+            ))}
+          </span>
+          <small className="eg-field__hint">
+            {t(locale, 'settings.look.accentHint')}{' '}
+            <button type="button" className="q-link" onClick={() => onAccent(DEFAULT_ACCENT)}>{t(locale, 'settings.look.resetEgdevRed')}</button>
+          </small>
+        </div>
+        <Field label={t(locale, 'settings.look.stripOpacity')} value={`${Math.round(cfg.opacity * 100)} %`}>
+          <input type="range" min={0.3} max={1} step={0.02} value={cfg.opacity} style={rangeFill(cfg.opacity, 0.3, 1)} onChange={(e) => onLiveChange({ opacity: Number(e.target.value) })} />
+        </Field>
+        <Rows>
+          <Toggle label={t(locale, 'settings.look.compact')} hint={t(locale, 'settings.look.compactHint')} checked={cfg.compact} onChange={(v) => onLiveChange({ compact: v })} />
+          <Toggle label={t(locale, 'settings.look.showResets')} hint={t(locale, 'settings.look.showResetsHint')} checked={cfg.showResets ?? true} onChange={(v) => onLiveChange({ showResets: v })} />
+        </Rows>
+      </Section>
+
+      <Section title={t(locale, 'settings.look.strip')}>
+        <div className="eg-field">
+          <span className="eg-field__label" id="lb-edge">{t(locale, 'settings.look.edge')}</span>
+          <div className="q-chips" role="radiogroup" aria-labelledby="lb-edge">
+            {EDGES.map((e) => (
+              <button key={e.id} type="button" role="radio" aria-checked={cfg.dockEdge === e.id} className={`eg-chip${cfg.dockEdge === e.id ? ' is-active' : ''}`} onClick={() => onLiveChange({ dockEdge: e.id })}>
+                {t(locale, e.key)}
+              </button>
+            ))}
+          </div>
+          <small className="eg-field__hint">{t(locale, 'settings.look.dragHint')}</small>
+        </div>
+        <Field label={t(locale, 'settings.look.dockPosition')} value={`${Math.round(cfg.dockOffset * 100)} %`}>
+          <input type="range" min={0} max={1} step={0.01} value={cfg.dockOffset} style={rangeFill(cfg.dockOffset, 0, 1)} onChange={(e) => onLiveChange({ dockOffset: Number(e.target.value) })} />
+        </Field>
+        <Rows>
+          <Toggle label={t(locale, 'settings.look.autoHide')} hint={t(locale, 'settings.look.autoHideHint')} checked={cfg.autoHide} onChange={(v) => onLiveChange({ autoHide: v })} />
+          <Toggle label={t(locale, 'settings.look.alwaysOnTop')} hint={t(locale, 'settings.look.alwaysOnTopHint')} checked={cfg.alwaysOnTop} onChange={(v) => onLiveChange({ alwaysOnTop: v })} />
+        </Rows>
+        {liveError && (
+          <div className="eg-field" role="alert">
+            <span className="eg-field__label">{t(locale, 'settings.look.liveError')}</span>
+            <small className="eg-field__hint">{liveError}</small>
+            <button type="button" className="q-link" onClick={onRetry}>{t(locale, 'settings.common.retry')}</button>
+          </div>
+        )}
+      </Section>
+    </>
+  );
+}
+
+/** Sección «Alertas»: cuándo avisar (dos momentos) y el efecto propio. Extraída
+ *  por el mismo motivo que LookSection. */
+export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError }: {
+  locale: Locale;
+  alerts: AlertsConfig;
+  onAlerts: (patch: Partial<AlertsConfig>) => void;
+  onPersist: (alerts: AlertsConfig) => Promise<void>;
+  onError: (msg: string) => void;
+}) {
+  return (
+    <>
+      <Section title={t(locale, 'settings.alerts.when')}>
+        <Rows>
+          <Toggle label={t(locale, 'settings.alerts.enable')} checked={alerts.enabled} onChange={(v) => onAlerts({ enabled: v })} />
+          <Toggle label={t(locale, 'settings.alerts.native')} hint={t(locale, 'settings.alerts.nativeHint')} checked={alerts.native} onChange={(v) => onAlerts({ native: v })} />
+        </Rows>
+        <div className="q-moment">
+          <h3>{t(locale, 'settings.alerts.exceededTitle')}</h3>
+          <Field label={t(locale, 'settings.alerts.threshold')} value={`${Math.round(alerts.threshold)} %`} hint={t(locale, 'settings.alerts.thresholdHint')}>
+            <input type="range" min={50} max={100} step={1} value={alerts.threshold} style={rangeFill(alerts.threshold, 50, 100)} onChange={(e) => onAlerts({ threshold: Number(e.target.value) })} />
+          </Field>
+          <MomentEffect locale={locale} moment="exceeded" effect={alerts.exceededEffect} media={alerts.exceededMedia} alerts={alerts} onEffect={(v) => onAlerts({ exceededEffect: v })} onMedia={(v) => onAlerts({ exceededMedia: v })} onPersist={onPersist} onError={onError} />
+        </div>
+        <div className="q-moment">
+          <h3>{t(locale, 'settings.alerts.resetTitle')}</h3>
+          <Rows>
+            <Toggle label={t(locale, 'settings.alerts.onReset')} hint={t(locale, 'settings.alerts.onResetHint')} checked={alerts.onReset} onChange={(v) => onAlerts({ onReset: v })} />
+          </Rows>
+          {alerts.onReset && (
+            <MomentEffect locale={locale} moment="reset" effect={alerts.resetEffect} media={alerts.resetMedia} alerts={alerts} onEffect={(v) => onAlerts({ resetEffect: v })} onMedia={(v) => onAlerts({ resetMedia: v })} onPersist={onPersist} onError={onError} />
+          )}
+        </div>
+      </Section>
+
+      <Section title={t(locale, 'settings.alerts.custom.title')}>
+        <p className="q-note">
+          {t(locale, 'settings.alerts.custom.note')}
+        </p>
+        <Field label={t(locale, 'settings.alerts.custom.size')}>
+          <select value={alerts.mediaSize} onChange={(e) => onAlerts({ mediaSize: e.target.value as MediaSize })}>
+            <option value="small">{t(locale, 'settings.alerts.custom.sizeSmall')}</option>
+            <option value="medium">{t(locale, 'settings.alerts.custom.sizeMedium')}</option>
+            <option value="full">{t(locale, 'settings.alerts.custom.sizeFull')}</option>
+          </select>
+        </Field>
+        <Rows>
+          <Toggle label={t(locale, 'settings.alerts.custom.sound')} hint={t(locale, 'settings.alerts.custom.soundHint')} checked={alerts.mediaSound} onChange={(v) => onAlerts({ mediaSound: v })} />
+        </Rows>
+      </Section>
+    </>
+  );
+}
+
+/** Sección «Atajos»: interruptor global, tabla de atajos y avisos del registro.
+ *  Extraída por el mismo motivo que LookSection. */
+export function ShortcutsSection({ locale, shortcuts, onShortcuts, errors, warnings }: {
+  locale: Locale;
+  shortcuts: ShortcutsConfig;
+  onShortcuts: (patch: Partial<ShortcutsConfig>) => void;
+  errors: string[];
+  warnings: string[];
+}) {
+  return (
+    <Section title={t(locale, 'settings.shortcuts.title')}>
+      <Rows>
+        <Toggle label={t(locale, 'settings.shortcuts.enable')} hint={t(locale, 'settings.shortcuts.enableHint')} checked={shortcuts.enabled} onChange={(v) => onShortcuts({ enabled: v })} />
+      </Rows>
+      {shortcuts.enabled && (
+        <>
+          <div className="eg-table-wrap">
+            <table className="eg-table eg-table--compact">
+              <caption className="q-sr">{t(locale, 'settings.shortcuts.tableCaption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t(locale, 'settings.shortcuts.colAction')}</th>
+                  <th scope="col">{t(locale, 'settings.shortcuts.colShortcut')}</th>
+                  <th scope="col" className="eg-table__acts"><span className="q-sr">{t(locale, 'settings.shortcuts.colActions')}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <ShortcutRow locale={locale} label={t(locale, 'settings.shortcuts.toggleStrip')} value={shortcuts.toggle} onChange={(v) => onShortcuts({ toggle: v })} />
+                <ShortcutRow locale={locale} label={t(locale, 'settings.shortcuts.openPeak')} value={shortcuts.openPeak} onChange={(v) => onShortcuts({ openPeak: v })} />
+                <ShortcutRow locale={locale} label={t(locale, 'settings.shortcuts.refreshNow')} value={shortcuts.refresh} onChange={(v) => onShortcuts({ refresh: v })} />
+              </tbody>
+            </table>
+          </div>
+          <ShortcutNotices errors={errors} warnings={warnings} />
+          <small className="eg-field__hint">{t(locale, 'settings.shortcuts.hint')}</small>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** Sección «Proyecto» (junto a la de actualizaciones). Extraída por el mismo
+ *  motivo que LookSection. */
+export function ProjectSection({ locale }: { locale: Locale }) {
+  return (
+    <Section title={t(locale, 'settings.updates.project')}>
+      <p className="q-note">{t(locale, 'settings.updates.projectNote')}</p>
+      <div className="q-chips">
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.repo)}>GitHub</button>
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.issues)}>{t(locale, 'settings.updates.requestProvider')}</button>
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.web)}>egdev.es</button>
+      </div>
+    </Section>
   );
 }
 
@@ -1668,7 +1873,6 @@ export function Settings() {
     }
   };
   const pendingProviders = PROVIDER_TABS.filter((t) => providerState(t.id, cfg, secrets) === 'warn').length;
-  const palette = derivePalette(cfg.accentColor);
 
   const providerCard = (t: (typeof PROVIDER_TABS)[number]) => {
     const st = providerState(t.id, cfg, secrets);
@@ -2287,80 +2491,15 @@ export function Settings() {
 
           {section === 'look' && (
             <div className="q-grid-2">
-              <Section title="Anillos">
-                <div className="q-preview">
-                  <span className="eg-gauge" role="img" aria-label={`Vista previa a ${cfg.orbSize} px`} style={{ '--size': `${cfg.orbSize}px` } as CSSProperties}>
-                    <span className="eg-gauge__ring" style={{ '--p': 0.82 } as CSSProperties} />
-                    {!cfg.compact && <span className="eg-gauge__ring" style={{ '--p': 0.46 } as CSSProperties} />}
-                    {!cfg.compact && cfg.orbSize >= 40 && <span className="eg-gauge__ring" style={{ '--p': 0.31 } as CSSProperties} />}
-                    <span className="eg-gauge__logo logo">
-                      <ProviderLogo id="claude" name="Claude" />
-                    </span>
-                  </span>
-                  <Field label="Tamaño del anillo" value={`${cfg.orbSize} px`} hint={<button type="button" className="q-link" onClick={() => changeOrbSize(ORB_SIZE.default)}>Restablecer ({ORB_SIZE.default} px)</button>}>
-                    <input type="range" min={ORB_SIZE.min} max={ORB_SIZE.max} step={2} value={cfg.orbSize} style={rangeFill(cfg.orbSize, ORB_SIZE.min, ORB_SIZE.max)} onChange={(e) => changeOrbSize(Number(e.target.value))} />
-                  </Field>
-                </div>
-                <div className="eg-field">
-                  <span className="eg-field__label">Color de acento</span>
-                  <div className="q-swatches">
-                    {ACCENT_PRESETS.map((c) => (
-                      <button key={c} type="button" className="q-swatch" style={{ background: c }} aria-label={`Usar ${c}`} aria-pressed={normalizeHex(cfg.accentColor) === c} onClick={() => changeAccent(c)} />
-                    ))}
-                    <label className="q-swatch q-swatch--picker" title="Elegir cualquier color (RGB)">
-                      <input type="color" value={normalizeHex(cfg.accentColor)} onChange={(e) => changeAccent(e.target.value)} />
-                      <span aria-hidden="true">+</span>
-                    </label>
-                  </div>
-                  <span className="q-palette" aria-label="Colores resultantes">
-                    {palette.map((c, i) => (
-                      <span key={i}>
-                        <i style={{ background: c }} />
-                        {c}
-                      </span>
-                    ))}
-                  </span>
-                  <small className="eg-field__hint">
-                    Es el del anillo exterior y la primera barra; los otros dos tonos salen solos. Los avisos y el exceso conservan sus colores de alerta.{' '}
-                    <button type="button" className="q-link" onClick={() => changeAccent(DEFAULT_ACCENT)}>Restablecer rojo egdev</button>
-                  </small>
-                </div>
-                <Field label="Opacidad de la tira y el panel" value={`${Math.round(cfg.opacity * 100)} %`}>
-                  <input type="range" min={0.3} max={1} step={0.02} value={cfg.opacity} style={rangeFill(cfg.opacity, 0.3, 1)} onChange={(e) => liveChange({ opacity: Number(e.target.value) })} />
-                </Field>
-                <Rows>
-                  <Toggle label="Círculos pequeños" hint="Un solo anillo por suscripción: el límite más cercano." checked={cfg.compact} onChange={(v) => liveChange({ compact: v })} />
-                  <Toggle label="Mostrar resets en los círculos" hint="El saldo de resets siempre sigue disponible en el panel de detalle." checked={cfg.showResets ?? true} onChange={(v) => liveChange({ showResets: v })} />
-                </Rows>
-              </Section>
-
-              <Section title="Tira">
-                <div className="eg-field">
-                  <span className="eg-field__label" id="lb-edge">Borde</span>
-                  <div className="q-chips" role="radiogroup" aria-labelledby="lb-edge">
-                    {EDGES.map((e) => (
-                      <button key={e.id} type="button" role="radio" aria-checked={cfg.dockEdge === e.id} className={`eg-chip${cfg.dockEdge === e.id ? ' is-active' : ''}`} onClick={() => liveChange({ dockEdge: e.id })}>
-                        {e.label}
-                      </button>
-                    ))}
-                  </div>
-                  <small className="eg-field__hint">También puedes arrastrarla desde su asa: se pega al borde más cercano.</small>
-                </div>
-                <Field label="Posición en el borde" value={`${Math.round(cfg.dockOffset * 100)} %`}>
-                  <input type="range" min={0} max={1} step={0.01} value={cfg.dockOffset} style={rangeFill(cfg.dockOffset, 0, 1)} onChange={(e) => liveChange({ dockOffset: Number(e.target.value) })} />
-                </Field>
-                <Rows>
-                  <Toggle label="Ocultar sola" hint="Deja una franja en el borde y vuelve al acercar el ratón o cuando hay un aviso." checked={cfg.autoHide} onChange={(v) => liveChange({ autoHide: v })} />
-                  <Toggle label="Siempre encima" hint="Por encima del resto de ventanas." checked={cfg.alwaysOnTop} onChange={(v) => liveChange({ alwaysOnTop: v })} />
-                </Rows>
-                {liveState.error && (
-                  <div className="eg-field" role="alert">
-                    <span className="eg-field__label">Personalización no aplicada</span>
-                    <small className="eg-field__hint">{liveState.error}</small>
-                    <button type="button" className="q-link" onClick={() => void liveRef.current?.retry()}>Reintentar</button>
-                  </div>
-                )}
-              </Section>
+              <LookSection
+                locale={locale}
+                cfg={cfg}
+                liveError={liveState.error}
+                onOrbSize={changeOrbSize}
+                onAccent={changeAccent}
+                onLiveChange={liveChange}
+                onRetry={() => void liveRef.current?.retry()}
+              />
 
               <Section title={t(locale, 'settings.language.title')}>
                 <Field label={t(locale, 'settings.language.label')} hint={t(locale, 'settings.language.hint')}>
@@ -2382,90 +2521,18 @@ export function Settings() {
 
           {section === 'alerts' && (
             <div className="q-grid-2">
-              <Section title="Cuándo avisar">
-                <Rows>
-                  <Toggle label="Activar avisos" checked={cfg.alerts.enabled} onChange={(v) => set('alerts', { enabled: v })} />
-                  <Toggle label="Notificación del sistema" hint="Además del efecto en pantalla." checked={cfg.alerts.native} onChange={(v) => set('alerts', { native: v })} />
-                </Rows>
-                <div className="q-moment">
-                  <h3>1 · Al superar el límite</h3>
-                  <Field label="Avisar al llegar a" value={`${Math.round(cfg.alerts.threshold)} %`} hint="Una vez por ventana (sesión de 5 h, semana, mes…).">
-                    <input type="range" min={50} max={100} step={1} value={cfg.alerts.threshold} style={rangeFill(cfg.alerts.threshold, 50, 100)} onChange={(e) => set('alerts', { threshold: Number(e.target.value) })} />
-                  </Field>
-                  <MomentEffect moment="exceeded" effect={cfg.alerts.exceededEffect} media={cfg.alerts.exceededMedia} alerts={cfg.alerts} onEffect={(v) => set('alerts', { exceededEffect: v })} onMedia={(v) => set('alerts', { exceededMedia: v })} onPersist={persistAlerts} onError={setSaved} />
-                </div>
-                <div className="q-moment">
-                  <h3>2 · Al reiniciarse</h3>
-                  <Rows>
-                    <Toggle label="Avisar cuando el límite superado se reinicia" hint="«Claude · Sesión 5 h: disponible de nuevo»" checked={cfg.alerts.onReset} onChange={(v) => set('alerts', { onReset: v })} />
-                  </Rows>
-                  {cfg.alerts.onReset && (
-                    <MomentEffect moment="reset" effect={cfg.alerts.resetEffect} media={cfg.alerts.resetMedia} alerts={cfg.alerts} onEffect={(v) => set('alerts', { resetEffect: v })} onMedia={(v) => set('alerts', { resetMedia: v })} onPersist={persistAlerts} onError={setSaved} />
-                  )}
-                </div>
-              </Section>
-
-              <Section title="Efecto propio">
-                <p className="q-note">
-                  Un vídeo WebM (VP9) con canal alfa o una imagen animada GIF, WebP o APNG con transparencia. Se muestra centrado encima de todo,
-                  sin bloquear el ratón; el vídeo dura lo que dure (máx. 20 s) y las imágenes 4,5 s.
-                </p>
-                <Field label="Tamaño">
-                  <select value={cfg.alerts.mediaSize} onChange={(e) => set('alerts', { mediaSize: e.target.value as MediaSize })}>
-                    <option value="small">Pequeño</option>
-                    <option value="medium">Mediano</option>
-                    <option value="full">Pantalla completa</option>
-                  </select>
-                </Field>
-                <Rows>
-                  <Toggle label="Con sonido" hint="Solo para vídeos." checked={cfg.alerts.mediaSound} onChange={(v) => set('alerts', { mediaSound: v })} />
-                </Rows>
-              </Section>
+              <AlertsSection locale={locale} alerts={cfg.alerts} onAlerts={(patch) => set('alerts', patch)} onPersist={persistAlerts} onError={setSaved} />
             </div>
           )}
 
           {section === 'shortcuts' && (
-            <Section title="Atajos globales">
-              <Rows>
-                <Toggle label="Activar atajos" hint="Funcionan aunque Quorb no tenga el foco." checked={cfg.shortcuts.enabled} onChange={(v) => set('shortcuts', { enabled: v })} />
-              </Rows>
-              {cfg.shortcuts.enabled && (
-                <>
-                  <div className="eg-table-wrap">
-                    <table className="eg-table eg-table--compact">
-                      <caption className="q-sr">Atajos de teclado</caption>
-                      <thead>
-                        <tr>
-                          <th scope="col">Acción</th>
-                          <th scope="col">Atajo</th>
-                          <th scope="col" className="eg-table__acts"><span className="q-sr">Acciones</span></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <ShortcutRow label="Mostrar u ocultar la tira" value={cfg.shortcuts.toggle} onChange={(v) => set('shortcuts', { toggle: v })} />
-                        <ShortcutRow label="Abrir el más cargado" value={cfg.shortcuts.openPeak} onChange={(v) => set('shortcuts', { openPeak: v })} />
-                        <ShortcutRow label="Actualizar ahora" value={cfg.shortcuts.refresh} onChange={(v) => set('shortcuts', { refresh: v })} />
-                      </tbody>
-                    </table>
-                  </div>
-                  <ShortcutNotices errors={shortcutErrors} warnings={shortcutWarnings} />
-                  <small className="eg-field__hint">Pulsa un atajo o «Cambiar» y teclea la combinación. Se aplican al guardar.</small>
-                </>
-              )}
-            </Section>
+            <ShortcutsSection locale={locale} shortcuts={cfg.shortcuts} onShortcuts={(patch) => set('shortcuts', patch)} errors={shortcutErrors} warnings={shortcutWarnings} />
           )}
 
           {section === 'updates' && (
             <div className="q-grid-2">
-              <UpdatesSection auto={cfg.autoUpdate} onAuto={(v) => set('autoUpdate', v)} />
-              <Section title="Proyecto">
-                <p className="q-note">Quorb es open source (MIT). Si te ahorra un susto con los límites, una estrella en GitHub ayuda a que lo encuentre más gente.</p>
-                <div className="q-chips">
-                  <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.repo)}>GitHub</button>
-                  <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.issues)}>Pedir un proveedor</button>
-                  <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.web)}>egdev.es</button>
-                </div>
-              </Section>
+              <UpdatesSection locale={locale} auto={cfg.autoUpdate} onAuto={(v) => set('autoUpdate', v)} />
+              <ProjectSection locale={locale} />
             </div>
           )}
         </div>
