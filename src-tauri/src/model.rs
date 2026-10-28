@@ -139,14 +139,21 @@ mod tests {
     fn reset_credits_serialization_omits_unknown_but_preserves_zero() {
         let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
         assert_eq!(report.available_resets, None);
-        assert!(serde_json::to_value(&report).unwrap().get("availableResets").is_none());
+        assert!(serde_json::to_value(&report)
+            .unwrap()
+            .get("availableResets")
+            .is_none());
         report.available_resets = Some(0);
         assert_eq!(serde_json::to_value(&report).unwrap()["availableResets"], 0);
     }
 
     #[test]
     fn meter_serializes_its_stable_id_next_to_the_label() {
-        let m = Meter { id: "weekly".into(), label: "Semana".into(), ..Default::default() };
+        let m = Meter {
+            id: "weekly".into(),
+            label: "Semana".into(),
+            ..Default::default()
+        };
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["id"], "weekly");
         assert_eq!(v["label"], "Semana");
@@ -155,13 +162,21 @@ mod tests {
 
     #[test]
     fn reset_credits_failure_clears_available_metadata() {
-        for status in [Status::Warning, Status::Error, Status::NeedsLogin, Status::Unconfigured] {
+        for status in [
+            Status::Warning,
+            Status::Error,
+            Status::NeedsLogin,
+            Status::Unconfigured,
+        ] {
             let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
             report.available_resets = Some(2);
             let failed = report.fail(status.clone(), "synthetic failure");
             assert_eq!(failed.status, status);
             assert_eq!(failed.available_resets, None);
-            assert!(serde_json::to_value(&failed).unwrap().get("availableResets").is_none());
+            assert!(serde_json::to_value(&failed)
+                .unwrap()
+                .get("availableResets")
+                .is_none());
         }
     }
 }

@@ -16,9 +16,12 @@ pub fn open(id: &str, cfg: &AppConfig) -> Result<(), String> {
     let mut env = None;
     let provider = match cfg.accounts.iter().find(|a| a.id == id) {
         Some(a) => {
-            let var = a.session_env().ok_or_else(|| format!("La cuenta «{}» no tiene login por CLI", a.label))?;
+            let var = a
+                .session_env()
+                .ok_or_else(|| format!("La cuenta «{}» no tiene login por CLI", a.label))?;
             let dir = a.session_dir(&crate::providers::home());
-            std::fs::create_dir_all(&dir).map_err(|e| format!("No pude crear {}: {e}", dir.display()))?;
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("No pude crear {}: {e}", dir.display()))?;
             env = Some((var, dir));
             a.provider.as_str()
         }
@@ -49,10 +52,20 @@ pub fn open(id: &str, cfg: &AppConfig) -> Result<(), String> {
 /// ¿Está instalado el CLI de login de cada proveedor que lo usa? Para avisar en
 /// Ajustes antes de que pulses «Iniciar sesión».
 pub fn cli_status(cfg: &AppConfig) -> std::collections::BTreeMap<String, bool> {
-    [("claude", &cfg.claude.login_command), ("codex", &cfg.codex.login_command), ("gemini", &cfg.gemini.login_command), ("grok", &cfg.grok.login_command)]
-        .into_iter()
-        .map(|(p, c)| (p.to_string(), !matches!(find_program(&program_of(c)), Found::Missing)))
-        .collect()
+    [
+        ("claude", &cfg.claude.login_command),
+        ("codex", &cfg.codex.login_command),
+        ("gemini", &cfg.gemini.login_command),
+        ("grok", &cfg.grok.login_command),
+    ]
+    .into_iter()
+    .map(|(p, c)| {
+        (
+            p.to_string(),
+            !matches!(find_program(&program_of(c)), Found::Missing),
+        )
+    })
+    .collect()
 }
 
 /// Primer elemento del comando (`codex login` → `codex`), sin comillas.
@@ -76,18 +89,35 @@ enum Found {
 /// Busca `program` en dos niveles: primero el PATH heredado (`OnPath`) y,
 /// después, el PATH fresco del registro y las carpetas conocidas (`In`), para
 /// que `open` pueda anteponer la carpeta encontrada sin tocar el entorno global.
-fn find_program_tiers(program: &str, legacy: &[PathBuf], fresh: &[PathBuf], known: &[PathBuf], windows: bool, pathext: &str) -> Found {
+fn find_program_tiers(
+    program: &str,
+    legacy: &[PathBuf],
+    fresh: &[PathBuf],
+    known: &[PathBuf],
+    windows: bool,
+    pathext: &str,
+) -> Found {
     if program.is_empty() {
         return Found::Missing;
     }
     let p = Path::new(program);
     if p.is_absolute() || program.contains(['\\', '/']) {
-        return if p.is_file() { Found::OnPath } else { Found::Missing };
+        return if p.is_file() {
+            Found::OnPath
+        } else {
+            Found::Missing
+        };
     }
-    if legacy.iter().any(|d| dir_has_program(d, program, windows, pathext)) {
+    if legacy
+        .iter()
+        .any(|d| dir_has_program(d, program, windows, pathext))
+    {
         return Found::OnPath;
     }
-    if let Some(dir) = fresh.iter().find(|d| dir_has_program(d, program, windows, pathext)) {
+    if let Some(dir) = fresh
+        .iter()
+        .find(|d| dir_has_program(d, program, windows, pathext))
+    {
         return Found::In(dir.clone());
     }
     known
@@ -99,13 +129,28 @@ fn find_program_tiers(program: &str, legacy: &[PathBuf], fresh: &[PathBuf], know
 
 /// Variante inyectable sin PATH fresco (solo pruebas).
 #[cfg(test)]
-fn find_program_in(program: &str, path_dirs: &[PathBuf], known_dirs: &[PathBuf], windows: bool, pathext: &str) -> Found {
+fn find_program_in(
+    program: &str,
+    path_dirs: &[PathBuf],
+    known_dirs: &[PathBuf],
+    windows: bool,
+    pathext: &str,
+) -> Found {
     find_program_tiers(program, path_dirs, &[], known_dirs, windows, pathext)
 }
 
 fn find_program(program: &str) -> Found {
-    let legacy: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-    find_program_tiers(program, &legacy, &fresh_path_dirs(), &known_dirs(), cfg!(windows), &pathext_env())
+    let legacy: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    find_program_tiers(
+        program,
+        &legacy,
+        &fresh_path_dirs(),
+        &known_dirs(),
+        cfg!(windows),
+        &pathext_env(),
+    )
 }
 
 /// PATH fresco leído del registro (solo Windows); vacío en el resto.
@@ -133,14 +178,21 @@ fn pathext_env() -> String {
 fn program_candidates(program: &str, windows: bool, pathext: &str) -> Vec<String> {
     let mut names = vec![];
     if windows {
-        names.extend(pathext.split(';').filter(|e| !e.is_empty()).map(|e| format!("{program}{e}")));
+        names.extend(
+            pathext
+                .split(';')
+                .filter(|e| !e.is_empty())
+                .map(|e| format!("{program}{e}")),
+        );
     }
     names.push(program.to_string());
     names
 }
 
 fn dir_has_program(dir: &Path, program: &str, windows: bool, pathext: &str) -> bool {
-    program_candidates(program, windows, pathext).iter().any(|name| dir.join(name).is_file())
+    program_candidates(program, windows, pathext)
+        .iter()
+        .any(|name| dir.join(name).is_file())
 }
 
 /// Carpetas donde suelen quedar los CLIs: npm global, el instalador nativo de
@@ -169,9 +221,15 @@ fn known_dirs() -> Vec<PathBuf> {
 fn install_hint(provider: &str, windows: bool) -> &'static str {
     if windows {
         match provider {
-            "claude" => "Instala Claude Code (en PowerShell: irm https://claude.ai/install.ps1 | iex)",
-            "codex" => "Instala el CLI de Codex con: npm install -g @openai/codex (necesita Node.js)",
-            "gemini" => "Instala Gemini CLI con: npm install -g @google/gemini-cli (necesita Node.js)",
+            "claude" => {
+                "Instala Claude Code (en PowerShell: irm https://claude.ai/install.ps1 | iex)"
+            }
+            "codex" => {
+                "Instala el CLI de Codex con: npm install -g @openai/codex (necesita Node.js)"
+            }
+            "gemini" => {
+                "Instala Gemini CLI con: npm install -g @google/gemini-cli (necesita Node.js)"
+            }
             _ => "Instala su CLI o cambia el comando de login en la cuenta principal",
         }
     } else {
@@ -200,14 +258,19 @@ type SessionEnv = Option<(&'static str, std::path::PathBuf)>;
 /// texto del script de Terminal, no por herencia del entorno.
 #[cfg(any(test, not(target_os = "macos")))]
 fn path_with(extra: Option<PathBuf>) -> Option<std::ffi::OsString> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
     dirs.extend(fresh_path_dirs());
     path_with_current(extra, std::env::join_paths(dirs).ok())
 }
 
 /// Antepone `extra` a `current` (el PATH actual) sin tocar el entorno real.
 #[cfg(any(test, not(target_os = "macos")))]
-fn path_with_current(extra: Option<PathBuf>, current: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+fn path_with_current(
+    extra: Option<PathBuf>,
+    current: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
     let dir = extra?;
     let mut all = vec![dir];
     if let Some(p) = current {
@@ -217,7 +280,11 @@ fn path_with_current(extra: Option<PathBuf>, current: Option<std::ffi::OsString>
 }
 
 #[cfg(windows)]
-fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<(), String> {
+fn spawn_terminal(
+    command: &str,
+    env: SessionEnv,
+    extra_dir: Option<PathBuf>,
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = std::process::Command::new("cmd");
@@ -238,7 +305,11 @@ fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) ->
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<(), String> {
+fn spawn_terminal(
+    command: &str,
+    env: SessionEnv,
+    extra_dir: Option<PathBuf>,
+) -> Result<(), String> {
     let script = macos_terminal_script(command, env, extra_dir)?;
     let mut cmd = std::process::Command::new("osascript");
     cmd.arg("-e")
@@ -268,20 +339,35 @@ fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) ->
 /// Windows y Linux: su contracto de escaping es parte de la superficie probada
 /// del port y las plataformas sin Terminal deben validarlos igual.
 #[cfg(any(test, target_os = "macos"))]
-fn macos_terminal_script(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<String, String> {
+fn macos_terminal_script(
+    command: &str,
+    env: SessionEnv,
+    extra_dir: Option<PathBuf>,
+) -> Result<String, String> {
     if command.chars().any(char::is_control) {
-        return Err("El comando de login contiene caracteres de control (revísalo en Ajustes)".into());
+        return Err(
+            "El comando de login contiene caracteres de control (revísalo en Ajustes)".into(),
+        );
     }
     let mut sh = String::new();
     if let Some(dir) = &extra_dir {
-        sh.push_str(&format!("export PATH={}:\"$PATH\"; ", sh_quote(&dir.to_string_lossy())));
+        sh.push_str(&format!(
+            "export PATH={}:\"$PATH\"; ",
+            sh_quote(&dir.to_string_lossy())
+        ));
     }
     if let Some((var, dir)) = &env {
-        sh.push_str(&format!("export {var}={}; ", sh_quote(&dir.to_string_lossy())));
+        sh.push_str(&format!(
+            "export {var}={}; ",
+            sh_quote(&dir.to_string_lossy())
+        ));
     }
     sh.push_str(command);
     sh.push_str("; exec $SHELL");
-    Ok(format!("tell application \"Terminal\" to do script \"{}\"", apple_script_quote(&sh)))
+    Ok(format!(
+        "tell application \"Terminal\" to do script \"{}\"",
+        apple_script_quote(&sh)
+    ))
 }
 
 /// Escapa un texto para insertarlo entre comillas simples de shell.
@@ -408,19 +494,20 @@ const TERMINALS: [&str; 7] = [
 /// lanzar la terminal con su ruta y anteponerla al PATH del proceso hijo.
 #[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
 fn find_terminal_impl(path_dirs: &[PathBuf], known_dirs: &[PathBuf]) -> Option<(String, PathBuf)> {
-    TERMINALS
-        .iter()
-        .find_map(|t| match find_program_tiers(t, path_dirs, &[], known_dirs, false, "") {
+    TERMINALS.iter().find_map(|t| {
+        match find_program_tiers(t, path_dirs, &[], known_dirs, false, "") {
             Found::Missing => None,
             Found::OnPath => Some((t.to_string(), PathBuf::new())),
             Found::In(dir) => Some((t.to_string(), dir)),
-        })
+        }
+    })
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn find_terminal() -> Option<(String, PathBuf)> {
-    let legacy: Vec<PathBuf> =
-        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let legacy: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
     find_terminal_impl(&legacy, &known_dirs())
 }
 
@@ -434,13 +521,24 @@ fn terminal_invocation(terminal: &str, program: &str, args: &[String]) -> Vec<St
         "xfce4-terminal" => "-x".to_string(),
         _ => "-e".to_string(),
     };
-    let mut v = vec![flag, "sh".into(), "-c".into(), SHELL_WRAP.into(), "sh".into(), program.into()];
+    let mut v = vec![
+        flag,
+        "sh".into(),
+        "-c".into(),
+        SHELL_WRAP.into(),
+        "sh".into(),
+        program.into(),
+    ];
     v.extend(args.iter().cloned());
     v
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn spawn_terminal(command: &str, env: SessionEnv, extra_dir: Option<PathBuf>) -> Result<(), String> {
+fn spawn_terminal(
+    command: &str,
+    env: SessionEnv,
+    extra_dir: Option<PathBuf>,
+) -> Result<(), String> {
     let (program, args) = split_login_command(command)?;
     if program.is_empty() {
         return Err("Comando de login vacío (revísalo en Ajustes).".into());
@@ -478,8 +576,9 @@ fn path_with_dirs(extras: &[PathBuf]) -> Option<std::ffi::OsString> {
     if extras.is_empty() {
         return None;
     }
-    let mut dirs: Vec<PathBuf> =
-        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
     dirs.splice(0..0, extras.iter().cloned());
     std::env::join_paths(dirs).ok()
 }
@@ -493,7 +592,8 @@ mod tests {
 
     impl TempDir {
         fn new(tag: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("quorb-login-{}-{tag}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("quorb-login-{}-{tag}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
@@ -514,28 +614,46 @@ mod tests {
     fn program_of_keeps_quoted_paths_with_spaces() {
         assert_eq!(program_of("codex login"), "codex");
         assert_eq!(program_of("  gemini   --foo"), "gemini");
-        assert_eq!(program_of("\"/opt/mis herramientas/claude\" login"), "/opt/mis herramientas/claude");
-        assert_eq!(program_of("\"C:\\Program Files\\nodejs\\codex.cmd\""), "C:\\Program Files\\nodejs\\codex.cmd");
+        assert_eq!(
+            program_of("\"/opt/mis herramientas/claude\" login"),
+            "/opt/mis herramientas/claude"
+        );
+        assert_eq!(
+            program_of("\"C:\\Program Files\\nodejs\\codex.cmd\""),
+            "C:\\Program Files\\nodejs\\codex.cmd"
+        );
         assert_eq!(program_of(""), "");
     }
 
     #[test]
     fn split_login_command_keeps_quotes_and_escapes() {
-        assert_eq!(split_login_command("codex login"), Ok(("codex".into(), vec!["login".into()])));
-        assert_eq!(split_login_command("  gemini   --foo"), Ok(("gemini".into(), vec!["--foo".into()])));
+        assert_eq!(
+            split_login_command("codex login"),
+            Ok(("codex".into(), vec!["login".into()]))
+        );
+        assert_eq!(
+            split_login_command("  gemini   --foo"),
+            Ok(("gemini".into(), vec!["--foo".into()]))
+        );
         assert_eq!(
             split_login_command("\"/opt/mis herramientas/claude\" login"),
             Ok(("/opt/mis herramientas/claude".into(), vec!["login".into()]))
         );
         assert_eq!(
             split_login_command("claude 'mi sesión' \"otra\" c\\adena"),
-            Ok(("claude".into(), vec!["mi sesión".into(), "otra".into(), "cadena".into()]))
+            Ok((
+                "claude".into(),
+                vec!["mi sesión".into(), "otra".into(), "cadena".into()]
+            ))
         );
         // Los metacaracteres de shell quedan como argumentos literales, no como
         // código: la cadena NUNCA se interpola en `sh -c`.
         assert_eq!(
             split_login_command("claude; rm -rf /"),
-            Ok(("claude;".into(), vec!["rm".into(), "-rf".into(), "/".into()]))
+            Ok((
+                "claude;".into(),
+                vec!["rm".into(), "-rf".into(), "/".into()]
+            ))
         );
     }
 
@@ -566,7 +684,10 @@ mod tests {
         // `\\` aislado dentro de comillas dobles → `\`.
         assert_eq!(split_login_command("\"\\\\\""), Ok(("\\".into(), vec![])));
         // Barra literal ante carácter ordinario (`\p`): se conserva tal cual.
-        assert_eq!(split_login_command("\"a\\pb\""), Ok(("a\\pb".into(), vec![])));
+        assert_eq!(
+            split_login_command("\"a\\pb\""),
+            Ok(("a\\pb".into(), vec![]))
+        );
         // `\\` al final de un argumento entre dobles (antes del cierre):
         // entrada `a\\` → arg `a\`
         assert_eq!(split_login_command("\"a\\\\\""), Ok(("a\\".into(), vec![])));
@@ -636,24 +757,42 @@ mod tests {
     #[test]
     fn absolute_directory_is_not_a_program() {
         let dir = TempDir::new("absdir");
-        assert_eq!(find_program_in(dir.path().to_str().unwrap(), &[], &[], false, ""), Found::Missing);
+        assert_eq!(
+            find_program_in(dir.path().to_str().unwrap(), &[], &[], false, ""),
+            Found::Missing
+        );
     }
 
     #[test]
     fn program_is_found_on_the_injected_path_then_in_known_dirs() {
         let path_dir = TempDir::new("path");
         std::fs::write(path_dir.path().join("codex"), b"").unwrap();
-        assert_eq!(find_program_in("codex", &[path_dir.path().to_path_buf()], &[], false, ""), Found::OnPath);
+        assert_eq!(
+            find_program_in("codex", &[path_dir.path().to_path_buf()], &[], false, ""),
+            Found::OnPath
+        );
 
         let known = TempDir::new("known");
         std::fs::write(known.path().join("gemini"), b"").unwrap();
         assert_eq!(
-            find_program_in("gemini", &[path_dir.path().to_path_buf()], &[known.path().to_path_buf()], false, ""),
+            find_program_in(
+                "gemini",
+                &[path_dir.path().to_path_buf()],
+                &[known.path().to_path_buf()],
+                false,
+                ""
+            ),
             Found::In(known.path().to_path_buf())
         );
 
-        assert_eq!(find_program_in("codex", &[], &[], false, ""), Found::Missing);
-        assert_eq!(find_program_in("", &[path_dir.path().to_path_buf()], &[], false, ""), Found::Missing);
+        assert_eq!(
+            find_program_in("codex", &[], &[], false, ""),
+            Found::Missing
+        );
+        assert_eq!(
+            find_program_in("", &[path_dir.path().to_path_buf()], &[], false, ""),
+            Found::Missing
+        );
     }
 
     #[test]
@@ -665,7 +804,14 @@ mod tests {
         std::fs::write(known.path().join("codex"), b"").unwrap();
         // Sin PATH heredado, el fresco se marca como In para poder anteponerlo.
         assert_eq!(
-            find_program_tiers("codex", &[], &[fresh.path().to_path_buf()], &[known.path().to_path_buf()], false, ""),
+            find_program_tiers(
+                "codex",
+                &[],
+                &[fresh.path().to_path_buf()],
+                &[known.path().to_path_buf()],
+                false,
+                ""
+            ),
             Found::In(fresh.path().to_path_buf())
         );
         // El PATH heredado gana y es OnPath.
@@ -696,10 +842,19 @@ mod tests {
         // con kitty. (Los otros nombres no existen en known.)
         let res = find_terminal_impl(&[], &[known.path().to_path_buf()]);
         let Some((name, dir)) = res else {
-            panic!("con un PATH vacío y kitty en known_dir, find_terminal debe encontrar una terminal");
+            panic!(
+                "con un PATH vacío y kitty en known_dir, find_terminal debe encontrar una terminal"
+            );
         };
-        assert_eq!(name, "kitty", "la cascada debe llegar a kitty cuando no hay otra");
-        assert_eq!(dir, known.path().to_path_buf(), "find_terminal debe conservar la dir de la terminal");
+        assert_eq!(
+            name, "kitty",
+            "la cascada debe llegar a kitty cuando no hay otra"
+        );
+        assert_eq!(
+            dir,
+            known.path().to_path_buf(),
+            "find_terminal debe conservar la dir de la terminal"
+        );
     }
 
     /// P2 owner feedback: CLI y terminal en carpetas distintas fuera del PATH.
@@ -718,7 +873,14 @@ mod tests {
         assert_eq!(name, "kitty");
         assert_eq!(dir, terminal_dir.path().to_path_buf());
         // El CLI codex se resuelve por su lado, en cli_dir.
-        let codex = find_program_tiers("codex", &[], &[], &[cli_dir.path().to_path_buf()], false, "");
+        let codex = find_program_tiers(
+            "codex",
+            &[],
+            &[],
+            &[cli_dir.path().to_path_buf()],
+            false,
+            "",
+        );
         assert_eq!(codex, Found::In(cli_dir.path().to_path_buf()));
     }
 
@@ -733,17 +895,24 @@ mod tests {
     #[test]
     fn joined_path_prepends_the_extra_dir_and_keeps_the_rest() {
         let extra = PathBuf::from("/opt/mis herramientas/bin");
-        let current = std::env::join_paths([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+        let current =
+            std::env::join_paths([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
         let joined = path_with_current(Some(extra.clone()), Some(current)).unwrap();
         let parts: Vec<PathBuf> = std::env::split_paths(&joined).collect();
-        assert_eq!(parts, vec![extra, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
+        assert_eq!(
+            parts,
+            vec![extra, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]
+        );
         assert!(path_with_current(None, None).is_none());
     }
 
     #[test]
     fn sh_quote_wraps_and_escapes_single_quotes() {
         assert_eq!(sh_quote("codex"), "'codex'");
-        assert_eq!(sh_quote("/opt/mis herramientas/bin"), "'/opt/mis herramientas/bin'");
+        assert_eq!(
+            sh_quote("/opt/mis herramientas/bin"),
+            "'/opt/mis herramientas/bin'"
+        );
         assert_eq!(sh_quote("mi'ruta"), "'mi'\\''ruta'");
     }
 
@@ -767,7 +936,8 @@ mod tests {
     #[test]
     fn macos_script_exports_the_session_env_with_spaces_and_non_ascii() {
         let dir = PathBuf::from("/Users/ju/ Mi Carpeta Ñ");
-        let script = macos_terminal_script("claude login", Some(("CODEX_HOME", dir.clone())), None).unwrap();
+        let script =
+            macos_terminal_script("claude login", Some(("CODEX_HOME", dir.clone())), None).unwrap();
         assert!(script.contains("export CODEX_HOME='/Users/ju/ Mi Carpeta Ñ'"));
         assert!(script.contains("codex") || script.contains("claude"));
     }
@@ -788,9 +958,16 @@ mod tests {
     /// lo único protegido es la integridad del script que lo contiene.
     #[test]
     fn macos_script_keeps_hostile_printable_input_quoted_and_on_one_line() {
-        let script = macos_terminal_script("echo 'co\"de'; rm -rf $(x) `y`; ls", None, None).unwrap();
-        assert!(!script.contains('\n'), "el payload no debe contener saltos de línea");
-        assert!(script.contains("\\\""), "las comillas dobles quedan escapadas en AppleScript");
+        let script =
+            macos_terminal_script("echo 'co\"de'; rm -rf $(x) `y`; ls", None, None).unwrap();
+        assert!(
+            !script.contains('\n'),
+            "el payload no debe contener saltos de línea"
+        );
+        assert!(
+            script.contains("\\\""),
+            "las comillas dobles quedan escapadas en AppleScript"
+        );
     }
 
     /// Caracteres de control (newlines, tabs, etc.) en el comando configurable:

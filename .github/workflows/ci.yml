@@ -34,6 +34,10 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
+          components: rustfmt
+
+      - name: Rust format is clean
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
       - name: Install locked frontend dependencies
         run: npm ci
@@ -43,6 +47,13 @@ jobs:
 
       - name: i18n text inventory is up to date
         run: node scripts/i18n-inventory.mjs --check
+
+      # Formatter version policy: deliberately mobile. Both workflows install
+      # `stable` via dtolnay/rust-toolchain; `stable` is resolved at run time, so
+      # a rustfmt update can change formatting without any repository change. If
+      # this gate fails after a `stable` bump, run
+      # `cargo fmt --manifest-path src-tauri/Cargo.toml --all` and land the diff
+      # as a formatting-only commit (see CONTRIBUTING.md).
 
       - name: Typecheck and build
         run: npm run build

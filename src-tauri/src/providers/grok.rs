@@ -40,13 +40,21 @@ pub(crate) fn auth_candidates(grok_home: Option<&Path>, home: &Path) -> Vec<Path
 
 /// Ruta efectiva de `auth.json`: respeta `credentials_path` explícito y, si no,
 /// el primer candidato existente.
-pub(crate) fn auth_path(credentials_path: Option<&str>, grok_home: Option<&Path>, home: &Path) -> Result<PathBuf, String> {
+pub(crate) fn auth_path(
+    credentials_path: Option<&str>,
+    grok_home: Option<&Path>,
+    home: &Path,
+) -> Result<PathBuf, String> {
     resolve_path(credentials_path, &auth_candidates(grok_home, home))
 }
 
 /// `auth_path` leyendo `GROK_HOME` del entorno (uso real; los tests inyectan).
 pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathBuf, String> {
-    auth_path(credentials_path, std::env::var_os("GROK_HOME").map(PathBuf::from).as_deref(), &home())
+    auth_path(
+        credentials_path,
+        std::env::var_os("GROK_HOME").map(PathBuf::from).as_deref(),
+        &home(),
+    )
 }
 
 pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
@@ -79,8 +87,18 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return report.fail(Status::NeedsLogin, "Sesión caducada. Ejecuta «grok login» para renovarla."),
-        429 => return report.fail(Status::Warning, "El endpoint de uso está limitando peticiones."),
+        401 | 403 => {
+            return report.fail(
+                Status::NeedsLogin,
+                "Sesión caducada. Ejecuta «grok login» para renovarla.",
+            )
+        }
+        429 => {
+            return report.fail(
+                Status::Warning,
+                "El endpoint de uso está limitando peticiones.",
+            )
+        }
         code => return report.fail(Status::Error, format!("HTTP {code} en el endpoint de uso")),
     }
     let body: Value = match res.json().await {
@@ -93,7 +111,12 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     report.meters = parsed.meters;
     report.plan = plan(&auth.token, http).await.or(parsed.plan_hint);
     if report.meters.is_empty() {
-        return report.fail(Status::Warning, parsed.message.unwrap_or_else(|| "Respuesta sin datos de uso (¿ha cambiado el formato?)".into()));
+        return report.fail(
+            Status::Warning,
+            parsed
+                .message
+                .unwrap_or_else(|| "Respuesta sin datos de uso (¿ha cambiado el formato?)".into()),
+        );
     }
     report.message = parsed.message;
     report
@@ -186,23 +209,45 @@ pub(crate) fn parse(body: &Value, _now: DateTime<Utc>) -> Parsed {
         .and_then(Value::as_f64)
         // Fallback legacy: proporción on-demand usada sobre su tope.
         .or_else(|| {
-            let used = body.pointer("/usage/onDemandUsed/val").and_then(Value::as_f64)?;
-            let cap = body.pointer("/onDemandCap/val").and_then(Value::as_f64).filter(|c| *c > 0.0)?;
+            let used = body
+                .pointer("/usage/onDemandUsed/val")
+                .and_then(Value::as_f64)?;
+            let cap = body
+                .pointer("/onDemandCap/val")
+                .and_then(Value::as_f64)
+                .filter(|c| *c > 0.0)?;
             Some(used / cap * 100.0)
         });
 
     // Fin e inicio de la ventana: período actual y, si no, período de facturación.
-    let period_end = ["currentPeriod/end", "billingPeriodEnd"].iter().find_map(|p| cfg.and_then(|c| c.pointer(&format!("/{p}"))).and_then(Value::as_str));
-    let period_start = ["currentPeriod/start", "billingPeriodStart"].iter().find_map(|p| cfg.and_then(|c| c.pointer(&format!("/{p}"))).and_then(Value::as_str));
+    let period_end = ["currentPeriod/end", "billingPeriodEnd"]
+        .iter()
+        .find_map(|p| {
+            cfg.and_then(|c| c.pointer(&format!("/{p}")))
+                .and_then(Value::as_str)
+        });
+    let period_start = ["currentPeriod/start", "billingPeriodStart"]
+        .iter()
+        .find_map(|p| {
+            cfg.and_then(|c| c.pointer(&format!("/{p}")))
+                .and_then(Value::as_str)
+        });
     let resets_at: Option<String> = period_end.map(str::to_string);
-    let window = match (period_start.and_then(rfc3339), resets_at.as_deref().and_then(rfc3339)) {
+    let window = match (
+        period_start.and_then(rfc3339),
+        resets_at.as_deref().and_then(rfc3339),
+    ) {
         (Some(s), Some(e)) if e > s => Some((e - s).num_seconds().max(1)),
         _ => None,
     };
 
     let meters = match (percent, resets_at.as_deref()) {
         (Some(p), at) => {
-            let label = if p > 100.5 { "Uso de créditos" } else { "Uso semanal" };
+            let label = if p > 100.5 {
+                "Uso de créditos"
+            } else {
+                "Uso semanal"
+            };
             vec![Meter {
                 id: "weekly".into(),
                 label: label.into(),
@@ -223,11 +268,17 @@ pub(crate) fn parse(body: &Value, _now: DateTime<Utc>) -> Parsed {
             "Respuesta sin datos de uso (¿ha cambiado el formato?)".into()
         }
     });
-    Parsed { meters, plan_hint: None, message }
+    Parsed {
+        meters,
+        plan_hint: None,
+        message,
+    }
 }
 
 fn rfc3339(s: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -321,20 +372,35 @@ mod tests {
         });
         let p = parse(&body, Utc::now());
         assert!(p.meters.is_empty());
-        assert_eq!(p.message.as_deref(), Some("El endpoint no reporta porcentaje de uso para este período."));
+        assert_eq!(
+            p.message.as_deref(),
+            Some("El endpoint no reporta porcentaje de uso para este período.")
+        );
     }
 
     #[test]
     fn unrecognized_shape_reports_format_change() {
         let p = parse(&json!({"unexpected": true}), Utc::now());
         assert!(p.meters.is_empty());
-        assert_eq!(p.message.as_deref(), Some("Respuesta sin datos de uso (¿ha cambiado el formato?)"));
+        assert_eq!(
+            p.message.as_deref(),
+            Some("Respuesta sin datos de uso (¿ha cambiado el formato?)")
+        );
     }
 
     #[test]
     fn auth_candidates_respect_grok_home() {
         let h = Path::new("/home/u");
-        assert_eq!(auth_candidates(Some(Path::new("/custom")), h), vec![PathBuf::from("/custom/auth.json"), PathBuf::from("/home/u/.grok/auth.json")]);
-        assert_eq!(auth_candidates(None, h), vec![PathBuf::from("/home/u/.grok/auth.json")]);
+        assert_eq!(
+            auth_candidates(Some(Path::new("/custom")), h),
+            vec![
+                PathBuf::from("/custom/auth.json"),
+                PathBuf::from("/home/u/.grok/auth.json")
+            ]
+        );
+        assert_eq!(
+            auth_candidates(None, h),
+            vec![PathBuf::from("/home/u/.grok/auth.json")]
+        );
     }
 }

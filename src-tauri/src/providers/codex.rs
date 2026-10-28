@@ -30,13 +30,21 @@ pub(crate) fn auth_candidates(codex_home: Option<&Path>, home: &Path) -> Vec<Pat
 
 /// Ruta efectiva de `auth.json`: respeta `credentials_path` explícito y, si no,
 /// el primer candidato existente.
-pub(crate) fn auth_path(credentials_path: Option<&str>, codex_home: Option<&Path>, home: &Path) -> Result<PathBuf, String> {
+pub(crate) fn auth_path(
+    credentials_path: Option<&str>,
+    codex_home: Option<&Path>,
+    home: &Path,
+) -> Result<PathBuf, String> {
     resolve_path(credentials_path, &auth_candidates(codex_home, home))
 }
 
 /// `auth_path` leyendo `CODEX_HOME` del entorno (uso real; los tests inyectan).
 pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathBuf, String> {
-    auth_path(credentials_path, std::env::var_os("CODEX_HOME").map(PathBuf::from).as_deref(), &home())
+    auth_path(
+        credentials_path,
+        std::env::var_os("CODEX_HOME").map(PathBuf::from).as_deref(),
+        &home(),
+    )
 }
 
 pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
@@ -68,8 +76,18 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return report.fail(Status::NeedsLogin, "Sesión caducada. Ejecuta «codex» para renovarla."),
-        429 => return report.fail(Status::Warning, "El endpoint de uso está limitando peticiones."),
+        401 | 403 => {
+            return report.fail(
+                Status::NeedsLogin,
+                "Sesión caducada. Ejecuta «codex» para renovarla.",
+            )
+        }
+        429 => {
+            return report.fail(
+                Status::Warning,
+                "El endpoint de uso está limitando peticiones.",
+            )
+        }
         code => return report.fail(Status::Error, format!("HTTP {code} en el endpoint de uso")),
     }
     let body: Value = match res.json().await {
@@ -78,7 +96,9 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     };
     let mut report = report;
     report.validity = parse_validity(
-        auth_json.pointer("/tokens/id_token").and_then(Value::as_str),
+        auth_json
+            .pointer("/tokens/id_token")
+            .and_then(Value::as_str),
         auth.account_id.as_deref(),
         chrono::Utc::now(),
     );
@@ -91,7 +111,10 @@ fn hydrate_usage(mut report: UsageReport, body: &Value) -> UsageReport {
     report.available_resets = parse_available_resets(body);
     report.meters = meters;
     if report.meters.is_empty() && report.available_resets.is_none() {
-        return report.fail(Status::Warning, "Respuesta sin datos de uso (¿ha cambiado el formato?)");
+        return report.fail(
+            Status::Warning,
+            "Respuesta sin datos de uso (¿ha cambiado el formato?)",
+        );
     }
     report
 }
@@ -106,11 +129,13 @@ impl Auth {
     pub fn parse(v: &Value) -> Result<Self, String> {
         let tokens = v.get("tokens").filter(|t| t.is_object());
         let Some(tokens) = tokens else {
-            return Err(if v.get("OPENAI_API_KEY").and_then(Value::as_str).is_some() {
-                "Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login».".into()
-            } else {
-                "auth.json sin tokens. Ejecuta «codex login».".into()
-            });
+            return Err(
+                if v.get("OPENAI_API_KEY").and_then(Value::as_str).is_some() {
+                    "Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login».".into()
+                } else {
+                    "auth.json sin tokens. Ejecuta «codex login».".into()
+                },
+            );
         };
         let access_token = tokens
             .get("access_token")
@@ -120,30 +145,55 @@ impl Auth {
             .to_string();
         Ok(Self {
             access_token,
-            account_id: tokens.get("account_id").and_then(Value::as_str).map(str::to_string),
+            account_id: tokens
+                .get("account_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         })
     }
 }
 
 /// Display metadata only: never infer a billing date from OAuth exp or expose tokens.
-fn parse_validity(token: Option<&str>, account_id: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<Validity> {
+fn parse_validity(
+    token: Option<&str>,
+    account_id: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<Validity> {
     let token = token.filter(|t| t.len() <= 65_536)?;
     let parts: Vec<_> = token.split('.').collect();
-    if parts.len() != 3 { return None; }
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    if parts.len() != 3 {
+        return None;
+    }
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .ok()?;
     let claims: Value = serde_json::from_slice(&payload).ok()?;
-    if claims.get("exp").and_then(Value::as_i64)? <= now.timestamp() { return None; }
+    if claims.get("exp").and_then(Value::as_i64)? <= now.timestamp() {
+        return None;
+    }
     let account = claims.get("https://api.openai.com/auth")?;
     let account_id = account_id.filter(|id| !id.is_empty())?;
-    if account.get("chatgpt_account_id").and_then(Value::as_str)? != account_id { return None; }
-    let at = chrono::DateTime::parse_from_rfc3339(account.get("chatgpt_subscription_active_until")?.as_str()?).ok()?;
-    if at <= now { return None; }
-    Some(Validity { at: at.to_rfc3339(), kind: ValidityKind::Period })
+    if account.get("chatgpt_account_id").and_then(Value::as_str)? != account_id {
+        return None;
+    }
+    let at = chrono::DateTime::parse_from_rfc3339(
+        account.get("chatgpt_subscription_active_until")?.as_str()?,
+    )
+    .ok()?;
+    if at <= now {
+        return None;
+    }
+    Some(Validity {
+        at: at.to_rfc3339(),
+        kind: ValidityKind::Period,
+    })
 }
 
 fn window_label(seconds: Option<i64>, fallback: &str) -> String {
     match seconds {
-        Some(s) if s > 0 && s <= 6 * 3600 => format!("Sesión · {} h", (s as f64 / 3600.0).round() as i64),
+        Some(s) if s > 0 && s <= 6 * 3600 => {
+            format!("Sesión · {} h", (s as f64 / 3600.0).round() as i64)
+        }
         Some(s) if (6 * 86400..=8 * 86400).contains(&s) => "Semana".into(),
         Some(s) if s > 0 && s % 86400 == 0 => format!("{} días", s / 86400),
         _ => fallback.into(),
@@ -168,39 +218,62 @@ fn parse_window(w: &Value, fallback: &str, fallback_id: &str) -> Option<Meter> {
         label: window_label(secs, fallback),
         window_seconds: secs.filter(|s| *s > 0),
         percent: Some(pct),
-        resets_at: w.get("reset_at").and_then(Value::as_i64).and_then(unix_to_rfc3339),
+        resets_at: w
+            .get("reset_at")
+            .and_then(Value::as_i64)
+            .and_then(unix_to_rfc3339),
         ..Default::default()
     })
 }
 
 fn parse_available_resets(v: &Value) -> Option<u32> {
-    let count = v.get("rate_limit_reset_credits")?.get("available_count")?.as_i64()?;
+    let count = v
+        .get("rate_limit_reset_credits")?
+        .get("available_count")?
+        .as_i64()?;
     u32::try_from(count).ok()
 }
 
 pub(crate) fn parse_usage(v: &Value) -> (Option<String>, Vec<Meter>) {
     let plan = v.get("plan_type").and_then(Value::as_str).map(|p| {
         let mut c = p.chars();
-        c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+        c.next()
+            .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+            .unwrap_or_default()
     });
     let mut meters = vec![];
     if let Some(rl) = v.get("rate_limit") {
-        if let Some(m) = rl.get("primary_window").and_then(|w| parse_window(w, "Ventana corta", "window_short")) {
+        if let Some(m) = rl
+            .get("primary_window")
+            .and_then(|w| parse_window(w, "Ventana corta", "window_short"))
+        {
             meters.push(m);
         }
-        if let Some(mut m) = rl.get("secondary_window").and_then(|w| parse_window(w, "Ventana larga", "window_long")) {
+        if let Some(mut m) = rl
+            .get("secondary_window")
+            .and_then(|w| parse_window(w, "Ventana larga", "window_long"))
+        {
             // Dos ventanas con el mismo significado no pueden compartir id.
             if meters.iter().any(|x| x.id == m.id) {
-                m.id = format!("{}_{}", m.id, m.window_seconds.map_or_else(|| "secondary".to_string(), |s| s.to_string()));
+                m.id = format!(
+                    "{}_{}",
+                    m.id,
+                    m.window_seconds
+                        .map_or_else(|| "secondary".to_string(), |s| s.to_string())
+                );
             }
             meters.push(m);
         }
     }
-    if let Some(c) = v.get("credits").filter(|c| c.get("has_credits").and_then(Value::as_bool) == Some(true)) {
+    if let Some(c) = v
+        .get("credits")
+        .filter(|c| c.get("has_credits").and_then(Value::as_bool) == Some(true))
+    {
         let unlimited = c.get("unlimited").and_then(Value::as_bool).unwrap_or(false);
-        let balance = c
-            .get("balance")
-            .and_then(|b| b.as_f64().or_else(|| b.as_str().and_then(|s| s.parse().ok())));
+        let balance = c.get("balance").and_then(|b| {
+            b.as_f64()
+                .or_else(|| b.as_str().and_then(|s| s.parse().ok()))
+        });
         if !unlimited {
             if let Some(b) = balance {
                 meters.push(Meter {
@@ -229,7 +302,8 @@ mod tests {
         fn new(tag: &str) -> Self {
             static N: AtomicU32 = AtomicU32::new(0);
             let n = N.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("quorb-codex-test-{tag}-{}-{n}", std::process::id()));
+            let dir = std::env::temp_dir()
+                .join(format!("quorb-codex-test-{tag}-{}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
@@ -262,9 +336,15 @@ mod tests {
         let codex = Path::new("/tmp/quorb-codex");
         assert_eq!(
             auth_candidates(Some(codex), home),
-            vec![codex.join("auth.json"), home.join(".codex").join("auth.json")]
+            vec![
+                codex.join("auth.json"),
+                home.join(".codex").join("auth.json")
+            ]
         );
-        assert_eq!(auth_candidates(None, home), vec![home.join(".codex").join("auth.json")]);
+        assert_eq!(
+            auth_candidates(None, home),
+            vec![home.join(".codex").join("auth.json")]
+        );
     }
 
     #[test]
@@ -273,7 +353,10 @@ mod tests {
         let codex_home = TempDir::new("codexhome");
         let codex_auth = codex_home.file("auth.json");
         home.file(".codex/auth.json");
-        assert_eq!(auth_path(None, Some(codex_home.path()), home.path()).unwrap(), codex_auth);
+        assert_eq!(
+            auth_path(None, Some(codex_home.path()), home.path()).unwrap(),
+            codex_auth
+        );
     }
 
     #[test]
@@ -282,7 +365,10 @@ mod tests {
         let home = TempDir::new("home-fallback");
         let codex_home = TempDir::new("codexhome-empty");
         let home_auth = home.file(".codex/auth.json");
-        assert_eq!(auth_path(None, Some(codex_home.path()), home.path()).unwrap(), home_auth);
+        assert_eq!(
+            auth_path(None, Some(codex_home.path()), home.path()).unwrap(),
+            home_auth
+        );
     }
 
     #[test]
@@ -292,7 +378,10 @@ mod tests {
         codex_home.file("auth.json");
         let custom = home.file("custom/auth.json");
         let explicit = custom.to_string_lossy().into_owned();
-        assert_eq!(auth_path(Some(&explicit), Some(codex_home.path()), home.path()).unwrap(), custom);
+        assert_eq!(
+            auth_path(Some(&explicit), Some(codex_home.path()), home.path()).unwrap(),
+            custom
+        );
     }
 
     #[test]
@@ -307,8 +396,16 @@ mod tests {
     #[test]
     fn parses_auth() {
         let v = json!({"OPENAI_API_KEY": null, "tokens": {"id_token": "a", "access_token": "b", "refresh_token": "c", "account_id": "acc"}});
-        assert_eq!(Auth::parse(&v).unwrap(), Auth { access_token: "b".into(), account_id: Some("acc".into()) });
-        assert!(Auth::parse(&json!({"OPENAI_API_KEY": "sk-..."})).unwrap_err().contains("API key"));
+        assert_eq!(
+            Auth::parse(&v).unwrap(),
+            Auth {
+                access_token: "b".into(),
+                account_id: Some("acc".into())
+            }
+        );
+        assert!(Auth::parse(&json!({"OPENAI_API_KEY": "sk-..."}))
+            .unwrap_err()
+            .contains("API key"));
     }
 
     /// Sesión real de Codex: el fixture es la estructura que escribe
@@ -323,9 +420,14 @@ mod tests {
         assert_eq!(auth.account_id.as_deref(), Some("account-example-123"));
         // El id_token del fixture expira en el año ~2100: a día de hoy es válido.
         let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).expect("now fijo");
-        let id_token = v.pointer("/tokens/id_token").and_then(Value::as_str).unwrap();
-        assert!(parse_validity(Some(id_token), Some("account-example-123"), now).is_some(),
-            "la sesión real válida debe reportar validez");
+        let id_token = v
+            .pointer("/tokens/id_token")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(
+            parse_validity(Some(id_token), Some("account-example-123"), now).is_some(),
+            "la sesión real válida debe reportar validez"
+        );
     }
 
     fn id_token(claims: Value) -> String {
@@ -336,7 +438,9 @@ mod tests {
 
     #[test]
     fn reads_optional_period_end_from_current_matching_id_token() {
-        let now = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().to_utc();
+        let now = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z")
+            .unwrap()
+            .to_utc();
         let token = id_token(json!({
             "exp": now.timestamp() + 3600,
             "https://api.openai.com/auth": {
@@ -349,17 +453,26 @@ mod tests {
         assert_eq!(v.at, "2030-02-01T00:00:00+00:00");
         assert!(parse_validity(Some(&token), Some("other"), now).is_none());
         assert!(parse_validity(Some(&token), None, now).is_none());
-        assert!(parse_validity(Some(&token), Some("acc"), now + chrono::Duration::hours(2)).is_none());
+        assert!(
+            parse_validity(Some(&token), Some("acc"), now + chrono::Duration::hours(2)).is_none()
+        );
     }
 
     #[test]
     fn never_substitutes_token_expiration_for_subscription_period() {
         let now = chrono::Utc::now();
-        for token in ["bad".to_string(), id_token(json!({"exp": now.timestamp() + 3600})),
-            id_token(json!({"https://api.openai.com/auth": {"chatgpt_subscription_active_until": "bad"}})),
-            id_token(json!({"exp": now.timestamp() + 3600, "https://api.openai.com/auth": {
-                "chatgpt_account_id": "acc", "chatgpt_subscription_active_until": "2020-01-01T00:00:00Z"
-            }}))] {
+        for token in [
+            "bad".to_string(),
+            id_token(json!({"exp": now.timestamp() + 3600})),
+            id_token(
+                json!({"https://api.openai.com/auth": {"chatgpt_subscription_active_until": "bad"}}),
+            ),
+            id_token(
+                json!({"exp": now.timestamp() + 3600, "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acc", "chatgpt_subscription_active_until": "2020-01-01T00:00:00Z"
+                }}),
+            ),
+        ] {
             assert!(parse_validity(Some(&token), Some("acc"), now).is_none());
         }
         assert!(parse_validity(None, Some("acc"), now).is_none());
@@ -369,7 +482,10 @@ mod tests {
     fn reset_credits_hydration_accepts_count_without_meters_or_period() {
         for count in [2, 0] {
             let body = json!({"rate_limit_reset_credits": {"available_count": count}});
-            let report = hydrate_usage(UsageReport::new("codex", "Codex", Kind::Subscription), &body);
+            let report = hydrate_usage(
+                UsageReport::new("codex", "Codex", Kind::Subscription),
+                &body,
+            );
             assert_eq!(report.status, Status::Ok);
             assert_eq!(report.available_resets, Some(count));
             assert!(report.meters.is_empty());
@@ -380,10 +496,16 @@ mod tests {
 
     #[test]
     fn reset_credits_hydration_clears_metadata_when_usage_is_unknown() {
-        for body in [json!({}), json!({"rate_limit_reset_credits": {"available_count": "2"}})] {
+        for body in [
+            json!({}),
+            json!({"rate_limit_reset_credits": {"available_count": "2"}}),
+        ] {
             let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
             report.available_resets = Some(2);
-            report.validity = Some(Validity { at: "2030-02-01T00:00:00Z".into(), kind: ValidityKind::Period });
+            report.validity = Some(Validity {
+                at: "2030-02-01T00:00:00Z".into(),
+                kind: ValidityKind::Period,
+            });
             let report = hydrate_usage(report, &body);
             assert_eq!(report.status, Status::Warning);
             assert_eq!(report.available_resets, None);
@@ -400,7 +522,10 @@ mod tests {
             "rate_limit_reset_credits": {"available_count": -1}
         });
         let mut report = UsageReport::new("codex", "Codex", Kind::Subscription);
-        report.validity = Some(Validity { at: "2030-02-01T00:00:00Z".into(), kind: ValidityKind::Period });
+        report.validity = Some(Validity {
+            at: "2030-02-01T00:00:00Z".into(),
+            kind: ValidityKind::Period,
+        });
         let expected_validity = report.validity.clone();
         let report = hydrate_usage(report, &body);
         assert_eq!(report.status, Status::Ok);
@@ -433,11 +558,19 @@ mod tests {
         assert_eq!(expected.1[2].used, Some(15.0));
         assert_eq!(parse_available_resets(&base), None);
         for invalid in [
-            Value::Null, json!({}), json!([]), json!(2), json!("2"), json!(true),
-            json!({"available_count": null}), json!({"available_count": -1}),
+            Value::Null,
+            json!({}),
+            json!([]),
+            json!(2),
+            json!("2"),
+            json!(true),
+            json!({"available_count": null}),
+            json!({"available_count": -1}),
             json!({"available_count": u32::MAX as u64 + 1}),
-            json!({"available_count": u64::MAX}), json!({"available_count": 2.0}),
-            json!({"available_count": 2.5}), json!({"available_count": "2"}),
+            json!({"available_count": u64::MAX}),
+            json!({"available_count": 2.0}),
+            json!({"available_count": 2.5}),
+            json!({"available_count": "2"}),
             json!({"available_count": true}),
         ] {
             let mut v = base.clone();
@@ -467,12 +600,19 @@ mod tests {
         assert_eq!(m[1].label, "Semana");
         assert_eq!(m[1].window_seconds, Some(604800));
         assert_eq!(m[2].used, Some(15.0));
-        assert_eq!(m.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["session", "weekly", "credits"]);
+        assert_eq!(
+            m.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+            ["session", "weekly", "credits"]
+        );
     }
 
     fn ids_for(primary: Value, secondary: Value) -> Vec<(String, String)> {
         let v = json!({"rate_limit": {"primary_window": primary, "secondary_window": secondary}});
-        parse_usage(&v).1.into_iter().map(|m| (m.id, m.label)).collect()
+        parse_usage(&v)
+            .1
+            .into_iter()
+            .map(|m| (m.id, m.label))
+            .collect()
     }
 
     #[test]
@@ -482,7 +622,10 @@ mod tests {
             json!({"used_percent": 2, "limit_window_seconds": 7 * 3600 + 1}),
         );
         assert_eq!(ids[0], ("window_days".to_string(), "3 días".to_string()));
-        assert_eq!(ids[1], ("window_long".to_string(), "Ventana larga".to_string()));
+        assert_eq!(
+            ids[1],
+            ("window_long".to_string(), "Ventana larga".to_string())
+        );
         let ids = ids_for(json!({"used_percent": 1}), json!({"used_percent": 2}));
         assert_eq!(ids[0].0, "window_short");
         assert_eq!(ids[1].0, "window_long");
@@ -494,13 +637,19 @@ mod tests {
             json!({"used_percent": 1, "limit_window_seconds": 18000}),
             json!({"used_percent": 2, "limit_window_seconds": 18000}),
         );
-        assert_eq!(ids.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["session", "session_18000"]);
+        assert_eq!(
+            ids.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(),
+            ["session", "session_18000"]
+        );
         // Labels stay exactly as today.
         assert!(ids.iter().all(|(_, l)| l == "Sesión · 5 h"));
         let days = ids_for(
             json!({"used_percent": 1, "limit_window_seconds": 2 * 86400}),
             json!({"used_percent": 2, "limit_window_seconds": 3 * 86400}),
         );
-        assert_eq!(days.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["window_days", "window_days_259200"]);
+        assert_eq!(
+            days.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(),
+            ["window_days", "window_days_259200"]
+        );
     }
 }

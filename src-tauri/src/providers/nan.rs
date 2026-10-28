@@ -30,9 +30,18 @@ pub(crate) struct Quota {
 
 /// Cuotas publicadas en nan.builders/docs/models. Si `/v1/models` trae otras, mandan esas.
 pub(crate) fn known_quotas() -> BTreeMap<&'static str, Quota> {
-    let m = |t: f64| Quota { tokens: t, billing_period: false };
+    let m = |t: f64| Quota {
+        tokens: t,
+        billing_period: false,
+    };
     BTreeMap::from([
-        ("glm5.3", Quota { tokens: 3e9, billing_period: true }),
+        (
+            "glm5.3",
+            Quota {
+                tokens: 3e9,
+                billing_period: true,
+            },
+        ),
         ("deepseek-v4-flash", m(3e9)),
         ("glm5.3-flash", m(2e9)),
         ("qwen3.8-flash", m(5e8)),
@@ -78,7 +87,9 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
                 return report;
             }
             Err(super::nan_cloud::CloudError::Expired) => {
-                note = Some("La sesión de NaN ha caducado: vuelve a conectar tu cuenta en Ajustes.".into());
+                note = Some(
+                    "La sesión de NaN ha caducado: vuelve a conectar tu cuenta en Ajustes.".into(),
+                );
             }
             Err(super::nan_cloud::CloudError::Other(e)) => {
                 note = Some(format!("NaN Cloud no responde ({e})."));
@@ -89,15 +100,26 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     // B. API key: /v1/usage + cuotas publicadas.
     let Some(key) = who.secret(secrets::NAN_API_KEY) else {
         let mut r = report.fail(
-            if note.is_some() { Status::NeedsLogin } else { Status::Unconfigured },
-            note.unwrap_or_else(|| "Conecta tu cuenta de NaN (enlace por correo) o añade tu API key en Ajustes.".into()),
+            if note.is_some() {
+                Status::NeedsLogin
+            } else {
+                Status::Unconfigured
+            },
+            note.unwrap_or_else(|| {
+                "Conecta tu cuenta de NaN (enlace por correo) o añade tu API key en Ajustes.".into()
+            }),
         );
         r.action = Some("settings".into());
         return r;
     };
 
     // 1. Modelos (valida la key y, si los trae, límites por modelo)
-    let res = match http.get(format!("{}/models", cfg.base_url)).bearer_auth(&key).send().await {
+    let res = match http
+        .get(format!("{}/models", cfg.base_url))
+        .bearer_auth(&key)
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => return report.fail(Status::Error, net_error(e)),
     };
@@ -108,7 +130,10 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     }
     let rate_meters = rate_limit_meters(res.headers());
     let models_json = res.json::<Value>().await.unwrap_or(Value::Null);
-    let mut quotas: BTreeMap<String, Quota> = known_quotas().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    let mut quotas: BTreeMap<String, Quota> = known_quotas()
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
     quotas.extend(quotas_from_models(&models_json));
 
     // 2. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
@@ -127,12 +152,19 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
             report.message = Some(format!(
                 "{} tokens este mes · {}",
                 compact(total),
-                if report.meters.is_empty() { "sin cuotas con contador" } else { "cuotas por modelo" }
+                if report.meters.is_empty() {
+                    "sin cuotas con contador"
+                } else {
+                    "cuotas por modelo"
+                }
             ));
         }
         Err(e) => {
             report.status = Status::Warning;
-            report.message = Some(format!("No pude leer /v1/usage ({e}). {}", plan_quota(&cfg.plan)));
+            report.message = Some(format!(
+                "No pude leer /v1/usage ({e}). {}",
+                plan_quota(&cfg.plan)
+            ));
         }
     }
 
@@ -179,7 +211,10 @@ async fn fetch_usage(
         if !res.status().is_success() {
             return Err(format!("HTTP {}", res.status().as_u16()));
         }
-        let body: Value = res.json().await.map_err(|e| format!("respuesta no JSON: {e}"))?;
+        let body: Value = res
+            .json()
+            .await
+            .map_err(|e| format!("respuesta no JSON: {e}"))?;
         cursor = body
             .get("next_cursor")
             .and_then(Value::as_str)
@@ -199,11 +234,17 @@ pub async fn probe(cfg: &NanConfig, http: &reqwest::Client) -> Result<String, St
     let now = Utc::now();
     let mut out = String::new();
     for (name, req) in [
-        ("GET /v1/models", http.get(format!("{}/models", cfg.base_url))),
+        (
+            "GET /v1/models",
+            http.get(format!("{}/models", cfg.base_url)),
+        ),
         (
             "GET /v1/usage",
             http.get(format!("{}/usage", cfg.base_url)).query(&[
-                ("start_date", month_start(now).format("%Y-%m-%d").to_string()),
+                (
+                    "start_date",
+                    month_start(now).format("%Y-%m-%d").to_string(),
+                ),
                 ("end_date", now.format("%Y-%m-%d").to_string()),
             ]),
         ),
@@ -218,7 +259,10 @@ pub async fn probe(cfg: &NanConfig, http: &reqwest::Client) -> Result<String, St
             .collect();
         let body = res.text().await.unwrap_or_default();
         let body: String = body.chars().take(20_000).collect();
-        out.push_str(&format!("### {name} → {status}\n{}\n{body}\n\n", headers.join("\n")));
+        out.push_str(&format!(
+            "### {name} → {status}\n{}\n{body}\n\n",
+            headers.join("\n")
+        ));
     }
     Ok(out)
 }
@@ -229,7 +273,13 @@ const MODEL_KEYS: [&str; 4] = ["model", "model_id", "model_name", "name"];
 const DATE_KEYS: [&str; 3] = ["date", "day", "bucket"];
 
 fn tokens_of(o: &serde_json::Map<String, Value>) -> Option<f64> {
-    for k in ["total_tokens", "tokens", "total", "token_count", "usage_tokens"] {
+    for k in [
+        "total_tokens",
+        "tokens",
+        "total",
+        "token_count",
+        "usage_tokens",
+    ] {
         if let Some(v) = o.get(k).and_then(num) {
             return Some(v);
         }
@@ -239,7 +289,8 @@ fn tokens_of(o: &serde_json::Map<String, Value>) -> Option<f64> {
 }
 
 fn num(v: &Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
 fn str_of<'a>(o: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
@@ -247,14 +298,22 @@ fn str_of<'a>(o: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Option<&'
 }
 
 /// Recorre el JSON y devuelve (modelo?, fecha?, tokens) de cada objeto con tokens.
-fn collect(v: &Value, parent_date: Option<&str>, out: &mut Vec<(Option<String>, Option<String>, f64)>) {
+fn collect(
+    v: &Value,
+    parent_date: Option<&str>,
+    out: &mut Vec<(Option<String>, Option<String>, f64)>,
+) {
     match v {
         Value::Array(a) => a.iter().for_each(|x| collect(x, parent_date, out)),
         Value::Object(o) => {
             let date = str_of(o, &DATE_KEYS).or(parent_date);
             let model = str_of(o, &MODEL_KEYS);
             if let Some(t) = tokens_of(o) {
-                out.push((model.map(str::to_string), date.map(|d| d.chars().take(10).collect()), t));
+                out.push((
+                    model.map(str::to_string),
+                    date.map(|d| d.chars().take(10).collect()),
+                    t,
+                ));
             }
             for (k, child) in o {
                 // `{ "by_model": { "glm5.3": { "total_tokens": … } } }`
@@ -264,7 +323,11 @@ fn collect(v: &Value, parent_date: Option<&str>, out: &mut Vec<(Option<String>, 
                             if let Value::Object(io) = inner {
                                 if str_of(io, &MODEL_KEYS).is_none() {
                                     if let Some(t) = tokens_of(io) {
-                                        out.push((Some(name.clone()), date.map(|d| d.chars().take(10).collect()), t));
+                                        out.push((
+                                            Some(name.clone()),
+                                            date.map(|d| d.chars().take(10).collect()),
+                                            t,
+                                        ));
                                         continue;
                                     }
                                 }
@@ -297,8 +360,14 @@ pub(crate) fn summarize(pages: &[Value], since: Option<DateTime<Utc>>) -> UsageS
 
     let mut s = UsageSummary::default();
     // Totales por modelo sin fecha (sección «totals») mandan si existen y no hay filtro de fecha.
-    let model_totals: Vec<_> = rows.iter().filter(|(m, d, _)| m.is_some() && d.is_none()).collect();
-    let model_daily: Vec<_> = rows.iter().filter(|(m, d, _)| m.is_some() && d.is_some()).collect();
+    let model_totals: Vec<_> = rows
+        .iter()
+        .filter(|(m, d, _)| m.is_some() && d.is_none())
+        .collect();
+    let model_daily: Vec<_> = rows
+        .iter()
+        .filter(|(m, d, _)| m.is_some() && d.is_some())
+        .collect();
     if !model_daily.is_empty() {
         for (m, d, t) in &model_daily {
             if in_range(d) {
@@ -322,18 +391,33 @@ pub(crate) fn summarize(pages: &[Value], since: Option<DateTime<Utc>>) -> UsageS
 /// Límites de tokens que `/v1/models` pueda exponer por modelo (campos con «quota»).
 pub(crate) fn quotas_from_models(v: &Value) -> BTreeMap<String, Quota> {
     let mut out = BTreeMap::new();
-    let Some(list) = v.get("data").and_then(Value::as_array) else { return out };
+    let Some(list) = v.get("data").and_then(Value::as_array) else {
+        return out;
+    };
     for m in list {
-        let Some(id) = m.get("id").and_then(Value::as_str) else { continue };
+        let Some(id) = m.get("id").and_then(Value::as_str) else {
+            continue;
+        };
         let found = m.as_object().and_then(|o| {
             o.iter()
-                .chain(o.get("limits").and_then(Value::as_object).into_iter().flatten())
+                .chain(
+                    o.get("limits")
+                        .and_then(Value::as_object)
+                        .into_iter()
+                        .flatten(),
+                )
                 .find(|(k, v)| k.contains("quota") && num(v).map(|n| n >= 1e6).unwrap_or(false))
                 .and_then(|(_, v)| num(v))
         });
         if let Some(t) = found {
             let billing = m.to_string().contains("billing");
-            out.insert(id.to_string(), Quota { tokens: t, billing_period: billing });
+            out.insert(
+                id.to_string(),
+                Quota {
+                    tokens: t,
+                    billing_period: billing,
+                },
+            );
         }
     }
     out
@@ -342,18 +426,33 @@ pub(crate) fn quotas_from_models(v: &Value) -> BTreeMap<String, Quota> {
 /// Inicio del periodo de facturación actual dado su día de inicio (1–28).
 pub(crate) fn billing_period_start(now: DateTime<Utc>, day: u32) -> DateTime<Utc> {
     let day = day.clamp(1, 28);
-    let this = Utc.with_ymd_and_hms(now.year(), now.month(), day, 0, 0, 0).single().unwrap_or(now);
+    let this = Utc
+        .with_ymd_and_hms(now.year(), now.month(), day, 0, 0, 0)
+        .single()
+        .unwrap_or(now);
     if now >= this {
         return this;
     }
-    let (y, m) = if now.month() == 1 { (now.year() - 1, 12) } else { (now.year(), now.month() - 1) };
-    Utc.with_ymd_and_hms(y, m, day, 0, 0, 0).single().unwrap_or(now)
+    let (y, m) = if now.month() == 1 {
+        (now.year() - 1, 12)
+    } else {
+        (now.year(), now.month() - 1)
+    };
+    Utc.with_ymd_and_hms(y, m, day, 0, 0, 0)
+        .single()
+        .unwrap_or(now)
 }
 
 fn next_billing(now: DateTime<Utc>, day: u32) -> DateTime<Utc> {
     let start = billing_period_start(now, day);
-    let (y, m) = if start.month() == 12 { (start.year() + 1, 1) } else { (start.year(), start.month() + 1) };
-    Utc.with_ymd_and_hms(y, m, start.day(), 0, 0, 0).single().unwrap_or(now)
+    let (y, m) = if start.month() == 12 {
+        (start.year() + 1, 1)
+    } else {
+        (start.year(), start.month() + 1)
+    };
+    Utc.with_ymd_and_hms(y, m, start.day(), 0, 0, 0)
+        .single()
+        .unwrap_or(now)
 }
 
 /// Un medidor por modelo con cuota y uso, ordenados por % (el anillo exterior es el más cercano a agotarse).
@@ -367,12 +466,20 @@ pub(crate) fn quota_meters(
     let mut out: Vec<Meter> = quotas
         .iter()
         .filter_map(|(model, q)| {
-            let used = (if q.billing_period { period.per_model.get(model) } else { month.per_model.get(model) }).copied()?;
+            let used = (if q.billing_period {
+                period.per_model.get(model)
+            } else {
+                month.per_model.get(model)
+            })
+            .copied()?;
             if used <= 0.0 || q.tokens <= 0.0 {
                 return None;
             }
             let (start, end) = if q.billing_period {
-                (billing_period_start(now, billing_day), next_billing(now, billing_day))
+                (
+                    billing_period_start(now, billing_day),
+                    next_billing(now, billing_day),
+                )
             } else {
                 (month_start(now), next_month_start(now))
             };
@@ -388,7 +495,11 @@ pub(crate) fn quota_meters(
             })
         })
         .collect();
-    out.sort_by(|a, b| b.percent.partial_cmp(&a.percent).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.percent
+            .partial_cmp(&a.percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -419,7 +530,11 @@ fn plan_quota(plan: &str) -> &'static str {
 
 /// Convierte `x-ratelimit-limit-*` / `x-ratelimit-remaining-*` en medidores.
 pub(crate) fn rate_limit_meters(h: &reqwest::header::HeaderMap) -> Vec<Meter> {
-    let num = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<f64>().ok());
+    let num = |name: &str| {
+        h.get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<f64>().ok())
+    };
     let mut out = vec![];
     for (suffix, id, label, unit) in [
         ("requests", "rate_requests", "Peticiones (ventana)", "req"),
@@ -460,11 +575,23 @@ async fn custom_usage(cfg: &NanConfig, http: &reqwest::Client, key: &str) -> Opt
 }
 
 pub(crate) fn pointer_meter(body: &Value, cfg: &NanConfig) -> Option<Meter> {
-    let used = cfg.used_pointer.as_deref().and_then(|p| body.pointer(p)).and_then(num)?;
-    let limit = cfg.limit_pointer.as_deref().and_then(|p| body.pointer(p)).and_then(num);
+    let used = cfg
+        .used_pointer
+        .as_deref()
+        .and_then(|p| body.pointer(p))
+        .and_then(num)?;
+    let limit = cfg
+        .limit_pointer
+        .as_deref()
+        .and_then(|p| body.pointer(p))
+        .and_then(num);
     Some(Meter {
         id: "custom".into(),
-        label: cfg.usage_label.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Consumo".into()),
+        label: cfg
+            .usage_label
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Consumo".into()),
         percent: limit.filter(|l| *l > 0.0).map(|l| used / l * 100.0),
         used: Some(used),
         limit,
@@ -498,11 +625,23 @@ mod tests {
         let month = summarize(&[page.clone()], Some(month_start(now())));
         assert_eq!(month.per_model.get("deepseek-v4-flash"), Some(&6e8));
         assert_eq!(month.per_day.len(), 2);
-        let meters = quota_meters(&month, &summarize(&[page], None), &known_quotas().into_iter().map(|(k, v)| (k.to_string(), v)).collect(), now(), 1);
+        let meters = quota_meters(
+            &month,
+            &summarize(&[page], None),
+            &known_quotas()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            now(),
+            1,
+        );
         assert_eq!(meters[0].label, "deepseek-v4-flash");
         assert_eq!(meters[0].id, "model:deepseek-v4-flash");
         assert_eq!(meters[0].percent, Some(20.0));
-        assert_eq!(meters[0].resets_at.as_deref(), Some("2026-11-01T00:00:00+00:00"));
+        assert_eq!(
+            meters[0].resets_at.as_deref(),
+            Some("2026-11-01T00:00:00+00:00")
+        );
     }
 
     #[test]
@@ -520,16 +659,31 @@ mod tests {
 
     #[test]
     fn billing_period_wraps_months() {
-        assert_eq!(billing_period_start(now(), 15).to_rfc3339(), "2026-09-15T00:00:00+00:00");
-        assert_eq!(billing_period_start(now(), 3).to_rfc3339(), "2026-10-03T00:00:00+00:00");
-        assert_eq!(next_billing(now(), 15).to_rfc3339(), "2026-10-15T00:00:00+00:00");
+        assert_eq!(
+            billing_period_start(now(), 15).to_rfc3339(),
+            "2026-09-15T00:00:00+00:00"
+        );
+        assert_eq!(
+            billing_period_start(now(), 3).to_rfc3339(),
+            "2026-10-03T00:00:00+00:00"
+        );
+        assert_eq!(
+            next_billing(now(), 15).to_rfc3339(),
+            "2026-10-15T00:00:00+00:00"
+        );
     }
 
     #[test]
     fn reads_quota_from_models() {
         let v = json!({"data": [{"id": "glm5.3", "limits": {"token_quota": 4000000000u64, "reset": "billing_period"}}, {"id": "x"}]});
         let q = quotas_from_models(&v);
-        assert_eq!(q.get("glm5.3"), Some(&Quota { tokens: 4e9, billing_period: true }));
+        assert_eq!(
+            q.get("glm5.3"),
+            Some(&Quota {
+                tokens: 4e9,
+                billing_period: true
+            })
+        );
         assert!(!q.contains_key("x"));
     }
 
@@ -537,7 +691,10 @@ mod tests {
     fn reads_rate_limit_headers() {
         let mut h = HeaderMap::new();
         h.insert("x-ratelimit-limit-requests", HeaderValue::from_static("60"));
-        h.insert("x-ratelimit-remaining-requests", HeaderValue::from_static("45"));
+        h.insert(
+            "x-ratelimit-remaining-requests",
+            HeaderValue::from_static("45"),
+        );
         let m = rate_limit_meters(&h);
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].percent, Some(25.0));
@@ -549,9 +706,15 @@ mod tests {
     fn token_rate_limit_has_its_own_id() {
         let mut h = HeaderMap::new();
         h.insert("x-ratelimit-limit-tokens", HeaderValue::from_static("1000"));
-        h.insert("x-ratelimit-remaining-tokens", HeaderValue::from_static("500"));
+        h.insert(
+            "x-ratelimit-remaining-tokens",
+            HeaderValue::from_static("500"),
+        );
         let m = rate_limit_meters(&h);
-        assert_eq!((m[0].id.as_str(), m[0].label.as_str()), ("rate_tokens", "Tokens (ventana)"));
+        assert_eq!(
+            (m[0].id.as_str(), m[0].label.as_str()),
+            ("rate_tokens", "Tokens (ventana)")
+        );
     }
 
     #[test]
@@ -561,7 +724,11 @@ mod tests {
             limit_pointer: Some("/usage/quota".into()),
             ..Default::default()
         };
-        let m = pointer_meter(&json!({"usage": {"used": "750000000", "quota": 3000000000u64}}), &cfg).unwrap();
+        let m = pointer_meter(
+            &json!({"usage": {"used": "750000000", "quota": 3000000000u64}}),
+            &cfg,
+        )
+        .unwrap();
         assert_eq!(m.percent, Some(25.0));
         assert!(pointer_meter(&json!({}), &cfg).is_none());
         assert_eq!((m.id.as_str(), m.label.as_str()), ("custom", "Consumo"));

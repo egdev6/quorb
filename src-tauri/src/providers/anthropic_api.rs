@@ -30,7 +30,10 @@ fn budget_meter(amount: f64, budget: f64, unit: String, reset: String, window: i
 pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let report = who.report("Anthropic API", Kind::Api);
     let Some(key) = who.secret(secrets::ANTHROPIC_ADMIN_KEY) else {
-        return report.fail(Status::Unconfigured, "Añade una Admin API key de Anthropic en Ajustes.");
+        return report.fail(
+            Status::Unconfigured,
+            "Añade una Admin API key de Anthropic en Ajustes.",
+        );
     };
 
     let now = chrono::Utc::now();
@@ -62,7 +65,12 @@ pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) ->
         };
         match res.status().as_u16() {
             200 => {}
-            401 | 403 => return report.fail(Status::Unconfigured, "Admin key rechazada (¿es una key normal en vez de admin?)"),
+            401 | 403 => {
+                return report.fail(
+                    Status::Unconfigured,
+                    "Admin key rechazada (¿es una key normal en vez de admin?)",
+                )
+            }
             code => return report.fail(Status::Error, format!("HTTP {code} en cost_report")),
         }
         let body: Value = match res.json().await {
@@ -86,7 +94,9 @@ pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) ->
     });
     if let Some(b) = cfg.monthly_budget_usd.filter(|b| *b > 0.0) {
         let (reset, window) = month_window(chrono::Utc::now());
-        report.meters.push(budget_meter(amount, b, "USD".into(), reset, window));
+        report
+            .meters
+            .push(budget_meter(amount, b, "USD".into(), reset, window));
     }
     report
 }
@@ -97,10 +107,17 @@ pub(crate) fn sum_cents(v: &Value) -> f64 {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .flat_map(|bucket| bucket.get("results").and_then(Value::as_array).into_iter().flatten())
+        .flat_map(|bucket| {
+            bucket
+                .get("results")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
         .filter_map(|r| {
             let a = r.get("amount")?;
-            a.as_f64().or_else(|| a.as_str().and_then(|s| s.parse::<f64>().ok()))
+            a.as_f64()
+                .or_else(|| a.as_str().and_then(|s| s.parse::<f64>().ok()))
         })
         .sum()
 }
@@ -109,7 +126,9 @@ pub(crate) fn next_page(v: &Value) -> Option<String> {
     if v.get("has_more").and_then(Value::as_bool) != Some(true) {
         return None;
     }
-    v.get("next_page").and_then(Value::as_str).map(str::to_string)
+    v.get("next_page")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -119,7 +138,13 @@ mod tests {
 
     #[test]
     fn budget_meter_bundles_id_label_unit_and_values() {
-        let m = budget_meter(12.5, 50.0, "USD".into(), "2026-11-01T00:00:00Z".into(), 2_592_000);
+        let m = budget_meter(
+            12.5,
+            50.0,
+            "USD".into(),
+            "2026-11-01T00:00:00Z".into(),
+            2_592_000,
+        );
         assert_eq!(m.id, "budget_monthly");
         assert_eq!(m.label, "Presupuesto mensual");
         assert_eq!(m.unit.as_deref(), Some("USD"));
@@ -143,6 +168,9 @@ mod tests {
         });
         assert_eq!(sum_cents(&v), 200.0);
         assert_eq!(next_page(&v).as_deref(), Some("abc"));
-        assert_eq!(next_page(&json!({"has_more": false, "next_page": "x"})), None);
+        assert_eq!(
+            next_page(&json!({"has_more": false, "next_page": "x"})),
+            None
+        );
     }
 }

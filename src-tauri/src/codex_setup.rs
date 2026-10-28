@@ -184,7 +184,10 @@ pub(crate) fn fresh_windows_path_dirs() -> Vec<PathBuf> {
         let lookup = |name: &str| std::env::var(name).ok();
         let sources = [
             (HKEY_CURRENT_USER, "Environment"),
-            (HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            ),
         ];
         let mut dirs = vec![];
         for (hive, subkey) in sources {
@@ -249,10 +252,7 @@ pub fn discover_node_in(roots: &[PathBuf]) -> Option<NodePair> {
             .join("npm")
             .join("bin")
             .join("npm-cli.js");
-        (node.is_file() && npm.is_file()).then(|| NodePair {
-            node,
-            npm_cli: npm,
-        })
+        (node.is_file() && npm.is_file()).then(|| NodePair { node, npm_cli: npm })
     })
 }
 
@@ -310,7 +310,10 @@ pub fn npm_install_args(stage: &Path) -> Vec<String> {
 
 /// Lanzamiento npm: programa `node.exe`, 1.er arg `npm-cli.js`, verbo `install` y flags fijos (sin shell).
 fn npm_command(node: &NodePair, stage: &Path) -> (PathBuf, Vec<String>) {
-    let mut args = vec![node.npm_cli.to_string_lossy().into_owned(), "install".to_string()];
+    let mut args = vec![
+        node.npm_cli.to_string_lossy().into_owned(),
+        "install".to_string(),
+    ];
     args.extend(npm_install_args(stage));
     (node.node.clone(), args)
 }
@@ -349,7 +352,10 @@ fn set_node_path(
     node_root: &Path,
 ) {
     let mut dirs = vec![node_root.to_path_buf()];
-    if let Some((_, value)) = base.iter().find(|(key, _)| key.eq_ignore_ascii_case("PATH")) {
+    if let Some((_, value)) = base
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+    {
         dirs.extend(std::env::split_paths(value));
     }
     if let Ok(joined) = std::env::join_paths(dirs) {
@@ -420,7 +426,16 @@ fn nested(base: &Path, parts: &[&str]) -> PathBuf {
 /// Los dos contenedores conocidos del alias nativo bajo la raíz instalada.
 fn alias_parents(root: &Path) -> Vec<PathBuf> {
     vec![
-        nested(root, &["node_modules", "@openai", "codex", "node_modules", "@openai"]),
+        nested(
+            root,
+            &[
+                "node_modules",
+                "@openai",
+                "codex",
+                "node_modules",
+                "@openai",
+            ],
+        ),
         nested(root, &["node_modules", "@openai"]),
     ]
 }
@@ -531,7 +546,13 @@ fn node_metadata(
 ) -> Result<(), String> {
     let cwd = node.node.parent().unwrap_or_else(|| Path::new("."));
     let version = runner
-        .run(&node.node, &["--version".to_string()], env, cwd, PROBE_TIMEOUT)
+        .run(
+            &node.node,
+            &["--version".to_string()],
+            env,
+            cwd,
+            PROBE_TIMEOUT,
+        )
         .ok()
         .filter(|out| out.code == 0)
         .and_then(|out| parse_node_major(&out.stdout))
@@ -569,7 +590,10 @@ fn unique_stage(root: &Path) -> PathBuf {
             return candidate;
         }
     }
-    root.join(format!("codex-{CODEX_VERSION}-stage-{}", std::process::id()))
+    root.join(format!(
+        "codex-{CODEX_VERSION}-stage-{}",
+        std::process::id()
+    ))
 }
 
 /// Limpia el stage propiedad de esta operación al salir, salvo que se promueva.
@@ -738,8 +762,10 @@ mod tests {
         fn new(tag: &str) -> Self {
             static N: AtomicU64 = AtomicU64::new(0);
             let n = N.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir()
-                .join(format!("quorb-codex-setup-{}-{tag}-{n}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "quorb-codex-setup-{}-{tag}-{n}",
+                std::process::id()
+            ));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
@@ -764,13 +790,7 @@ mod tests {
         std::fs::create_dir_all(npm.parent().unwrap()).unwrap();
         std::fs::write(&node, b"").unwrap();
         std::fs::write(&npm, b"").unwrap();
-        (
-            dir,
-            NodePair {
-                node,
-                npm_cli: npm,
-            },
-        )
+        (dir, NodePair { node, npm_cli: npm })
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -854,14 +874,16 @@ mod tests {
     /// ¿Es la llamada a npm? (programa `npm-cli.js` o primer arg = npm-cli.js).
     fn is_npm_call(node: &NodePair, call: &Call) -> bool {
         call.program.ends_with("npm-cli.js")
-            || call.args.first().map(String::as_str) == Some(node.npm_cli.to_string_lossy().as_ref())
+            || call.args.first().map(String::as_str)
+                == Some(node.npm_cli.to_string_lossy().as_ref())
     }
 
     /// Contrato real: node.exe emparejado + npm-cli.js como 1.er arg + verbo `install`.
     fn strict_npm_ok(node: &NodePair, call: &Call) -> bool {
         call.program == node.node.to_string_lossy().as_ref()
             && !call.program.ends_with(".js")
-            && call.args.first().map(String::as_str) == Some(node.npm_cli.to_string_lossy().as_ref())
+            && call.args.first().map(String::as_str)
+                == Some(node.npm_cli.to_string_lossy().as_ref())
             && call.args.get(1).map(String::as_str) == Some("install")
     }
 
@@ -1061,7 +1083,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, MSG_BUSY);
-        assert!(!prompted.load(Ordering::SeqCst), "no debe mostrarse el diálogo");
+        assert!(
+            !prompted.load(Ordering::SeqCst),
+            "no debe mostrarse el diálogo"
+        );
         assert!(runner.calls().is_empty());
         assert!(state.busy());
 
@@ -1122,7 +1147,10 @@ mod tests {
             Path::new("/quorb/node"),
             Path::new("/quorb/stage"),
         );
-        assert_eq!(env.get("SystemRoot").map(String::as_str), Some("C:\\Windows"));
+        assert_eq!(
+            env.get("SystemRoot").map(String::as_str),
+            Some("C:\\Windows")
+        );
         assert!(env
             .get("PATH")
             .unwrap()
@@ -1342,7 +1370,10 @@ mod tests {
             std::fs::read_to_string(prefix.join("keep.txt")).unwrap(),
             "original"
         );
-        assert!(runner.calls().is_empty(), "no debe ejecutarse npm si ya está");
+        assert!(
+            runner.calls().is_empty(),
+            "no debe ejecutarse npm si ya está"
+        );
         assert!(!stage_leftovers(root.path()));
     }
 
@@ -1367,11 +1398,17 @@ mod tests {
         let exe = resolve_native_exe(Platform::WindowsX64, &prefix).expect("binario promovido");
         assert!(exe.is_file());
         assert!(!stage_leftovers(root.path()), "el stage debe desaparecer");
-        assert_eq!(state.last().map(|l| l.outcome), Some(CodexOutcome::Installed));
+        assert_eq!(
+            state.last().map(|l| l.outcome),
+            Some(CodexOutcome::Installed)
+        );
         assert!(!state.busy());
         assert!(!runner.programs().iter().any(|p| p.ends_with(".cmd")));
         // El binario verificado es el del alias nativo, no un wrapper.
-        assert!(runner.programs().iter().any(|p| p.ends_with(CODEX_BIN_NAME)));
+        assert!(runner
+            .programs()
+            .iter()
+            .any(|p| p.ends_with(CODEX_BIN_NAME)));
     }
 
     #[test]
@@ -1486,7 +1523,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.outcome, InstallOutcome::Installed);
-        assert!(resolve_native_exe(Platform::WindowsArm64, &canonical_prefix(root.path())).is_some());
+        assert!(
+            resolve_native_exe(Platform::WindowsArm64, &canonical_prefix(root.path())).is_some()
+        );
     }
 
     #[test]
@@ -1506,7 +1545,10 @@ mod tests {
             .join("node_modules/@openai/codex-win32-arm64/codex.exe");
         std::fs::create_dir_all(arm.parent().unwrap()).unwrap();
         std::fs::write(&arm, b"").unwrap();
-        assert_eq!(resolve_native_exe(Platform::WindowsArm64, root.path()), Some(arm));
+        assert_eq!(
+            resolve_native_exe(Platform::WindowsArm64, root.path()),
+            Some(arm)
+        );
     }
 
     #[test]
@@ -1533,13 +1575,18 @@ mod tests {
     fn managed_native_dirs_cover_both_aliases_and_layouts() {
         let home = Path::new("C:\\Users\\ana");
         let dirs = managed_native_dirs(home);
-        let s: Vec<String> = dirs.iter().map(|d| d.to_string_lossy().replace('\\', "/")).collect();
+        let s: Vec<String> = dirs
+            .iter()
+            .map(|d| d.to_string_lossy().replace('\\', "/"))
+            .collect();
         let root = crate::channel::current().home_dir;
         assert!(s.iter().any(|d| d.contains(&format!(
             "{root}/tools/codex-0.162.1/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64"
         ))));
         assert!(s.iter().any(|d| {
-            d.contains(&format!("{root}/tools/codex-0.162.1/node_modules/@openai/codex-win32-arm64"))
+            d.contains(&format!(
+                "{root}/tools/codex-0.162.1/node_modules/@openai/codex-win32-arm64"
+            ))
         }));
         assert!(consent_message(crate::i18n::Locale::Es).contains(&format!("~/{root}/tools/")));
         assert!(s.iter().any(|d| d.contains("x86_64-pc-windows-msvc")));
@@ -1550,7 +1597,11 @@ mod tests {
     fn installed_flag_is_metadata_not_login_health() {
         let root = TempDir::new("installed");
         let prefix = canonical_prefix(root.path());
-        assert!(!codex_installed_in(Platform::WindowsX64, root.path(), false));
+        assert!(!codex_installed_in(
+            Platform::WindowsX64,
+            root.path(),
+            false
+        ));
         let exe = native_exe_candidates(Platform::WindowsX64, &prefix)[0].clone();
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
         std::fs::write(&exe, b"").unwrap();
@@ -1568,7 +1619,10 @@ mod tests {
         assert_eq!(program, node.node, "el programa es node.exe, nunca el .js");
         assert_eq!(args[0], node.npm_cli.to_string_lossy().as_ref());
         assert_eq!(args[1], "install", "verbo install explícito");
-        assert_eq!(&args[2..], npm_install_args(Path::new("C:/stage")).as_slice());
+        assert_eq!(
+            &args[2..],
+            npm_install_args(Path::new("C:/stage")).as_slice()
+        );
     }
 
     /// Node real del proyecto (por `QUORB_TEST_NODE_EXECUTABLE` o PATH); nunca se

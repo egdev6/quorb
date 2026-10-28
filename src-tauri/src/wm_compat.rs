@@ -441,8 +441,12 @@ fn probe_appindicator_extension() -> ExtensionProbe {
 /// Parseo puro de las listas de `gnome-extensions` (`None` = sondeo fallido).
 fn parse_extension_probe(enabled: Option<&str>, all: Option<&str>) -> ExtensionProbe {
     match (enabled, all) {
-        (Some(enabled), _) if enabled.lines().any(|l| l.trim() == APPINDICATOR_UUID) => ExtensionProbe::Enabled,
-        (Some(_), Some(all)) if all.lines().any(|l| l.trim() == APPINDICATOR_UUID) => ExtensionProbe::Disabled,
+        (Some(enabled), _) if enabled.lines().any(|l| l.trim() == APPINDICATOR_UUID) => {
+            ExtensionProbe::Enabled
+        }
+        (Some(_), Some(all)) if all.lines().any(|l| l.trim() == APPINDICATOR_UUID) => {
+            ExtensionProbe::Disabled
+        }
         (Some(_), Some(_)) => ExtensionProbe::Absent,
         _ => ExtensionProbe::Unknown,
     }
@@ -631,12 +635,30 @@ mod tests {
         // en Wayland y `surfaces_for` debe tomar la rama Hyprland (no la X11).
         let info = detect_wm_info_from_env(&env(None, None, Some("hyprland"), None), tray());
         assert!(info.is_hyprland, "is_hyprland debe ser true");
-        assert!(info.is_wayland, "is_wayland debe ser true: Hyprland es solo-Wayland");
+        assert!(
+            info.is_wayland,
+            "is_wayland debe ser true: Hyprland es solo-Wayland"
+        );
         // Las superficies deben ser las de Hyprland: bandeja y always-on-top con `limited`.
-        assert_eq!(info.surfaces.always_on_top.state, "limited", "always_on_top limited en Hyprland");
-        assert_eq!(info.surfaces.tray_icon.state, "limited", "tray_icon limited en Hyprland");
-        assert!(info.surfaces.tray_icon.note.contains("vuelve a abrir Quorb"), "nota de tray en Hyprland");
-        assert_eq!(info.surfaces.click_through.state, "limited", "click_through limited en Hyprland");
+        assert_eq!(
+            info.surfaces.always_on_top.state, "limited",
+            "always_on_top limited en Hyprland"
+        );
+        assert_eq!(
+            info.surfaces.tray_icon.state, "limited",
+            "tray_icon limited en Hyprland"
+        );
+        assert!(
+            info.surfaces
+                .tray_icon
+                .note
+                .contains("vuelve a abrir Quorb"),
+            "nota de tray en Hyprland"
+        );
+        assert_eq!(
+            info.surfaces.click_through.state, "limited",
+            "click_through limited en Hyprland"
+        );
         assert_eq!(info.surfaces.global_shortcuts.state, "limited");
         assert_eq!(info.surfaces.autostart.state, "ok");
     }
@@ -656,22 +678,57 @@ mod tests {
     #[test]
     fn is_wayland_session_from_env_follows_wm_info_semantics() {
         // Protocolo Wayland explícito.
-        assert!(is_wayland_session_from_env(&env(Some("wayland-0"), None, None, None)));
-        assert!(is_wayland_session_from_env(&env(None, Some("wayland"), None, None)));
+        assert!(is_wayland_session_from_env(&env(
+            Some("wayland-0"),
+            None,
+            None,
+            None
+        )));
+        assert!(is_wayland_session_from_env(&env(
+            None,
+            Some("wayland"),
+            None,
+            None
+        )));
         // Compositor solo-Wayland en XDG_CURRENT_DESKTOP.
-        assert!(is_wayland_session_from_env(&env(None, None, None, Some("sway"))));
+        assert!(is_wayland_session_from_env(&env(
+            None,
+            None,
+            None,
+            Some("sway")
+        )));
         // Hyprland es Wayland-only incluso sin más señales.
-        assert!(is_wayland_session_from_env(&env(None, None, Some("hyprland"), None)));
+        assert!(is_wayland_session_from_env(&env(
+            None,
+            None,
+            Some("hyprland"),
+            None
+        )));
     }
 
     #[test]
     fn is_wayland_session_from_env_rejects_x11_and_empty_strings() {
         // X11 explícito: no es Wayland aunque el escritorio sea GNOME/KDE.
-        assert!(!is_wayland_session_from_env(&env(None, Some("x11"), Some("gnome"), Some("GNOME"))));
-        assert!(!is_wayland_session_from_env(&env(None, Some("x11"), Some("plasma"), Some("KDE"))));
+        assert!(!is_wayland_session_from_env(&env(
+            None,
+            Some("x11"),
+            Some("gnome"),
+            Some("GNOME")
+        )));
+        assert!(!is_wayland_session_from_env(&env(
+            None,
+            Some("x11"),
+            Some("plasma"),
+            Some("KDE")
+        )));
         // Env vacío o strings vacíos: nada señalado.
         assert!(!is_wayland_session_from_env(&env(None, None, None, None)));
-        assert!(!is_wayland_session_from_env(&env(Some(""), Some(""), Some(""), Some(""))));
+        assert!(!is_wayland_session_from_env(&env(
+            Some(""),
+            Some(""),
+            Some(""),
+            Some("")
+        )));
     }
 
     #[test]
@@ -693,7 +750,10 @@ mod tests {
 
     #[test]
     fn gnome_xorg_is_not_wayland() {
-        let info = detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome"), Some("GNOME")), tray());
+        let info = detect_wm_info_from_env(
+            &env(None, Some("x11"), Some("gnome"), Some("GNOME")),
+            tray(),
+        );
         assert!(!info.is_wayland, "GNOME sobre Xorg no es Wayland");
         assert!(
             info.recommendation.contains("completa"),
@@ -716,8 +776,10 @@ mod tests {
 
     #[test]
     fn plasma_x11_is_not_wayland() {
-        let info =
-            detect_wm_info_from_env(&env(None, Some("x11"), Some("plasma"), Some("KDE:plasma")), tray());
+        let info = detect_wm_info_from_env(
+            &env(None, Some("x11"), Some("plasma"), Some("KDE:plasma")),
+            tray(),
+        );
         assert!(!info.is_wayland, "Plasma sobre X11 no es Wayland");
         assert_eq!(
             info.surfaces.global_shortcuts.state, "ok",
@@ -727,17 +789,20 @@ mod tests {
 
     #[test]
     fn recommendation_for_gnome_wayland_mentions_mutter() {
-        let info = detect_wm_info_from_env(&env(None, Some("wayland"), Some("gnome"), None), tray());
+        let info =
+            detect_wm_info_from_env(&env(None, Some("wayland"), Some("gnome"), None), tray());
         assert!(info.recommendation.contains("GNOME Wayland"));
         assert!(info.recommendation.contains("Mutter"));
     }
 
     #[test]
     fn x11_surfaces_are_all_expected_complete() {
-        let surfaces: Vec<(&'static str, SurfaceStatus)> =
-            detect_wm_info_from_env(&env(None, Some("x11"), Some("gnome-xorg-errors"), None), tray())
-                .surfaces
-                .into_iter();
+        let surfaces: Vec<(&'static str, SurfaceStatus)> = detect_wm_info_from_env(
+            &env(None, Some("x11"), Some("gnome-xorg-errors"), None),
+            tray(),
+        )
+        .surfaces
+        .into_iter();
         for (name, status) in surfaces.iter() {
             // Click-through del widget es `limited` en todas las sesiones hoy:
             // solo el overlay de efectos llama set_ignore_cursor_events, no la tira.
@@ -765,7 +830,10 @@ mod tests {
         // es instalar la extensión (que realmente falta).
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Absent, extension: ExtensionProbe::Absent },
+            TrayDiagnostics {
+                host: HostProbe::Absent,
+                extension: ExtensionProbe::Absent,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "limited");
@@ -775,7 +843,9 @@ mod tests {
             s.tray_icon.note
         );
         assert!(
-            s.tray_icon.note.contains("Instalá la extensión «AppIndicator»"),
+            s.tray_icon
+                .note
+                .contains("Instalá la extensión «AppIndicator»"),
             "con extensión ausente, el consejo es instalarla: {}",
             s.tray_icon.note
         );
@@ -793,11 +863,17 @@ mod tests {
     fn gnome_wayland_without_host_and_extension_enabled_reports_the_host_cause() {
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Absent, extension: ExtensionProbe::Enabled },
+            TrayDiagnostics {
+                host: HostProbe::Absent,
+                extension: ExtensionProbe::Enabled,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "limited");
-        assert!(s.tray_icon.note.contains("No se detectó ningún host StatusNotifier"));
+        assert!(s
+            .tray_icon
+            .note
+            .contains("No se detectó ningún host StatusNotifier"));
         assert!(s.tray_icon.note.contains("está habilitada"));
         assert!(
             !s.tray_icon.note.contains("Instalá"),
@@ -812,7 +888,10 @@ mod tests {
     fn gnome_wayland_with_host_present_only_claims_host_availability() {
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Present, extension: ExtensionProbe::Enabled },
+            TrayDiagnostics {
+                host: HostProbe::Present,
+                extension: ExtensionProbe::Enabled,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "ok");
@@ -848,7 +927,10 @@ mod tests {
     fn gnome_wayland_disabled_extension_advises_enabling() {
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Absent, extension: ExtensionProbe::Disabled },
+            TrayDiagnostics {
+                host: HostProbe::Absent,
+                extension: ExtensionProbe::Disabled,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "limited");
@@ -866,7 +948,10 @@ mod tests {
     fn gnome_wayland_host_present_extension_disabled_never_advises_enabling() {
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Present, extension: ExtensionProbe::Disabled },
+            TrayDiagnostics {
+                host: HostProbe::Present,
+                extension: ExtensionProbe::Disabled,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "ok");
@@ -886,7 +971,10 @@ mod tests {
     fn gnome_wayland_host_present_extension_absent_reports_probe_scope() {
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Present, extension: ExtensionProbe::Absent },
+            TrayDiagnostics {
+                host: HostProbe::Present,
+                extension: ExtensionProbe::Absent,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "ok");
@@ -915,7 +1003,10 @@ mod tests {
     fn gnome_wayland_host_present_extension_unknown_still_claims_host() {
         let s = detect_wm_info_from_env(
             &env(Some("wayland-0"), Some("wayland"), Some("gnome"), None),
-            TrayDiagnostics { host: HostProbe::Present, extension: ExtensionProbe::Unknown },
+            TrayDiagnostics {
+                host: HostProbe::Present,
+                extension: ExtensionProbe::Unknown,
+            },
         )
         .surfaces;
         assert_eq!(s.tray_icon.state, "ok");
@@ -931,18 +1022,44 @@ mod tests {
     /// #181: parseo puro de las sondas (matriz del ajuste 2), sin procesos.
     #[test]
     fn host_probe_parse_covers_success_absence_and_failure() {
-        assert_eq!(parse_host_probe(Some("(['org.kde.StatusNotifierWatcher', 'a'])")), HostProbe::Present);
-        assert_eq!(parse_host_probe(Some("(['otro.nicho'])")), HostProbe::Absent);
-        assert_eq!(parse_host_probe(None), HostProbe::Unknown, "fallo/timeout → desconocido");
+        assert_eq!(
+            parse_host_probe(Some("(['org.kde.StatusNotifierWatcher', 'a'])")),
+            HostProbe::Present
+        );
+        assert_eq!(
+            parse_host_probe(Some("(['otro.nicho'])")),
+            HostProbe::Absent
+        );
+        assert_eq!(
+            parse_host_probe(None),
+            HostProbe::Unknown,
+            "fallo/timeout → desconocido"
+        );
     }
 
     #[test]
     fn extension_probe_parse_covers_enabled_disabled_absent_and_unknown() {
-        assert_eq!(parse_extension_probe(Some("a@x\nubuntu-appindicators@ubuntu.com"), None), ExtensionProbe::Enabled);
-        assert_eq!(parse_extension_probe(Some("a@x"), Some("ubuntu-appindicators@ubuntu.com")), ExtensionProbe::Disabled);
-        assert_eq!(parse_extension_probe(Some("a@x"), Some("b@y")), ExtensionProbe::Absent);
-        assert_eq!(parse_extension_probe(None, None), ExtensionProbe::Unknown, "fallo → desconocido, no ausente");
-        assert_eq!(parse_extension_probe(None, Some("b@y")), ExtensionProbe::Unknown);
+        assert_eq!(
+            parse_extension_probe(Some("a@x\nubuntu-appindicators@ubuntu.com"), None),
+            ExtensionProbe::Enabled
+        );
+        assert_eq!(
+            parse_extension_probe(Some("a@x"), Some("ubuntu-appindicators@ubuntu.com")),
+            ExtensionProbe::Disabled
+        );
+        assert_eq!(
+            parse_extension_probe(Some("a@x"), Some("b@y")),
+            ExtensionProbe::Absent
+        );
+        assert_eq!(
+            parse_extension_probe(None, None),
+            ExtensionProbe::Unknown,
+            "fallo → desconocido, no ausente"
+        );
+        assert_eq!(
+            parse_extension_probe(None, Some("b@y")),
+            ExtensionProbe::Unknown
+        );
     }
     /// #183 (revisión R2): el runner debe acotar la captura: una salida mayor
     /// que MAX_CAPTURE_BYTES se captura acotada y la sonda termina en cota.
@@ -981,7 +1098,12 @@ mod tests {
             &["-c", "printf 'ok\\n'; (sleep 30) &"],
             std::time::Duration::from_secs(1),
         );
-        assert_eq!(out.as_deref(), Some("ok\n"), "stdout del hijo directo: {:?}", out);
+        assert_eq!(
+            out.as_deref(),
+            Some("ok\n"),
+            "stdout del hijo directo: {:?}",
+            out
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(10),
             "no debe esperar al nieto (30 s): {:?}",
@@ -1020,7 +1142,10 @@ mod tests {
             "sesión: wayland={:?} desktop={:?} current={:?}",
             info.xdg_session_type, info.desktop_session, info.xdg_current_desktop
         );
-        println!("tray: state={:?} note={:?}", info.surfaces.tray_icon.state, info.surfaces.tray_icon.note);
+        println!(
+            "tray: state={:?} note={:?}",
+            info.surfaces.tray_icon.state, info.surfaces.tray_icon.note
+        );
         // Contrato mínimo aunque el sondeo falle: la nota nunca queda vacía y
         // siempre nombra qué se diagnosticó (host o desconocido honesto).
         assert!(!info.surfaces.tray_icon.note.is_empty());
@@ -1028,7 +1153,8 @@ mod tests {
 
     #[test]
     fn kde_wayland_is_less_limited_than_gnome() {
-        let s = detect_wm_info_from_env(&env(None, Some("wayland"), Some("plasma"), None), tray()).surfaces;
+        let s = detect_wm_info_from_env(&env(None, Some("wayland"), Some("plasma"), None), tray())
+            .surfaces;
         assert_eq!(s.tray_icon.state, "ok");
         assert_eq!(s.always_on_top.state, "ok");
         assert_eq!(s.global_shortcuts.state, "limited");
@@ -1037,7 +1163,8 @@ mod tests {
     #[test]
     fn hyprland_limits_always_on_top_and_tray() {
         let s =
-            detect_wm_info_from_env(&env(None, Some("wayland"), Some("hyprland"), None), tray()).surfaces;
+            detect_wm_info_from_env(&env(None, Some("wayland"), Some("hyprland"), None), tray())
+                .surfaces;
         assert_eq!(s.always_on_top.state, "limited");
         assert_eq!(s.tray_icon.state, "limited");
         assert!(s.tray_icon.note.contains("vuelve a abrir Quorb"));
@@ -1046,7 +1173,8 @@ mod tests {
 
     #[test]
     fn generic_wayland_is_prudent_with_limits() {
-        let s = detect_wm_info_from_env(&env(Some("wayland-1"), None, Some("sway"), None), tray()).surfaces;
+        let s = detect_wm_info_from_env(&env(Some("wayland-1"), None, Some("sway"), None), tray())
+            .surfaces;
         assert_eq!(s.tray_icon.state, "limited");
         assert_eq!(s.always_on_top.state, "limited");
         assert_eq!(s.global_shortcuts.state, "limited");

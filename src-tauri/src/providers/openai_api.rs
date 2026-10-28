@@ -29,7 +29,10 @@ fn budget_meter(total: f64, budget: f64, currency: String, reset: String, window
 pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let report = who.report("OpenAI API", Kind::Api);
     let Some(key) = who.secret(secrets::OPENAI_ADMIN_KEY) else {
-        return report.fail(Status::Unconfigured, "Añade una Admin key de OpenAI en Ajustes.");
+        return report.fail(
+            Status::Unconfigured,
+            "Añade una Admin key de OpenAI en Ajustes.",
+        );
     };
 
     let start = month_start(chrono::Utc::now()).timestamp().to_string();
@@ -51,8 +54,15 @@ pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) ->
         };
         match res.status().as_u16() {
             200 => {}
-            401 | 403 => return report.fail(Status::Unconfigured, "Admin key rechazada (¿es una key de proyecto en vez de admin?)"),
-            code => return report.fail(Status::Error, format!("HTTP {code} en organization/costs")),
+            401 | 403 => {
+                return report.fail(
+                    Status::Unconfigured,
+                    "Admin key rechazada (¿es una key de proyecto en vez de admin?)",
+                )
+            }
+            code => {
+                return report.fail(Status::Error, format!("HTTP {code} en organization/costs"))
+            }
         }
         let body: Value = match res.json().await {
             Ok(v) => v,
@@ -67,7 +77,11 @@ pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) ->
             .get("has_more")
             .and_then(Value::as_bool)
             .filter(|m| *m)
-            .and_then(|_| body.get("next_page").and_then(Value::as_str).map(str::to_string));
+            .and_then(|_| {
+                body.get("next_page")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
         if page.is_none() {
             break;
         }
@@ -82,7 +96,9 @@ pub async fn fetch(cfg: &ApiCostConfig, who: Who<'_>, http: &reqwest::Client) ->
     });
     if let Some(b) = cfg.monthly_budget_usd.filter(|b| *b > 0.0) {
         let (reset, window) = month_window(chrono::Utc::now());
-        report.meters.push(budget_meter(total, b, currency, reset, window));
+        report
+            .meters
+            .push(budget_meter(total, b, currency, reset, window));
     }
     report
 }
@@ -95,11 +111,19 @@ pub(crate) fn sum_costs(v: &Value) -> (f64, Option<String>) {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .flat_map(|b| b.get("results").and_then(Value::as_array).into_iter().flatten())
+        .flat_map(|b| {
+            b.get("results")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
         .filter_map(|r| {
             let amount = r.get("amount")?;
             if currency.is_none() {
-                currency = amount.get("currency").and_then(Value::as_str).map(|c| c.to_uppercase());
+                currency = amount
+                    .get("currency")
+                    .and_then(Value::as_str)
+                    .map(|c| c.to_uppercase());
             }
             amount.get("value").and_then(Value::as_f64)
         })
@@ -114,7 +138,13 @@ mod tests {
 
     #[test]
     fn budget_meter_bundles_id_label_unit_and_values() {
-        let m = budget_meter(30.0, 120.0, "EUR".into(), "2026-11-01T00:00:00Z".into(), 2_592_000);
+        let m = budget_meter(
+            30.0,
+            120.0,
+            "EUR".into(),
+            "2026-11-01T00:00:00Z".into(),
+            2_592_000,
+        );
         assert_eq!(m.id, "budget_monthly");
         assert_eq!(m.label, "Presupuesto mensual");
         assert_eq!(m.unit.as_deref(), Some("EUR"));

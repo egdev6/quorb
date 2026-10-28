@@ -60,7 +60,11 @@ pub fn for_provider(provider: &str) -> &'static [&'static str] {
         "openai_api" => &[OPENAI_ADMIN_KEY],
         "nan" => &[NAN_API_KEY, NAN_SESSION],
         // Contraseña + cookie + vínculo al destino (el bound_url no se edita en UI).
-        "nine_router" => &[NINE_ROUTER_PASSWORD, NINE_ROUTER_SESSION, NINE_ROUTER_BOUND_URL],
+        "nine_router" => &[
+            NINE_ROUTER_PASSWORD,
+            NINE_ROUTER_SESSION,
+            NINE_ROUTER_BOUND_URL,
+        ],
         _ => &[],
     }
 }
@@ -122,13 +126,19 @@ pub fn set(key: &str, value: &str) -> Result<(), String> {
 
 /// Qué secretos hay configurados (sin revelar su valor), incluidos los de las cuentas extra.
 pub fn status(accounts: &[crate::config::Account]) -> BTreeMap<String, bool> {
-    let extra = accounts
-        .iter()
-        .flat_map(|a| for_provider(&a.provider).iter().map(move |k| scoped(k, &a.id)));
-    ALL.iter().map(|k| k.to_string()).chain(extra).map(|k| {
-        let set = get(&k).is_some();
-        (k, set)
-    }).collect()
+    let extra = accounts.iter().flat_map(|a| {
+        for_provider(&a.provider)
+            .iter()
+            .map(move |k| scoped(k, &a.id))
+    });
+    ALL.iter()
+        .map(|k| k.to_string())
+        .chain(extra)
+        .map(|k| {
+            let set = get(&k).is_some();
+            (k, set)
+        })
+        .collect()
 }
 
 /// Borra los secretos de una cuenta extra que se ha eliminado.
@@ -181,10 +191,23 @@ mod tests {
         }
         let key = scoped(
             OPENROUTER_API_KEY,
-            &format!("openrouter:kc-smoke-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos()),
+            &format!(
+                "openrouter:kc-smoke-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos()
+            ),
         );
-        assert!(crate::config::is_account_id(key.split_once('@').unwrap().1), "la clave de prueba debe pasar la validación de cuentas");
-        assert!(get(&key).is_none(), "la clave única de prueba debería no existir");
+        assert!(
+            crate::config::is_account_id(key.split_once('@').unwrap().1),
+            "la clave de prueba debe pasar la validación de cuentas"
+        );
+        assert!(
+            get(&key).is_none(),
+            "la clave única de prueba debería no existir"
+        );
         let _guard = CleanupGuard(key.clone());
         set(&key, "valor-de-prueba").expect("set en Keychain");
         assert_eq!(get(&key).as_deref(), Some("valor-de-prueba"));
@@ -217,7 +240,10 @@ mod tests {
         let err = result.unwrap_err();
         assert!(!err.contains(valor), "el error filtra el valor: {err}");
         for internal in ALL.iter() {
-            assert!(!err.contains(internal), "el error filtra una clave interna ({internal}): {err}");
+            assert!(
+                !err.contains(internal),
+                "el error filtra una clave interna ({internal}): {err}"
+            );
         }
         assert!(err.contains("desconocida"), "mensaje no accionable: {err}");
     }
@@ -251,16 +277,32 @@ mod tests {
         }
         let key = scoped(
             OPENROUTER_API_KEY,
-            &format!("openrouter:linux-smoke-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos()),
+            &format!(
+                "openrouter:linux-smoke-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos()
+            ),
         );
-        assert!(crate::config::is_account_id(key.split_once('@').unwrap().1), "la clave de prueba debe pasar la validación de cuentas");
-        assert!(get(&key).is_none(), "la clave única de prueba debería no existir");
+        assert!(
+            crate::config::is_account_id(key.split_once('@').unwrap().1),
+            "la clave de prueba debe pasar la validación de cuentas"
+        );
+        assert!(
+            get(&key).is_none(),
+            "la clave única de prueba debería no existir"
+        );
         let _guard = CleanupGuard(key.clone());
         // Valor de prueba de baja entropía y sin credencial; aun así gitleaks
         // (regla generic-api-key) dispara por el patrón `set(key, "...")`, así
         // que anotamos el falso positivo explícitamente:
         set(&key, "valor-de-prueba-del-smoke-de-llavero").expect("set en Secret Service"); // gitleaks:allow
-        assert_eq!(get(&key).as_deref(), Some("valor-de-prueba-del-smoke-de-llavero")); // gitleaks:allow
+        assert_eq!(
+            get(&key).as_deref(),
+            Some("valor-de-prueba-del-smoke-de-llavero")
+        ); // gitleaks:allow
         set(&key, "").expect("borrado con set vacío");
         assert!(get(&key).is_none(), "la clave debería quedar eliminada");
     }

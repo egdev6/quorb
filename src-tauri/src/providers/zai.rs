@@ -9,11 +9,11 @@
 //! `fail(Status::Error)` sin romper la app. El endpoint `/use` que consume un
 //! reset existe, pero Quorb es monitoreo read-only y nunca lo llama.
 
-use chrono::{DateTime, TimeZone, Utc};
 use super::{net_error, Who};
 use crate::config::ZaiConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::secrets;
+use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 
 const URL: &str = "https://api.z.ai/api/monitor/usage/quota/limit";
@@ -27,14 +27,30 @@ pub async fn fetch(_cfg: &ZaiConfig, who: Who<'_>, http: &reqwest::Client) -> Us
         return report.fail(Status::Unconfigured, "Añade tu API key de z.ai en Ajustes.");
     };
 
-    let res = match http.get(URL).bearer_auth(&key).header("Accept", "application/json").send().await {
+    let res = match http
+        .get(URL)
+        .bearer_auth(&key)
+        .header("Accept", "application/json")
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => return report.fail(Status::Error, net_error(e)),
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return report.fail(Status::Unconfigured, "API key de z.ai rechazada (compruébala en z.ai/manage-apikey)."),
-        429 => return report.fail(Status::Warning, "El endpoint de uso está limitando peticiones; reintento en el próximo ciclo."),
+        401 | 403 => {
+            return report.fail(
+                Status::Unconfigured,
+                "API key de z.ai rechazada (compruébala en z.ai/manage-apikey).",
+            )
+        }
+        429 => {
+            return report.fail(
+                Status::Warning,
+                "El endpoint de uso está limitando peticiones; reintento en el próximo ciclo.",
+            )
+        }
         code => return report.fail(Status::Error, format!("HTTP {code} en el endpoint de uso")),
     }
     let body: Value = match res.json().await {
@@ -42,8 +58,14 @@ pub async fn fetch(_cfg: &ZaiConfig, who: Who<'_>, http: &reqwest::Client) -> Us
         Err(e) => return report.fail(Status::Error, format!("Respuesta inesperada: {e}")),
     };
     if body.get("success").and_then(Value::as_bool) == Some(false) {
-        let msg = body.get("msg").and_then(Value::as_str).unwrap_or("sin detalle");
-        return report.fail(Status::Warning, format!("z.ai respondió sin datos de uso: {msg} (¿API key sin Coding Plan?)"));
+        let msg = body
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or("sin detalle");
+        return report.fail(
+            Status::Warning,
+            format!("z.ai respondió sin datos de uso: {msg} (¿API key sin Coding Plan?)"),
+        );
     }
 
     let parsed = parse_quota(&body);
@@ -51,7 +73,10 @@ pub async fn fetch(_cfg: &ZaiConfig, who: Who<'_>, http: &reqwest::Client) -> Us
     report.plan = parsed.plan;
     report.meters = parsed.meters;
     if report.meters.is_empty() {
-        return report.fail(Status::Warning, "Respuesta sin datos de uso (¿ha cambiado el formato?)");
+        return report.fail(
+            Status::Warning,
+            "Respuesta sin datos de uso (¿ha cambiado el formato?)",
+        );
     }
     // El saldo de resets es un dato adicional: si su endpoint falla o cambia,
     // el reporte de cuotas sigue en pie sin saldo (nunca lo degrada). Va
@@ -105,7 +130,12 @@ pub(crate) fn parse_quota(v: &Value) -> Parsed {
     let data = v.get("data").unwrap_or(v);
     let plan = data.get("level").and_then(Value::as_str).map(pretty_level);
     let mut meters = vec![];
-    for limit in data.get("limits").and_then(Value::as_array).into_iter().flatten() {
+    for limit in data
+        .get("limits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let meter = match limit.get("type").and_then(Value::as_str) {
             Some("TOKENS_LIMIT") => tokens_meter(limit),
             Some("TIME_LIMIT") => web_tools_meter(limit),
@@ -123,7 +153,10 @@ pub(crate) fn parse_quota(v: &Value) -> Parsed {
 
 /// Un `TOKENS_LIMIT`: ventana del plan (5 h o semana) o cuota legada en créditos.
 fn tokens_meter(limit: &Value) -> Meter {
-    let (unit, number) = (limit.get("unit").and_then(Value::as_i64), limit.get("number").and_then(Value::as_i64));
+    let (unit, number) = (
+        limit.get("unit").and_then(Value::as_i64),
+        limit.get("number").and_then(Value::as_i64),
+    );
     match (unit, number) {
         (Some(3), Some(5)) => window_meter(limit, "five_hour", "Cuota · 5 h", H5),
         (Some(6), Some(1)) => window_meter(limit, "weekly", "Cuota · semana", WEEK),
@@ -239,7 +272,11 @@ pub(crate) fn parse_available_resets(v: &Value) -> Option<u32> {
     let count: usize = groups
         .into_iter()
         .flatten()
-        .map(|rows| rows.iter().filter(|r| r.get("available").and_then(Value::as_bool) == Some(true)).count())
+        .map(|rows| {
+            rows.iter()
+                .filter(|r| r.get("available").and_then(Value::as_bool) == Some(true))
+                .count()
+        })
         .sum();
     u32::try_from(count).ok()
 }
@@ -303,7 +340,10 @@ mod tests {
         let p = parse_quota(&fixture());
         let m: Vec<&Meter> = p.meters.iter().collect();
         assert_eq!(m.len(), 2, "debe traer las dos cuotas conocidas");
-        assert_eq!(m[0].id, "five_hour", "el fallback legado de créditos comparte id con la ventana de 5 h");
+        assert_eq!(
+            m[0].id, "five_hour",
+            "el fallback legado de créditos comparte id con la ventana de 5 h"
+        );
         assert_eq!(m[0].label, "Cuota · 5 h");
         assert_eq!(m[0].percent, Some(70.0));
         assert_eq!(m[0].used, Some(84.0));
@@ -334,9 +374,18 @@ mod tests {
         assert_eq!(p.meters[0].label, "Cuota · 5 h");
         assert_eq!(p.meters[0].window_seconds, Some(5 * 3600));
         assert_eq!(p.meters[0].percent, Some(61.0));
-        assert_eq!(p.meters[0].used, None, "`usage` no es créditos en las ventanas");
-        assert_eq!(p.meters[0].limit, None, "`number` es el tamaño de ventana, no la cuota");
-        assert_eq!(p.meters[0].resets_at, super::super::unix_to_rfc3339(1_760_000_000));
+        assert_eq!(
+            p.meters[0].used, None,
+            "`usage` no es créditos en las ventanas"
+        );
+        assert_eq!(
+            p.meters[0].limit, None,
+            "`number` es el tamaño de ventana, no la cuota"
+        );
+        assert_eq!(
+            p.meters[0].resets_at,
+            super::super::unix_to_rfc3339(1_760_000_000)
+        );
         assert_eq!(p.meters[1].id, "weekly");
         assert_eq!(p.meters[1].label, "Cuota · semana");
         assert_eq!(p.meters[1].window_seconds, Some(7 * 24 * 3600));
@@ -383,10 +432,18 @@ mod tests {
     #[test]
     fn empty_or_malformed_body_gives_no_meters() {
         assert!(parse_quota(&json!({})).meters.is_empty());
-        assert!(parse_quota(&json!({"data": {"limits": []}})).meters.is_empty());
-        assert!(parse_quota(&json!({"data": {"limits": null}})).meters.is_empty());
+        assert!(parse_quota(&json!({"data": {"limits": []}}))
+            .meters
+            .is_empty());
+        assert!(parse_quota(&json!({"data": {"limits": null}}))
+            .meters
+            .is_empty());
         // `success: false` (p. ej. key sin devpack) tampoco aporta medidores.
-        assert!(parse_quota(&json!({"success": false, "msg": "no subscription"})).meters.is_empty());
+        assert!(
+            parse_quota(&json!({"success": false, "msg": "no subscription"}))
+                .meters
+                .is_empty()
+        );
     }
 
     #[test]
@@ -398,12 +455,20 @@ mod tests {
             json!({"data": {"limits": [{"type": "TIME_LIMIT", "unit": 5, "number": 1, "usage": 4000}]}}),
             json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "unit": 0, "number": 120}]}}),
         ] {
-            assert!(parse_quota(&v).meters.is_empty(), "solo cupo no es uso: {v}");
+            assert!(
+                parse_quota(&v).meters.is_empty(),
+                "solo cupo no es uso: {v}"
+            );
         }
         // Con consumo pero sin %, el medidor sí se emite (texto "0 usos").
-        let p = parse_quota(&json!({"data": {"limits": [{"type": "TIME_LIMIT", "usage": 4000, "currentValue": 0}]}}));
+        let p = parse_quota(
+            &json!({"data": {"limits": [{"type": "TIME_LIMIT", "usage": 4000, "currentValue": 0}]}}),
+        );
         assert_eq!(p.meters.len(), 1);
-        assert_eq!((p.meters[0].used, p.meters[0].limit), (Some(0.0), Some(4000.0)));
+        assert_eq!(
+            (p.meters[0].used, p.meters[0].limit),
+            (Some(0.0), Some(4000.0))
+        );
     }
 
     #[test]
@@ -417,19 +482,32 @@ mod tests {
             json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "nextResetTime": 1_760_000_000_000_i64}]}}),
             json!({"data": {"limits": [{"type": "TIME_LIMIT", "nextResetTime": 1_760_000_000_000_i64}]}}),
         ] {
-            assert!(parse_quota(&v).meters.is_empty(), "sin datos de uso no hay medidor: {v}");
+            assert!(
+                parse_quota(&v).meters.is_empty(),
+                "sin datos de uso no hay medidor: {v}"
+            );
         }
         // Con un % presente el medidor sí se emite y los campos ausentes quedan
         // en None sin pánico (cobertura del test que reemplaza este caso).
-        let p = parse_quota(&json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "percentage": 55}]}}));
+        let p =
+            parse_quota(&json!({"data": {"limits": [{"type": "TOKENS_LIMIT", "percentage": 55}]}}));
         assert_eq!(p.meters.len(), 1);
         assert_eq!(p.meters[0].percent, Some(55.0));
-        assert!(p.meters[0].used.is_none() && p.meters[0].limit.is_none() && p.meters[0].resets_at.is_none());
+        assert!(
+            p.meters[0].used.is_none()
+                && p.meters[0].limit.is_none()
+                && p.meters[0].resets_at.is_none()
+        );
     }
 
     #[test]
     fn malformed_data_shapes_degrade_without_panicking() {
-        for v in [json!({"success": true, "data": null}), json!({"data": "pro"}), json!({"data": 42}), json!({"data": {"limits": {"a": 1}}})] {
+        for v in [
+            json!({"success": true, "data": null}),
+            json!({"data": "pro"}),
+            json!({"data": 42}),
+            json!({"data": {"limits": {"a": 1}}}),
+        ] {
             let p = parse_quota(&v);
             assert!(p.meters.is_empty() && p.plan.is_none());
         }
@@ -437,7 +515,9 @@ mod tests {
 
     #[test]
     fn limits_entries_with_wrong_field_types_are_skipped_fields() {
-        let p = parse_quota(&json!({"data": {"limits": ["x", 7, null, {"type": "TOKENS_LIMIT", "percentage": "80", "usage": 12}]}}));
+        let p = parse_quota(
+            &json!({"data": {"limits": ["x", 7, null, {"type": "TOKENS_LIMIT", "percentage": "80", "usage": 12}]}}),
+        );
         assert_eq!(p.meters.len(), 1);
         assert_eq!(p.meters[0].percent, None);
         assert_eq!(p.meters[0].used, Some(12.0));
@@ -457,7 +537,9 @@ mod tests {
     #[test]
     fn non_string_level_is_none_but_plain_shape_parses() {
         assert_eq!(parse_quota(&json!({"data": {"level": 3}})).plan, None);
-        let p = parse_quota(&json!({"level": "max", "limits": [{"type": "TOKENS_LIMIT", "number": 10, "usage": 1, "percentage": 10, "nextResetTime": 1760000000000i64}]}));
+        let p = parse_quota(
+            &json!({"level": "max", "limits": [{"type": "TOKENS_LIMIT", "number": 10, "usage": 1, "percentage": 10, "nextResetTime": 1760000000000i64}]}),
+        );
         assert_eq!(p.plan.as_deref(), Some("Max"));
         assert_eq!(p.meters.len(), 1);
     }
@@ -490,7 +572,11 @@ mod tests {
             {"recordId": 1, "available": true},
             {"recordId": 2, "available": false}
         ]);
-        assert_eq!(parse_available_resets(&v), Some(3), "suma 5 h + semana e ignora vencidos");
+        assert_eq!(
+            parse_available_resets(&v),
+            Some(3),
+            "suma 5 h + semana e ignora vencidos"
+        );
     }
 
     #[test]
@@ -500,7 +586,11 @@ mod tests {
             {"recordId": 10, "available": false},
             {"recordId": 11, "available": false}
         ]);
-        assert_eq!(parse_available_resets(&v), Some(0), "agotado es un saldo válido, no desconocido");
+        assert_eq!(
+            parse_available_resets(&v),
+            Some(0),
+            "agotado es un saldo válido, no desconocido"
+        );
     }
 
     #[test]
@@ -533,7 +623,14 @@ mod tests {
             zai_timestamp("2026-12-22 23:59:59").map(|t| t.to_rfc3339()),
             Some("2026-12-22T15:59:59+00:00".into())
         );
-        for bad in ["", "x", "2026-10-25", "2026-10-25T06:39:58Z", "2026-10-25 06:39", "2026-13-45 99:99:99"] {
+        for bad in [
+            "",
+            "x",
+            "2026-10-25",
+            "2026-10-25T06:39:58Z",
+            "2026-10-25 06:39",
+            "2026-13-45 99:99:99",
+        ] {
             assert!(zai_timestamp(bad).is_none(), "{bad:?}");
         }
     }
@@ -542,7 +639,11 @@ mod tests {
     fn resets_with_unparseable_last_reset_time_degrade_to_none() {
         let mut v = resets_fixture();
         v["data"]["lastWeekResetTime"] = json!("hace un rato");
-        assert_eq!(parse_available_resets(&v), None, "esquema cambiado: saldo desconocido");
+        assert_eq!(
+            parse_available_resets(&v),
+            None,
+            "esquema cambiado: saldo desconocido"
+        );
         // null/ausente se tolera: el saldo sigue contando.
         v["data"]["lastWeekResetTime"] = Value::Null;
         assert_eq!(parse_available_resets(&v), Some(2));
