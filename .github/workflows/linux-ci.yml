@@ -107,13 +107,20 @@ jobs:
         run: cargo test --locked
 
       # ---- W3 #106: Secret Service smoke (Linux real) ----
-      # El smoke `linux_secret_service_round_trip` (secrets.rs) está `#[ignore]`
-      # porque necesita un Secret Service de escritorio real (D-Bus + libsecret).
-      # Aquí se monta uno efímero: `dbus-run-session` crea un session bus aislado
-      # (y ya exporta DBUS_SESSION_BUS_ADDRESS) y `gnome-keyring-daemon --unlock`
-      # levanta el servicio con una contraseña de prueba propia del runner.
-      # El test guarda/lee/borra un valor de prueba y valida el backend
-      # `linux-native` del crate `keyring` — criterio 2 de la issue #106.
+      # Los smokes `linux_secret_service_round_trip` y
+      # `linux_legacy_migrate_once_then_legacy_is_gone` (secrets.rs) están
+      # `#[ignore]` porque necesitan un Secret Service real (D-Bus +
+      # libsecret). Aquí se monta uno efímero: `dbus-run-session` crea un
+      # session bus aislado (y ya exporta DBUS_SESSION_BUS_ADDRESS) y
+      # `gnome-keyring-daemon --unlock` levanta el servicio con una contraseña
+      # de prueba propia del runner.
+      # El primero guarda/lee/borra un valor de prueba (backend `linux-native`
+      # del crate `keyring`); el segundo puebla el servicio LEGADO
+      # (es.egdev.ai-usage) y verifica que get() migra al destino actual,
+      # que el valor se reescribe y que el legado desaparece (criterio AC2).
+      # QUORB_SECRETS_SMOKE_ISOLATED=1 se define SOLO dentro de esta sesión
+      # aislada: el smoke de migración falla sin ella, así nunca toca un
+      # llavero real de un escritorio.
       - name: Secret Service smoke (gnome-keyring, D-Bus session)
         run: |
           echo "► Arrancando Secret Service efímero (dbus-run-session + gnome-keyring)..."
@@ -121,9 +128,13 @@ jobs:
             eval $(printf "%s" "quorb-ci-testpass" | gnome-keyring-daemon --unlock --components=secrets)
             echo "  DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
             echo "  GNOME_KEYRING_CONTROL=${GNOME_KEYRING_CONTROL:-<none>}"
+            export QUORB_SECRETS_SMOKE_ISOLATED=1
             cd src-tauri
             echo "► Corriendo smoke linux_secret_service_round_trip (--ignored)..."
             cargo test --locked linux_secret_service_round_trip -- --ignored --nocapture
+            echo "► Corriendo smoke linux_legacy_migrate_once_then_legacy_is_gone (--ignored)..."
+            cargo test --locked linux_legacy_migrate_once_then_legacy_is_gone -- --ignored --nocapture
+            echo "  QUORB_SECRETS_SMOKE_ISOLATED=$QUORB_SECRETS_SMOKE_ISOLATED (aislamiento verificado)"
           '
 
       # ---- Solo si with_bundle == bundle ----

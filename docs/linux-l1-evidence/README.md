@@ -98,14 +98,33 @@ Lo que demuestra (criterio 2 de #106):
 - Se **borra** (`set(&key, "")` → `get` devuelve `None`).
 - Usa la misma vía `entry()`/`scoped()` que la app, con una clave de la allowlist — no escribe en disco ni en texto plano.
 
-**Pendiente del criterio 2 (revisión del owner, 2026-10-23)**: la **migración
-del servicio legacy** (`migrate_legacy()` en `secrets.rs`: copia un secreto de
-`LEGACY_SERVICE` al servicio actual y borra el antiguo) **no se ejercita en la
-evidencia**. Requiere un Secret Service real con una clave legacy presente; los
-tests existentes cubren el invariante «no leak / no degradar a texto plano»,
-pero no el flujo de migración en sí. Se registra como pendiente: validarlo en
-el mismo step del smoke (escribir en `LEGACY_SERVICE`, llamar `get` con la
-clave, comprobar que migró y que el legacy se borró) o en una máquina real.
+**Migración del servicio legacy — ejercitada (criterio 2, revisión del owner 2026-10-28)**:
+la migración (`migrate_legacy()` en `secrets.rs`: copia un secreto de
+`LEGACY_SERVICE` al servicio actual y borra el antiguo) queda validada por el
+smoke `linux_legacy_migrate_once_then_legacy_is_gone` en el run
+[`40651008234`](https://github.com/sosan/quorb/actions/runs/40651008234)
+(SHA `0c75fab`), log: `linux_legacy_migrate_once_then_legacy_is_gone ... ok`.
+Qué verifica:
+- Escribe **directamente** en `LEGACY_SERVICE` (`es.egdev.ai-usage`) una clave
+  base de la allowlist (`nan_session`, sin `@` — las claves con `@` no migran
+  por diseño de `get()`), sin pasar por `set`/`get`.
+- `get()` con el destino actual vacío la recupera **por la vía de migración**
+  (se lee una vez).
+- El valor queda reescrito en el **destino actual** (`es.egdev.quorb`),
+  comprobado leyendo el entry actual sin volver a migrar.
+- El legado desaparece de lecturas directas posteriores (**`NoEntry`**).
+- Sin imprimir valores; `CleanupGuard` limpia ambos servicios al terminar.
+
+**Ejecución segura (aislamiento obligatorio)**: el smoke escribe en la clave
+real `nan_session` del llavero, así que **solo se ejecuta en el entorno
+aislado del CI** — `dbus-run-session` + `gnome-keyring` efímero con
+`QUORB_SECRETS_SMOKE_ISOLATED=1` (var definida únicamente dentro de esa sesión
+en `linux-ci.yml`). Sin esa variable, el smoke **falla antes de tocar nada**:
+no debe ejecutarse a mano en un escritorio con llavero real. El `CleanupGuard`
+se crea antes de cualquier lectura y su limpieza solo corre en ese entorno
+aislado, así que nunca borra datos reales. Los smokes de llavero (round trip y
+migración) se ejecutan únicamente vía el paso "Secret Service smoke" de
+`linux-ci.yml`, no como ejecución manual en escritorio.
 
 Dependencias añadidas al runner: `libsecret-1-dev`, `gnome-keyring`, `dbus`, `dbus-x11`, `xvfb`.
 
