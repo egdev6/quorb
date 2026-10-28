@@ -272,6 +272,15 @@ mod tests {
     #[test]
     #[ignore = "requiere llavero aislado del CI"]
     fn linux_secret_service_round_trip() {
+        // Aislamiento igual que el smoke de migración (coherencia doc/código,
+        // revisión rust-reviewer): la única vía soportada es el keyring
+        // efímero del CI; sin QUORB_SECRETS_SMOKE_ISOLATED=1 no toca nada.
+        assert!(
+            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            "smoke de llavero solo en entorno aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
+        );
         // Clave única por corrida y propia de la lista cerrada: `entry` rechaza
         // cualquier clave ajena, así que el smoke usa la misma vía que la app.
         struct CleanupGuard(String);
@@ -316,8 +325,10 @@ mod tests {
     /// pobla el espacio legado (`LEGACY_SERVICE` = `es.egdev.ai-usage`) con
     /// una clave, y verifica que `get()` la recupera POR LA VÍA DE MIGRACIÓN
     /// — se lee una vez, se reescribe en el destino actual y desaparece del
-    /// legado (criterio AC2 del owner, issue #106). Sin imprimir el valor:
-    /// solo asserts. SOLO corre en el entorno aislado del CI (mismo paso de
+    /// legado (criterio AC2 del owner, issue #106). El valor no se loguea en
+    /// el camino feliz (solo aparece en un assert_eq! si algo falla, y es una
+    /// constante de prueba no secreta). SOLO corre en el entorno aislado del
+    /// CI (mismo paso de
     /// linux-ci.yml que el round trip); exige QUORB_SECRETS_SMOKE_ISOLATED=1
     /// y falla antes de tocar nada si no está definida — nunca en un
     /// escritorio con llavero real.
@@ -342,11 +353,16 @@ mod tests {
         struct CleanupGuard(String);
         impl Drop for CleanupGuard {
             fn drop(&mut self) {
-                // Limpiar lo que haya quedado en cualquiera de los dos
-                // servicios (actual y legado), sin pasar por `get` (que
-                // migraría de nuevo). Solo corre en el entorno aislado del
-                // CI (la var de aislamiento ya se exigió arriba), así que
-                // nunca borra datos reales de un escritorio.
+                // Defensa en profundidad (revisión rust-reviewer, 2026-10-28):
+                // si este Drop se ejecuta tras fallar la precondición de
+                // aislamiento (p. ej. un entorno con llavero real donde la
+                // var se filtró y el destino NO estaba vacío), NO debe borrar
+                // nada: re-verificar la var antes de limpiar. La protección
+                // real es el keyring efímero del CI; la var es la señal del
+                // contrato, y este guard no borra sin ella.
+                if std::env::var("QUORB_SECRETS_SMOKE_ISOLATED").as_deref() != Ok("1") {
+                    return;
+                }
                 let _ = set(&self.0, "");
                 if let Ok(legacy) = keyring::Entry::new(LEGACY_SERVICE, &self.0) {
                     let _ = legacy.delete_credential();
