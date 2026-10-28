@@ -1,21 +1,48 @@
 import settingsSource from '../Settings.tsx?raw';
 import detailSource from '../DetailPanel.tsx?raw';
+import { es } from '../i18n/es';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 // Guard the action-to-variant wiring in the real JSX, without exporting private
 // settings components or pretending Node can verify the rendered CSS cascade.
+// Los textos viven en el catálogo: un hijo o atributo `t(locale, 'clave')` se
+// resuelve con `es`, así la guarda sigue leyendo el texto que ve el usuario.
+
+/** Valor de una clave punteada del catálogo español. */
+function esValue(key: string): string | undefined {
+  let node: unknown = es;
+  for (const part of key.split('.')) {
+    if (typeof node !== 'object' || node === null) return undefined;
+    node = (node as Record<string, unknown>)[part];
+  }
+  return typeof node === 'string' ? node : undefined;
+}
+
+/** Texto de un nodo JSX: string plano o `t(locale, 'clave', …)` resuelto con el catálogo. */
+function jsxText(source: ts.SourceFile, node: ts.Node | undefined): string | undefined {
+  const value = node !== undefined && ts.isJsxExpression(node) ? node.expression : node;
+  if (!value) return undefined;
+  if (ts.isStringLiteral(value)) return value.text;
+  if (ts.isCallExpression(value) && value.expression.getText(source) === 't' && ts.isStringLiteral(value.arguments[1])) {
+    return esValue(value.arguments[1].text);
+  }
+  return undefined;
+}
+
 function buttonClasses(text: string): Map<string, string[]> {
   const source = ts.createSourceFile('buttons.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const buttons = new Map<string, string[]>();
   const visit = (node: ts.Node) => {
     if (ts.isJsxElement(node) && node.openingElement.tagName.getText(source) === 'button') {
-      const label = node.children.filter(ts.isJsxText).map((child) => child.text.trim()).join(' ').trim();
+      const label = node.children
+        .map((child) => (ts.isJsxText(child) ? child.text.trim() : (jsxText(source, child) ?? '').trim()))
+        .join(' ')
+        .trim();
       const attr = node.openingElement.attributes.properties.find((prop) => ts.isJsxAttribute(prop) && prop.name.getText(source) === 'className');
       if (attr && ts.isJsxAttribute(attr) && attr.initializer && ts.isStringLiteral(attr.initializer)) {
         const title = node.openingElement.attributes.properties.find((prop) => ts.isJsxAttribute(prop) && prop.name.getText(source) === 'title');
-        const key = title && ts.isJsxAttribute(title) && title.initializer && ts.isStringLiteral(title.initializer)
-          ? title.initializer.text : label;
+        const key = (title && ts.isJsxAttribute(title) ? jsxText(source, title.initializer) : undefined) ?? label;
         buttons.set(key, [...(buttons.get(key) ?? []), attr.initializer.text]);
       }
     }

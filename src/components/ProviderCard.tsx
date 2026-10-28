@@ -1,21 +1,23 @@
 import { useState } from 'react';
-import type { UsageReport } from '../lib/types';
+import type { Locale, UsageReport } from '../lib/types';
 import { formatMoney } from '../lib/format';
+import { t } from '../i18n';
 import { MeterBar } from './MeterBar';
 import { popupMeterColor } from '../lib/popup-preferences';
 import { api } from '../lib/api';
 import { ProviderLogo } from './ProviderLogo';
 import { ValidityBadge } from './ValidityBadge';
 
-const STATUS: Record<UsageReport['status'], { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }> = {
-  ok: { label: 'Al día', tone: 'success' },
-  warning: { label: 'Atención', tone: 'warning' },
-  error: { label: 'Error', tone: 'danger' },
-  needsLogin: { label: 'Sin sesión', tone: 'danger' },
-  unconfigured: { label: 'Sin configurar', tone: 'neutral' },
+// El tono es identidad visual; el texto del estado sale del catálogo por locale.
+const STATUS_TONE: Record<UsageReport['status'], 'success' | 'warning' | 'danger' | 'neutral'> = {
+  ok: 'success',
+  warning: 'warning',
+  error: 'danger',
+  needsLogin: 'danger',
+  unconfigured: 'neutral',
 };
 
-function ActionButton({ report }: { report: UsageReport }) {
+function ActionButton({ report, locale = 'es' }: { report: UsageReport; locale?: Locale }) {
   // Si no se puede abrir el login (p. ej. falta el CLI), se explica aquí mismo.
   const [error, setError] = useState<string | null>(null);
   if (report.action === 'login') {
@@ -23,13 +25,13 @@ function ActionButton({ report }: { report: UsageReport }) {
       <>
         <button
           className="eg-btn eg-btn--primary eg-btn--sm"
-          title={report.stale ? 'Abre el CLI oficial, que renueva la sesión; el widget se actualiza solo al terminar' : undefined}
+          title={report.stale ? t(locale, 'details.action.renewHint') : undefined}
           onClick={() => {
             setError(null);
             api.openLogin(report.id).catch((e) => setError(String(e)));
           }}
         >
-          {report.stale ? 'Renovar sesión' : 'Iniciar sesión'}
+          {report.stale ? t(locale, 'details.action.renew') : t(locale, 'details.action.login')}
         </button>
         {error && (
           <div className="eg-notice eg-notice--sm eg-notice--warning" role="alert">
@@ -42,7 +44,7 @@ function ActionButton({ report }: { report: UsageReport }) {
   if (report.action === 'settings') {
     return (
       <button className="eg-btn eg-btn--secondary eg-btn--sm" onClick={() => api.openSettings().catch(console.error)}>
-        Configurar
+        {t(locale, 'details.action.configure')}
       </button>
     );
   }
@@ -50,9 +52,9 @@ function ActionButton({ report }: { report: UsageReport }) {
 }
 
 /** Cabecera y límites del panel de detalle (ModuleCard --glass del DS). */
-export function ProviderCard({ report }: { report: UsageReport }) {
+export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; locale?: Locale }) {
   const { spend } = report;
-  const status = STATUS[report.status];
+  const tone = STATUS_TONE[report.status];
   let ring = 0;
   return (
     <div className="q-card" data-status={report.status} data-provider={report.id}>
@@ -64,11 +66,11 @@ export function ProviderCard({ report }: { report: UsageReport }) {
         {report.plan ? (
           <span className="eg-status eg-status--neutral">{report.plan}</span>
         ) : (
-          report.status !== 'ok' && <span className={`eg-status eg-status--${status.tone}`}>{status.label}</span>
+          report.status !== 'ok' && <span className={`eg-status eg-status--${tone}`}>{t(locale, `details.status.${report.status}`)}</span>
         )}
         {report.stale && (
-          <span className="eg-status eg-status--neutral" title="Datos del último ciclo correcto">
-            caché
+          <span className="eg-status eg-status--neutral" title={t(locale, 'details.staleChipTitle')}>
+            {t(locale, 'details.staleChip')}
           </span>
         )}
       </div>
@@ -85,6 +87,7 @@ export function ProviderCard({ report }: { report: UsageReport }) {
                 meter={m}
                 ring={r}
                 color={index != null ? popupMeterColor(report, m, index) : undefined}
+                locale={locale}
               />
             );
           })}
@@ -99,21 +102,21 @@ export function ProviderCard({ report }: { report: UsageReport }) {
           </div>
           {spend.budget != null && spend.budget > 0 && (
             <div className="eg-stat eg-stat--sm">
-              <span className="eg-stat__label">Presupuesto</span>
+              <span className="eg-stat__label">{t(locale, 'details.budget')}</span>
               <span className="eg-stat__value">{formatMoney(spend.budget, spend.currency)}</span>
             </div>
           )}
         </div>
       )}
 
-      <ValidityBadge report={report} />
+      <ValidityBadge report={report} locale={locale} />
 
       {report.message && (
-        <div className={`eg-notice eg-notice--sm eg-notice--${report.status === 'ok' ? 'info' : status.tone === 'neutral' ? 'info' : status.tone}`} role="status">
+        <div className={`eg-notice eg-notice--sm eg-notice--${report.status === 'ok' ? 'info' : tone === 'neutral' ? 'info' : tone}`} role="status">
           <span className="eg-notice__text">{report.message}</span>
         </div>
       )}
-      <ActionButton report={report} />
+      <ActionButton report={report} locale={locale} />
     </div>
   );
 }

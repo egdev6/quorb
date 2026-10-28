@@ -1,4 +1,5 @@
-import type { UsageReport } from './types';
+import type { Locale, UsageReport } from './types';
+import { intlLocale, t } from '../i18n';
 
 /** Provider RFC3339 dates only: JS otherwise normalizes impossible days (e.g. Feb 30). */
 function validDate(at: string): Date | null {
@@ -13,13 +14,14 @@ function validDate(at: string): Date | null {
 }
 
 /** No fallback dates: billing period end is not confirmed cancellation. */
-export function validityInfo(report: UsageReport) {
+export function validityInfo(report: UsageReport, locale: Locale = 'es') {
   const validity = report.validity;
   if (!validity || report.stale || !['ok', 'warning'].includes(report.status)) return null;
   const date = validDate(validity.at);
   if (!date || !['period', 'key'].includes(validity.kind)) return null;
-  const label = validity.kind === 'key' ? 'Clave caduca' : 'Periodo hasta';
-  const formatted = date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
-  const title = `${label} ${formatted}${validity.kind === 'period' ? ' · Fin del periodo comunicado por el proveedor; no confirma cancelación' : ' · Caducidad de la clave comunicada por el proveedor'}`;
+  const label = t(locale, validity.kind === 'key' ? 'details.validity.keyLabel' : 'details.validity.periodLabel');
+  const formatted = date.toLocaleDateString(intlLocale(locale), { day: 'numeric', month: 'short', year: 'numeric' });
+  const note = t(locale, validity.kind === 'period' ? 'details.validity.periodNote' : 'details.validity.keyNote');
+  const title = `${label} ${formatted} · ${note}`;
   return { ...validity, label, formatted, title };
 }

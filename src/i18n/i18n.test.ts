@@ -66,6 +66,8 @@ describe('t()', () => {
     expect(t('es', 'settings.nav.look')).toBe('Apariencia');
     expect(t('en', 'settings.nav.providers')).toBe('Providers');
     expect(t('es', 'settings.pages.updates.desc')).toBe('Versión instalada, actualizaciones automáticas y el proyecto.');
+    expect(t('es', 'details.range7d')).toBe('7 días');
+    expect(t('en', 'widget.settings')).toBe('Settings');
   });
 
   it('accepts every migrated dotted key at compile time', () => {
@@ -74,8 +76,12 @@ describe('t()', () => {
       'settings.nav.providers',
       'settings.pages.look.desc',
       'settings.language.hint',
+      'widget.dragHint',
+      'widget.updatingTo',
+      'details.paceBurnsOut',
+      'details.scaleTo',
     ];
-    expect(keys).toHaveLength(4);
+    expect(keys).toHaveLength(8);
   });
 
   it('only valid dotted keys compile', () => {

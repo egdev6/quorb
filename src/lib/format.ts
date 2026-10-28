@@ -1,19 +1,20 @@
-import type { Meter, UsageReport } from './types';
+import type { Locale, Meter, UsageReport } from './types';
+import { t, type MessageKey } from '../i18n';
 
 /** «en 2 h 13 min», «en 3 d 4 h», «ahora» */
-export function formatResetIn(iso: string | null, now: Date = new Date()): string | null {
+export function formatResetIn(iso: string | null, now: Date = new Date(), locale: Locale = 'es'): string | null {
   if (!iso) return null;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  const mins = Math.round((t - now.getTime()) / 60000);
-  if (mins <= 0) return 'ahora';
-  if (mins < 60) return `en ${mins} min`;
+  const target = Date.parse(iso);
+  if (Number.isNaN(target)) return null;
+  const mins = Math.round((target - now.getTime()) / 60000);
+  if (mins <= 0) return t(locale, 'details.resetIn.now');
+  if (mins < 60) return t(locale, 'details.resetIn.minutes', { mins });
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  if (h < 24) return m ? `en ${h} h ${m} min` : `en ${h} h`;
+  if (h < 24) return m ? t(locale, 'details.resetIn.hoursMinutes', { h, m }) : t(locale, 'details.resetIn.hours', { h });
   const d = Math.floor(h / 24);
   const rh = h % 24;
-  return rh ? `en ${d} d ${rh} h` : `en ${d} d`;
+  return rh ? t(locale, 'details.resetIn.daysHours', { d, h: rh }) : t(locale, 'details.resetIn.days', { d });
 }
 
 export function formatMoney(amount: number, currency = 'USD'): string {
@@ -38,32 +39,34 @@ export function formatPercent(p: number): string {
   return `${Math.round(p)}%`;
 }
 
-const SHORT_BY_ID = new Map([
-  ['weekly', 'Semana'],
-  ['weekly_opus', 'Opus'],
-  ['weekly_sonnet', 'Sonnet'],
-  ['weekly_apps', 'Apps'],
-  ['budget_monthly', 'Presupuesto'],
-  ['rate_requests', 'Peticiones'],
-  ['rate_tokens', 'Tokens'],
-  ['extra_usage', 'Extra'],
+// Etiqueta corta para la leyenda de los anillos: por id estable, con la etiqueta
+// larga como respaldo para datos antiguos sin id.
+const KEY_BY_ID = new Map<string, MessageKey>([
+  ['weekly', 'details.meters.weekly'],
+  ['weekly_opus', 'details.meters.weeklyOpus'],
+  ['weekly_sonnet', 'details.meters.weeklySonnet'],
+  ['weekly_apps', 'details.meters.weeklyApps'],
+  ['budget_monthly', 'details.meters.budgetMonthly'],
+  ['rate_requests', 'details.meters.rateRequests'],
+  ['rate_tokens', 'details.meters.rateTokens'],
+  ['extra_usage', 'details.meters.extraUsage'],
 ]);
 
-// Respaldo para medidores sin id (datos antiguos).
-const SHORT_BY_LABEL = new Map([
-  ['Semana · todos', 'Semana'],
-  ['Semana · Opus', 'Opus'],
-  ['Semana · Sonnet', 'Sonnet'],
-  ['Semana · apps', 'Apps'],
-  ['Presupuesto mensual', 'Presupuesto'],
-  ['Peticiones (ventana)', 'Peticiones'],
-  ['Tokens (ventana)', 'Tokens'],
-  ['Uso extra (mes)', 'Extra'],
+const KEY_BY_LABEL = new Map<string, MessageKey>([
+  ['Semana · todos', 'details.meters.weekly'],
+  ['Semana · Opus', 'details.meters.weeklyOpus'],
+  ['Semana · Sonnet', 'details.meters.weeklySonnet'],
+  ['Semana · apps', 'details.meters.weeklyApps'],
+  ['Presupuesto mensual', 'details.meters.budgetMonthly'],
+  ['Peticiones (ventana)', 'details.meters.rateRequests'],
+  ['Tokens (ventana)', 'details.meters.rateTokens'],
+  ['Uso extra (mes)', 'details.meters.extraUsage'],
 ]);
 
 /** Etiqueta corta para la leyenda de los anillos: por id estable, con la etiqueta como respaldo. */
-export function shortLabel(label: string, id = ''): string {
-  return SHORT_BY_ID.get(id) ?? SHORT_BY_LABEL.get(label) ?? label.replace(/^Sesión · /, 'Sesión ');
+export function shortLabel(label: string, id = '', locale: Locale = 'es'): string {
+  const key = KEY_BY_ID.get(id) ?? KEY_BY_LABEL.get(label);
+  return key ? t(locale, key) : label.replace(/^Sesión · /, 'Sesión ');
 }
 
 export type Level = 'low' | 'mid' | 'high' | 'max';
@@ -127,17 +130,17 @@ export function trayTooltip(reports: UsageReport[]): string {
 }
 
 /** Resumen en texto plano para copiar al portapapeles. */
-export function reportSummary(r: UsageReport, now: Date = new Date()): string {
+export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Locale = 'es'): string {
   const lines = [r.plan ? `${r.name} (${r.plan})` : r.name];
   for (const m of r.meters) {
-    const reset = formatResetIn(m.resetsAt, now);
+    const reset = formatResetIn(m.resetsAt, now, locale);
     const value =
       m.percent != null
         ? `${Math.round(m.percent)} %`
         : m.used != null
           ? `${formatCompact(m.used)}${m.unit ? ` ${m.unit}` : ''}`
           : '—';
-    lines.push(`· ${m.label}: ${value}${reset ? ` (reinicia ${reset})` : ''}`);
+    lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}`);
   }
   if (r.spend) lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`);
   if (r.message && r.status !== 'ok') lines.push(`· ${r.message}`);

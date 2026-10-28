@@ -1,4 +1,4 @@
-import type { UsageReport } from '../lib/types';
+import type { Locale, UsageReport } from '../lib/types';
 import { validityInfo } from '../lib/validity';
 import { resetCreditsInfo } from '../lib/reset-credits';
 
@@ -7,9 +7,9 @@ function ResetIcon() {
 }
 
 /** Independent provider dates and banked balances; compact mode uses a single chip. */
-export function ValidityBadge({ report, compact = false, showResets = true }: { report: UsageReport; compact?: boolean; showResets?: boolean }) {
-  const validity = validityInfo(report);
-  const resets = !compact || showResets ? resetCreditsInfo(report) : null;
+export function ValidityBadge({ report, compact = false, showResets = true, locale = 'es' }: { report: UsageReport; compact?: boolean; showResets?: boolean; locale?: Locale }) {
+  const validity = validityInfo(report, locale);
+  const resets = !compact || showResets ? resetCreditsInfo(report, locale) : null;
   if (compact && resets) {
     const title = [validity?.title, resets.title].filter(Boolean).join(' · ');
     return (

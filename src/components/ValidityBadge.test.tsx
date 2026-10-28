@@ -112,6 +112,19 @@ describe('banked reset badges', () => {
   });
 });
 
+describe('localized validity and reset badges (T2c-S1)', () => {
+  it('renders key expiry in English through the locale prop', () => {
+    const html = renderToStaticMarkup(<ValidityBadge report={withDate('key')} locale="en" />);
+    expect(html).toContain('Key expires');
+    expect(html).toContain('Provider-reported key expiry');
+  });
+
+  it('renders banked balances in English through the locale prop', () => {
+    const html = renderToStaticMarkup(<ValidityBadge report={withBalance(2)} locale="en" />);
+    expect(html).toContain('2 resets available');
+  });
+});
+
 describe('available validity badges', () => {
   it('shows nothing without a valid date, with stale data or a failed account', () => {
     const invalid = [report, { ...report, validity: null }, { ...withDate('period'), stale: true },

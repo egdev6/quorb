@@ -34,7 +34,7 @@ These are the scripts declared in `package.json`:
 | `npm run typecheck` | TypeScript checks |
 | `npm test` | Vitest tests plus the release scripts' Node tests |
 | `cd src-tauri; cargo test` | Rust tests |
-| `node scripts/i18n-inventory.mjs` | Regenerate `docs/i18n-inventory.md` (CI runs it with `--check`) |
+| `node scripts/i18n-inventory.mjs` | Regenerate `docs/i18n-inventory.md` (CI runs it with `--check`); `--sites` prints `path:line \| text` rows |
 | `npm run app:dev` | Run the desktop app with hot reload |
 | `npm run app:build` | Build a local (unsigned) installer |
 
@@ -44,7 +44,7 @@ Rust formatting is checked by CI (`cargo fmt --manifest-path src-tauri/Cargo.tom
 
 The formatter is deliberately mobile: both workflows install `stable` via `dtolnay/rust-toolchain`, and `stable` is resolved at run time, so a rustfmt update can change formatting without any change in this repository. The format gate catches that on the integrated tree: if CI fails after a `stable` bump, run `cargo fmt --manifest-path src-tauri/Cargo.toml --all` and land the diff as its own formatting-only commit; if a PR is open, coordinate before rebasing on that diff. No `rustfmt.toml`: defaults apply.
 
-`docs/i18n-inventory.md` lists every user-facing text with its `path:line`, read from the committed `src/` and `src-tauri/src/` trees. Because each row carries a line number, it goes stale whenever a pull request changes text **or shifts lines** in those folders. CI fails with the exact command to run: commit your change, then run `node scripts/i18n-inventory.mjs` and commit the regenerated document. If `main` moved meanwhile, update your branch first and regenerate again; never edit the document by hand.
+`docs/i18n-inventory.md` lists the distinct user-facing texts of each file, sorted and deduplicated, read from the committed `src/` and `src-tauri/src/` trees. It carries no line numbers, so its diff only moves when a text actually changes — not when lines shift (a shift still moves the two tree-hash lines in the header, because the document is anchored to the content-addressed trees). To locate a text in the code, run `node scripts/i18n-inventory.mjs --sites` for `path:line | text` rows on stdout. CI fails when the committed document no longer matches the trees, with the exact command to run; its message distinguishes hashes-only drift (the listed texts still match, refreshing is mechanical) from real text changes (with a merge-ref note when `main` moved): commit your change, then run `node scripts/i18n-inventory.mjs` and commit the regenerated document. If `main` moved meanwhile, update your branch first and regenerate again; never edit the document by hand.
 
 ### Contributing with ODD
 
