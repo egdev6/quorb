@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, CSSProperties } from 'react';
-import type { UsageReport } from '../lib/types';
+import type { Locale, UsageReport } from '../lib/types';
 import { peakMeter } from '../lib/format';
 import { meterColor } from '../lib/meter-colors';
 import { ProviderLogo } from './ProviderLogo';
@@ -27,6 +27,7 @@ export function ProviderGauge({
   size,
   active,
   account,
+  locale = 'es',
   showResets = true,
   threshold,
   dragging = false,
@@ -40,6 +41,8 @@ export function ProviderGauge({
   active: boolean;
   /** Número de cuenta cuando el proveedor tiene varias («1», «2»…) */
   account?: string;
+  /** Idioma de los títulos accesibles (validez y saldos) */
+  locale?: Locale;
   /** Ocultar solo el saldo de resets, no la identidad ni las fechas. */
   showResets?: boolean;
   /** Umbral de aviso (%) */
@@ -50,8 +53,8 @@ export function ProviderGauge({
   /** Manejadores de puntero para reordenar arrastrando */
   pointer?: Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp'>;
 }) {
-  const validity = validityInfo(report);
-  const resets = showResets ? resetCreditsInfo(report) : null;
+  const validity = validityInfo(report, locale);
+  const resets = showResets ? resetCreditsInfo(report, locale) : null;
   const accessibleTitle = [report.name, validity?.title, resets?.title].filter(Boolean).join(' · ');
   const peak = peakMeter(report);
   const all = report.meters.filter((m) => m.percent != null);
@@ -99,7 +102,7 @@ export function ProviderGauge({
       <span className="eg-gauge__logo logo">
         <ProviderLogo id={report.id} name={report.name} />
       </span>
-      <ValidityBadge report={report} compact showResets={showResets} />
+      <ValidityBadge report={report} compact showResets={showResets} locale={locale} />
       {account && (
         <span className="orb__acct" aria-hidden="true">
           {account}

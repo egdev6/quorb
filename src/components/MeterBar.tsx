@@ -1,22 +1,23 @@
 import type { CSSProperties } from 'react';
-import type { Meter } from '../lib/types';
+import type { Locale, Meter } from '../lib/types';
 import { formatCompact, formatPercent, formatResetIn, levelFor } from '../lib/format';
+import { t } from '../i18n';
 
 /**
  * Un límite del panel (EGDEV Foundation): marca del anillo + etiqueta + %,
  * ProgressBar --lg y cuándo se reinicia. `ring` = anillo del círculo (1–3) o null.
  * `color` conserva la identidad del límite, incluso cuando no cabe en el círculo.
  */
-export function MeterBar({ meter, ring, color }: { meter: Meter; ring: number | null; color?: string }) {
+export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; ring: number | null; color?: string; locale?: Locale }) {
   const pct = meter.percent;
-  const reset = formatResetIn(meter.resetsAt);
+  const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
     meter.used != null
       ? meter.limit != null
         ? `${formatCompact(meter.used)} / ${formatCompact(meter.limit)}${meter.unit ? ` ${meter.unit}` : ''}`
         : `${formatCompact(meter.used)}${meter.unit ? ` ${meter.unit}` : ''}`
       : null;
-  const meta = [pct != null ? amount : null, reset ? `Se reinicia ${reset}` : null].filter(Boolean).join(' · ');
+  const meta = [pct != null ? amount : null, reset ? t(locale, 'details.meterResets', { when: reset }) : null].filter(Boolean).join(' · ');
 
   return (
     <div

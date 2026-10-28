@@ -5,7 +5,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { ProviderCard } from './components/ProviderCard';
 import { ProviderDetails } from './components/ProviderDetails';
 import { api } from './lib/api';
-import { intlLocale } from './i18n';
+import { intlLocale, t } from './i18n';
 import { useLocale } from './i18n/use-locale';
 import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
@@ -152,21 +152,21 @@ export function DetailPanel() {
         ref={panelRef}
         className="panel q-panel eg-module-card eg-module-card--glass"
         role="dialog"
-        aria-label={`Detalle de ${data.report.name}`}
+        aria-label={t(locale, 'details.panel.title', { name: data.report.name })}
         // No transitions/animations: a transitioned `transform` would make the measured
         // rect lag behind the fitted scale and corrupt the next measurement.
         style={{ left: 0, top: 0, width: data.width / base, transform: `scale(${scale})`, transformOrigin: 'top left', transition: 'none', animation: 'none', overflow: 'hidden', '--orb': data.orbSize, visibility: positioned ? 'visible' : 'hidden' } as CSSProperties}
       >
-        <ProviderCard report={data.report} />
+        <ProviderCard report={data.report} locale={locale} />
         <section className="panel__insights" aria-labelledby="panel-insights-title">
-          <h2 id="panel-insights-title" className="panel__heading">Ritmo e historial</h2>
-          <ProviderDetails key={data.report.id} report={data.report} />
+          <h2 id="panel-insights-title" className="panel__heading">{t(locale, 'details.panel.insightsHeading')}</h2>
+          <ProviderDetails key={data.report.id} report={data.report} locale={locale} />
         </section>
         <div className="panel__actions">
-          {usageUrl && <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(usageUrl).catch(console.warn)}>Uso oficial ↗</button>}
-          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={async () => setToast((await copyText(reportSummary(data.report))) ? 'Copiado ✓' : 'No se pudo copiar')}>{toast ?? 'Copiar resumen'}</button>
+          {usageUrl && <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(usageUrl).catch(console.warn)}>{t(locale, 'details.panel.officialUsage')}</button>}
+          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={async () => setToast((await copyText(reportSummary(data.report, new Date(), locale))) ? t(locale, 'details.copy.copied') : t(locale, 'details.copy.failed'))}>{toast ?? t(locale, 'details.copy.summary')}</button>
         </div>
-        <footer className="panel__foot"><span>Actualizado {updated}</span><span>cada {data.refreshMinutes} min</span></footer>
+        <footer className="panel__foot"><span>{t(locale, 'details.panel.updated', { when: updated })}</span><span>{t(locale, 'details.panel.everyMinutes', { mins: data.refreshMinutes })}</span></footer>
         {data.error && <p className="panel__error">{data.error}</p>}
       </div>
     </div>

@@ -49,6 +49,23 @@ describe('server-reported Codex reset credits', () => {
   });
 });
 
+describe('localized reset credits (T2c-S1)', () => {
+  it('follows the locale through the label and the provider note', () => {
+    expect(resetCreditsInfo(banked(1), 'en')?.label).toBe('1 reset available');
+    expect(resetCreditsInfo(banked(2), 'en')?.label).toBe('2 resets available');
+    expect(resetCreditsInfo(banked(2), 'en')?.title).toContain('balance reported by Codex; not automatic resets');
+    // El español queda fijado por el argumento explícito, igual que por defecto.
+    expect(resetCreditsInfo(banked(1), 'es')?.label).toBe('1 reset disponible');
+    expect(resetCreditsInfo(banked(2), 'es')?.title).toContain('saldo comunicado por Codex; no son reinicios automáticos');
+  });
+
+  it('keeps the z.ai note per provider and locale', () => {
+    const zai = { ...report, id: 'zai', availableResets: 2 };
+    expect(resetCreditsInfo(zai, 'en')?.title).toContain('balance reported by z.ai; each reset expires and is used manually');
+    expect(resetCreditsInfo(zai, 'es')?.title).toContain('saldo comunicado por z.ai');
+  });
+});
+
 describe('server-reported z.ai reset credits', () => {
   const zaiBanked = (count: unknown): UsageReport => ({ ...report, id: 'zai', availableResets: count as number });
 
