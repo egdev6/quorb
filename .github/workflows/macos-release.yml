@@ -187,20 +187,17 @@ jobs:
           if (String(result.releaseId) !== process.env.RELEASE_ID) throw new Error('Release identity changed');
           NODE
           dmg="source/src-tauri/target/release/bundle/dmg/Quorb_${RELEASE_VERSION}_aarch64.dmg"
-          gh release upload "v$RELEASE_VERSION" "$dmg" --repo egdev6/quorb
-          if ! gh release upload "v$RELEASE_VERSION" "$dmg.sha256" --repo egdev6/quorb; then
+          name="${dmg##*/}"
+          dmg_id="$(gh api --method POST -H 'Content-Type: application/x-apple-diskimage' "https://uploads.github.com/repos/egdev6/quorb/releases/$RELEASE_ID/assets?name=$name" --input "$dmg" --jq .id)"
+          if ! [[ "$dmg_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::DMG upload returned a non-numeric asset id; deleting nothing."
+            exit 1
+          fi
+          if ! gh api --method POST -H 'Content-Type: text/plain' "https://uploads.github.com/repos/egdev6/quorb/releases/$RELEASE_ID/assets?name=$name.sha256" --input "$dmg.sha256" --jq .id; then
             echo "::error::SHA-256 upload failed; removing only the DMG this run uploaded."
-            name="${dmg##*/}"
-            if ! assets="$(gh release view "v$RELEASE_VERSION" --repo egdev6/quorb --json assets --jq '.assets[].name')"; then
-              echo "::error::Cannot list assets after upload failure; manual cleanup needed for $name and $name.sha256."
+            if ! gh api --method DELETE "repos/egdev6/quorb/releases/assets/$dmg_id"; then
+              echo "::error::Rollback failed; manual cleanup needed for $name (asset id $dmg_id)."
               exit 1
             fi
-            for asset in "$name"; do
-              if grep -Fx -- "$asset" <<< "$assets" > /dev/null; then
-                if ! gh release delete-asset "v$RELEASE_VERSION" "$asset" --repo egdev6/quorb --yes; then
-                  echo "::error::Rollback failed after upload failure; manual cleanup needed for $asset."
-                fi
-              fi
-            done
             exit 1
           fi
