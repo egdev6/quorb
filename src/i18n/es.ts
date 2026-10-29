@@ -209,6 +209,7 @@ export const es = {
         nineRouter: 'Pasarela local · uso y gasto agregados',
         zai: 'GLM Coding Plan · cuotas de 5 h, semanales y web tools',
         opencodeGo: 'Go / Go Plus · cuotas de 5 h, semanal y ciclo de facturación',
+        antigravity: 'Cuota del agente por modelo · IDE abierto',
       },
       badge: {
         on: 'Activo',

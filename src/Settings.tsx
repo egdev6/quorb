@@ -1119,6 +1119,7 @@ const PROVIDER_TABS = [
   { id: 'codex', name: 'ChatGPT y Codex', nameKey: 'settings.providers.codexName', group: 'sub', descKey: 'settings.providers.desc.codex' },
   { id: 'gemini', name: 'Gemini', group: 'sub', descKey: 'settings.providers.desc.gemini' },
   { id: 'cursor', name: 'Cursor', group: 'sub', descKey: 'settings.providers.desc.cursor' },
+  { id: 'antigravity', name: 'Antigravity', group: 'sub', descKey: 'settings.providers.desc.antigravity' },
   { id: 'grok', name: 'Grok', group: 'sub', descKey: 'settings.providers.desc.grok' },
   { id: 'copilot', name: 'GitHub Copilot', group: 'sub', descKey: 'settings.providers.desc.copilot' },
   { id: 'minimax', name: 'MiniMax', group: 'sub', descKey: 'settings.providers.desc.minimax' },
@@ -1658,6 +1659,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.grok.enabled);
     case 'cursor':
       return on(cfg.cursor.enabled);
+    case 'antigravity':
+      return on(cfg.antigravity.enabled);
     case 'copilot':
       return on(cfg.copilot.enabled, !!s.github_token && cfg.copilot.username.trim() !== '');
     case 'nan':
@@ -2335,6 +2338,22 @@ export function Settings() {
             </Section>
           );
         })()}
+
+      {tab === 'antigravity' && (
+        <Section kicker="Suscripción · IDE abierto" title="Antigravity">
+          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)} onChange={(v) => setVisibility('antigravity', v)} />
+          <p className="q-note">Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial.</p>
+          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
+            <li>
+              <b>Abre Antigravity con tu cuenta de Google</b>
+              <span>
+                Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.
+              </span>
+            </li>
+            <HealthStep id="antigravity" {...healthFor('antigravity', !cfg.antigravity.enabled)} />
+          </ol>
+        </Section>
+      )}
 
       {tab === 'cursor' && (
         <Section kicker="Suscripción · sesión de la app" title="Cursor">

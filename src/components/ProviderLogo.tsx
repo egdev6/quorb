@@ -112,6 +112,7 @@ const MONOGRAM: Record<string, { text: string; sub?: string }> = {
   minimax: { text: 'MM' },
   nine_router: { text: '9R' },
   opencode_go: { text: 'OC' },
+  antigravity: { text: 'AG' },
 };
 
 /** Las APIs de pago por uso llevan una etiqueta «API» para distinguirlas de la suscripción. */

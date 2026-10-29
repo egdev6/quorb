@@ -1,0 +1,443 @@
+//! Antigravity (IDE de Google) — cuota por modelo de su agente.
+//!
+//! Antigravity no guarda una sesión reutilizable en disco (como `oauth_creds.json`
+//! de Gemini CLI) y su cuota es un grupo propio, distinto del de Gemini CLI. Lo que
+//! sí hace es arrancar un servidor de lenguaje local que expone el estado del
+//! usuario, el mismo que pinta el panel de cuotas del IDE (NO OFICIAL):
+//!   · `POST http://127.0.0.1:<puerto>/exa.language_server_pb.LanguageServerService/GetUserStatus`
+//!
+//! Solo funciona con Antigravity abierto. Se descubre así:
+//!   · token CSRF → argumento `--csrf_token` del proceso `language_server`
+//!     lanzado con `--app_data_dir antigravity` (sin él responde 401);
+//!   · puerto HTTP → línea «listening on random port at N for HTTP» del log
+//!     `language_server.log`, que se reescribe en cada arranque.
+//!
+//! Nada sale de la máquina: la petición va a localhost y el token no se guarda.
+
+use super::{net_error, Who};
+use crate::config::AntigravityConfig;
+use crate::model::{Kind, Meter, Status, UsageReport};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+const METHOD: &str = "/exa.language_server_pb.LanguageServerService/GetUserStatus";
+const NOT_RUNNING: &str =
+    "Abre Antigravity para leer su cuota (solo se consulta con el IDE abierto).";
+
+/// Proceso del servidor de lenguaje de Antigravity.
+#[derive(Debug, PartialEq)]
+struct Server {
+    pid: u32,
+    csrf: String,
+}
+
+pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+    let report = who.report("Antigravity", Kind::Subscription);
+    // Listar procesos lanza un comando externo: fuera del hilo del runtime.
+    let server = tokio::task::spawn_blocking(find_server)
+        .await
+        .ok()
+        .flatten();
+    let Some(server) = server else {
+        return report.fail(Status::Warning, NOT_RUNNING);
+    };
+    let port = std::fs::read_to_string(log_path())
+        .ok()
+        .and_then(|log| http_port(&log, server.pid));
+    let Some(port) = port else {
+        return report.fail(
+            Status::Warning,
+            "Antigravity está arrancando: aún no publica el puerto de su servidor local.",
+        );
+    };
+
+    let res = http
+        .post(format!("http://127.0.0.1:{port}{METHOD}"))
+        .header("X-Codeium-Csrf-Token", &server.csrf)
+        .header("Connect-Protocol-Version", "1")
+        .json(&json!({
+            "metadata": { "ideName": "antigravity", "extensionName": "antigravity", "locale": "en" }
+        }))
+        .send()
+        .await;
+    let res = match res {
+        Ok(r) => r,
+        Err(e) => return report.fail(Status::Warning, format!("{NOT_RUNNING} ({})", net_error(e))),
+    };
+    let v: Value = match res.status().as_u16() {
+        200 => match res.json().await {
+            Ok(v) => v,
+            Err(e) => return report.fail(Status::Error, format!("Respuesta inesperada: {e}")),
+        },
+        401 | 403 => {
+            return report.fail(
+                Status::Warning,
+                "Antigravity ha rechazado la consulta local. Reinícialo e inténtalo de nuevo.",
+            )
+        }
+        code => return report.fail(Status::Error, format!("HTTP {code} en GetUserStatus")),
+    };
+    build_report(report, &v, chrono::Utc::now())
+}
+
+/// Informe final a partir de la respuesta de `GetUserStatus`. Puro, sin red.
+fn build_report(
+    mut report: UsageReport,
+    v: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> UsageReport {
+    let status = v.get("userStatus").unwrap_or(v);
+    report.plan = plan_name(status);
+    report.meters = parse_models(status, now);
+    if report.meters.is_empty() {
+        report.status = Status::Warning;
+        report.message = Some(
+            "Antigravity no ha devuelto cuotas por modelo. ¿Has iniciado sesión en el IDE?".into(),
+        );
+    }
+    report
+}
+
+/// «Google AI Pro» (nivel de la suscripción) o, si falta, el plan interno («Pro»).
+fn plan_name(status: &Value) -> Option<String> {
+    let tier = status
+        .pointer("/userTier/description")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let plan = status
+        .pointer("/planStatus/planInfo/planName")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    tier.or(plan).map(str::to_string)
+}
+
+/// Un medidor por modelo (el % gastado es 1 − remainingFraction). Las variantes de
+/// esfuerzo («(High)», «(Low)»…) comparten cuota: nos quedamos con la más gastada.
+fn parse_models(status: &Value, now: chrono::DateTime<chrono::Utc>) -> Vec<Meter> {
+    let mut by_model: BTreeMap<String, Meter> = BTreeMap::new();
+    for c in status
+        .pointer("/cascadeModelConfigData/clientModelConfigs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(label) = c.get("label").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(q) = c.get("quotaInfo") else {
+            continue;
+        };
+        // Sin `remainingFraction` el modelo está agotado (proto3 omite el 0).
+        let remaining = q
+            .get("remainingFraction")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        if !remaining.is_finite() {
+            continue;
+        }
+        let name = base_label(label);
+        let resets_at = q
+            .get("resetTime")
+            .and_then(Value::as_str)
+            .filter(|s| chrono::DateTime::parse_from_rfc3339(s).is_ok())
+            .map(str::to_string);
+        let meter = Meter {
+            id: format!("model:{}", slug(&name)),
+            label: name.clone(),
+            percent: Some(((1.0 - remaining) * 100.0).clamp(0.0, 100.0)),
+            used: None,
+            limit: None,
+            unit: None,
+            window_seconds: resets_at.as_deref().and_then(|r| window_for(r, now)),
+            resets_at,
+        };
+        let keep = by_model
+            .get(&name)
+            .map(|m| m.percent < meter.percent)
+            .unwrap_or(true);
+        if keep {
+            by_model.insert(name, meter);
+        }
+    }
+    let mut out: Vec<Meter> = by_model.into_values().collect();
+    out.sort_by(|a, b| {
+        b.percent
+            .partial_cmp(&a.percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
+/// «Claude Opus 5.5 (High)» → «Claude Opus 5.5».
+fn base_label(label: &str) -> String {
+    let t = label.trim();
+    match t.rfind(" (") {
+        Some(i) if t.ends_with(')') => t[..i].trim_end().to_string(),
+        _ => t.to_string(),
+    }
+}
+
+/// «Claude Opus 5.5» → «claude_opus_5_5».
+fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
+}
+
+/// Antigravity no dice la duración de la ventana. Las cuotas que conocemos son de
+/// 5 h y semanales; deducimos cuál por el tiempo que falta para el reinicio.
+fn window_for(reset: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+    let reset = chrono::DateTime::parse_from_rfc3339(reset).ok()?;
+    let left = (reset.with_timezone(&chrono::Utc) - now).num_seconds();
+    match left {
+        l if l <= 0 => None,
+        l if l <= 5 * 3600 => Some(5 * 3600),
+        l if l <= 7 * 86_400 => Some(7 * 86_400),
+        _ => None,
+    }
+}
+
+/// `language_server.log` en la carpeta de datos de Antigravity del SO.
+fn log_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(super::home)
+        .join("Antigravity")
+        .join("logs")
+        .join("language_server.log")
+}
+
+/// Puerto HTTP que anunció en el log el proceso `pid`. Se ignora un log de un
+/// arranque anterior (otro pid) para no consultar un puerto ajeno.
+fn http_port(log: &str, pid: u32) -> Option<u16> {
+    let start = format!("Starting language server process with pid {pid}");
+    let from = log.rfind(&start)?;
+    log[from..].lines().find_map(|l| {
+        let rest = l.split("listening on random port at ").nth(1)?;
+        let (port, kind) = rest.split_once(' ')?;
+        kind.trim_end()
+            .ends_with("for HTTP")
+            .then(|| port.parse().ok())?
+    })
+}
+
+/// Valor de `--flag valor` o `--flag=valor` en una línea de comandos.
+fn arg_value<'a>(cmdline: &'a str, flag: &str) -> Option<&'a str> {
+    let mut it = cmdline.split_whitespace();
+    while let Some(tok) = it.next() {
+        if tok == flag {
+            return it.next();
+        }
+        if let Some(v) = tok.strip_prefix(flag).and_then(|r| r.strip_prefix('=')) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Servidor de Antigravity entre `(pid, línea de comandos)`. Windsurf y otros
+/// IDEs de Codeium lanzan el mismo binario: se filtra por `--app_data_dir antigravity`.
+fn pick_server<'a>(procs: impl IntoIterator<Item = (u32, &'a str)>) -> Option<Server> {
+    procs.into_iter().find_map(|(pid, cmd)| {
+        if !cmd.to_ascii_lowercase().contains("language_server") {
+            return None;
+        }
+        if !arg_value(cmd, "--app_data_dir").is_some_and(|d| d.eq_ignore_ascii_case("antigravity"))
+        {
+            return None;
+        }
+        let csrf = arg_value(cmd, "--csrf_token")?
+            .trim_matches('"')
+            .to_string();
+        (!csrf.is_empty()).then_some(Server { pid, csrf })
+    })
+}
+
+#[cfg(windows)]
+fn find_server() -> Option<Server> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name LIKE 'language_server%'\" | \
+             Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+    // Un solo proceso llega como objeto; varios, como lista.
+    let list = match v {
+        Value::Array(a) => a,
+        other => vec![other],
+    };
+    let procs: Vec<(u32, String)> = list
+        .iter()
+        .filter_map(|p| {
+            let pid = p.get("ProcessId")?.as_u64()? as u32;
+            Some((pid, p.get("CommandLine")?.as_str()?.to_string()))
+        })
+        .collect();
+    pick_server(procs.iter().map(|(p, c)| (*p, c.as_str())))
+}
+
+#[cfg(not(windows))]
+fn find_server() -> Option<Server> {
+    let out = std::process::Command::new("ps")
+        .args(["-ww", "-eo", "pid=,args="])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let procs: Vec<(u32, &str)> = text
+        .lines()
+        .filter_map(|l| {
+            let (pid, cmd) = l.trim_start().split_once(' ')?;
+            Some((pid.parse().ok()?, cmd))
+        })
+        .collect();
+    pick_server(procs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc
+            .with_ymd_and_hms(2026, 10, 29, 15, 37, 41)
+            .unwrap()
+    }
+
+    const CMD: &str = r"C:\Users\u\AppData\Local\Programs\antigravity\resources\bin\language_server.exe --standalone --override_ide_name antigravity --https_server_port 0 --csrf_token abc-123 --app_data_dir antigravity --enable_sidecars";
+
+    #[test]
+    fn picks_antigravity_server_and_ignores_other_ides() {
+        let windsurf = "language_server_windows_x64.exe --csrf_token zzz --app_data_dir windsurf";
+        let other = "node server.js --csrf_token nope";
+        let got = pick_server([(1, other), (2, windsurf), (3, CMD)]);
+        assert_eq!(
+            got,
+            Some(Server {
+                pid: 3,
+                csrf: "abc-123".into()
+            })
+        );
+        assert_eq!(pick_server([(2, windsurf)]), None);
+        // `--flag=valor` también vale.
+        let eq = "language_server --app_data_dir=antigravity --csrf_token=t1";
+        assert_eq!(pick_server([(9, eq)]).map(|s| s.csrf), Some("t1".into()));
+        // Sin token no hay servidor utilizable.
+        assert_eq!(
+            pick_server([(4, "language_server --app_data_dir antigravity")]),
+            None
+        );
+    }
+
+    #[test]
+    fn reads_http_port_of_the_current_process_only() {
+        let log = "\
+I1029 server.go:1631] Starting language server process with pid 111
+I1029 server.go:649] Language server listening on random port at 40000 for HTTPS (gRPC)
+I1029 server.go:657] Language server listening on random port at 40001 for HTTP
+I1029 server.go:1631] Starting language server process with pid 222
+I1029 server.go:649] Language server listening on random port at 51182 for HTTPS (gRPC)
+I1029 server.go:657] Language server listening on random port at 51183 for HTTP\r
+";
+        assert_eq!(http_port(log, 222), Some(51183));
+        assert_eq!(http_port(log, 111), Some(40001));
+        assert_eq!(http_port(log, 333), None);
+        assert_eq!(http_port("", 222), None);
+    }
+
+    #[test]
+    fn groups_effort_variants_and_sorts_by_usage() {
+        let v = json!({"userStatus": {
+            "userTier": {"id": "g1-pro-tier", "description": "Google AI Pro"},
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {"clientModelConfigs": [
+                {"label": "Gemini 4 Argon (High)", "quotaInfo": {"remainingFraction": 1, "resetTime": "2026-11-05T15:37:41Z"}},
+                {"label": "Claude Opus 5.5 (Medium)", "quotaInfo": {"remainingFraction": 0.6, "resetTime": "2026-10-29T20:37:41Z"}},
+                {"label": "Claude Opus 5.5 (High)", "quotaInfo": {"remainingFraction": 0.25, "resetTime": "2026-10-29T20:37:41Z"}},
+                {"label": "Sin cuota"},
+                {"label": "Gemini 3.8 Flash (Low)", "quotaInfo": {"resetTime": "2026-10-29T20:37:41Z"}}
+            ]}
+        }});
+        let r = build_report(
+            UsageReport::new("antigravity", "Antigravity", Kind::Subscription),
+            &v,
+            now(),
+        );
+        assert_eq!(r.status, Status::Ok);
+        assert_eq!(r.plan.as_deref(), Some("Google AI Pro"));
+        let ids: Vec<&str> = r.meters.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "model:gemini_3_8_flash",
+                "model:claude_opus_5_5",
+                "model:gemini_4_argon"
+            ]
+        );
+        // Sin remainingFraction = agotado.
+        assert_eq!(r.meters[0].percent, Some(100.0));
+        assert_eq!(r.meters[1].label, "Claude Opus 5.5");
+        assert_eq!(r.meters[1].percent, Some(75.0));
+        assert_eq!(r.meters[1].window_seconds, Some(5 * 3600));
+        assert_eq!(r.meters[2].percent, Some(0.0));
+        assert_eq!(r.meters[2].window_seconds, Some(7 * 86_400));
+        assert_eq!(
+            r.meters[2].resets_at.as_deref(),
+            Some("2026-11-05T15:37:41Z")
+        );
+    }
+
+    #[test]
+    fn plan_falls_back_to_plan_name() {
+        let v = json!({"planStatus": {"planInfo": {"planName": "Pro"}}});
+        assert_eq!(plan_name(&v).as_deref(), Some("Pro"));
+        assert_eq!(plan_name(&json!({})), None);
+    }
+
+    #[test]
+    fn empty_response_is_a_warning() {
+        let r = build_report(
+            UsageReport::new("antigravity", "Antigravity", Kind::Subscription),
+            &json!({"userStatus": {}}),
+            now(),
+        );
+        assert_eq!(r.status, Status::Warning);
+        assert!(r.meters.is_empty());
+        assert!(r.message.is_some());
+    }
+
+    #[test]
+    fn invalid_reset_is_dropped_but_percent_kept() {
+        let v = json!({"cascadeModelConfigData": {"clientModelConfigs": [
+            {"label": "GPT-OSS 120B (Medium)", "quotaInfo": {"remainingFraction": 0.5, "resetTime": "mañana"}}
+        ]}});
+        let m = parse_models(&v, now());
+        assert_eq!(m[0].id, "model:gpt_oss_120b");
+        assert_eq!(m[0].percent, Some(50.0));
+        assert_eq!(m[0].resets_at, None);
+        assert_eq!(m[0].window_seconds, None);
+    }
+
+    #[test]
+    fn labels_and_slugs() {
+        assert_eq!(base_label("Claude Sonnet 5.5 (Low)"), "Claude Sonnet 5.5");
+        assert_eq!(base_label("GPT-OSS 120B"), "GPT-OSS 120B");
+        assert_eq!(slug("GPT-OSS 120B"), "gpt_oss_120b");
+        assert_eq!(arg_value("a --x 1", "--x"), Some("1"));
+        assert_eq!(arg_value("a --xy 1", "--x"), None);
+    }
+}

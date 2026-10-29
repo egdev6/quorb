@@ -197,6 +197,7 @@ export const en = {
         nineRouter: 'Local gateway · aggregated usage and spend',
         zai: 'GLM Coding Plan · 5 h, weekly quotas and web tools',
         opencodeGo: 'Go / Go Plus · 5 h, weekly and billing-cycle quotas',
+        antigravity: 'Per-model agent quota · open IDE',
       },
       badge: {
         on: 'Active',
