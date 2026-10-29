@@ -12,7 +12,7 @@ Deja aquí el logo de cada proveedor (`.svg`, `.png` o `.webp`). Se busca primer
 | Gemini | `gemini`, `google` |
 | Cursor | `cursor` |
 | Grok (SuperGrok) | `grok` |
-| GitHub Copilot | `copilot`, `github-copilot`, `microsoft-copilot`, `github` |
+| GitHub Copilot | `copilot`, `github-copilot`, `github` |
 | OpenRouter | `openrouter` |
 
 Los SVG se insertan inline, así que `fill="currentColor"` sale en blanco. Los `id`, `class` y estilos internos de cada SVG se prefijan con el nombre del archivo, así dos logos con el mismo `id="a"` no se pisan. Si un wordmark necesitara recortarse, usa la constante `VIEWBOX` de `ProviderLogo.tsx` (ahora vacía: `nan.svg` ya viene recortado).
