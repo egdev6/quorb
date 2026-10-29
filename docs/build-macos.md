@@ -66,6 +66,55 @@ Solo `contents: read`/`checks: read`; `GH_TOKEN` solo en preflight, checkout sin
 No se ha ejecutado este workflow ni realizado uploads/descargas, instalación o prueba GUI en Mac real.
 La guía enlazada describe cómo obtener/verificar/informar sin quitar cuarentena; no acredita seguridad.
 
+## Release macOS firmada: configurada, todavía no ejecutada
+
+El workflow manual [macos-release.yml](../.github/workflows/macos-release.yml) se
+materializa byte a byte desde `.github/security-drafts/macos-release.yml`.
+Es independiente de `release.yml`: recibe `version` estable y `source_sha` de la
+release Windows `v<version>` ya existente (también admite su borrador). Solo se
+lanza desde `main`; no crea releases, tags ni publica un borrador.
+
+Un job de preflight sin entorno de firma valida el ref, los formatos estrictos,
+la pertenencia de `source_sha` al historial de `origin/main` y la versión de
+`package.json` leída con `git show` en ese commit. Consulta la API de GitHub con
+paginación para encontrar releases, incluidos borradores, y sus assets. Resuelve
+el tag real, tanto ligero como anotado, hasta el commit exacto. Si GitHub todavía
+no ha creado el tag de un borrador Windows, solo admite `target_commitish` igual
+al SHA completo validado, nunca una rama móvil. Rechaza un DMG o checksum con el
+nombre destino ya ocupado. A diferencia de la preview, no impone otra lista de
+checks: este preflight protege la fuente y la release existente, no sustituye
+las protecciones de `main` ni su revisión.
+
+El job dependiente usa el entorno protegido `macos-signing`, con aprobación de
+`egdev6` y despliegue limitado a `main`. Los únicos secretos Apple requeridos son
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
+`APPLE_API_ISSUER`, `APPLE_API_KEY` y `APPLE_API_KEY_P8` (sin valores en el repo).
+Solo los steps de preparación de la clave y build/firma reciben secretos, nunca
+el workflow ni el job completo. La clave `.p8` se escribe de forma exclusiva con
+permisos `0600` en `RUNNER_TEMP`, se pasa como `APPLE_API_KEY_PATH` y se elimina
+mediante el único step `if: always()`, también si falla el build.
+
+Compila el SHA validado con `npm run app:build:mac` en `macos-15`, Node 22 y Rust
+stable nativos ARM64, con objetivo mínimo macOS **15.0**. Tauri firma con Developer
+ID y notariza; después se solicita explícitamente la notarización del DMG y se
+pega el ticket con `stapler`. Antes de subir nada se verifica el bundle ARM64,
+`codesign --verify --deep --strict`, autoridad `Developer ID Application` y team
+`SRD8T33RU5`, evaluación `spctl` de la app y del DMG, y `xcrun stapler validate`
+del DMG. El certificado documentado caduca el **2027-11-28**; esto no acredita
+que se haya usado correctamente ni que un artefacto publicado esté firmado.
+
+Tras volver a validar la identidad de la release y sus colisiones, solo adjunta
+`Quorb_<version>_aarch64.dmg` y `Quorb_<version>_aarch64.dmg.sha256`, calculado sobre
+los bytes finales con ticket. No sobrescribe assets, no toca `latest.json` ni
+artefactos del updater. **Las actualizaciones de macOS siguen siendo manuales.**
+
+**Este workflow no se ha ejecutado todavía.** Siguen pendientes la validación de
+Gatekeeper del DMG descargado en un Mac real y la comprobación de primera apertura
+con cuarentena de [#118](https://github.com/egdev6/quorb/issues/118), sin retirar
+la cuarentena. No acredita instalación, GUI ni un rango de macOS soportado.
+Ejecutar firma/notarización, crear tags, lanzar Release o publicar assets requiere
+aprobación separada; escribir esta configuración no autoriza esas operaciones.
+
 ## Ejecución prevista de CI macOS (sin cambios)
 
 - PR (incluidos forks), push a `main` y ejecución manual; permiso `contents: read`.
