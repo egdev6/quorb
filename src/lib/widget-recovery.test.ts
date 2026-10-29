@@ -133,4 +133,14 @@ describe('shouldAuditNativePosition', () => {
     expect(shouldAuditNativePosition('macos')).toBe(/Windows/.test(MAC_UA));
     expect(shouldAuditNativePosition('linux')).toBe(/Windows/.test(LINUX_UA));
   });
+
+  // #180 (WU3, regression pin): the widget now branches drag strategies by
+  // display backend (WU2), but the position audit must stay Windows-only.
+  // Under native Wayland the compositor owns placement (WU2/compositor branch)
+  // and outerPosition() is (0,0) by design, so auditing would fight the
+  // compositor's placement; under XWayland the audit gate must NOT reactivate
+  // either, keeping the pre-#180 behavior (Linux excluded) intact.
+  it('#180 regression: la auditoria no se reactiva con la rama de arrastre por compositor', () => {
+    expect(shouldAuditNativePosition('linux')).toBe(false);
+  });
 });

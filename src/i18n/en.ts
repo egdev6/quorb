@@ -164,6 +164,9 @@ export const en = {
         autostart: 'Start at login',
         notifications: 'Notifications',
         transparency: 'Transparency',
+        // New surface #180: the backend decides its state by effective GDK
+        // backend; this is only the visible row label.
+        windowPositioning: 'Window positioning',
       },
     },
     providers: {

@@ -647,6 +647,22 @@ fn the_origin_comes_from_the_root_or_there_is_no_reading_at_all() {
 }
 
 #[test]
+fn the_display_kind_classification_matches_the_transport_one() {
+    // Fuente única del backend GDK efectivo (issue #180): X11 (y XWayland),
+    // Wayland nativo, y lo demás desconocido (degrada al fallback por env).
+    assert_eq!(kind_from_type_name("GdkX11Display"), DisplayKind::X11);
+    assert_eq!(
+        kind_from_type_name("GdkWaylandDisplay"),
+        DisplayKind::Wayland
+    );
+    assert_eq!(
+        kind_from_type_name("GdkBroadwayDisplay"),
+        DisplayKind::Unknown
+    );
+    assert_eq!(kind_from_type_name(""), DisplayKind::Unknown);
+}
+
+#[test]
 fn the_transport_comes_from_the_real_gdk_display_type() {
     assert_eq!(transport_from_type_name("GdkX11Display"), Transport::X11);
     assert_eq!(

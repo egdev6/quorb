@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import hook from './useDockReveal.ts?raw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
+import { resetDragMode, setDragMode } from './drag-session';
 import { contains, stripRect, type Edge } from './dock';
 
 type GripHandlers = {
@@ -65,6 +66,12 @@ vi.mock('./useDockReveal', () => ({
   useDockReveal: () => ({ phase: 'open', markPrepared: vi.fn(), finishTransition: vi.fn() }),
 }));
 vi.mock('./useUpdater', () => ({ useUpdaterMode: () => 'unknown' }));
+// #180 (WU2): the widget gates drag gestures behind the startup display
+// decision; these tests exercise the native (X11) pipeline, so resolve the
+// detection seam deterministically instead of letting it hang unresolved.
+vi.mock('./wm-detect', () => ({
+  detectWindowManager: vi.fn(async () => ({ displayBackend: 'x11' })),
+}));
 vi.mock('./api', () => ({ api: {
   setWidgetBounds: widgetEffects.bounds,
   setSurfaceClip: widgetEffects.clip,
@@ -298,12 +305,16 @@ describe('Widget effect mutation ordering', () => {
       borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
       borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
     }));
+    // SSR runs no React effects, so the #180 module decision store never sees
+    // the mount-effect write; these tests drive the native branch directly.
+    setDragMode('native');
   };
 
   afterEach(() => {
     widgetEffects.states = [];
     widgetEffects.refs = [];
     widgetEffects.effects = [];
+    resetDragMode();
     vi.resetAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();

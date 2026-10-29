@@ -191,6 +191,25 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 > no se marcan como soportadas; la política de soporte (§5) es el único
 > compromiso aceptado.
 
+### 6.1 Posicionamiento de la tira: Wayland nativo y alternativa XWayland (#180)
+
+- **Wayland nativo**: ni `gtk_window_move` ni `xdg-shell` exponen posición
+  absoluta al cliente. El arrastre de la tira usa el gesto del compositor
+  (`startDragging`), sin imán al borde ni persistencia de `dockEdge`/`dockOffset`
+  al soltar: no se escribe `config.json` con coordenadas que el cliente no
+  puede verificar. La fila «Posicionamiento de la ventana» del bloque
+  «Sesión de escritorio» reporta `limited` aquí.
+- **Alternativa XWayland**: arrancar con `GDK_BACKEND=x11` fuerza el pipeline
+  X11 completo (imán al borde + persistencia de la posición; la fila reporta
+  `ok`). GTK acepta la variable como lista separada por comas y decide el
+  backend efectivo en runtime, así que bajo XWayland la app ve X11
+  (clase `GdkX11Display`) aunque la sesión del escritorio sea Wayland.
+  **El valor tiene que llegar al proceso de la app**: lanzalo en la misma
+  línea (`GDK_BACKEND=x11 npm run app:dev` o `GDK_BACKEND=x11 quorb`) o
+  expórtalo antes (`export GDK_BACKEND=x11`). Un comando separado con `&`
+  (por ejemplo `GDK_BACKEND=x11 &` en su propia línea) aplica la variable solo
+  a la subshell y la app no la hereda.
+
 ## 7. Riesgos priorizados (L0a→L0d)
 
 | Riesgo | Prob. | Impacto | Mitigación | Evidencia / entrada de código |

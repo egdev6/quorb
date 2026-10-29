@@ -177,13 +177,41 @@ pub enum Transport {
     Other,
 }
 
-/// Clasifica el tipo del display de GDK: X11 y XWayland comparten `GdkX11Display`.
-#[cfg(any(target_os = "linux", test))]
+/// Clasifica el tipo del display de GDK: X11 y XWayland comparten
+/// `GdkX11Display`. Tras la unificación (#180) `transport()` deriva de
+/// `kind_from_type_name`; esta función queda como pin pura de tests.
+#[cfg(test)]
 pub fn transport_from_type_name(name: &str) -> Transport {
     if name.contains("X11") {
         Transport::X11
     } else {
         Transport::Other
+    }
+}
+
+/// Clasificación única del display GDK efectivo (issue #180, revisión del
+/// mantenedor: una sola detección del backend). X11 y XWayland comparten
+/// `GdkX11Display`; Wayland nativo es `GdkWaylandDisplay`; lo demás
+/// (broadway u otro backend exótico) o un display sin inicializar es
+/// desconocido. `transport()` (colocación) y `wm_compat::get_wm_info`
+/// (Ajustes/arrastre) derivan de esta misma caché para no poder discrepar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayKind {
+    X11,
+    Wayland,
+    Unknown,
+}
+
+/// Clasifica el nombre del tipo del display de GDK (puro, testeable sin
+/// tocar GDK).
+#[cfg(any(target_os = "linux", test))]
+pub fn kind_from_type_name(name: &str) -> DisplayKind {
+    if name.contains("X11") {
+        DisplayKind::X11
+    } else if name.contains("Wayland") {
+        DisplayKind::Wayland
+    } else {
+        DisplayKind::Unknown
     }
 }
 
@@ -745,20 +773,30 @@ impl Surface for UiSurface {
     }
 }
 
-/// El transporte de la superficie nativa, detectado del display real.
-/// **Sólo en el hilo de UI**: GDK no se puede tocar desde otro hilo.
+/// La única lectura del display GDK del binario (issue #180, revisión del
+/// mantenedor: una sola detección del backend): cacheada en `OnceLock` y
+/// **sólo en el hilo de UI** — GDK no se puede tocar desde otro hilo.
+/// `transport()` (colocación) y `wm_compat::get_wm_info` (Ajustes/arrastre)
+/// derivan de esta misma caché para no poder discrepar.
 #[cfg(target_os = "linux")]
-fn transport() -> Transport {
-    static TRANSPORT: std::sync::OnceLock<Transport> = std::sync::OnceLock::new();
-    *TRANSPORT.get_or_init(detect_transport)
+fn display_kind() -> DisplayKind {
+    static DISPLAY_KIND: std::sync::OnceLock<DisplayKind> = std::sync::OnceLock::new();
+    *DISPLAY_KIND.get_or_init(|| {
+        use gtk::prelude::*;
+        match gtk::gdk::Display::default() {
+            Some(display) => kind_from_type_name(display.type_().name()),
+            None => DisplayKind::Unknown,
+        }
+    })
 }
 
+/// El transporte de la superficie nativa, derivado del display real (caché
+/// de `display_kind`, hilo de UI): X11/XWayland o native Wayland.
 #[cfg(target_os = "linux")]
-fn detect_transport() -> Transport {
-    use gtk::prelude::*;
-    match gtk::gdk::Display::default() {
-        Some(display) => transport_from_type_name(display.type_().name()),
-        None => Transport::Other,
+fn transport() -> Transport {
+    match display_kind() {
+        DisplayKind::X11 => Transport::X11,
+        DisplayKind::Wayland | DisplayKind::Unknown => Transport::Other,
     }
 }
 
@@ -768,4 +806,20 @@ async fn transport_on_ui(window: &tauri::WebviewWindow) -> Transport {
     on_ui(window, |_| transport())
         .await
         .unwrap_or(Transport::Other)
+}
+
+/// Sonda del backend GDK efectivo para `wm_compat` (issue #180): la misma
+/// lectura cacheada que decide la colocación, ejecutada en el hilo de UI.
+/// Best-effort: sin display, tipo desconocido o hilo de UI que no responde
+/// a tiempo degrada a `None` y decide el fallback por env
+/// (`wm_compat::display_backend_from_env`).
+#[cfg(target_os = "linux")]
+pub async fn display_backend_on_ui(
+    window: &tauri::WebviewWindow,
+) -> Option<crate::wm_compat::DisplayBackend> {
+    match on_ui(window, |_| display_kind()).await? {
+        DisplayKind::X11 => Some(crate::wm_compat::DisplayBackend::X11),
+        DisplayKind::Wayland => Some(crate::wm_compat::DisplayBackend::Wayland),
+        DisplayKind::Unknown => None,
+    }
 }

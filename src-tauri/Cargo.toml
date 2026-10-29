@@ -65,9 +65,10 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# Solo Linux: la superficie GTK del ciclo de colocación nativa (#179). La misma
-# dependencia que ya resuelven tauri y tao (gtk 0.18 sin features): no sube el
-# piso de GTK (3.22) ni añade crates nuevos.
+# Solo Linux: la superficie GTK del ciclo de colocación nativa (#179) y la
+# sonda del backend GDK efectivo que de ella depende (#180, sonda única). La
+# misma dependencia que ya resuelven tauri y tao (gtk 0.18 sin features): no
+# sube el piso de GTK (3.22) ni añade crates nuevos.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 

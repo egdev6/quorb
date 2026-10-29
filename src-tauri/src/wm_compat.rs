@@ -17,6 +17,17 @@
 
 use serde::Serialize;
 
+/// Effective GDK display backend (issue #180, WU1/WU4 maintainer correction):
+/// drag mode and the `windowPositioning` surface branch on THIS value — the
+/// backend GTK actually uses at runtime — never on the session type. E.g. a
+/// full Wayland session with `GDK_BACKEND=x11` is X11.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayBackend {
+    X11,
+    Wayland,
+}
+
 /// Resumen de compositor y caveats para Ajustes.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +50,10 @@ pub struct WindowManagerInfo {
     /// Recomendación accionable para Ajustes: qué hacer con always-on-top,
     /// click-through y edge-docking en este entorno.
     pub recommendation: &'static str,
+    /// Backend GDK efectivo (issue #180): decide drag mode y la superficie
+    /// `windowPositioning`. Corresponde al display de GDK en runtime (sonda
+    /// best-effort) o, si no resolvió, al fallback por `GDK_BACKEND`/sesión.
+    pub display_backend: DisplayBackend,
     /// Estado y nota por superficie (widget, bandeja, atajos, autostart,
     /// notificaciones y transparencia) según la sesión detectada. Solo
     /// informativo: el frontend lo muestra tal cual en Ajustes.
@@ -46,7 +61,9 @@ pub struct WindowManagerInfo {
 }
 
 /// Estado de una superficie de escritorio para la sesión detectada.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// `Default` es derivable para encadenar `..Default::default()` en literales
+/// (la superficie nueva `window_positioning` siempre se recálcula explícita).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
 pub struct SurfaceStatus {
     /// `ok` si la superficie se espera completa; `limited` límites explícitos.
     pub state: &'static str,
@@ -56,7 +73,9 @@ pub struct SurfaceStatus {
 
 /// Snapshot de superficies del escritorio (issue #107). Comónico a
 /// X11/compositores Wayland: la variación se concentra en las notas.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// `Default` es derivable para `surfaces_for`: las ramas por sesión no
+/// necesitan repetir el literal de `window_positioning` (ver wrapper).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSurfaces {
     pub always_on_top: SurfaceStatus,
@@ -66,15 +85,22 @@ pub struct DesktopSurfaces {
     pub autostart: SurfaceStatus,
     pub notifications: SurfaceStatus,
     pub transparency: SurfaceStatus,
+    /// Posicionamiento/arrastre de la tira (issue #180): SOLO decide por el
+    /// backend GDK efectivo, nunca por el tipo de sesión. Bajo XWayland
+    /// (`GDK_BACKEND=x11`) debe reportar `ok`.
+    pub window_positioning: SurfaceStatus,
 }
 
-/// Las 4 env vars que miramos, normalizadas: `None` si ausentes o vacías.
+/// Las 5 env vars que miramos, normalizadas: `None` si ausentes o vacías.
+/// `gdk_backend` es `GDK_BACKEND` (issue #180): GTK lo acepta como lista
+/// separada por comas (p. ej. `"x11,*"`) y decide el backend GDK efectivo.
 #[derive(Debug, Default, Clone)]
 pub struct Env {
     pub wayland_display: Option<String>,
     pub xdg_session_type: Option<String>,
     pub desktop_session: Option<String>,
     pub xdg_current_desktop: Option<String>,
+    pub gdk_backend: Option<String>,
 }
 
 impl Env {
@@ -93,6 +119,7 @@ impl Env {
             xdg_current_desktop: std::env::var("XDG_CURRENT_DESKTOP")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            gdk_backend: std::env::var("GDK_BACKEND").ok().filter(|s| !s.is_empty()),
         }
     }
 }
@@ -105,58 +132,18 @@ pub fn detect_wm_info_from_env(env: &Env, tray: TrayDiagnostics) -> WindowManage
     // que `Env::from_process`: si el caller construye el `Env` a mano y le
     // pasa `Some("")` (los tests lo hacen), un string vacío no debe contar
     // como señal de Wayland ni aparecer en el struct.
-    let non_empty = |opt: &Option<String>| opt.clone().filter(|s| !s.is_empty());
-    let env_n = Env {
-        wayland_display: non_empty(&env.wayland_display),
-        xdg_session_type: non_empty(&env.xdg_session_type),
-        desktop_session: non_empty(&env.desktop_session),
-        xdg_current_desktop: non_empty(&env.xdg_current_desktop),
-    };
+    let env_n = normalize_env(env);
 
+    // Single-source session signals: reused verbatim by the display-backend
+    // fallback and the runtime-probe override so nothing drifts.
+    let is_hyprland = is_hyprland_signal(&env_n);
     // Protocolo Wayland: solo evidencia de protocolo, no de escritorio.
     // GNOME/KDE cotidianamente corren sobre Xorg: su token en
     // XDG_CURRENT_DESKTOP no debe marcar Wayland. Sway/Hyprland/wlroots y
     // el resto de tokens solo-Wayland no tienen X11, así que sí lo señalan.
-    let is_hyprland = env_n
-        .desktop_session
-        .as_deref()
-        .map(|s| s.eq_ignore_ascii_case("hyprland"))
-        .unwrap_or(false)
-        || env_n
-            .xdg_current_desktop
-            .as_deref()
-            .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("Hyprland")))
-            .unwrap_or(false);
-
-    // Hyprland es un compositor Wayland-only: si `DESKTOP_SESSION=hyprland` o
-    // `XDG_CURRENT_DESKTOP=Hyprland` sin más señales, el usuario está en
-    // Wayland (no en X11) — `surfaces_for` debe tomar la rama Hyprland, no
-    // la X11. `is_hyprland` se usa como señal adicional de Wayland.
-    let is_wayland = env_n.wayland_display.is_some()
-        || env_n
-            .xdg_session_type
-            .as_deref()
-            .map(|s| s.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(false)
-        || env_n
-            .xdg_current_desktop
-            .as_deref()
-            .map(|s| s.split(':').any(is_wayland_only_session))
-            .unwrap_or(false)
-        || is_hyprland;
-
-    // `env_n` ya clonó los `Option<String>` desde el `&Env` input (y filtró
-    // vacíos); se mueven al struct sin clones adicionales.
-    let is_gnome = env_n
-        .desktop_session
-        .as_deref()
-        .map(|s| s.eq_ignore_ascii_case("gnome"))
-        .unwrap_or(false)
-        || env_n
-            .xdg_current_desktop
-            .as_deref()
-            .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("GNOME")))
-            .unwrap_or(false);
+    let is_wayland = is_wayland_protocol(&env_n, is_hyprland);
+    let is_gnome = is_gnome_signal(&env_n);
+    let display_backend = display_backend_from_env(&env_n);
     let is_kde = env_n
         .desktop_session
         .as_deref()
@@ -198,8 +185,136 @@ pub fn detect_wm_info_from_env(env: &Env, tray: TrayDiagnostics) -> WindowManage
         is_wayland,
         is_hyprland,
         recommendation,
-        surfaces: surfaces_for(is_wayland, is_hyprland, is_gnome, is_kde, tray),
+        display_backend,
+        surfaces: surfaces_for(
+            is_wayland,
+            is_hyprland,
+            is_gnome,
+            is_kde,
+            display_backend,
+            tray,
+        ),
     }
+}
+
+/// Normaliza strings vacíos como "ausente" en TODOS los campos, igual que
+/// `Env::from_process`: si el caller construye el `Env` a mano y le pasa
+/// `Some("")` (los tests lo hacen), un string vacío no debe contar como señal.
+fn normalize_env(env: &Env) -> Env {
+    let non_empty = |opt: &Option<String>| opt.clone().filter(|s| !s.is_empty());
+    Env {
+        wayland_display: non_empty(&env.wayland_display),
+        xdg_session_type: non_empty(&env.xdg_session_type),
+        desktop_session: non_empty(&env.desktop_session),
+        xdg_current_desktop: non_empty(&env.xdg_current_desktop),
+        gdk_backend: non_empty(&env.gdk_backend),
+    }
+}
+
+/// Señal Hyprland (`DESKTOP_SESSION=hyprland` o token `Hyprland` en
+/// `XDG_CURRENT_DESKTOP`). Extraída de `detect_wm_info_from_env` para que el
+/// fallback del backend efectivo la reutilice sin duplicar los matches.
+fn is_hyprland_signal(env_n: &Env) -> bool {
+    env_n
+        .desktop_session
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("hyprland"))
+        .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("Hyprland")))
+            .unwrap_or(false)
+}
+
+/// ¿La sesión habla protocolo Wayland? Semática idéntica a la rama de
+/// `detect_wm_info_from_env` (evidencia de protocolo, no de escritorio).
+fn is_wayland_protocol(env_n: &Env, is_hyprland: bool) -> bool {
+    env_n.wayland_display.is_some()
+        || env_n
+            .xdg_session_type
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(is_wayland_only_session))
+            .unwrap_or(false)
+        || is_hyprland
+}
+
+/// Señal GNOME (`DESKTOP_SESSION=gnome` o token `GNOME` en
+/// `XDG_CURRENT_DESKTOP`). Única fuente para la rama de superficies y para el
+/// recálculo de `windowPositioning` en el override de la sonda runtime.
+fn is_gnome_signal(env_n: &Env) -> bool {
+    env_n
+        .desktop_session
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("gnome"))
+        .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(|p| p.eq_ignore_ascii_case("GNOME")))
+            .unwrap_or(false)
+}
+
+/// Effective GDK display backend from environment evidence (issue #180,
+/// WU1/WU4 maintainer correction). Pure; approximation of GTK semantics:
+/// GTK walks the comma-separated `GDK_BACKEND` list and initializes the first
+/// backend it can successfully set up (`*` means the platform default order).
+/// We approximate without initializing GTK: the first decisive token in the
+/// list decides (`x11` → X11, `wayland` → Wayland); any other token (`*`,
+/// unknown backend names) is skipped, i.e. "let the GTK default happen". With
+/// no decisive token the session-based default applies: Wayland when the
+/// session signals the Wayland protocol, else X11 (same detection as
+/// `is_wayland_session_from_env`).
+///
+/// Known approximation limits (accepted; the fallback must stand alone):
+/// an `"x11,wayland"` list resolves to X11 even if no X server exists and
+/// GTK would have fallen through to Wayland. The runtime probe applied in
+/// `get_wm_info` is the authoritative refinement when it resolves.
+pub fn display_backend_from_env(env: &Env) -> DisplayBackend {
+    let env_n = normalize_env(env);
+    if let Some(raw) = env_n.gdk_backend.as_deref() {
+        for token in raw.split(',') {
+            match token.trim().to_ascii_lowercase().as_str() {
+                "x11" => return DisplayBackend::X11,
+                "wayland" => return DisplayBackend::Wayland,
+                // "*" and unknown names: keep walking (GTK default order).
+                _ => continue,
+            }
+        }
+    }
+    let is_hyprland = is_hyprland_signal(&env_n);
+    if is_wayland_protocol(&env_n, is_hyprland) {
+        DisplayBackend::Wayland
+    } else {
+        DisplayBackend::X11
+    }
+}
+
+/// Runtime override of the effective display backend (issue #180, WU4): the
+/// live GDK probe, when it resolves, MUST win over the env fallback. Pure
+/// helper, applied at the command level: rewrites `display_backend` and
+/// recomputes ONLY `surfaces.window_positioning`; every other surface stays
+/// untouched.
+pub fn with_display_backend(
+    mut info: WindowManagerInfo,
+    backend: DisplayBackend,
+) -> WindowManagerInfo {
+    info.display_backend = backend;
+    let desktop_env = Env {
+        wayland_display: None,
+        xdg_session_type: None,
+        desktop_session: info.desktop_session.clone(),
+        xdg_current_desktop: info.xdg_current_desktop.clone(),
+        gdk_backend: None,
+    };
+    info.surfaces.window_positioning =
+        window_positioning_status(backend, is_gnome_signal(&desktop_env));
+    info
 }
 
 /// Token de escritorio KDE en `XDG_CURRENT_DESKTOP` (lista separada por `:`).
@@ -213,7 +328,29 @@ fn is_kde_token(token: &str) -> bool {
 /// Límites por superficie derivados de la sesión detectada. Pura y
 /// determinista: los tests fijan lo que Ajustes va a mostrar. El diagnóstico
 /// de bandeja (`tray`) se inyecta: solo la rama GNOME lo consume.
+///
+/// Issue #180 (WU4): `display_backend` es el backend GDK efectivo, ya
+/// calculado por `display_backend_from_env`; `surfaces_for` lo recibe para
+/// poblar SOLO la superficie nueva `window_positioning`, el resto de ramas
+/// sigue dependiendo del tipo de sesión/compositor como siempre.
 fn surfaces_for(
+    is_wayland: bool,
+    is_hyprland: bool,
+    is_gnome: bool,
+    is_kde: bool,
+    display_backend: DisplayBackend,
+    tray: TrayDiagnostics,
+) -> DesktopSurfaces {
+    // windowPositioning NO depende del tipo de sesión: solo del backend GDK
+    // efectivo (el input de compositor solo refina la nota en GNOME).
+    DesktopSurfaces {
+        window_positioning: window_positioning_status(display_backend, is_gnome),
+        ..desktop_surfaces_by_session(is_wayland, is_hyprland, is_gnome, is_kde, tray)
+    }
+}
+
+/// Superficies por sesión/compositor (el cuerpo histórico de `surfaces_for`).
+fn desktop_surfaces_by_session(
     is_wayland: bool,
     is_hyprland: bool,
     is_gnome: bool,
@@ -232,6 +369,7 @@ fn surfaces_for(
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "Requiere composición activa (GNOME, KDE y XFCE la traen)." },
+            ..Default::default()
         };
     }
     if is_hyprland {
@@ -243,6 +381,7 @@ fn surfaces_for(
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
+            ..Default::default()
         };
     }
     if is_gnome {
@@ -257,6 +396,7 @@ fn surfaces_for(
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
+            ..Default::default()
         };
     }
     if is_kde {
@@ -268,6 +408,7 @@ fn surfaces_for(
             autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
+            ..Default::default()
         };
     }
     // Wayland genérico (sway, wlroots, otros de la matriz): notas prudentes
@@ -280,6 +421,18 @@ fn surfaces_for(
         autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
         notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
         transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
+        ..Default::default()
+    }
+}
+
+/// Estado de `windowPositioning` (issue #180, WU4): las ramas deciden SOLO
+/// por el backend GDK efectivo, nunca por el tipo de sesión; el input de
+/// compositor (`is_gnome`) solo refina la nota bajo Wayland.
+pub fn window_positioning_status(display_backend: DisplayBackend, is_gnome: bool) -> SurfaceStatus {
+    match display_backend {
+        DisplayBackend::X11 => SurfaceStatus { state: "ok", note: "En X11 (y bajo XWayland con GDK_BACKEND=x11) el anclaje al borde y el arrastre con imán funcionan; la tira alcanza el borde del área de trabajo (#205)." },
+        DisplayBackend::Wayland if is_gnome => SurfaceStatus { state: "limited", note: "Mutter no expone posicionamiento absoluto de ventanas (gtk_window_move no tiene efecto): el arrastre usa el gesto del compositor y, al soltar, no hay imán ni se persiste la posición." },
+        DisplayBackend::Wayland => SurfaceStatus { state: "limited", note: "El posicionamiento absoluto de ventanas no está disponible bajo xdg-shell en Wayland: el arrastre de la tira se delega al compositor." },
     }
 }
 
@@ -564,6 +717,30 @@ fn recommendation(
 /// (spawn + espera + drenaje, hasta ~2,25 s nominales) corren en el pool de
 /// tareas bloqueantes y nunca en el hilo de UI; los commands Tauri síncronos
 /// NO garantizan sacar el trabajo del hilo principal.
+///
+/// Issue #180 (revisión del mantenedor, una sola detección del backend GDK):
+/// la sonda runtime del backend GDK efectivo es la de `widget_placement`
+/// (`display_backend_on_ui`, hilo de UI + caché `OnceLock` compartida con
+/// `transport()`); aquí solo la consumimos. Cuando resuelve manda sobre el
+/// fallback por env; si no (`Unknown`, sin display, o el hilo de UI no
+/// responde a tiempo), decide `display_backend_from_env`. Sólo Linux tiene
+/// sonda: las sondas de bandeja viven igualmente fuera del hilo de UI.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub async fn get_wm_info(window: tauri::WebviewWindow) -> WindowManagerInfo {
+    let mut info = tauri::async_runtime::spawn_blocking(detect_wm_info)
+        .await
+        .expect("la tarea de sondeo no debe fallar antes del cierre de la app");
+    if let Some(backend) = crate::widget_placement::display_backend_on_ui(&window).await {
+        info = with_display_backend(info, backend);
+    }
+    info
+}
+
+/// Non-Linux: command equal to the pre-#180 one; no probe exists and the
+/// env fallback (`display_backend_from_env`, baked into `detect_wm_info`)
+/// decides.
+#[cfg(not(target_os = "linux"))]
 #[tauri::command]
 pub async fn get_wm_info() -> WindowManagerInfo {
     tauri::async_runtime::spawn_blocking(detect_wm_info)
@@ -586,6 +763,7 @@ mod tests {
             xdg_session_type: xdg_session_type.map(str::to_string),
             desktop_session: desktop_session.map(str::to_string),
             xdg_current_desktop: xdg_current_desktop.map(str::to_string),
+            gdk_backend: None,
         }
     }
 
@@ -1192,7 +1370,159 @@ mod tests {
                 ("autostart", d.autostart),
                 ("notifications", d.notifications),
                 ("transparency", d.transparency),
+                ("window_positioning", d.window_positioning),
             ]
         }
+    }
+
+    /// Full Wayland session (GNOME) as the deterministic backdrop for the
+    /// GDK-backend cases: WAYLAND_DISPLAY set, XDG_SESSION_TYPE=wayland,
+    /// XDG_CURRENT_DESKTOP=GNOME:GNOME.
+    fn wayland_session_env() -> Env {
+        env(
+            Some("wayland-0"),
+            Some("wayland"),
+            Some("gnome"),
+            Some("GNOME:GNOME"),
+        )
+    }
+
+    /// #180 (WU4): the display backend is decided by the EFFECTIVE GDK backend,
+    /// never by the session type.
+    #[test]
+    fn display_backend_gdk_x11_wins_on_wayland_session() {
+        let env = Env {
+            gdk_backend: Some("x11".to_string()),
+            ..wayland_session_env()
+        };
+        assert_eq!(display_backend_from_env(&env), DisplayBackend::X11);
+    }
+
+    #[test]
+    fn display_backend_unset_defaults_to_session_wayland() {
+        assert_eq!(
+            display_backend_from_env(&wayland_session_env()),
+            DisplayBackend::Wayland
+        );
+    }
+
+    #[test]
+    fn display_backend_gdk_list_wayland_first_wins() {
+        let env = Env {
+            gdk_backend: Some("wayland,x11".to_string()),
+            ..wayland_session_env()
+        };
+        assert_eq!(display_backend_from_env(&env), DisplayBackend::Wayland);
+    }
+
+    #[test]
+    fn display_backend_gdk_wildcard_is_not_decisive() {
+        let env = Env {
+            gdk_backend: Some("*".to_string()),
+            ..wayland_session_env()
+        };
+        assert_eq!(display_backend_from_env(&env), DisplayBackend::Wayland);
+    }
+
+    #[test]
+    fn display_backend_gdk_x11_with_wildcard_is_decisive() {
+        let env = Env {
+            gdk_backend: Some("x11,*".to_string()),
+            ..wayland_session_env()
+        };
+        assert_eq!(display_backend_from_env(&env), DisplayBackend::X11);
+    }
+
+    /// #180: serde contract (WU5 mirror): camelCase keys and lowercase
+    /// display-backend variants are what the frontend will consume.
+    #[test]
+    fn serde_output_uses_display_backend_and_window_positioning_keys() {
+        let info = detect_wm_info_from_env(&wayland_session_env(), tray());
+        let json = serde_json::to_value(&info).expect("serializable");
+        assert_eq!(json["displayBackend"], "wayland");
+        assert_eq!(json["surfaces"]["windowPositioning"]["state"], "limited");
+
+        let overridden = with_display_backend(info, DisplayBackend::X11);
+        let json = serde_json::to_value(&overridden).expect("serializable");
+        assert_eq!(json["displayBackend"], "x11");
+        assert_eq!(json["surfaces"]["windowPositioning"]["state"], "ok");
+    }
+
+    #[test]
+    fn display_backend_x11_session_defaults_to_x11() {
+        // Generic X11 session with GDK_BACKEND unset: no Wayland evidence → X11.
+        let env = env(None, Some("x11"), Some("gnome"), Some("GNOME"));
+        assert_eq!(display_backend_from_env(&env), DisplayBackend::X11);
+    }
+
+    /// #180 (WU4): the surface status branches ONLY on the display backend.
+    #[test]
+    fn window_positioning_status_x11_is_ok() {
+        let s = window_positioning_status(DisplayBackend::X11, true);
+        assert_eq!(s.state, "ok");
+        assert!(s.note.contains("XWayland"), "{}", s.note);
+        let s_nongnome = window_positioning_status(DisplayBackend::X11, false);
+        assert_eq!(s_nongnome.state, "ok");
+    }
+
+    #[test]
+    fn window_positioning_status_gnome_wayland_is_limited_with_mutter_note() {
+        let s = window_positioning_status(DisplayBackend::Wayland, true);
+        assert_eq!(s.state, "limited");
+        assert!(s.note.contains("Mutter"), "{}", s.note);
+    }
+
+    #[test]
+    fn window_positioning_status_other_wayland_is_limited_generic() {
+        let s = window_positioning_status(DisplayBackend::Wayland, false);
+        assert_eq!(s.state, "limited");
+        assert!(s.note.contains("xdg-shell"), "{}", s.note);
+        assert!(!s.note.contains("Mutter"), "{}", s.note);
+    }
+
+    /// #180 (WU4 integration): a Wayland session with GDK_BACKEND=x11 reports
+    /// `ok` for windowPositioning (the maintainer-requested XWayland case).
+    #[test]
+    fn wayland_session_with_gdk_x11_gets_window_positioning_ok() {
+        let env = Env {
+            gdk_backend: Some("x11".to_string()),
+            ..wayland_session_env()
+        };
+        let info = detect_wm_info_from_env(&env, tray());
+        assert_eq!(info.display_backend, DisplayBackend::X11);
+        assert_eq!(info.surfaces.window_positioning.state, "ok");
+    }
+
+    /// #180 (WU4): the runtime probe override rewrites display_backend and
+    /// recomputes ONLY windowPositioning; every other surface stays intact.
+    #[test]
+    fn with_display_backend_overrides_backend_and_window_positioning_only() {
+        let info = detect_wm_info_from_env(&wayland_session_env(), tray());
+        assert_eq!(info.display_backend, DisplayBackend::Wayland);
+        assert_eq!(info.surfaces.window_positioning.state, "limited");
+
+        let overridden = with_display_backend(info.clone(), DisplayBackend::X11);
+        assert_eq!(overridden.display_backend, DisplayBackend::X11);
+        assert_eq!(overridden.surfaces.window_positioning.state, "ok");
+        assert_eq!(overridden.surfaces.tray_icon, info.surfaces.tray_icon);
+        assert_eq!(
+            overridden.surfaces.always_on_top,
+            info.surfaces.always_on_top
+        );
+        assert_eq!(
+            overridden.surfaces.click_through,
+            info.surfaces.click_through
+        );
+        assert_eq!(
+            overridden.surfaces.global_shortcuts,
+            info.surfaces.global_shortcuts
+        );
+        assert_eq!(overridden.surfaces.autostart, info.surfaces.autostart);
+        assert_eq!(
+            overridden.surfaces.notifications,
+            info.surfaces.notifications
+        );
+        assert_eq!(overridden.surfaces.transparency, info.surfaces.transparency);
+        assert_eq!(overridden.is_wayland, info.is_wayland);
     }
 }

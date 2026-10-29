@@ -25,6 +25,8 @@ import { accountTags } from './lib/accounts';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { peekRect, usesPeekWindow, waitForViewport, watchPreparation } from './lib/auto-hide';
 import { useDockReveal } from './lib/useDockReveal';
+import { currentDragMode, dragMode, fallbackDragMode, resetDragMode, setDragMode } from './lib/drag-session';
+import { detectWindowManager } from './lib/wm-detect';
 import { t } from './i18n';
 import { localeFrom } from './i18n/use-locale';
 import { StripFallback } from './components/StripFallback';
@@ -653,6 +655,22 @@ export function Widget() {
     return () => { disposed = true; };
   }, [dragging, geo, autoHide, widgetQueue]);
 
+  // Safety net for the compositor drag (issue #180, maintainer review point
+  // 3): under the compositor's move grab the client may never receive the
+  // closing pointerup, which would leave `dragging` stuck true (detail panel
+  // blocked, auto-hide busy, placement not re-requested). A later buttonless
+  // pointermove is the reliable release signal the webview still sees after
+  // the grab ends. Compositor-only: the native branch owns its release
+  // pipeline in onGripUp and must not be bypassed.
+  useEffect(() => {
+    if (!dragging || currentDragMode() !== 'compositor') return;
+    const release = (e: { buttons: number }) => {
+      if (e.buttons === 0) setDragging(false);
+    };
+    window.addEventListener('pointermove', release);
+    return () => window.removeEventListener('pointermove', release);
+  }, [dragging]);
+
   // The detail window owns its dimensions; hovering never mutates widget geometry.
   useEffect(() => {
     const strip = geo && stripSize ? stripRect(geo.area, edge, offset, stripSize.w, stripSize.h) : null;
@@ -826,6 +844,39 @@ export function Widget() {
       window.clearInterval(interval);
     };
   }, [hovered, presenceRef]);
+  // #180: drag strategy decision, fetched ONCE at mount (single fast
+  // `get_wm_info` command). Two deterministic defaults, both recorded here:
+  // - While the decision is unresolved (`currentDragMode() === null`) the
+  //   grip does nothing: starting the old delta pipeline on a Wayland
+  //   session is precisely the corruption this issue fixes, so the drag is
+  //   BLOCKED instead of guessed. Detection is a fast startup command, so
+  //   blocking until it resolves is deterministic and imperceptible.
+  // - If detection fails, the fallback is Linux-only (#210 review minor):
+  //   Linux degrades to 'compositor' because the gesture cannot touch
+  //   config.json, while Windows/macOS keep 'native' so a one-off probe
+  //   failure never removes their magnet (see fallbackDragMode in
+  //   src/lib/drag-session.ts).
+  // - On unmount the store is cleared so a re-mounted widget re-detects
+  //   instead of inheriting a stale decision.
+  useEffect(() => {
+    let disposed = false;
+    detectWindowManager()
+      .then((info) => {
+        if (disposed) return;
+        // `displayBackend` ships in the get_wm_info response (wm_compat.rs,
+        // WU4 serde camelCase) and the TS mirror declares it typed now (WU5).
+        // Detection failure still falls back to 'compositor' (catch below).
+        setDragMode(dragMode(info.displayBackend).mode);
+      })
+      .catch(() => {
+        if (!disposed) setDragMode(fallbackDragMode(osFromUA(navigator.userAgent)));
+      });
+    return () => {
+      disposed = true;
+      resetDragMode();
+    };
+  }, []);
+
   useEffect(() => {
     dragMounted.current = true;
     return () => {
@@ -859,7 +910,26 @@ export function Widget() {
 
   const onGripDown = (e: PointerEvent<HTMLSpanElement>) => {
     if (e.button !== 0 || !geo || !dragMounted.current) return;
+    // #180: until the startup decision is known the grip does nothing (see
+    // the decision effect above for both defaults).
+    const mode = currentDragMode();
+    if (mode == null) return;
     e.preventDefault();
+    if (mode === 'compositor') {
+      // Compositor branch: the drag is delegated to the compositor via the
+      // xdg-shell move gesture. startDragging() consumes the pointerdown
+      // serial itself, so we set up no pointer capture and no `drag.current`
+      // delta state: under xdg-shell the client has no absolute position to
+      // delta from (see onGripUp for the release-side counterpart).
+      setDragging(true);
+      cancelTimers();
+      setHovered(null);
+      getCurrentWindow().startDragging().catch((err) => {
+        setError(String(err));
+        setDragging(false);
+      });
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     if (drag.current) cancelAnimationFrame(drag.current.raf);
     cancelTimers();
@@ -893,6 +963,10 @@ export function Widget() {
   };
 
   const onGripMove = (e: PointerEvent<HTMLSpanElement>) => {
+    // #180: in compositor mode the compositor moves the window during the
+    // gesture, so this is a no-op — early return before any arithmetic or
+    // rAF work. The native branch below keeps today's pipeline untouched.
+    if (currentDragMode() === 'compositor') return;
     const d = drag.current;
     if (!d?.start || d.ending || e.pointerId !== d.pointerId) return;
     const current = () => dragMounted.current && drag.current === d;
@@ -908,6 +982,18 @@ export function Widget() {
   };
 
   const onGripUp = async (e: PointerEvent<HTMLSpanElement>) => {
+    // #180: in compositor mode the compositor owns the grab and the final
+    // position, so this is minimal cleanup only — mirror of the `finally`
+    // below, minus the native snap/persist work: no outerPosition(), no
+    // nearestEdge(), no patchConfig(), no resolveGeo(). In this mode we set
+    // up no pointer capture, no rAF and no `drag.current`, so there is
+    // genuinely nothing else to release; a persisted edge computed from
+    // untrustworthy coordinates would corrupt the config.json that X11
+    // sessions also read.
+    if (currentDragMode() === 'compositor') {
+      setDragging(false);
+      return;
+    }
     const d = drag.current;
     if (!d || d.ending || e.pointerId !== d.pointerId) return;
     d.ending = true;

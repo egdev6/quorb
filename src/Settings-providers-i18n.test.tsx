@@ -246,7 +246,7 @@ describe('Save bar, unsaved changes and global notices (SSR, i18n)', () => {
     isHyprland: false,
     recommendation: 'texto del backend',
     surfaces: Object.fromEntries(
-      ['alwaysOnTop', 'clickThrough', 'trayIcon', 'globalShortcuts', 'autostart', 'notifications', 'transparency'].map((k, i) => [
+      ['alwaysOnTop', 'clickThrough', 'trayIcon', 'globalShortcuts', 'autostart', 'notifications', 'transparency', 'windowPositioning'].map((k, i) => [
         k,
         { state: i % 2 ? 'limited' : 'ok', note: 'nota del backend' },
       ]),

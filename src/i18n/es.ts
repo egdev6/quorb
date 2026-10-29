@@ -173,6 +173,9 @@ export const es = {
         autostart: 'Arranque al iniciar sesión',
         notifications: 'Notificaciones',
         transparency: 'Transparencia',
+        // New surface #180: the only row label that names the window; the
+        // backend decides its state by the effective GDK backend.
+        windowPositioning: 'Posicionamiento de la ventana',
       },
     },
     // Página «Proveedores»: lista, panel lateral, comprobación y aviso del CLI.
