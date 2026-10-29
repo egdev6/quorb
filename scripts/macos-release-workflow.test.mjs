@@ -196,7 +196,22 @@ jobs:
           if (String(result.releaseId) !== process.env.RELEASE_ID) throw new Error('Release identity changed');
           NODE
           dmg="source/src-tauri/target/release/bundle/dmg/Quorb_\${RELEASE_VERSION}_aarch64.dmg"
-          gh release upload "v$RELEASE_VERSION" "$dmg" "$dmg.sha256" --repo egdev6/quorb
+          if ! gh release upload "v$RELEASE_VERSION" "$dmg" "$dmg.sha256" --repo egdev6/quorb; then
+            echo "::error::Upload failed; rolling back DMG and SHA-256 assets."
+            name="\${dmg##*/}"
+            if ! assets="$(gh release view "v$RELEASE_VERSION" --repo egdev6/quorb --json assets --jq '.assets[].name')"; then
+              echo "::error::Cannot list assets after upload failure; manual cleanup needed for $name and $name.sha256."
+              exit 1
+            fi
+            for asset in "$name" "$name.sha256"; do
+              if grep -Fx -- "$asset" <<< "$assets" > /dev/null; then
+                if ! gh release delete-asset "v$RELEASE_VERSION" "$asset" --repo egdev6/quorb --yes; then
+                  echo "::error::Rollback failed after upload failure; manual cleanup needed for $asset."
+                fi
+              fi
+            done
+            exit 1
+          fi
 `.replaceAll('\\${', '${');
 
 function assertContract(draft, workflow, pkg) {
@@ -240,6 +255,13 @@ test('rejects mutations to every reviewed line, step order and byte materializat
     ['"$dmg.sha256"', '"$dmg.sha256" latest.json'], ['SRD8T33RU5', 'OTHERTEAM1'],
     ['--strict', '--verbose'], ['stapler\', \'validate', 'stapler\', \'staple'],
     ['--wait', '--no-wait'], ["flag: 'wx'", "flag: 'w'"],
+    ['for asset in "$name" "$name.sha256"', 'for asset in "other.dmg" "$name.sha256"'],
+    ['for asset in "$name" "$name.sha256"', 'for asset in Quorb_*'],
+    ['grep -Fx -- "$asset"', 'grep -E -- "$asset"'],
+    ['"$asset" --repo egdev6/quorb --yes', '"other.dmg" --repo egdev6/quorb --yes'],
+    ['"$asset" --repo egdev6/quorb --yes', '"Quorb_*" --repo egdev6/quorb --yes'],
+    ['--repo egdev6/quorb --yes; then', '--repo egdev6/quorb --yes || true; then'],
+    ['manual cleanup needed for $asset.', 'cleanup succeeded.'],
   ];
   for (const pin of expected.matchAll(/uses: (\S+)/g)) mutations.push([pin[1], pin[1].replace(/@.*/, '@main')]);
   for (const [before, after] of mutations) {
@@ -247,6 +269,19 @@ test('rejects mutations to every reviewed line, step order and byte materializat
     const changed = Buffer.from(expected.replace(before, after));
     assert.throws(() => assertContract(changed, changed, pkg()), undefined, before);
   }
+  const rollbackStart = expected.indexOf('          if ! gh release upload ');
+  const upload = '          gh release upload "v$RELEASE_VERSION" "$dmg" "$dmg.sha256" --repo egdev6/quorb\n';
+  const withoutRollback = expected.slice(0, rollbackStart) + upload;
+  assert.throws(() => assertContract(Buffer.from(withoutRollback), Buffer.from(withoutRollback), pkg()), undefined, 'Removed rollback branch');
+  const revalidation = `          node --input-type=module <<'NODE'
+          import { preflightRelease } from './scripts/macos-release-preflight.mjs';
+          const result = await preflightRelease();
+          if (String(result.releaseId) !== process.env.RELEASE_ID) throw new Error('Release identity changed');
+          NODE
+`;
+  assert.ok(expected.includes(revalidation));
+  const uploadBeforeRevalidation = expected.replace(revalidation, '') + revalidation;
+  assert.throws(() => assertContract(Buffer.from(uploadBeforeRevalidation), Buffer.from(uploadBeforeRevalidation), pkg()), undefined, 'Upload order changed');
   const swapped = expected.replace('          npm run app:build:mac\n', '').replace('          xcrun stapler staple "$dmg"', '          xcrun stapler staple "$dmg"\n          npm run app:build:mac');
   assert.throws(() => assertContract(Buffer.from(swapped), Buffer.from(swapped), pkg()));
   assert.throws(() => assertContract(bytes, Buffer.from(expected.replaceAll('\n', '\r\n')), pkg()));
