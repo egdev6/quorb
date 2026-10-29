@@ -196,14 +196,15 @@ jobs:
           if (String(result.releaseId) !== process.env.RELEASE_ID) throw new Error('Release identity changed');
           NODE
           dmg="source/src-tauri/target/release/bundle/dmg/Quorb_\${RELEASE_VERSION}_aarch64.dmg"
-          if ! gh release upload "v$RELEASE_VERSION" "$dmg" "$dmg.sha256" --repo egdev6/quorb; then
-            echo "::error::Upload failed; rolling back DMG and SHA-256 assets."
+          gh release upload "v$RELEASE_VERSION" "$dmg" --repo egdev6/quorb
+          if ! gh release upload "v$RELEASE_VERSION" "$dmg.sha256" --repo egdev6/quorb; then
+            echo "::error::SHA-256 upload failed; removing only the DMG this run uploaded."
             name="\${dmg##*/}"
             if ! assets="$(gh release view "v$RELEASE_VERSION" --repo egdev6/quorb --json assets --jq '.assets[].name')"; then
               echo "::error::Cannot list assets after upload failure; manual cleanup needed for $name and $name.sha256."
               exit 1
             fi
-            for asset in "$name" "$name.sha256"; do
+            for asset in "$name"; do
               if grep -Fx -- "$asset" <<< "$assets" > /dev/null; then
                 if ! gh release delete-asset "v$RELEASE_VERSION" "$asset" --repo egdev6/quorb --yes; then
                   echo "::error::Rollback failed after upload failure; manual cleanup needed for $asset."
@@ -255,8 +256,10 @@ test('rejects mutations to every reviewed line, step order and byte materializat
     ['"$dmg.sha256"', '"$dmg.sha256" latest.json'], ['SRD8T33RU5', 'OTHERTEAM1'],
     ['--strict', '--verbose'], ['stapler\', \'validate', 'stapler\', \'staple'],
     ['--wait', '--no-wait'], ["flag: 'wx'", "flag: 'w'"],
-    ['for asset in "$name" "$name.sha256"', 'for asset in "other.dmg" "$name.sha256"'],
-    ['for asset in "$name" "$name.sha256"', 'for asset in Quorb_*'],
+    ['for asset in "$name"; do', 'for asset in "other.dmg"; do'],
+    ['for asset in "$name"; do', 'for asset in Quorb_*; do'],
+    ['for asset in "$name"; do', 'for asset in "$name" "$name.sha256"; do'],
+    ['          gh release upload "v$RELEASE_VERSION" "$dmg" --repo egdev6/quorb\n', ''],
     ['grep -Fx -- "$asset"', 'grep -E -- "$asset"'],
     ['"$asset" --repo egdev6/quorb --yes', '"other.dmg" --repo egdev6/quorb --yes'],
     ['"$asset" --repo egdev6/quorb --yes', '"Quorb_*" --repo egdev6/quorb --yes'],
