@@ -65,7 +65,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: macos-signing
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 120
     permissions:
       contents: write
     env:

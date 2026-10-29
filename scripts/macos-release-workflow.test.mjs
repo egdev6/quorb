@@ -74,7 +74,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: macos-signing
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 120
     permissions:
       contents: write
     env:
@@ -243,6 +243,7 @@ test('rejects mutations to every reviewed line, step order and byte materializat
   const mutations = [
     ['workflow_dispatch:', 'pull_request_target:'], ['contents: read', 'contents: write'],
     ['needs: preflight', 'needs: []'], ['environment: macos-signing', 'environment: production'],
+    ['timeout-minutes: 120', 'timeout-minutes: 45'], ['timeout-minutes: 5\n', 'timeout-minutes: 120\n'],
     ['persist-credentials: false', 'persist-credentials: true'], ['macos-15', 'macos-latest'],
     ['node-version: 22', 'node-version: 24'], ['if: always()', 'if: success()'],
     ['run: npm ci', 'continue-on-error: true\n        run: npm ci'],
