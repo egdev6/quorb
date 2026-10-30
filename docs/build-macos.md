@@ -66,56 +66,113 @@ Solo `contents: read`/`checks: read`; `GH_TOKEN` solo en preflight, checkout sin
 No se ha ejecutado este workflow ni realizado uploads/descargas, instalación o prueba GUI en Mac real.
 La guía enlazada describe cómo obtener/verificar/informar sin quitar cuarentena; no acredita seguridad.
 
-## Release macOS firmada: configurada, todavía no ejecutada
+## Release macOS reanudable: preparación local, runtime pendiente
 
-El workflow manual [macos-release.yml](../.github/workflows/macos-release.yml) se
-materializa byte a byte desde `.github/security-drafts/macos-release.yml`.
-Es independiente de `release.yml`: recibe `version` estable y `source_sha` de la
-release Windows `v<version>` ya existente (también admite su borrador). Solo se
-lanza desde `main`; no crea releases, tags ni publica un borrador.
+Los workflows [prepare/submit](../.github/workflows/macos-release.yml) y
+[resume](../.github/workflows/macos-release-resume.yml) tienen fuentes revisables
+byte a byte en `.github/security-drafts/`. Solo admiten dispatch manual desde
+`main`, con el Environment existente `macos-signing` (reviewer `egdev6`, rama
+`main`). Esta corrección no cambia ese Environment ni autoriza ejecuciones.
 
-Un job de preflight sin entorno de firma valida el ref, los formatos estrictos,
-la pertenencia de `source_sha` al historial de `origin/main` y la versión de
-`package.json` leída con `git show` en ese commit. Consulta la API de GitHub con
-paginación para encontrar releases, incluidos borradores, y sus assets. Resuelve
-el tag real, tanto ligero como anotado, hasta el commit exacto. Si GitHub todavía
-no ha creado el tag de un borrador Windows, solo admite `target_commitish` igual
-al SHA completo validado, nunca una rama móvil. Rechaza un DMG o checksum con el
-nombre destino ya ocupado. A diferencia de la preview, no impone otra lista de
-checks: este preflight protege la fuente y la release existente, no sustituye
-las protecciones de `main` ni su revisión.
+### 1. Preparar y enviar una vez
 
-El job dependiente usa el entorno protegido `macos-signing`, con aprobación de
-`egdev6` y despliegue limitado a `main`. Los únicos secretos Apple requeridos son
-`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
-`APPLE_API_ISSUER`, `APPLE_API_KEY` y `APPLE_API_KEY_P8` (sin valores en el repo).
-Solo los steps de preparación de la clave y build/firma reciben secretos, nunca
-el workflow ni el job completo. La clave `.p8` se escribe de forma exclusiva con
-permisos `0600` en `RUNNER_TEMP`, se pasa como `APPLE_API_KEY_PATH` y se elimina
-mediante el único step `if: always()`, también si falla el build.
+`macos-release.yml` recibe `version` estable y `source_sha` de la release Windows
+`v<version>` existente (borrador permitido). El preflight sigue sin secretos:
+comprueba ref, versión con `git show`, ancestría en `origin/main`, release/tag
+(incluidos tags anotados), ID de release y colisiones de DMG/checksum. Para un
+borrador todavía sin tag exige `target_commitish` igual al SHA completo, no una
+rama. No crea releases/tags ni cambia Windows/updater.
 
-Compila el SHA validado con `npm run app:build:mac` en `macos-15`, Node 22 y Rust
-stable nativos ARM64, con objetivo mínimo macOS **15.0**. Tauri firma con Developer
-ID y notariza; después se solicita explícitamente la notarización del DMG y se
-pega el ticket con `stapler`. Antes de subir nada se verifica el bundle ARM64,
-`codesign --verify --deep --strict`, autoridad `Developer ID Application` y team
-`SRD8T33RU5`, evaluación `spctl` de la app y del DMG, y `xcrun stapler validate`
-del DMG. El certificado documentado caduca el **2027-11-28**; esto no acredita
-que se haya usado correctamente ni que un artefacto publicado esté firmado.
+El build ARM64 nativo usa macOS 15, Node 22, Rust stable y mínimo macOS **15.0**.
+Solo recibe certificado, contraseña e identidad Developer ID. El helper elimina
+del entorno hijo **todas** las variables `APPLE_API_*`, `APPLE_ID`,
+`APPLE_PASSWORD` y `APPLE_TEAM_ID`, incluso si fueran heredadas. Según el código
+Tauri CLI 2.12.1 / bundler 2.10.1 revisado, la app se firma antes de detectar
+credenciales ausentes y omitir notarización; el DMG se firma por separado.
 
-Tras volver a validar la identidad de la release y sus colisiones, solo adjunta
-`Quorb_<version>_aarch64.dmg` y `Quorb_<version>_aarch64.dmg.sha256`, calculado sobre
-los bytes finales con ticket. No sobrescribe assets, no toca `latest.json` ni
-artefactos del updater. **Las actualizaciones de macOS siguen siendo manuales.**
+Tras verificar metadata/ARM64, integridad del DMG y firmas Developer ID de app y
+DMG (team `SRD8T33RU5`), guarda solo DMG firmado + `manifest.json` en
+`macos-notary-checkpoint-<run_id>-<attempt>`. Upload inmutable, retención **14 días**,
+antes de escribir `.p8` o llamar a Apple. El manifiesto liga repositorio, workflow
+path/SHA, source SHA, versión, release ID, run/attempt, nombre, tamaño y SHA256 de
+los bytes enviados. No contiene claves ni certificado privado.
 
-El intento 3 de la ejecución `40949608906` firmó la app, pero quedó esperando en
-`Notarizing` hasta su cancelación, sin respuesta visible de Apple; no publicó el
-DMG. Siguen pendientes la validación de Gatekeeper del DMG descargado en un Mac
-real y la comprobación de primera apertura
-con cuarentena de [#118](https://github.com/egdev6/quorb/issues/118), sin retirar
-la cuarentena. No acredita instalación, GUI ni un rango de macOS soportado.
-Ejecutar firma/notarización, crear tags, lanzar Release o publicar assets requiere
-aprobación separada; escribir esta configuración no autoriza esas operaciones.
+Solo después del upload, `notarytool submit` envía ese mismo DMG exterior sin
+`--wait`, sin polling ni retries. Es normal que el workflow **termine aquí**, no
+es una release completada. El UUID se imprime y resume; el artifact separado
+`macos-notary-receipt-<run_id>-<attempt>` guarda UUID, hash DMG y artifact ID/digest
+del checkpoint devueltos por upload. La `.p8` exclusiva `0600` en `RUNNER_TEMP` se
+elimina al salir y mediante cleanup `always()`. No hay permiso `contents: write`.
+
+### 2. Reanudar sin compilar ni volver a enviar
+
+Usar `macos-release-resume.yml` con `source_run_id`, `source_run_attempt`, la misma
+`version` y `source_sha`; normalmente dejar `submission_id` vacío. Requiere nueva
+autorización para consultar Apple. No requiere certificado Developer ID privado,
+solo las tres credenciales API en el step de consulta.
+
+Antes de usar esas credenciales valida el run propio/headrepo, `main`, evento,
+workflow path/ID y SHA ancestro aprobado; exige además bytes del workflow productor
+iguales a la fuente revisada actual. No acepta un productor antiguo/incompatible.
+Resuelve artifacts por run/attempt, nombre único, ID, vínculos API, tiempos de
+intento y expiración; **un run cancelado con checkpoint válido es recuperable**.
+Exige run terminado, no conclusión `success`. Descarga ZIP crudo con API autenticada,
+verifica fatalmente su digest antes de extraer y admite solo archivos esperados:
+sin rutas, symlinks, duplicados, extras, bombas o tamaños excesivos (DMG ≤512 MiB).
+No usa el comportamiento warning-only de download-artifact. Compara manifiesto con
+valores externos de run/preflight, no con sus propias declaraciones.
+
+- `In Progress`: outcome **pending**, sin staple ni publicación; consultar después.
+- `Accepted` sin log disponible: **pending**, no release completada.
+- `Invalid`/`Rejected`: muestra issues JSON acotados/saneados y falla; no reenvía.
+- `Accepted`: el log debe contener `jobId` igual al UUID y `sha256` igual al DMG
+  **previo** al staple. Ausente o distinto falla cerrado. El fixture `log.sha256`
+  es **sintético**, no prueba que Apple real entregue ese campo; debe verificarse
+  en una ejecución autorizada, nunca omitir el gate para conseguir verde.
+
+Después de Accepted grapa **solo el DMG retenido**; Apple procesa tickets de los
+contenedores anidados. No recompila, re-firma, pega tickets a la app ni reempaqueta.
+Verifica firma/ticket del DMG y Gatekeeper; lo monta con `hdiutil attach -readonly
+-nobrowse -plist` en un directorio controlado. Analiza plist real, valida entidades
+y solo la `Quorb.app` contenida: rutas/symlinks, Developer ID/team, bundle ID
+`es.egdev.quorb`, versión, ARM64 y mínimo macOS 15.0; exige Gatekeeper de esa app.
+Siempre intenta desmontar. Un error de red/Gatekeeper o cleanup falla cerrado.
+
+### 3. Autorizar publicación por separado
+
+Dispatch manual **no basta**: `publish` es `false` por defecto. Solo con
+`publish: true`, outcome Accepted verificado y Environment aprobado puede arrancar
+el job de publicación, único con `contents: write`. Los demás jobs usan lectura.
+Un ZIP final inmutable se vuelve a validar por ID/digest y hash final ligado a
+outputs del job verificador. Revalida release ID y colisiones justo antes de
+adjuntar exclusivamente DMG y `.dmg.sha256`, sin overwrite. Si falla checksum,
+rollback solo puede borrar el ID del DMG subido por esa invocación, nunca un asset
+preexistente. Una respuesta ambigua requiere inspección manual.
+
+Son tres hashes distintos: **ZIP del artifact**, **DMG enviado**, **DMG final con
+ticket**. No toca `latest.json`; **updates macOS siguen manuales**. Una ejecución
+solo de verificación conserva el artifact final, no publica. Para publicar más
+tarde se autoriza otro resume con `publish: true`, repitiendo todas las puertas.
+
+### Cancelación, ambigüedad y expiración
+
+Conservar run ID/attempt, checkpoint ID/digest y UUID. Si se interrumpe submit antes
+del recibo, el checkpoint sigue retenido: usar diagnostics/history/info/log para
+investigar, **no rerun/retry de submit** ni asumir vínculo por nombre/fecha. El
+UUID candidato se puede pasar como `submission_id` únicamente para recuperación;
+solo el log Apple con UUID y hash coincidentes puede autorizar continuación.
+
+Tras **14 días**, o si el artifact fue borrado, resume falla: no reconstruye ni
+sustituye bytes automáticamente. Acordar recuperación por separado. El intento 3
+del run `40949608906`, anterior a este protocolo, esperó en Tauri `Notarizing`
+hasta cancelación y no publicó DMG; no se presume que tenga checkpoint recuperable.
+
+Esta corrección solo tiene pruebas Linux con procesos/HTTP/filesystem simulados
+y ZIP/plist sintéticos. No se ha ejecutado firma, Apple, upload/download real ni
+Gatekeeper nativo. Certificado documentado: caduca **2027-11-28**, sin afirmar su
+validez actual. Siguen pendientes Mac real, primera apertura con cuarentena y GUI
+de [#118](https://github.com/egdev6/quorb/issues/118), sin retirar cuarentena.
+Preparar código no autoriza dispatch, publicación, cambios de Environment ni tags.
 
 ## Consultar una notarización sin reenviarla
 

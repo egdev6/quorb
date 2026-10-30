@@ -38,30 +38,61 @@ at that SHA, ancestry in `origin/main`, release/tag and absence of asset collisi
 For a draft without a tag, `target_commitish` must equal the full SHA, not a branch.
 It does not modify the Windows workflow or create releases or tags.
 
-The dependent signing job uses the protected `macos-signing` environment (reviewer
-`egdev6`, deployment branch `main`). Its secrets are `APPLE_CERTIFICATE`,
-`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`,
-`APPLE_API_KEY` and `APPLE_API_KEY_P8`. They are exposed only to the key preparation
-and build/sign steps, never at job or workflow level. The `.p8` content is written
-to a private `0600` file under `RUNNER_TEMP`, passed to Tauri as
-`APPLE_API_KEY_PATH` and removed even after failure.
+The dependent signing job retains the protected `macos-signing` environment
+(reviewer `egdev6`, branch `main`), without changing its rules. The build receives
+only `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` and
+`APPLE_SIGNING_IDENTITY`. Its child environment removes all `APPLE_API_*`,
+`APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` credentials: Tauri signs but skips
+automatic notarization. Builds target ARM64 and minimum macOS 15.0.
 
-It builds the validated SHA for ARM64 with minimum macOS 15.0, signs with Developer
-ID, notarizes and staples the DMG ticket. Before upload it requires
-`codesign --verify --deep --strict`, the app's `Developer ID Application` authority
-and team `SRD8T33RU5`, `spctl` assessment of the app and DMG, and
-`xcrun stapler validate` on the DMG. The documented Developer ID certificate expires
-on **2027-11-28**. After revalidating the release, it attaches only
-`Quorb_<version>_aarch64.dmg` and its `.dmg.sha256` file without overwriting assets;
-it does not modify `latest.json` or updater artifacts. macOS updates remain
-**manual**.
+After verifying app and DMG Developer ID signatures, authority and team
+`SRD8T33RU5`, it retains only the signed DMG and strict manifest **before** writing
+any `.p8` or submitting to Apple. Immutable checkpoint:
+`macos-notary-checkpoint-<run_id>-<attempt>`, retention **14 days**. It then submits
+the outer DMG once without `--wait`, storing the UUID and a separate
+`macos-notary-receipt-<run_id>-<attempt>` with checkpoint artifact ID/digest.
+**Stopping after submit is normal, not a completed release.** No submit retries.
+Only the submit step receives `APPLE_API_KEY_P8`, `APPLE_API_KEY` and
+`APPLE_API_ISSUER`; exclusive `0600` key under `RUNNER_TEMP`, cleanup on exit and
+`always()` fallback. No secrets at job/workflow level.
 
-**This workflow has not been executed yet.** Actual signing/notarization,
-Gatekeeper validation of the downloaded DMG on a real Mac, and the first-open
-check with quarantine from [#118](https://github.com/egdev6/quorb/issues/118) remain
-pending. Do not remove quarantine to pass that check. Configuration does not prove
-support, installation or GUI functionality; running the workflow, creating tags
-or publishing assets requires separate approval.
+The [separate resume workflow](../.github/workflows/macos-release-resume.yml)
+accepts producer run ID, attempt, version and source SHA. Before Apple credentials,
+it authenticates own-repository/main/workflow/approved-SHA provenance, fatal ZIP
+digest, extraction allowlist and manifest against external trusted values. It
+needs no private Developer ID certificate and never rebuilds, re-signs or
+resubmits. `In Progress` or Accepted without an available log is **pending**, with
+no publication; rejection reports sanitized issues and fails. Accepted requires
+Apple log `jobId` and `sha256` to match the UUID and original DMG. That hash field
+has only a **synthetic** fixture, not real Apple evidence; absence fails closed.
+
+It staples only the retained DMG, checks signature/ticket and Gatekeeper, mounts
+readonly using a real plist parser, and verifies the contained `Quorb.app`
+(authority/team, bundle ID, version, ARM64, minimum OS, paths/symlinks and
+Gatekeeper). It always attempts detach, never repackages the app. Final SHA256 is
+separate from input DMG hash and artifact ZIP digest. The documented certificate
+expires **2027-11-28**, without asserting current validity.
+
+`publish` defaults to **false**: dispatch alone is not publication authorization.
+Only explicit `publish: true`, verified Accepted outcome and Environment approval
+enable the sole `contents: write` job; other jobs are read-only. It revalidates
+release ID and asset collisions and attaches only `Quorb_<version>_aarch64.dmg`
+and `.dmg.sha256` without overwrite. Rollback can delete only its own newly
+uploaded asset ID, never preexisting names. No `latest.json` or updater changes;
+macOS updates remain **manual**.
+
+A canceled producer with a valid checkpoint is recoverable without an overall
+successful run. If interrupted submit is ambiguous before receipt persistence,
+investigate via diagnostics/history/info/log: **never resubmit or link by name**.
+Optional recovery `submission_id` authorizes continuation only after Apple log
+UUID/hash binding. Expired/deleted artifacts require a separate recovery decision,
+not an automatic rebuild. See [the operational guide](./build-macos.md#release-macos-reanudable-preparación-local-runtime-pendiente).
+
+**This correction has not run against Apple or real macOS.** Linux tests simulate
+processes, HTTP and files. Downloaded-DMG Gatekeeper, first open with quarantine
+from [#118](https://github.com/egdev6/quorb/issues/118), and GUI checks remain
+pending; do not remove quarantine. Configuration proves neither support nor
+installation. Dispatch, publication and Environment changes need separate approval.
 
 ## Responsibilities
 
