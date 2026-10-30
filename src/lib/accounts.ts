@@ -1,6 +1,7 @@
 // Cuentas adicionales de un proveedor (src-tauri/src/config.rs › Account).
 import type { Account, AccountProvider, AppConfig, ScopedSecretKey, SecretKey, SecretStatus } from './types';
 import { ownedHomeDir } from './app-identity';
+import type { MessageKey } from '../i18n';
 
 /** Proveedor de un id de informe: `claude` o `claude:trabajo` → `claude`. */
 export const providerOf = (id: string): string => id.split(':')[0];
@@ -17,11 +18,17 @@ export const SESSION_DIR: Partial<Record<AccountProvider, { env: string; file: s
   grok: { env: 'GROK_HOME', file: 'auth.json' },
 };
 
+/**
+ * Desde dónde se instala: un nombre propio (`where`, no se traduce) o la clave del
+ * catálogo de un texto que sí (`whereKey`), nunca los dos.
+ */
+type CliInstallWhere = { where: string; whereKey?: undefined } | { whereKey: MessageKey; where?: undefined };
+
 /** Cómo instalar el CLI con el que se inicia sesión (si falta en el equipo). */
-export const CLI_INSTALL: Partial<Record<AccountProvider, { name: string; cmd: string; where: string; needs?: string }>> = {
+export const CLI_INSTALL: Partial<Record<AccountProvider, { name: string; cmd: string; needs?: string } & CliInstallWhere>> = {
   claude: { name: 'Claude Code', cmd: 'irm https://claude.ai/install.ps1 | iex', where: 'PowerShell' },
-  codex: { name: 'Codex CLI', cmd: 'npm install -g @openai/codex', where: 'una terminal', needs: 'Node.js' },
-  gemini: { name: 'Gemini CLI', cmd: 'npm install -g @google/gemini-cli', where: 'una terminal', needs: 'Node.js' },
+  codex: { name: 'Codex CLI', cmd: 'npm install -g @openai/codex', whereKey: 'settings.providers.cliMissing.terminal', needs: 'Node.js' },
+  gemini: { name: 'Gemini CLI', cmd: 'npm install -g @google/gemini-cli', whereKey: 'settings.providers.cliMissing.terminal', needs: 'Node.js' },
 };
 
 /** Carpeta por defecto (igual que `Account::session_dir`). */
@@ -82,6 +89,7 @@ export const ACCOUNT_SECRETS: Record<AccountProvider, SecretKey[]> = {
   nan: ['nan_api_key', 'nan_session'],
   openrouter: ['openrouter_api_key'],
   zai: ['zai_api_key'],
+  opencode_go: ['opencode_go_api_key'],
   anthropic_api: ['anthropic_admin_key'],
   openai_api: ['openai_admin_key'],
   // Los sub-proveedores de 9Router comparten la sesión del dashboard (no scoped).
@@ -104,6 +112,8 @@ export function accountReady(a: Account, s: SecretStatus): boolean {
       return has('nan_session') || has('nan_api_key');
     case 'openrouter':
       return has('openrouter_api_key');
+    case 'opencode_go':
+      return has('opencode_go_api_key');
     case 'anthropic_api':
       return has('anthropic_admin_key');
     case 'openai_api':

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
@@ -40,6 +40,7 @@ const LINKS = {
   minimaxKeys: 'https://www.minimax.io/',
   minimaxKeysCn: 'https://www.minimaxi.com/',
   zaiKeys: 'https://z.ai/manage-apikey/apikey-list',
+  opencodeConsole: 'https://opencode.ai/console',
   geminiCli: 'https://github.com/google-gemini/gemini-cli',
   grokCli: 'https://x.ai/',
   releases: 'https://github.com/egdev6/quorb/releases',
@@ -558,7 +559,7 @@ const numOrNull = (s: string) => {
 const strOrNull = (s: string) => (s.trim() === '' ? null : s);
 
 /** Aviso de que falta el CLI con el que se inicia sesión, con la orden para instalarlo. */
-function CliMissing({ provider }: { provider: AccountProvider }) {
+export function CliMissing({ provider, locale = 'es' }: { provider: AccountProvider; locale?: Locale }) {
   const how = CLI_INSTALL[provider];
   const [copied, setCopied] = useState(false);
   if (!how) return null;
@@ -573,13 +574,16 @@ function CliMissing({ provider }: { provider: AccountProvider }) {
   return (
     <div className="eg-notice eg-notice--sm eg-notice--warning q-cli" role="status">
       <span className="eg-notice__text">
-        <b>Falta {how.name} en este equipo.</b> Quorb inicia sesión con su login oficial. Instálalo desde {how.where}
-        {how.needs ? ` (necesita ${how.needs})` : ''}; Quorb lo detecta solo al terminar.
+        <b>{t(locale, 'settings.providers.cliMissing.title', { name: how.name })}</b>{' '}
+        {t(locale, 'settings.providers.cliMissing.body', {
+          where: how.whereKey ? t(locale, how.whereKey) : how.where,
+          needs: how.needs ? t(locale, 'settings.providers.cliMissing.needs', { needs: how.needs }) : '',
+        })}
       </span>
       <span className="q-cli__cmd">
         <code>{how.cmd}</code>
         <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={copy}>
-          {copied ? 'Copiado' : 'Copiar'}
+          {copied ? t(locale, 'settings.providers.cliMissing.copied') : t(locale, 'settings.providers.cliMissing.copy')}
         </button>
       </span>
     </div>
@@ -604,18 +608,20 @@ type HealthProps = {
   onLogin?: () => void;
   /** `true` mientras `onLogin` está en curso: deshabilita el CTA (single-flight). */
   loginBusy?: boolean;
+  /** Idioma del paso (`es` si no se indica). */
+  locale?: Locale;
 };
 
-type Health = { phase: 'checking' } | { phase: 'done'; report: UsageReport | null } | { phase: 'failed'; error: string };
+export type Health = { phase: 'checking' } | { phase: 'done'; report: UsageReport | null } | { phase: 'failed'; error: string };
 
-function healthSummary(r: UsageReport): string {
+export function healthSummary(r: UsageReport, locale: Locale = 'es'): string {
   const peak = peakMeter(r);
   const data =
     peak?.percent != null
-      ? `${peak.label} al ${formatPercent(peak.percent)}`
+      ? t(locale, 'settings.providers.health.peakAt', { label: peak.label, percent: formatPercent(peak.percent) })
       : r.spend
         ? `${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`
-        : 'Datos recibidos';
+        : t(locale, 'settings.providers.health.dataReceived');
   return r.plan ? `${r.plan} · ${data}` : data;
 }
 
@@ -623,7 +629,7 @@ function healthSummary(r: UsageReport): string {
  * Último paso de cada proveedor y cuenta: consulta la cuenta con lo guardado y dice si
  * funciona y, si no, por qué (sesión caducada, clave rechazada, falta un dato…).
  */
-function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLogin, loginBusy, refreshKey }: HealthProps & { id: string; refreshKey?: unknown }) {
+function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLogin, loginBusy, refreshKey, locale = 'es' }: HealthProps & { id: string; refreshKey?: unknown }) {
   const [h, setH] = useState<Health>({ phase: 'checking' });
   const [busy, setBusy] = useState(false);
   const seq = useRef(0);
@@ -649,6 +655,39 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
     return () => window.clearTimeout(t);
   }, [run, saved, secretsSig, refreshKey]);
 
+  return (
+    <HealthStepView
+      locale={locale}
+      h={h}
+      hidden={hidden}
+      dirty={dirty}
+      busy={busy}
+      saving={saving}
+      loginBusy={loginBusy}
+      onRun={run}
+      onSave={() => {
+        setBusy(true);
+        onSave().finally(() => setBusy(false));
+      }}
+      onLogin={onLogin}
+    />
+  );
+}
+
+/** Vista del paso de comprobación a partir de su estado. Extraída para poder
+ *  renderizar en pruebas cada estado con el locale explícito. */
+export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBusy, onRun, onSave, onLogin }: {
+  locale: Locale;
+  h: Health;
+  hidden: boolean;
+  dirty: boolean;
+  busy: boolean;
+  saving: boolean;
+  loginBusy?: boolean;
+  onRun: () => void;
+  onSave: () => void;
+  onLogin?: () => void;
+}) {
   const r = h.phase === 'done' ? h.report : null;
   const hasData = !!r && (r.meters.length > 0 || !!r.spend);
   const state =
@@ -663,19 +702,20 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
             : r.status === 'error'
               ? 'error'
               : 'warn';
-  const title = {
-    checking: 'Comprobando la conexión…',
-    ok: 'Funciona',
-    todo: 'Falta completar un paso',
-    warn: r?.status === 'needsLogin' ? 'Sin sesión' : 'Atención',
-    error: 'No funciona',
-  }[state];
+  const titleKey: Record<typeof state, MessageKey> = {
+    checking: 'settings.providers.health.checking',
+    ok: 'settings.providers.health.ok',
+    todo: 'settings.providers.health.todo',
+    warn: r?.status === 'needsLogin' ? 'settings.providers.health.needsLogin' : 'settings.providers.health.warn',
+    error: 'settings.providers.health.error',
+  };
+  const title = t(locale, titleKey[state]);
   // El fallo de la comprobación no pisa el diagnóstico del guardado (vive en `saved`).
   const message =
     h.phase === 'failed'
-      ? `No se pudo comprobar ahora: ${h.error}. Vuelve a intentarlo.`
+      ? t(locale, 'settings.providers.health.failed', { error: h.error })
       : !r
-        ? 'Guarda los cambios para comprobar esta cuenta.'
+        ? t(locale, 'settings.providers.health.saveToCheck')
         : r.message;
 
   return (
@@ -683,33 +723,25 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
       <b>{title}</b>
       {state === 'ok' && r && (
         <span>
-          {healthSummary(r)}
-          {hidden && ' · oculta en el widget'}
+          {healthSummary(r, locale)}
+          {hidden && t(locale, 'settings.providers.health.hiddenSuffix')}
         </span>
       )}
-      {state === 'checking' && <span>Consultando con lo guardado…</span>}
+      {state === 'checking' && <span>{t(locale, 'settings.providers.health.consulting')}</span>}
       {message && state !== 'checking' && (
         <span className={`eg-notice eg-notice--sm eg-notice--${state === 'ok' ? 'info' : state === 'error' ? 'danger' : 'warning'} q-steps__notice`} role={state === 'ok' ? undefined : 'alert'}>
           <span className="eg-notice__text">{message}</span>
         </span>
       )}
-      {dirty && <span className="q-note">Tienes cambios sin guardar: la comprobación usa lo guardado.</span>}
+      {dirty && <span className="q-note">{t(locale, 'settings.providers.health.dirtyNote')}</span>}
       <span className="q-steps__actions">
         {dirty ? (
-          <button
-            type="button"
-            className="eg-btn eg-btn--secondary eg-btn--sm"
-            disabled={busy || saving}
-            onClick={() => {
-              setBusy(true);
-              onSave().finally(() => setBusy(false));
-            }}
-          >
-            Guardar y comprobar
+          <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={busy || saving} onClick={onSave}>
+            {t(locale, 'settings.providers.health.saveAndCheck')}
           </button>
         ) : (
-          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" disabled={state === 'checking'} onClick={run}>
-            Comprobar ahora
+          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" disabled={state === 'checking'} onClick={onRun}>
+            {t(locale, 'settings.providers.health.checkNow')}
           </button>
         )}
         {state === 'warn' && r?.status === 'needsLogin' && onLogin && (
@@ -719,7 +751,7 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
             disabled={busy || saving || loginBusy}
             onClick={onLogin}
           >
-            Iniciar sesión
+            {t(locale, 'settings.providers.health.login')}
           </button>
         )}
       </span>
@@ -752,6 +784,7 @@ function useCliSession(id: string, active: boolean): boolean {
  * adicional: instalar el CLI si falta, iniciar sesión y comprobar que funciona.
  */
 function CliConnect({
+  locale,
   id,
   provider,
   loginCommand,
@@ -762,6 +795,8 @@ function CliConnect({
   codexInstall,
   onCodexRecheck,
 }: {
+  /** Idioma de los pasos. */
+  locale: Locale;
   id: string;
   provider: AccountProvider;
   loginCommand: string;
@@ -798,27 +833,87 @@ function CliConnect({
     }
   };
   return (
+    <CliConnectView
+      locale={locale}
+      id={id}
+      provider={provider}
+      loginCommand={loginCommand}
+      cliMissing={cliMissing}
+      persisted={persisted}
+      extra={extra}
+      health={health}
+      codexInstall={codexInstall}
+      onCodexRecheck={onCodexRecheck}
+      connected={connected}
+      busy={busy}
+      loginError={loginError}
+      onConnect={connect}
+    />
+  );
+}
+
+/** Vista de los pasos de conexión por CLI a partir de su estado. Extraída para
+ *  poder renderizar en pruebas cada estado con el locale explícito. */
+export function CliConnectView({
+  locale,
+  id,
+  provider,
+  loginCommand,
+  cliMissing,
+  persisted,
+  extra,
+  health,
+  codexInstall,
+  onCodexRecheck,
+  connected,
+  busy,
+  loginError,
+  onConnect,
+}: {
+  locale: Locale;
+  id: string;
+  provider: AccountProvider;
+  loginCommand: string;
+  cliMissing: boolean;
+  persisted: boolean;
+  extra: boolean;
+  health: HealthProps;
+  codexInstall: CodexInstallController;
+  onCodexRecheck: () => void;
+  /** Hay fichero de sesión del CLI. */
+  connected: boolean;
+  /** Hay un login o guardado en curso. */
+  busy: boolean;
+  /** Diagnóstico del último intento de login que falló. */
+  loginError: string | null;
+  onConnect: () => void;
+}) {
+  return (
     <>
       {cliMissing && (
         <li>
-          <b>Instala {CLI_INSTALL[provider]?.name ?? 'su CLI'}</b>
-          <span>Hace falta para iniciar sesión y para renovarla cuando caduque, aunque ahora funcione.</span>
-          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} />}
+          <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
+          <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
+          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
         </li>
       )}
       <li data-done={connected || undefined}>
-        <b>{connected ? 'Fichero de sesión encontrado' : extra ? 'Inicia sesión con la otra cuenta' : 'Inicia sesión'}</b>
+        <b>{connected ? t(locale, 'settings.providers.cliConnect.sessionFound') : extra ? t(locale, 'settings.providers.cliConnect.loginOther') : t(locale, 'settings.providers.cliConnect.login')}</b>
         <span>
-          Se abre una terminal con <code>{loginCommand}</code>
-          {provider === 'claude' && <> (si no te lo pide, escribe <code>/login</code>)</>}
-          {provider === 'gemini' && <> (elige «Login with Google»)</>}. El navegador hace el login oficial y el CLI guarda la sesión, que
-          Quorb solo lee.
-          {connected && ' El fichero existe, pero no confirma que la sesión siga siendo válida: míralo en la comprobación de abajo.'}
-          {extra && ' Entra con la cuenta que quieres añadir, no con la principal: si el navegador ya tiene abierta la principal, usa una ventana privada.'}
+          {t(locale, 'settings.providers.cliConnect.opensTerminal')}{' '}
+          <code>{loginCommand}</code>
+          {provider === 'claude' && <>{t(locale, 'settings.providers.cliConnect.claudeLoginHint')} <code>/login</code>)</>}
+          {provider === 'gemini' && <>{t(locale, 'settings.providers.cliConnect.geminiLoginHint')}</>}{t(locale, 'settings.providers.cliConnect.browserLogin')}
+          {connected && t(locale, 'settings.providers.cliConnect.fileExists')}
+          {extra && t(locale, 'settings.providers.cliConnect.extraNote')}
         </span>
         <span className="q-steps__actions">
-          <button className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`} disabled={busy || cliMissing || health.saving} onClick={connect}>
-            {connected ? 'Volver a abrir el login' : effectivePersisted(persisted, health.dirty) ? 'Iniciar sesión' : 'Guardar e iniciar sesión'}
+          <button className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`} disabled={busy || cliMissing || health.saving} onClick={onConnect}>
+            {connected
+              ? t(locale, 'settings.providers.cliConnect.reopenLogin')
+              : effectivePersisted(persisted, health.dirty)
+                ? t(locale, 'settings.providers.cliConnect.signIn')
+                : t(locale, 'settings.providers.cliConnect.saveAndSignIn')}
           </button>
         </span>
         {loginError && (
@@ -828,11 +923,11 @@ function CliConnect({
         )}
       </li>
       {persisted ? (
-        <HealthStep id={id} {...health} onLogin={connect} loginBusy={busy} refreshKey={connected} />
+        <HealthStep id={id} {...health} onLogin={onConnect} loginBusy={busy} refreshKey={connected} />
       ) : (
         <li>
-          <b>Comprobación</b>
-          <span>Se hace sola en cuanto guardes e inicies sesión.</span>
+          <b>{t(locale, 'settings.providers.checkTitle')}</b>
+          <span>{t(locale, 'settings.providers.cliConnect.checkAuto')}</span>
         </li>
       )}
     </>
@@ -840,7 +935,8 @@ function CliConnect({
 }
 
 /** Configuración de una cuenta adicional: nombre, si se muestra y cómo se conecta, en pasos. */
-function AccountEditor({
+export function AccountEditor({
+  locale,
   account: a,
   visible,
   onVisibility,
@@ -855,6 +951,8 @@ function AccountEditor({
   codexInstall,
   onCodexRecheck,
 }: {
+  /** Idioma del editor. */
+  locale: Locale;
   account: Account;
   visible: boolean;
   onVisibility: (enabled: boolean) => void;
@@ -882,40 +980,40 @@ function AccountEditor({
     <HealthStep id={a.id} {...health} />
   ) : (
     <li>
-      <b>Comprobación</b>
-      <span>Guarda la cuenta para comprobar que funciona.</span>
+      <b>{t(locale, 'settings.providers.checkTitle')}</b>
+      <span>{t(locale, 'settings.providers.accountEditor.checkSave')}</span>
       <span className="q-steps__actions">
         <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={health.saving} onClick={() => void health.onSave()}>
-          Guardar y comprobar
+          {t(locale, 'settings.providers.health.saveAndCheck')}
         </button>
       </span>
     </li>
   );
   return (
-    <Section kicker="Cuenta adicional" title={a.label}>
+    <Section kicker={t(locale, 'settings.providers.accountEditor.kicker')} title={a.label}>
       <div className="q-cols">
-        <Field label="Nombre" hint="Se ve en la tira junto al proveedor.">
+        <Field label={t(locale, 'settings.providers.accountEditor.nameLabel')} hint={t(locale, 'settings.providers.accountEditor.nameHint')}>
           <input type="text" value={a.label} onChange={(e) => onChange({ label: e.target.value })} />
         </Field>
       </div>
-      <Toggle label="Mostrar en el widget" checked={visible} onChange={onVisibility} />
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={visible} onChange={onVisibility} />
 
-      <ol className="q-steps" aria-label="Cómo conectar esta cuenta">
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.accountEditor.stepsAria')}>
         <li data-done={a.label.trim() !== '' || undefined}>
-          <b>Ponle nombre</b>
-          <span>Arriba, para distinguirla de la principal en la tira (por ejemplo, «Trabajo»).</span>
+          <b>{t(locale, 'settings.providers.accountEditor.nameStep')}</b>
+          <span>{t(locale, 'settings.providers.accountEditor.nameStepBody')}</span>
         </li>
 
         {session && (
-          <CliConnect id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} />
+          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} />
         )}
 
         {a.provider === 'cursor' && (
           <>
             <li data-done={has('cursor_token') || undefined}>
-              <b>Pega el token de esta cuenta</b>
-              <span>La app de Cursor guarda una sola sesión (la principal). Entra en cursor.com con esta cuenta y copia la cookie WorkosCursorSessionToken.</span>
-              <SecretInput id={key('cursor_token')} label="Token de la cuenta" configured={has('cursor_token')} onSaved={onSecrets} />
+              <b>{t(locale, 'settings.providers.accountEditor.cursorTokenTitle')}</b>
+              <span>{t(locale, 'settings.providers.accountEditor.cursorTokenBody')}</span>
+              <SecretInput locale={locale} id={key('cursor_token')} label={t(locale, 'settings.providers.accountEditor.cursorTokenLabel')} configured={has('cursor_token')} onSaved={onSecrets} />
             </li>
             {check}
           </>
@@ -924,36 +1022,37 @@ function AccountEditor({
         {a.provider === 'copilot' && (
           <>
             <li data-done={a.username.trim() !== '' || undefined}>
-              <b>Usuario y plan de GitHub</b>
+              <b>{t(locale, 'settings.providers.accountEditor.copilotUserPlan')}</b>
               <div className="q-cols">
-                <Field label="Usuario de GitHub">
+                <Field label={t(locale, 'settings.providers.accountEditor.githubUser')}>
                   <input type="text" spellCheck={false} value={a.username} onChange={(e) => onChange({ username: e.target.value })} />
                 </Field>
-                <Field label="Plan">
+                <Field label={t(locale, 'settings.providers.planLabel')}>
                   <select value={a.plan || 'pro'} onChange={(e) => onChange({ plan: e.target.value })}>
                     <option value="free">Free · 50</option>
                     <option value="pro">Pro · 300</option>
                     <option value="pro_plus">Pro+ · 1500</option>
                     <option value="business">Business · 300</option>
                     <option value="enterprise">Enterprise · 1000</option>
-                    <option value="custom">Otra cantidad</option>
+                    <option value="custom">{t(locale, 'settings.providers.accountEditor.planCustom')}</option>
                   </select>
                 </Field>
               </div>
               {a.plan === 'custom' && (
-                <Field label="Peticiones premium incluidas al mes">
+                <Field label={t(locale, 'settings.providers.accountEditor.customAllowance')}>
                   <input type="number" min={1} value={a.customAllowance ?? ''} onChange={(e) => onChange({ customAllowance: numOrNull(e.target.value) })} />
                 </Field>
               )}
             </li>
             <li data-done={has('github_token') || undefined}>
-              <b>Token de solo lectura</b>
+              <b>{t(locale, 'settings.providers.accountEditor.readOnlyToken')}</b>
               <SecretInput
+                locale={locale}
                 id={key('github_token')}
-                label="Token de GitHub de esta cuenta (fine-grained)"
+                label={t(locale, 'settings.providers.accountEditor.githubTokenLabel')}
                 configured={has('github_token')}
                 onSaved={onSecrets}
-                hint={<>Créalo con esta cuenta en <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> con el permiso «Plan» (solo lectura).</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.githubTokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> {t(locale, 'settings.providers.accountEditor.githubTokenPermission')}</>}
               />
             </li>
             {check}
@@ -963,13 +1062,13 @@ function AccountEditor({
         {a.provider === 'nan' && (
           <>
             <li data-done={has('nan_session') || has('nan_api_key') || undefined}>
-              <b>Conecta la cuenta o pega una API key</b>
+              <b>{t(locale, 'settings.providers.accountEditor.nanTitle')}</b>
               <NanConnect account={a.id} connected={has('nan_session')} onChange={onSecrets} />
-              <SecretInput id={key('nan_api_key')} label="API key (alternativa)" configured={has('nan_api_key')} onSaved={onSecrets} />
+              <SecretInput locale={locale} id={key('nan_api_key')} label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')} configured={has('nan_api_key')} onSaved={onSecrets} />
             </li>
             <li data-done>
-              <b>Plan</b>
-              <Field label="Plan" hint="La URL base y el resto de ajustes avanzados son los de la cuenta principal.">
+              <b>{t(locale, 'settings.providers.planLabel')}</b>
+              <Field label={t(locale, 'settings.providers.planLabel')} hint={t(locale, 'settings.providers.accountEditor.nanPlanHint')}>
                 <select value={a.plan || 'member'} onChange={(e) => onChange({ plan: e.target.value })}>
                   <option value="community">nan_community</option>
                   <option value="member">nan_member</option>
@@ -984,13 +1083,14 @@ function AccountEditor({
         {a.provider === 'openrouter' && (
           <>
             <li data-done={has('openrouter_api_key') || undefined}>
-              <b>API key</b>
+              <b>{t(locale, 'settings.providers.apiKey')}</b>
               <SecretInput
+                locale={locale}
                 id={key('openrouter_api_key')}
-                label="API key"
+                label={t(locale, 'settings.providers.apiKey')}
                 configured={has('openrouter_api_key')}
                 onSaved={onSecrets}
-                hint={<>Puede ser de otra cuenta o de la misma con otro límite. <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link></>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.openrouterHint')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link></>}
               />
             </li>
             {check}
@@ -1000,13 +1100,31 @@ function AccountEditor({
         {a.provider === 'zai' && (
           <>
             <li data-done={has('zai_api_key') || undefined}>
-              <b>API key</b>
+              <b>{t(locale, 'settings.providers.apiKey')}</b>
               <SecretInput
+                locale={locale}
                 id={key('zai_api_key')}
-                label="API key"
+                label={t(locale, 'settings.providers.apiKey')}
                 configured={has('zai_api_key')}
                 onSaved={onSecrets}
-                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+              />
+            </li>
+            {check}
+          </>
+        )}
+
+        {a.provider === 'opencode_go' && (
+          <>
+            <li data-done={has('opencode_go_api_key') || undefined}>
+              <b>{t(locale, 'settings.providers.apiKey')}</b>
+              <SecretInput
+                locale={locale}
+                id={key('opencode_go_api_key')}
+                label={t(locale, 'settings.providers.accountEditor.apiKeyOf', { name: 'OpenCode Go' })}
+                configured={has('opencode_go_api_key')}
+                onSaved={onSecrets}
+                hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
               />
             </li>
             {check}
@@ -1016,18 +1134,19 @@ function AccountEditor({
         {(a.provider === 'anthropic_api' || a.provider === 'openai_api') && (
           <>
             <li data-done={has(adminKey) || undefined}>
-              <b>Admin key de esta organización</b>
+              <b>{t(locale, 'settings.providers.accountEditor.adminKeyTitle')}</b>
               <SecretInput
+                locale={locale}
                 id={key(adminKey)}
-                label="Admin key"
+                label={t(locale, 'settings.providers.accountEditor.adminKey')}
                 configured={has(adminKey)}
                 onSaved={onSecrets}
-                hint={<>Cada organización tiene su propia <Link href={a.provider === 'anthropic_api' ? LINKS.anthropicAdmin : LINKS.openaiAdmin}>Admin key</Link>.</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.adminKeyOwn')} <Link href={a.provider === 'anthropic_api' ? LINKS.anthropicAdmin : LINKS.openaiAdmin}>{t(locale, 'settings.providers.accountEditor.adminKey')}</Link>.</>}
               />
             </li>
             <li data-done={a.monthlyBudgetUsd != null || undefined}>
-              <b>Presupuesto mensual (opcional)</b>
-              <Field label="USD al mes">
+              <b>{t(locale, 'settings.providers.accountEditor.budgetTitle')}</b>
+              <Field label={t(locale, 'settings.providers.accountEditor.budgetLabel')}>
                 <input type="number" min={0} step="any" value={a.monthlyBudgetUsd ?? ''} onChange={(e) => onChange({ monthlyBudgetUsd: numOrNull(e.target.value) })} />
               </Field>
             </li>
@@ -1038,12 +1157,15 @@ function AccountEditor({
 
       {session && (
         <details className="q-details">
-          <summary>Avanzado · carpeta de sesión</summary>
+          <summary>{t(locale, 'settings.providers.accountEditor.advanced')}</summary>
           <p className="q-note">
-            Cada cuenta guarda su sesión en su propia carpeta, así no toca la principal: el login se abre con <code>{session.env}</code>{' '}
-            apuntando a ella. Si la comprobación pide renovar la sesión, «Volver a abrir el login» abre de nuevo el CLI.
+            {t(locale, 'settings.providers.accountEditor.sessionNoteBefore')} <code>{session.env}</code>{' '}
+            {t(locale, 'settings.providers.accountEditor.sessionNoteAfter', { reopen: t(locale, 'settings.providers.cliConnect.reopenLogin') })}
           </p>
-          <Field label="Carpeta de sesión" hint={<>Vacío = <code>{defaultSessionDir(a, appName)}</code>. Puedes usar una que ya tengas. Quorb lee <code>{session.file}</code> dentro de ella.</>}>
+          <Field
+            label={t(locale, 'settings.providers.accountEditor.sessionDir')}
+            hint={<>{t(locale, 'settings.providers.accountEditor.sessionDirEmpty')} <code>{defaultSessionDir(a, appName)}</code>{t(locale, 'settings.providers.accountEditor.sessionDirMiddle')} <code>{session.file}</code> {t(locale, 'settings.providers.accountEditor.sessionDirEnd')}</>}
+          >
             <input type="text" spellCheck={false} value={a.configDir ?? ''} placeholder={defaultSessionDir(a, appName)} onChange={(e) => onChange({ configDir: strOrNull(e.target.value) })} />
           </Field>
         </details>
@@ -1051,36 +1173,42 @@ function AccountEditor({
 
       <div className="q-inline">
         <button type="button" className="eg-btn eg-btn--destructive eg-btn--sm" onClick={onRemove}>
-          Eliminar esta cuenta
+          {t(locale, 'settings.providers.accountEditor.remove')}
         </button>
-        <small className="eg-field__hint">Al guardar se borran también sus claves del almacén seguro del sistema.</small>
+        <small className="eg-field__hint">{t(locale, 'settings.providers.accountEditor.removeHint')}</small>
       </div>
     </Section>
   );
 }
 
+/** Nombres de proveedor: marcas, no se traducen; solo `codex` lleva una conjunción
+ *  española y tiene `nameKey`. Las descripciones se resuelven con `t()` al pintar. */
 const PROVIDER_TABS = [
-  { id: 'claude', name: 'Claude', group: 'sub', desc: 'Pro / Max · sesión de 5 h, semanal y por modelo' },
-  { id: 'codex', name: 'ChatGPT y Codex', group: 'sub', desc: 'Plus / Pro · sesión y semanal de Codex' },
-  { id: 'gemini', name: 'Gemini', group: 'sub', desc: 'Cuota diaria por modelo' },
-  { id: 'cursor', name: 'Cursor', group: 'sub', desc: 'Uso del plan en el ciclo y on-demand' },
-  { id: 'grok', name: 'Grok', group: 'sub', desc: 'SuperGrok · uso semanal de créditos del CLI' },
-  { id: 'copilot', name: 'GitHub Copilot', group: 'sub', desc: 'Peticiones premium del mes' },
-  { id: 'minimax', name: 'MiniMax', group: 'sub', desc: 'Cuota del plan M/Token y saldo de pago por uso' },
-  { id: 'nan', name: 'NaN Builders', group: 'api', desc: 'Cuota del plan y tokens por día' },
-  { id: 'openrouter', name: 'OpenRouter', group: 'api', desc: 'Saldo y gasto por clave' },
-  { id: 'anthropic_api', name: 'Anthropic API', group: 'api', desc: 'Gasto del mes con clave de admin' },
-  { id: 'openai_api', name: 'OpenAI API', group: 'api', desc: 'Gasto del mes con clave de admin' },
-  { id: 'nine_router', name: '9Router', group: 'api', desc: 'Pasarela local · uso y gasto agregados' },
-  { id: 'zai', name: 'z.ai', group: 'sub', desc: 'GLM Coding Plan · cuotas de 5 h, semanales y web tools' },
-] as const;
-/** Secciones de Ajustes, una por responsabilidad (rediseño de Quorb en Claude Design). */
+  { id: 'claude', name: 'Claude', group: 'sub', descKey: 'settings.providers.desc.claude' },
+  { id: 'codex', name: 'ChatGPT y Codex', nameKey: 'settings.providers.codexName', group: 'sub', descKey: 'settings.providers.desc.codex' },
+  { id: 'gemini', name: 'Gemini', group: 'sub', descKey: 'settings.providers.desc.gemini' },
+  { id: 'cursor', name: 'Cursor', group: 'sub', descKey: 'settings.providers.desc.cursor' },
+  { id: 'grok', name: 'Grok', group: 'sub', descKey: 'settings.providers.desc.grok' },
+  { id: 'copilot', name: 'GitHub Copilot', group: 'sub', descKey: 'settings.providers.desc.copilot' },
+  { id: 'minimax', name: 'MiniMax', group: 'sub', descKey: 'settings.providers.desc.minimax' },
+  { id: 'nan', name: 'NaN Builders', group: 'api', descKey: 'settings.providers.desc.nan' },
+  { id: 'openrouter', name: 'OpenRouter', group: 'api', descKey: 'settings.providers.desc.openrouter' },
+  { id: 'anthropic_api', name: 'Anthropic API', group: 'api', descKey: 'settings.providers.desc.anthropicApi' },
+  { id: 'openai_api', name: 'OpenAI API', group: 'api', descKey: 'settings.providers.desc.openaiApi' },
+  { id: 'nine_router', name: '9Router', group: 'api', descKey: 'settings.providers.desc.nineRouter' },
+  { id: 'zai', name: 'z.ai', group: 'sub', descKey: 'settings.providers.desc.zai' },
+  { id: 'opencode_go', name: 'OpenCode Go', group: 'sub', descKey: 'settings.providers.desc.opencodeGo' },
+] as const satisfies readonly { id: string; name: string; nameKey?: MessageKey; group: 'sub' | 'api'; descKey: MessageKey }[];
+/** Nombre visible de un proveedor en el idioma activo. */
+const providerName = (p: { name: string; nameKey?: MessageKey }, locale: Locale) => (p.nameKey ? t(locale, p.nameKey) : p.name);
+/** Secciones de Ajustes, una por responsabilidad (rediseño de Quorb en Claude Design).
+ *  Los textos de cada una viven en el catálogo (`settings.nav.*` y `settings.pages.*`). */
 const PAGES = [
-  { id: 'providers', label: 'Proveedores', title: 'Suscripciones y APIs', desc: 'Qué se consulta y cómo se conecta cada proveedor.', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z' },
-  { id: 'look', label: 'Apariencia', title: 'Apariencia', desc: 'Tamaño y color de los anillos, y dónde vive la tira.', icon: 'M12 2a10 10 0 1 0 0 20c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2zM13.5 6.5h0M17.5 10.5h0M8.5 7.5h0M6.5 12.5h0' },
-  { id: 'alerts', label: 'Alertas', title: 'Alertas', desc: 'Qué pasa al superar un límite y cuando se reinicia.', icon: 'M10.27 21a2 2 0 0 0 3.46 0M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33' },
-  { id: 'shortcuts', label: 'Atajos', title: 'Atajos', desc: 'Combinaciones de teclado que funcionan desde cualquier app.', icon: 'M2 4h20v16H2zM6 8h0M10 8h0M14 8h0M18 8h0M8 12h0M12 12h0M16 12h0M7 16h10' },
-  { id: 'updates', label: 'Actualizaciones', title: 'Actualizaciones', desc: 'Versión instalada, actualizaciones automáticas y el proyecto.', icon: 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5' },
+  { id: 'providers', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z' },
+  { id: 'look', icon: 'M12 2a10 10 0 1 0 0 20c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2zM13.5 6.5h0M17.5 10.5h0M8.5 7.5h0M6.5 12.5h0' },
+  { id: 'alerts', icon: 'M10.27 21a2 2 0 0 0 3.46 0M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33' },
+  { id: 'shortcuts', icon: 'M2 4h20v16H2zM6 8h0M10 8h0M14 8h0M18 8h0M8 12h0M12 12h0M16 12h0M7 16h10' },
+  { id: 'updates', icon: 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5' },
 ] as const;
 
 type PageId = (typeof PAGES)[number]['id'];
@@ -1105,10 +1233,10 @@ const EDGES: { id: AppConfig['dockEdge']; key: MessageKey }[] = [
 type ProviderTab = (typeof PROVIDER_TABS)[number]['id'];
 type ProviderState = 'on' | 'warn' | 'off';
 
-const PROVIDER_BADGE: Record<ProviderState, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
-  on: { label: 'Activo', tone: 'success' },
-  warn: { label: 'Falta conectar', tone: 'warning' },
-  off: { label: 'Desactivado', tone: 'neutral' },
+const PROVIDER_BADGE: Record<ProviderState, { labelKey: MessageKey; tone: 'success' | 'warning' | 'neutral' }> = {
+  on: { labelKey: 'settings.providers.badge.on', tone: 'success' },
+  warn: { labelKey: 'settings.providers.badge.warn', tone: 'warning' },
+  off: { labelKey: 'settings.providers.badge.off', tone: 'neutral' },
 };
 
 /** Estado de cada pestaña: activo, activo pero sin configurar, o desactivado.
@@ -1118,6 +1246,248 @@ function providerState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): Provid
   const extras = accountsOf(cfg, id).filter((a) => a.enabled);
   if (extras.some((a) => !accountReady(a, s))) return 'warn';
   return main === 'off' && extras.length > 0 ? 'on' : main;
+}
+
+/** Tarjeta de cada proveedor en la lista de «Proveedores». */
+function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect }: {
+  locale: Locale;
+  tab: (typeof PROVIDER_TABS)[number];
+  state: ProviderState;
+  extraAccounts: number;
+  open: boolean;
+  onSelect: () => void;
+}) {
+  const badge = PROVIDER_BADGE[st];
+  return (
+    <button
+      type="button"
+      className="eg-module-card q-provider"
+      aria-current={open}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={onSelect}
+    >
+      <span className="eg-module-card__head">
+        <span className="q-provider__logo logo">
+          <ProviderLogo id={p.id} name={providerName(p, locale)} />
+        </span>
+        <span className="eg-module-card__name">{providerName(p, locale)}</span>
+      </span>
+      <span className="q-provider__desc">
+        {t(locale, p.descKey)}
+        {extraAccounts > 0 && t(locale, 'settings.providers.accountsCount', { count: extraAccounts + 1 })}
+      </span>
+      <span className="eg-module-card__actions">
+        <span className={`eg-status eg-status--${badge.tone}`}>{t(locale, badge.labelKey)}</span>
+        <span className="eg-btn eg-btn--ghost eg-btn--sm q-provider__cta" aria-hidden="true">
+          {st === 'warn' ? t(locale, 'settings.providers.connect') : t(locale, 'settings.providers.configure')}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** Tarjeta de la página «Proveedores»: intervalo de consulta y las dos listas
+ *  (suscripciones y APIs). Extraída para poder renderizarla en pruebas de i18n. */
+export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes }: {
+  locale: Locale;
+  cfg: AppConfig;
+  secrets: SecretStatus;
+  tab: ProviderTab;
+  drawerOpen: boolean;
+  onSelectTab: (id: ProviderTab) => void;
+  onRefreshMinutes: (minutes: number) => void;
+}) {
+  const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
+    <ProviderCard
+      key={p.id}
+      locale={locale}
+      tab={p}
+      state={providerState(p.id, cfg, secrets)}
+      extraAccounts={accountsOf(cfg, p.id).length}
+      open={drawerOpen && tab === p.id}
+      onSelect={() => onSelectTab(p.id)}
+    />
+  );
+  return (
+    <section className="eg-module-card eg-module-card--banded q-section" aria-label={t(locale, 'settings.nav.providers')}>
+      <div className="eg-module-card__head">
+        <div className="q-section__titles">
+          <h2>{t(locale, 'settings.nav.providers')}</h2>
+        </div>
+        <label className="q-section__aside">
+          {t(locale, 'settings.providers.refreshEvery')}
+          <input type="number" min={1} max={120} value={cfg.refreshMinutes} onChange={(e) => onRefreshMinutes(Number(e.target.value) || 1)} />
+          {t(locale, 'settings.providers.refreshUnit')}
+        </label>
+      </div>
+      <div className="eg-module-card__body">
+      <p className="eg-eyebrow">{t(locale, 'settings.providers.subscriptions')}</p>
+      <div className="q-providers">{PROVIDER_TABS.filter((p) => p.group === 'sub').map(providerCard)}</div>
+      <p className="eg-eyebrow">{t(locale, 'settings.providers.apis')}</p>
+      <div className="q-providers">{PROVIDER_TABS.filter((p) => p.group === 'api').map(providerCard)}</div>
+      <small className="eg-field__hint">{t(locale, 'settings.providers.orderHint')}</small>
+      </div>
+    </section>
+  );
+}
+
+/** Cabecera del panel lateral del proveedor abierto. */
+export function ProviderDrawerHead({ locale, tab, state, closeRef, onClose }: {
+  locale: Locale;
+  tab: ProviderTab;
+  state: ProviderState;
+  closeRef?: Ref<HTMLButtonElement>;
+  onClose: () => void;
+}) {
+  const current = PROVIDER_TABS.find((entry) => entry.id === tab) ?? PROVIDER_TABS[0];
+  const badge = PROVIDER_BADGE[state];
+  return (
+    <header className="q-drawer__head">
+      <span className="q-drawer__logo logo">
+        <ProviderLogo id={current.id} name={providerName(current, locale)} />
+      </span>
+      <div className="q-drawer__titles">
+        <p className="eg-eyebrow">{t(locale, 'settings.providers.drawerEyebrow')}</p>
+        <h2 id="q-drawer-title">{providerName(current, locale)}</h2>
+      </div>
+      <span className={`eg-status eg-status--${badge.tone}`}>{t(locale, badge.labelKey)}</span>
+      <button ref={closeRef} type="button" className="eg-icon-btn" aria-label={t(locale, 'settings.providers.drawerClose')} onClick={onClose}>
+        <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </header>
+  );
+}
+
+/** Pestañas de cuentas del panel del proveedor (principal + adicionales). */
+export function AccountsBar({ locale, tab, accounts, selectedId, onSelect, onAdd }: {
+  locale: Locale;
+  tab: ProviderTab;
+  accounts: Account[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="q-accounts">
+      <div className="eg-tabs eg-tabs--sm" role="tablist" aria-label={t(locale, 'settings.providers.accountsAria')}>
+        {[{ id: tab as string, label: t(locale, 'settings.providers.mainAccount') }, ...accounts].map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            role="tab"
+            className="eg-tabs__item"
+            aria-selected={selectedId === a.id}
+            onClick={() => onSelect(a.id)}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'nine_router' ? (
+        <small className="eg-field__hint">{t(locale, 'settings.providers.nineRouterAuto')}</small>
+      ) : (
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={onAdd}>
+          {t(locale, 'settings.providers.addAccount')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Pie con el mensaje de guardado y los botones; el del panel lateral cierra el
+ *  panel («Listo») y el de la ventana cierra Ajustes («Cerrar»). */
+export function SettingsFoot({ locale, variant, saved, dirty, saving, onSave, onClose }: {
+  locale: Locale;
+  variant: 'drawer' | 'window';
+  saved: string | null;
+  dirty: boolean;
+  saving: boolean;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <footer className={variant === 'drawer' ? 'q-drawer__foot' : 'q-foot'}>
+      <span className="q-foot__msg" role="status">{saved}</span>
+      {variant === 'drawer' ? (
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={onClose}>
+          {t(locale, 'settings.shell.done')}
+        </button>
+      ) : (
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={onClose}>
+          {t(locale, 'settings.shell.close')}
+        </button>
+      )}
+      <button type="button" className="eg-btn eg-btn--primary eg-btn--sm" onClick={onSave} disabled={!dirty || saving}>
+        {saving ? t(locale, 'settings.shell.saving') : t(locale, 'settings.shell.saveChanges')}
+      </button>
+    </footer>
+  );
+}
+
+/** Interruptor «Arrancar al iniciar sesión» de la cabecera de Ajustes. */
+export function AutostartSwitch({ locale, checked, disabled, onChange }: {
+  locale: Locale;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="eg-check eg-check--switch">
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />{' '}
+      {t(locale, 'settings.shell.autostart')}
+    </label>
+  );
+}
+
+/** Aviso de fallo del autostart; si ni se pudo leer, ofrece reintentar. */
+export function AutostartNotice({ locale, error, unread, busy, onRetry }: {
+  locale: Locale;
+  error: string;
+  unread: boolean;
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="eg-notice eg-notice--warning eg-notice--sm" role="alert">
+      <span className="eg-notice__text">
+        {unread ? t(locale, 'settings.shell.autostartReadError') : ''}
+        {error}
+      </span>
+      {unread && (
+        <span className="eg-notice__actions">
+          <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={busy} onClick={onRetry}>
+            {t(locale, 'settings.common.retry')}
+          </button>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Bloque informativo «Sesión de escritorio» (solo Linux). */
+export function DesktopSessionNotice({ locale, wmInfo }: { locale: Locale; wmInfo: WindowManagerInfo }) {
+  return (
+    <div className="eg-notice eg-notice--sm" role="status">
+      <span className="eg-notice__text">
+        <strong>
+          {t(locale, 'settings.shell.desktopSession', { session: wmInfo.isWayland ? 'Wayland' : wmInfo.xdgSessionType ?? 'X11' })}
+          {wmInfo.desktopSession ? ` · ${wmInfo.desktopSession}` : ''}
+        </strong>
+      </span>
+      <p className="eg-notice__text">{wmInfo.recommendation}</p>
+      <ul style={{ margin: 0, paddingLeft: '1.2em' }}>
+        {desktopCompatRows(wmInfo.surfaces, locale).map((row) => (
+          <li key={row.label}>
+            <strong>{row.label}</strong> ·{' '}
+            {row.state === 'limited' ? <em>{t(locale, 'settings.shell.surfaceLimited')}</em> : <em>{t(locale, 'settings.shell.surfaceUnlimited')}</em>} {row.note}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /** Errores y avisos del último registro de atajos, para el panel de «Atajos».
@@ -1374,6 +1744,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.nineRouter.enabled, !!s.nine_router_password);
     case 'zai':
       return on(cfg.zai.enabled, !!s.zai_api_key);
+    case 'opencode_go':
+      return on(cfg.opencodeGo.enabled, !!s.opencode_go_api_key);
   }
 }
 
@@ -1432,7 +1804,7 @@ export function SettingsNav({
           <span className="q-brand__ver">{t(locale, 'settings.title')}</span>
         </span>
       </div>
-      <nav aria-label="Secciones de ajustes">
+      <nav aria-label={t(locale, 'settings.nav.sectionsAria')}>
         <ul className="eg-menu eg-menu--nav">
           {PAGES.map((p) => (
             <li key={p.id}>
@@ -1449,7 +1821,7 @@ export function SettingsNav({
                 </svg>
                 <span className="eg-menu__label">{t(locale, `settings.nav.${p.id}`)}</span>
                 {p.id === 'providers' && pendingProviders > 0 && (
-                  <span className="eg-menu__count" title="Activos pero sin configurar">{pendingProviders}</span>
+                  <span className="eg-menu__count" title={t(locale, 'settings.nav.pendingTitle')}>{pendingProviders}</span>
                 )}
                 {p.id === 'shortcuts' && shortcutErrors.length + shortcutWarnings.length > 0 && (
                   <span className="eg-menu__count">{shortcutErrors.length + shortcutWarnings.length}</span>
@@ -1463,19 +1835,285 @@ export function SettingsNav({
         type="button"
         className="eg-menu__item q-nav-toggle"
         aria-expanded={!navCollapsed}
-        aria-label={navCollapsed ? 'Expandir el menú' : 'Contraer el menú'}
-        title={navCollapsed ? 'Expandir el menú' : 'Contraer el menú'}
+        aria-label={navCollapsed ? t(locale, 'settings.nav.expand') : t(locale, 'settings.nav.collapse')}
+        title={navCollapsed ? t(locale, 'settings.nav.expand') : t(locale, 'settings.nav.collapse')}
         onClick={onToggleNav}
       >
         <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3 4h18v16H3zM9 4v16" />
           <path d={navCollapsed ? 'm13 10 2 2-2 2' : 'm15 10-2 2 2 2'} />
         </svg>
-        <span className="eg-menu__label">Contraer</span>
+        <span className="eg-menu__label">{t(locale, 'settings.nav.collapseShort')}</span>
       </button>
     </aside>
   );
 }
+
+/** Lo que comparten los paneles por proveedor de suscripción de Ajustes › Proveedores. */
+type PanelProps = {
+  locale: Locale;
+  cfg: AppConfig;
+  secrets: SecretStatus;
+  set: <K extends keyof AppConfig>(key: K, patch: Partial<AppConfig[K]> | AppConfig[K]) => void;
+  setVisibility: (id: string, enabled: boolean) => void;
+  loadSecrets: () => void;
+  healthFor: (id: string, hidden: boolean) => HealthProps;
+};
+
+/** Paneles por proveedor de suscripción (Claude, Codex, Gemini, Grok, Cursor, Copilot, MiniMax,
+ *  z.ai y OpenCode Go). Extraídos de `Settings()` para poder renderizarlos en pruebas de i18n.
+ *  Los títulos son marcas con su plan (`Claude (Pro / Max)`) y no se traducen. */
+export function SubscriptionPanel({
+  locale,
+  cfg,
+  set,
+  setVisibility,
+  healthFor,
+  p,
+  cli,
+  codexInstall,
+  onCodexRecheck,
+}: Pick<PanelProps, 'locale' | 'cfg' | 'set' | 'setVisibility' | 'healthFor'> & {
+  p: 'claude' | 'codex' | 'gemini' | 'grok';
+  cli: Record<string, boolean>;
+  codexInstall: CodexInstallController;
+  onCodexRecheck: () => void;
+}) {
+  const info = {
+    claude: {
+      kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
+      title: 'Claude (Pro / Max)',
+      note: t(locale, 'settings.providers.panels.claude.note'),
+      file: t(locale, 'settings.providers.panels.credentialsFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>\\wsl.localhost\Ubuntu\home\{t(locale, 'settings.providers.panels.claude.wslUser')}\.claude\.credentials.json</code></>,
+    },
+    codex: {
+      kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
+      title: 'ChatGPT (Plus / Pro · Codex)',
+      note: t(locale, 'settings.providers.panels.codex.note'),
+      file: t(locale, 'settings.providers.panels.authJsonFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%CODEX_HOME%</code> {t(locale, 'settings.providers.panels.or')} <code>%USERPROFILE%\.codex\auth.json</code></>,
+    },
+    gemini: {
+      kicker: t(locale, 'settings.providers.panels.gemini.kicker'),
+      title: 'Gemini (Google AI Pro / Code Assist)',
+      note: (
+        <>
+          {t(locale, 'settings.providers.panels.gemini.noteBefore')} <Link href={LINKS.geminiCli}>Gemini CLI</Link>{t(locale, 'settings.providers.panels.gemini.noteAfter')}
+        </>
+      ),
+      file: t(locale, 'settings.providers.panels.credentialsFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.gemini\oauth_creds.json</code></>,
+    },
+    grok: {
+      kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
+      title: 'Grok (SuperGrok)',
+      note: (
+        <>
+          {t(locale, 'settings.providers.panels.grok.noteBefore')} <code>grok login</code>{t(locale, 'settings.providers.panels.grok.noteAfter')}
+        </>
+      ),
+      file: t(locale, 'settings.providers.panels.authJsonFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%GROK_HOME%</code> {t(locale, 'settings.providers.panels.or')} <code>%USERPROFILE%\.grok\auth.json</code></>,
+    },
+  }[p];
+  return (
+    <Section kicker={info.kicker} title={info.title}>
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, p, cfg[p].enabled)} onChange={(v) => setVisibility(p, v)} />
+      <p className="q-note">{info.note}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <CliConnect
+          locale={locale}
+          id={p}
+          provider={p}
+          loginCommand={cfg[p].loginCommand}
+          cliMissing={cli[p] === false}
+          persisted
+          extra={false}
+          health={healthFor(p, !cfg[p].enabled)}
+          codexInstall={codexInstall}
+          onCodexRecheck={onCodexRecheck}
+        />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.advancedSessionLogin')}</summary>
+        <Field label={info.file} hint={info.hint}>
+          <input type="text" spellCheck={false} value={cfg[p].credentialsPath ?? ''} onChange={(e) => set(p, { credentialsPath: strOrNull(e.target.value) })} />
+        </Field>
+        <Field label={t(locale, 'settings.providers.panels.loginCommand')}>
+          <input type="text" spellCheck={false} value={cfg[p].loginCommand} onChange={(e) => set(p, { loginCommand: e.target.value })} />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function CursorPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.cursor.kicker')} title="Cursor">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)} onChange={(v) => setVisibility('cursor', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.cursor.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li>
+          <b>{t(locale, 'settings.providers.panels.cursor.loginTitle')}</b>
+          <span>{t(locale, 'settings.providers.panels.cursor.loginBody')}</span>
+          <SecretInput locale={locale} id="cursor_token" label={t(locale, 'settings.providers.panels.cursor.tokenLabel')} configured={!!secrets.cursor_token} onSaved={loadSecrets} />
+        </li>
+        <HealthStep id="cursor" {...healthFor('cursor', !cfg.cursor.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.cursor.advanced')}</summary>
+        <Field label={t(locale, 'settings.providers.panels.cursor.dbLabel')} hint={<>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%APPDATA%\Cursor\User\globalStorage\state.vscdb</code></>}>
+          <input type="text" spellCheck={false} value={cfg.cursor.credentialsPath ?? ''} onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })} />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function CopilotPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.kickerOfficialApi')} title="GitHub Copilot">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)} onChange={(v) => setVisibility('copilot', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.copilot.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={cfg.copilot.username.trim() !== '' || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.copilotUserPlan')}</b>
+          <div className="q-cols">
+            <Field label={t(locale, 'settings.providers.accountEditor.githubUser')}>
+              <input type="text" spellCheck={false} placeholder="egdev6" value={cfg.copilot.username} onChange={(e) => set('copilot', { username: e.target.value })} />
+            </Field>
+            <Field label={t(locale, 'settings.providers.planLabel')}>
+              <select value={cfg.copilot.plan} onChange={(e) => set('copilot', { plan: e.target.value })}>
+                <option value="free">Free · 50</option>
+                <option value="pro">Pro · 300</option>
+                <option value="pro_plus">Pro+ · 1500</option>
+                <option value="business">Business · 300</option>
+                <option value="enterprise">Enterprise · 1000</option>
+                <option value="custom">{t(locale, 'settings.providers.accountEditor.planCustom')}</option>
+              </select>
+            </Field>
+          </div>
+          {cfg.copilot.plan === 'custom' && (
+            <Field label={t(locale, 'settings.providers.accountEditor.customAllowance')}>
+              <input type="number" min={1} value={cfg.copilot.customAllowance ?? ''} onChange={(e) => set('copilot', { customAllowance: numOrNull(e.target.value) })} />
+            </Field>
+          )}
+        </li>
+        <li data-done={!!secrets.github_token || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.readOnlyToken')}</b>
+          <SecretInput
+            locale={locale}
+            id="github_token"
+            label={t(locale, 'settings.providers.panels.copilot.tokenLabel')}
+            configured={!!secrets.github_token}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.copilot.tokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> {t(locale, 'settings.providers.panels.copilot.tokenPermission')}</>}
+          />
+        </li>
+        <HealthStep id="copilot" {...healthFor('copilot', !cfg.copilot.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function MiniMaxPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.kickerOfficialApi')} title="MiniMax">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)} onChange={(v) => setVisibility('minimax', v)} />
+      <p className="q-note">
+        {t(locale, 'settings.providers.panels.minimax.noteBefore')}
+        <b> {t(locale, 'settings.providers.panels.minimax.noteBold')}</b> {t(locale, 'settings.providers.panels.minimax.noteAfter')}
+      </p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.minimax_subscription_key || undefined}>
+          <b>{t(locale, 'settings.providers.panels.minimax.subscriptionTitle')}</b>
+          <SecretInput
+            locale={locale}
+            id="minimax_subscription_key"
+            label="Subscription Key"
+            configured={!!secrets.minimax_subscription_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.minimax.subscriptionHintBefore')} <Link href={LINKS.minimaxKeys}>minimax.io</Link>{t(locale, 'settings.providers.panels.minimax.subscriptionHintChina')} <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link> {t(locale, 'settings.providers.panels.minimax.subscriptionHintAfter')}</>}
+          />
+        </li>
+        <li data-done={!!secrets.minimax_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.panels.minimax.paygTitle')}</b>
+          <SecretInput
+            locale={locale}
+            id="minimax_api_key"
+            label="API key PAYG"
+            configured={!!secrets.minimax_api_key}
+            onSaved={loadSecrets}
+            hint={t(locale, 'settings.providers.panels.minimax.paygHint')}
+          />
+        </li>
+        <HealthStep id="minimax" {...healthFor('minimax', !cfg.minimax.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.minimax.advanced')}</summary>
+        <Field
+          label="Base URL"
+          hint={t(locale, 'settings.providers.panels.minimax.baseUrlHint')}
+        >
+          <input
+            type="text"
+            spellCheck={false}
+            value={cfg.minimax.baseUrl}
+            onChange={(e) => set('minimax', { baseUrl: e.target.value })}
+          />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function ZaiPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.zai.kicker')} title="z.ai">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.zai.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.zai_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.apiKey')}</b>
+          <SecretInput
+            locale={locale}
+            id="zai_api_key"
+            label={t(locale, 'settings.providers.apiKey')}
+            configured={!!secrets.zai_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+          />
+        </li>
+        <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.opencodeGo.kicker')} title="OpenCode Go">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'opencode_go', cfg.opencodeGo.enabled)} onChange={(v) => setVisibility('opencode_go', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.opencodeGo.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.opencode_go_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.apiKey')}</b>
+          <SecretInput
+            locale={locale}
+            id="opencode_go_api_key"
+            label={t(locale, 'settings.providers.accountEditor.apiKeyOf', { name: 'OpenCode Go' })}
+            configured={!!secrets.opencode_go_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
+          />
+        </li>
+        <HealthStep id="opencode_go" {...healthFor('opencode_go', !cfg.opencodeGo.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
 
 export function Settings() {
   const appName = useAppName();
@@ -1817,7 +2455,7 @@ export function Settings() {
         if (status) setSecrets(status);
       }
       // Mensaje explícito por parte: nunca un «Guardado ✓» conjunto falso.
-      message = mixedSaveMessage(result);
+      message = mixedSaveMessage(result, locale);
       setSaved(message);
     } catch (e) {
       persisted = false;
@@ -1845,7 +2483,8 @@ export function Settings() {
     const k = configKeyFor(acc?.provider ?? id);
     return isConnectionDirty(acc, baseline?.accounts.find((a) => a.id === id), k ? cfg[k] : undefined, k ? baseline?.[k] : undefined);
   };
-  const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save });
+  const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save, locale });
+  const panel = { locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor };
   const selAccount = tabAccounts.find((a) => a.id === accountSel) ?? null;
   const addAccount = () => {
     const a = newAccount(cfg, tab as AccountProvider);
@@ -1874,39 +2513,6 @@ export function Settings() {
   };
   const pendingProviders = PROVIDER_TABS.filter((t) => providerState(t.id, cfg, secrets) === 'warn').length;
 
-  const providerCard = (t: (typeof PROVIDER_TABS)[number]) => {
-    const st = providerState(t.id, cfg, secrets);
-    const badge = PROVIDER_BADGE[st];
-    return (
-      <button
-        type="button"
-        key={t.id}
-        className="eg-module-card q-provider"
-        aria-current={drawerOpen && tab === t.id}
-        aria-haspopup="dialog"
-        aria-expanded={drawerOpen && tab === t.id}
-        onClick={() => selectTab(t.id)}
-      >
-        <span className="eg-module-card__head">
-          <span className="q-provider__logo logo">
-            <ProviderLogo id={t.id} name={t.name} />
-          </span>
-          <span className="eg-module-card__name">{t.name}</span>
-        </span>
-        <span className="q-provider__desc">
-          {t.desc}
-          {accountsOf(cfg, t.id).length > 0 && ` · ${accountsOf(cfg, t.id).length + 1} cuentas`}
-        </span>
-        <span className="eg-module-card__actions">
-          <span className={`eg-status eg-status--${badge.tone}`}>{badge.label}</span>
-          <span className="eg-btn eg-btn--ghost eg-btn--sm q-provider__cta" aria-hidden="true">
-            {st === 'warn' ? 'Conectar' : 'Configurar'}
-          </span>
-        </span>
-      </button>
-    );
-  };
-
   return (
     <div className="q-settings" data-nav-collapsed={navCollapsed || undefined}>
       <SettingsNav
@@ -1925,74 +2531,37 @@ export function Settings() {
         <div className="q-settings__content">
           <header className="q-head">
             <SettingsHeadTitles locale={locale} section={section} />
-            <label className="eg-check eg-check--switch">
-              <input
-                type="checkbox"
-                checked={autostartDraft ?? autostartState.confirmed ?? false}
-                disabled={autostartState.busy || autostartState.confirmed === null}
-                onChange={(e) => setAutostartDraft(e.target.checked)}
-              />{' '}
-              Arrancar al iniciar sesión
-            </label>
+            <AutostartSwitch
+              locale={locale}
+              checked={autostartDraft ?? autostartState.confirmed ?? false}
+              disabled={autostartState.busy || autostartState.confirmed === null}
+              onChange={setAutostartDraft}
+            />
           </header>
 
           {autostartState.error && (
-            <div className="eg-notice eg-notice--warning eg-notice--sm" role="alert">
-              <span className="eg-notice__text">
-                {autostartState.confirmed === null ? 'No se pudo leer «Arrancar al iniciar sesión»: ' : ''}
-                {autostartState.error}
-              </span>
-              {autostartState.confirmed === null && (
-                <span className="eg-notice__actions">
-                  <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={autostartState.busy} onClick={() => void autostartController.load()}>
-                    Reintentar
-                  </button>
-                </span>
-              )}
-            </div>
+            <AutostartNotice
+              locale={locale}
+              error={autostartState.error}
+              unread={autostartState.confirmed === null}
+              busy={autostartState.busy}
+              onRetry={() => void autostartController.load()}
+            />
           )}
 
-          {wmInfo && (
-            <div className="eg-notice eg-notice--sm" role="status">
-              <span className="eg-notice__text">
-                <strong>
-                  Sesión de escritorio: {wmInfo.isWayland ? 'Wayland' : wmInfo.xdgSessionType ?? 'X11'}
-                  {wmInfo.desktopSession ? ` · ${wmInfo.desktopSession}` : ''}
-                </strong>
-              </span>
-              <p className="eg-notice__text">{wmInfo.recommendation}</p>
-              <ul style={{ margin: 0, paddingLeft: '1.2em' }}>
-                {desktopCompatRows(wmInfo.surfaces).map((row) => (
-                  <li key={row.label}>
-                    <strong>{row.label}</strong> ·{' '}
-                    {row.state === 'limited' ? <em>con límites:</em> : <em>sin límites conocidos:</em>} {row.note}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {wmInfo && <DesktopSessionNotice locale={locale} wmInfo={wmInfo} />}
 
           {section === 'providers' && (
             <>
-              <section className="eg-module-card eg-module-card--banded q-section" aria-label="Proveedores">
-                <div className="eg-module-card__head">
-                  <div className="q-section__titles">
-                    <h2>Proveedores</h2>
-                  </div>
-                  <label className="q-section__aside">
-                    Consultar cada
-                    <input type="number" min={1} max={120} value={cfg.refreshMinutes} onChange={(e) => set('refreshMinutes', Number(e.target.value) || 1)} />
-                    min
-                  </label>
-                </div>
-                <div className="eg-module-card__body">
-                <p className="eg-eyebrow">Suscripciones</p>
-                <div className="q-providers">{PROVIDER_TABS.filter((t) => t.group === 'sub').map(providerCard)}</div>
-                <p className="eg-eyebrow">APIs y créditos</p>
-                <div className="q-providers">{PROVIDER_TABS.filter((t) => t.group === 'api').map(providerCard)}</div>
-                <small className="eg-field__hint">Para cambiar el orden de los anillos, arrástralos en la tira.</small>
-                </div>
-              </section>
+              <ProvidersCard
+                locale={locale}
+                cfg={cfg}
+                secrets={secrets}
+                tab={tab}
+                drawerOpen={drawerOpen}
+                onSelectTab={selectTab}
+                onRefreshMinutes={(minutes) => set('refreshMinutes', minutes)}
+              />
               <div className="q-drawer-scrim" data-open={drawerOpen || undefined} onClick={closeDrawer} aria-hidden="true" />
               <aside
                 className="q-drawer"
@@ -2003,54 +2572,13 @@ export function Settings() {
                 aria-hidden={!drawerOpen}
                 inert={!drawerOpen}
               >
-                {(() => {
-                  const current = PROVIDER_TABS.find((t) => t.id === tab) ?? PROVIDER_TABS[0];
-                  const badge = PROVIDER_BADGE[providerState(current.id, cfg, secrets)];
-                  return (
-                    <header className="q-drawer__head">
-                      <span className="q-drawer__logo logo">
-                        <ProviderLogo id={current.id} name={current.name} />
-                      </span>
-                      <div className="q-drawer__titles">
-                        <p className="eg-eyebrow">Configuración</p>
-                        <h2 id="q-drawer-title">{current.name}</h2>
-                      </div>
-                      <span className={`eg-status eg-status--${badge.tone}`}>{badge.label}</span>
-                      <button ref={drawerClose} type="button" className="eg-icon-btn" aria-label="Cerrar la configuración" onClick={closeDrawer}>
-                        <svg className="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </header>
-                  );
-                })()}
+                <ProviderDrawerHead locale={locale} tab={tab} state={providerState(tab, cfg, secrets)} closeRef={drawerClose} onClose={closeDrawer} />
                 <div className="q-drawer__body" key={tab}>
                   <InDrawer.Provider value={true}>
-      <div className="q-accounts">
-        <div className="eg-tabs eg-tabs--sm" role="tablist" aria-label="Cuentas">
-          {[{ id: tab as string, label: 'Principal' }, ...tabAccounts].map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              role="tab"
-              className="eg-tabs__item"
-              aria-selected={(selAccount?.id ?? tab) === a.id}
-              onClick={() => setAccountSel(a.id)}
-            >
-              {a.label}
-            </button>
-          ))}
-        </div>
-        {tab === 'nine_router' ? (
-          <small className="eg-field__hint">Los subproveedores de 9Router se descubren solos desde su historial de uso; no se añaden a mano.</small>
-        ) : (
-          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={addAccount}>
-            + Añadir cuenta
-          </button>
-        )}
-      </div>
+      <AccountsBar locale={locale} tab={tab} accounts={tabAccounts} selectedId={selAccount?.id ?? tab} onSelect={setAccountSel} onAdd={addAccount} />
       {selAccount && (
         <AccountEditor
+          locale={locale}
           key={selAccount.id}
           account={selAccount}
           visible={isAccountVisible(cfg, selAccount.id, selAccount.enabled)}
@@ -2074,190 +2602,15 @@ export function Settings() {
       {!selAccount && (
         <>
 
-      {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') &&
-        (() => {
-          const p = tab;
-          const info = {
-            claude: {
-              kicker: 'Suscripción · OAuth',
-              title: 'Claude (Pro / Max)',
-              note: 'Límites de sesión (5 h), semanales y por modelo de tu plan. Quorb lee la sesión que guarda Claude Code: no ve tu contraseña ni toca los tokens.',
-              file: 'Fichero de credenciales',
-              hint: <>Vacío = <code>%USERPROFILE%\.claude\.credentials.json</code>. Para WSL: <code>\\wsl.localhost\Ubuntu\home\TU_USUARIO\.claude\.credentials.json</code></>,
-            },
-            codex: {
-              kicker: 'Suscripción · OAuth',
-              title: 'ChatGPT (Plus / Pro · Codex)',
-              note: 'Límites de 5 h y semanales de tu plan de ChatGPT en Codex. Quorb lee la sesión que guarda el CLI de Codex.',
-              file: 'Fichero auth.json',
-              hint: <>Vacío = <code>%CODEX_HOME%</code> o <code>%USERPROFILE%\.codex\auth.json</code></>,
-            },
-            gemini: {
-              kicker: 'Suscripción · sesión de Gemini CLI',
-              title: 'Gemini (Google AI Pro / Code Assist)',
-              note: (
-                <>
-                  Cuotas diarias por modelo. Quorb lee la sesión que guarda <Link href={LINKS.geminiCli}>Gemini CLI</Link>. Endpoints no oficiales.
-                </>
-              ),
-              file: 'Fichero de credenciales',
-              hint: <>Vacío = <code>%USERPROFILE%\.gemini\oauth_creds.json</code></>,
-            },
-            grok: {
-              kicker: 'Suscripción · OAuth',
-              title: 'Grok (SuperGrok)',
-              note: (
-                <>
-                  Uso semanal de créditos de tu suscripción en el CLI de Grok. Quorb lee la sesión que guarda <code>grok login</code>. Endpoint no oficial.
-                </>
-              ),
-              file: 'Fichero auth.json',
-              hint: <>Vacío = <code>%GROK_HOME%</code> o <code>%USERPROFILE%\.grok\auth.json</code></>,
-            },
-          }[p];
-          return (
-            <Section kicker={info.kicker} title={info.title}>
-              <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, p, cfg[p].enabled)} onChange={(v) => setVisibility(p, v)} />
-              <p className="q-note">{info.note}</p>
-              <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-                <CliConnect
-                  id={p}
-                  provider={p}
-                  loginCommand={cfg[p].loginCommand}
-                  cliMissing={cli[p] === false}
-                  persisted
-                  extra={false}
-                  health={healthFor(p, !cfg[p].enabled)}
-                  codexInstall={codexInstaller}
-                  onCodexRecheck={cliRecheck}
-                />
-              </ol>
-              <details className="q-details">
-                <summary>Avanzado · fichero de sesión y comando de login</summary>
-                <Field label={info.file} hint={info.hint}>
-                  <input type="text" spellCheck={false} value={cfg[p].credentialsPath ?? ''} onChange={(e) => set(p, { credentialsPath: strOrNull(e.target.value) })} />
-                </Field>
-                <Field label="Comando de login">
-                  <input type="text" spellCheck={false} value={cfg[p].loginCommand} onChange={(e) => set(p, { loginCommand: e.target.value })} />
-                </Field>
-              </details>
-            </Section>
-          );
-        })()}
-
-      {tab === 'cursor' && (
-        <Section kicker="Suscripción · sesión de la app" title="Cursor">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)} onChange={(v) => setVisibility('cursor', v)} />
-          <p className="q-note">Uso del plan en el ciclo actual (total, Auto y modelos API) y gasto on-demand. Endpoint no oficial.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li>
-              <b>Inicia sesión en la app de Cursor</b>
-              <span>
-                Quorb lee la sesión que guarda la app de Cursor en este equipo (solo lectura). Si no usas la app aquí, pega un token manual: tiene
-                prioridad sobre la sesión de la app.
-              </span>
-              <SecretInput id="cursor_token" label="Token manual (opcional)" configured={!!secrets.cursor_token} onSaved={loadSecrets} />
-            </li>
-            <HealthStep id="cursor" {...healthFor('cursor', !cfg.cursor.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · base de datos de Cursor</summary>
-            <Field label="Base de datos de Cursor" hint={<>Vacío = <code>%APPDATA%\Cursor\User\globalStorage\state.vscdb</code></>}>
-              <input type="text" spellCheck={false} value={cfg.cursor.credentialsPath ?? ''} onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })} />
-            </Field>
-          </details>
-        </Section>
+      {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') && (
+        <SubscriptionPanel {...panel} p={tab} cli={cli} codexInstall={codexInstaller} onCodexRecheck={cliRecheck} />
       )}
 
-      {tab === 'copilot' && (
-        <Section kicker="Suscripción · API oficial" title="GitHub Copilot">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)} onChange={(v) => setVisibility('copilot', v)} />
-          <p className="q-note">Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={cfg.copilot.username.trim() !== '' || undefined}>
-              <b>Usuario y plan de GitHub</b>
-              <div className="q-cols">
-                <Field label="Usuario de GitHub">
-                  <input type="text" spellCheck={false} placeholder="egdev6" value={cfg.copilot.username} onChange={(e) => set('copilot', { username: e.target.value })} />
-                </Field>
-                <Field label="Plan">
-                  <select value={cfg.copilot.plan} onChange={(e) => set('copilot', { plan: e.target.value })}>
-                    <option value="free">Free · 50</option>
-                    <option value="pro">Pro · 300</option>
-                    <option value="pro_plus">Pro+ · 1500</option>
-                    <option value="business">Business · 300</option>
-                    <option value="enterprise">Enterprise · 1000</option>
-                    <option value="custom">Otra cantidad</option>
-                  </select>
-                </Field>
-              </div>
-              {cfg.copilot.plan === 'custom' && (
-                <Field label="Peticiones premium incluidas al mes">
-                  <input type="number" min={1} value={cfg.copilot.customAllowance ?? ''} onChange={(e) => set('copilot', { customAllowance: numOrNull(e.target.value) })} />
-                </Field>
-              )}
-            </li>
-            <li data-done={!!secrets.github_token || undefined}>
-              <b>Token de solo lectura</b>
-              <SecretInput
-                id="github_token"
-                label="Token de GitHub (fine-grained)"
-                configured={!!secrets.github_token}
-                onSaved={loadSecrets}
-                hint={<>Créalo en <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> con el permiso de cuenta «Plan»: solo lectura.</>}
-              />
-            </li>
-            <HealthStep id="copilot" {...healthFor('copilot', !cfg.copilot.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'cursor' && <CursorPanel {...panel} />}
 
-      {tab === 'minimax' && (
-        <Section kicker="Suscripción · API oficial" title="MiniMax">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)} onChange={(v) => setVisibility('minimax', v)} />
-          <p className="q-note">
-            Cuota del plan y, si añades la segunda clave, tu saldo de pago por uso. Son
-            <b> dos credenciales distintas</b> en la consola: la primera da acceso al plan y la segunda al saldo.
-          </p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.minimax_subscription_key || undefined}>
-              <b>Subscription Key del plan</b>
-              <SecretInput
-                id="minimax_subscription_key"
-                label="Subscription Key"
-                configured={!!secrets.minimax_subscription_key}
-                onSaved={loadSecrets}
-                hint={<>Del panel M/Token en <Link href={LINKS.minimaxKeys}>minimax.io</Link>. En la región de China, en <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link> (el host por región se cambia en Ajustes avanzados).</>}
-              />
-            </li>
-            <li data-done={!!secrets.minimax_api_key || undefined}>
-              <b>API key de pago por uso (opcional)</b>
-              <SecretInput
-                id="minimax_api_key"
-                label="API key PAYG"
-                configured={!!secrets.minimax_api_key}
-                onSaved={loadSecrets}
-                hint={<>Sin ella solo se muestra la cuota del plan; el saldo es opcional y su fallo no lo degrade.</>}
-              />
-            </li>
-            <HealthStep id="minimax" {...healthFor('minimax', !cfg.minimax.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · URL del API</summary>
-            <Field
-              label="Base URL"
-              hint="Las claves son por región: global en api.minimax.io, China en api.minimaxi.com. Si el anillo sale con error 1004 o 2049, prueba con la de tu región."
-            >
-              <input
-                type="text"
-                spellCheck={false}
-                value={cfg.minimax.baseUrl}
-                onChange={(e) => set('minimax', { baseUrl: e.target.value })}
-              />
-            </Field>
-          </details>
-        </Section>
-      )}
+      {tab === 'copilot' && <CopilotPanel {...panel} />}
+
+      {tab === 'minimax' && <MiniMaxPanel {...panel} />}
       {tab === 'openrouter' && (
         <Section kicker="Pago por uso · API oficial" title="OpenRouter">
           <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
@@ -2266,6 +2619,7 @@ export function Settings() {
             <li data-done={!!secrets.openrouter_api_key || undefined}>
               <b>API key</b>
               <SecretInput
+                locale={locale}
                 id="openrouter_api_key"
                 label="API key"
                 configured={!!secrets.openrouter_api_key}
@@ -2278,25 +2632,9 @@ export function Settings() {
         </Section>
       )}
 
-      {tab === 'zai' && (
-        <Section kicker="Suscripción · GLM Coding Plan" title="z.ai">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
-          <p className="q-note">Cuotas de coding de las últimas 5 h y de la semana, y cuota mensual de web tools del Coding Plan.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.zai_api_key || undefined}>
-              <b>API key</b>
-              <SecretInput
-                id="zai_api_key"
-                label="API key"
-                configured={!!secrets.zai_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
-              />
-            </li>
-            <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'zai' && <ZaiPanel {...panel} />}
+
+      {tab === 'opencode_go' && <OpenCodeGoPanel {...panel} />}
 
       {tab === 'nan' && (
         <Section kicker="Suscripción · cuenta o API key" title="NaN Builders">
@@ -2310,6 +2648,7 @@ export function Settings() {
               <b>Conecta tu cuenta o pega una API key</b>
               <NanConnect connected={!!secrets.nan_session} onChange={loadSecrets} />
               <SecretInput
+                locale={locale}
                 id="nan_api_key"
                 label="API key (alternativa)"
                 configured={!!secrets.nan_api_key}
@@ -2448,6 +2787,7 @@ export function Settings() {
                 <li data-done={!!secrets[secret] || undefined}>
                   <b>Admin key</b>
                   <SecretInput
+                    locale={locale}
                     id={secret}
                     label={tab === 'anthropic_api' ? 'Admin API key (sk-ant-admin…)' : 'Admin key'}
                     configured={!!secrets[secret]}
@@ -2476,15 +2816,7 @@ export function Settings() {
       )}
                   </InDrawer.Provider>
                 </div>
-                <footer className="q-drawer__foot">
-                  <span className="q-foot__msg" role="status">{saved}</span>
-                  <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={closeDrawer}>
-                    Listo
-                  </button>
-                  <button type="button" className="eg-btn eg-btn--primary eg-btn--sm" onClick={save} disabled={!dirty || saving}>
-                    {saving ? 'Guardando…' : 'Guardar cambios'}
-                  </button>
-                </footer>
+                <SettingsFoot locale={locale} variant="drawer" saved={saved} dirty={dirty} saving={saving} onSave={save} onClose={closeDrawer} />
               </aside>
             </>
           )}
@@ -2537,15 +2869,7 @@ export function Settings() {
           )}
         </div>
 
-        <footer className="q-foot">
-          <span className="q-foot__msg" role="status">{saved}</span>
-          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => getCurrentWindow().close()}>
-            Cerrar
-          </button>
-          <button type="button" className="eg-btn eg-btn--primary eg-btn--sm" onClick={save} disabled={!dirty || saving}>
-            {saving ? 'Guardando…' : 'Guardar cambios'}
-          </button>
-        </footer>
+        <SettingsFoot locale={locale} variant="window" saved={saved} dirty={dirty} saving={saving} onSave={save} onClose={() => getCurrentWindow().close()} />
       </main>
     </div>
   );

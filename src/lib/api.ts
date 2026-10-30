@@ -4,6 +4,7 @@ import type { AlertMoment, AppConfig, Effect, Sample, ScopedSecretKey, SecretSta
 import type { CodexInstallResult, CodexSetupStatus } from './codex-install';
 import type { SurfaceClip } from './surface-clip';
 import type { PhysicalBounds } from './detail-panel';
+import type { WidgetPlacementReport, WidgetPlacementRequest } from './widget-placement';
 
 /** Campos que el widget puede cambiar sin arrastrar el resto de la config. */
 export interface WidgetPatch {
@@ -72,7 +73,16 @@ export const api = {
   openSettings: () => invoke<void>('open_settings'),
   showDetail: () => invoke<boolean>('show_detail'),
   setDetailBounds: (bounds: PhysicalBounds) => invoke<void>('set_detail_bounds', { bounds }),
-  setWidgetBounds: (bounds: PhysicalBounds) => invoke<void>('set_widget_bounds', { bounds }),
+  /**
+   * Coloca la tira y devuelve la geometría que quedó en pantalla (#179): el
+   * backend es la autoridad y responde con el read-back, no con la solicitud.
+   * La petición lleva el borde anclado y el factor con el que se calculó el
+   * rectángulo: con otro tamaño efectivo, el borde se conserva y la conversión
+   * no depende del factor de la ventana (DPI mixto).
+   */
+  setWidgetBounds: (placement: WidgetPlacementRequest) => invoke<WidgetPlacementReport>('set_widget_bounds', { bounds: placement }),
+  /** Cancela la colocación pendiente: el usuario empezó a arrastrar la tira (#179). */
+  cancelWidgetPlacement: () => invoke<void>('cancel_widget_placement'),
   setSurfaceClip: (clip: SurfaceClip, backdrop = true) => invoke<void>('set_surface_clip', { clip, backdrop }),
   setTrayTooltip: (text: string) => invoke<void>('set_tray_tooltip', { text }),
   getHistory: (provider: string, hours: number) => invoke<Sample[]>('get_history', { provider, hours }),

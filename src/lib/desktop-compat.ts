@@ -4,27 +4,31 @@
 // macOS el bloque no se muestra: sus superficies no dependen del compositor.
 
 import type { DesktopSurfaces } from './wm-detect';
+import type { Locale } from './types';
+import { t, type MessageKey } from '../i18n';
 
 export interface DesktopCompatRow {
-  /** Etiqueta visible de la superficie (en español, como el resto de Ajustes). */
+  /** Etiqueta visible de la superficie, en el idioma de Ajustes. */
   label: string;
   state: 'ok' | 'limited';
   note: string;
 }
 
-const SURFACE_LABELS: { key: keyof DesktopSurfaces; label: string }[] = [
-  { key: 'alwaysOnTop', label: 'Siempre encima' },
-  { key: 'clickThrough', label: 'Clic a través de los huecos' },
-  { key: 'trayIcon', label: 'Icono de bandeja' },
-  { key: 'globalShortcuts', label: 'Atajos globales' },
-  { key: 'autostart', label: 'Arranque al iniciar sesión' },
-  { key: 'notifications', label: 'Notificaciones' },
-  { key: 'transparency', label: 'Transparencia' },
+const SURFACE_LABELS: { key: keyof DesktopSurfaces; label: MessageKey }[] = [
+  { key: 'alwaysOnTop', label: 'settings.shell.surfaces.alwaysOnTop' },
+  { key: 'clickThrough', label: 'settings.shell.surfaces.clickThrough' },
+  { key: 'trayIcon', label: 'settings.shell.surfaces.trayIcon' },
+  { key: 'globalShortcuts', label: 'settings.shell.surfaces.globalShortcuts' },
+  { key: 'autostart', label: 'settings.shell.surfaces.autostart' },
+  { key: 'notifications', label: 'settings.shell.surfaces.notifications' },
+  { key: 'transparency', label: 'settings.shell.surfaces.transparency' },
+  // #180: order mirrors the Rust struct (`window_positioning` is the last surface).
+  { key: 'windowPositioning', label: 'settings.shell.surfaces.windowPositioning' },
 ];
 
 /** Filas del bloque «Sesión de escritorio», en orden fijo y sin filtrar. */
-export function desktopCompatRows(surfaces: DesktopSurfaces): DesktopCompatRow[] {
-  return SURFACE_LABELS.map(({ key, label }) => ({ label, state: surfaces[key].state, note: surfaces[key].note }));
+export function desktopCompatRows(surfaces: DesktopSurfaces, locale: Locale = 'es'): DesktopCompatRow[] {
+  return SURFACE_LABELS.map(({ key, label }) => ({ label: t(locale, label), state: surfaces[key].state, note: surfaces[key].note }));
 }
 
 /** ¿Alguna superficie reporta límites en la sesión detectada? */

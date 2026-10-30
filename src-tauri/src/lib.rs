@@ -11,6 +11,12 @@ mod model;
 mod providers;
 mod secrets;
 mod uninstall;
+// El módulo se compila también en Windows/macOS (el comando se invoca siempre),
+// pero allí sus piezas de Linux no se usan: sin avisos de código muerto.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod widget_placement;
+#[cfg(test)]
+mod widget_placement_test;
 mod window_clip;
 #[cfg(target_os = "windows")]
 mod windows_backdrop;
@@ -82,21 +88,22 @@ async fn set_detail_bounds(
         .ok_or_else(|| "Detail bounds UI callback was dropped".to_string())?
 }
 
+/// Coloca la tira en la superficie nativa y devuelve la geometría que quedó en
+/// pantalla. En X11 se lee de vuelta; en el resto, la solicitud, como antes.
 #[tauri::command]
 async fn set_widget_bounds(
     window: WebviewWindow,
-    bounds: detail_geometry::Bounds,
-) -> Result<(), String> {
-    let (tx, mut rx) = tauri::async_runtime::channel(1);
-    let ui_window = window.clone();
-    window
-        .run_on_main_thread(move || {
-            let _ = tx.try_send(detail_geometry::apply_widget(&ui_window, bounds));
-        })
-        .map_err(|e| e.to_string())?;
-    rx.recv()
-        .await
-        .ok_or_else(|| "Widget bounds UI callback was dropped".to_string())?
+    bounds: widget_placement::Placement,
+) -> Result<widget_placement::Report, String> {
+    // La generación se reserva al llegar la petición: otra posterior la cancela.
+    let generation = widget_placement::next_generation();
+    widget_placement::place(&window, bounds, generation).await
+}
+
+/// Cancela la colocación pendiente: el usuario empezó a arrastrar la tira.
+#[tauri::command]
+async fn cancel_widget_placement() {
+    widget_placement::cancel();
 }
 
 /// Atajos registrados → acción, y errores y avisos del último registro
@@ -902,6 +909,11 @@ fn toggle_widget(app: &AppHandle) {
             let _ = app.emit_to(WIDGET, "widget-hidden", ());
         } else {
             let _ = w.show();
+            // La ventana vuelve a ser visible: el widget reintenta la
+            // colocación (la anterior pudo quedarse sin leer mientras
+            // estaba oculta) (#179). Si la geometría cacheada ya coincide,
+            // su deduplicación no vuelve a pedirla.
+            let _ = app.emit_to(WIDGET, "widget-shown", ());
         }
     }
 }
@@ -1128,6 +1140,7 @@ pub fn run() {
             show_detail,
             set_detail_bounds,
             set_widget_bounds,
+            cancel_widget_placement,
             set_surface_clip,
             set_tray_tooltip,
             get_history,

@@ -20,6 +20,8 @@ pub const MINIMAX_SUBSCRIPTION_KEY: &str = "minimax_subscription_key";
 pub const MINIMAX_API_KEY: &str = "minimax_api_key";
 /// API key de z.ai (z.ai/manage-apikey) para la cuota del GLM Coding Plan.
 pub const ZAI_API_KEY: &str = "zai_api_key";
+/// API key de OpenCode Go para las cuotas de suscripción.
+pub const OPENCODE_GO_API_KEY: &str = "opencode_go_api_key";
 /// Token fine-grained de GitHub con permiso «Plan» (lectura) para la facturación de Copilot.
 pub const GITHUB_TOKEN: &str = "github_token";
 /// Token de Cursor pegado a mano (si no, se lee de la app).
@@ -32,7 +34,7 @@ pub const NINE_ROUTER_SESSION: &str = "nine_router_session";
 /// coincide con el destino actual, no se envían (evita credenciales de A en B).
 pub const NINE_ROUTER_BOUND_URL: &str = "nine_router_bound_url";
 
-pub const ALL: [&str; 13] = [
+pub const ALL: [&str; 14] = [
     ANTHROPIC_ADMIN_KEY,
     OPENAI_ADMIN_KEY,
     NAN_API_KEY,
@@ -41,6 +43,7 @@ pub const ALL: [&str; 13] = [
     MINIMAX_SUBSCRIPTION_KEY,
     MINIMAX_API_KEY,
     ZAI_API_KEY,
+    OPENCODE_GO_API_KEY,
     GITHUB_TOKEN,
     CURSOR_TOKEN,
     NINE_ROUTER_PASSWORD,
@@ -59,6 +62,7 @@ pub fn for_provider(provider: &str) -> &'static [&'static str] {
         "anthropic_api" => &[ANTHROPIC_ADMIN_KEY],
         "openai_api" => &[OPENAI_ADMIN_KEY],
         "nan" => &[NAN_API_KEY, NAN_SESSION],
+        "opencode_go" => &[OPENCODE_GO_API_KEY],
         // Contraseña + cookie + vínculo al destino (el bound_url no se edita en UI).
         "nine_router" => &[
             NINE_ROUTER_PASSWORD,

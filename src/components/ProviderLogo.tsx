@@ -53,7 +53,7 @@ const ALIASES: Record<string, string[]> = {
   openai_api: ['openai_api', 'openai'],
   gemini: ['gemini', 'google'],
   cursor: ['cursor'],
-  copilot: ['copilot', 'github-copilot', 'microsoft-copilot', 'github'],
+  copilot: ['copilot', 'github-copilot', 'github'],
   openrouter: ['openrouter'],
   // `minimax-cn` es el nombre del nodo de 9Router para la región de China.
   minimax: ['minimax', 'minimax-cn', 'minimax_cn', 'minimaxi'],
@@ -111,6 +111,7 @@ const MONOGRAM: Record<string, { text: string; sub?: string }> = {
   openrouter: { text: 'OR' },
   minimax: { text: 'MM' },
   nine_router: { text: '9R' },
+  opencode_go: { text: 'OC' },
 };
 
 /** Las APIs de pago por uso llevan una etiqueta «API» para distinguirlas de la suscripción. */

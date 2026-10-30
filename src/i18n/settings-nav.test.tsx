@@ -104,3 +104,31 @@ describe('SettingsHeadTitles (SSR)', () => {
     );
   });
 });
+
+// `aria-current` y `aria-expanded` siguen la sección seleccionada y el plegado
+// del menú (nota 3 de #204, T2c slice 2 C1b).
+describe('SettingsNav: aria-current and aria-expanded follow the state (SSR)', () => {
+  const count = (html: string, needle: string) => html.split(needle).length - 1;
+  const nav = (over: { section?: 'providers' | 'look'; navCollapsed?: boolean }) =>
+    renderToStaticMarkup(<SettingsNav {...navProps('es', over.navCollapsed ?? false)} section={over.section ?? 'look'} />);
+
+  it('marks only the selected section as the current page', () => {
+    const look = nav({ section: 'look' });
+    expect(count(look, 'aria-current="page"')).toBe(1);
+    expect(look.slice(look.indexOf('aria-current="page"'))).toMatch(/^[^<]*>[\s\S]*?Apariencia/);
+    expect(look.slice(0, look.indexOf('aria-current="page"'))).not.toContain('Apariencia');
+    const providers = nav({ section: 'providers' });
+    expect(count(providers, 'aria-current="page"')).toBe(1);
+    expect(providers.slice(providers.indexOf('aria-current="page"'))).toMatch(/^[^<]*>[\s\S]*?Proveedores/);
+    expect(providers.slice(0, providers.indexOf('aria-current="page"'))).not.toContain('Alertas');
+  });
+
+  it('sets aria-expanded on the toggle from the collapsed state', () => {
+    const open = nav({ navCollapsed: false });
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).not.toContain('aria-expanded="false"');
+    const collapsed = nav({ navCollapsed: true });
+    expect(collapsed).toContain('aria-expanded="false"');
+    expect(collapsed).not.toContain('aria-expanded="true"');
+  });
+});

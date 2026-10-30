@@ -1,0 +1,203 @@
+name: macOS signed release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable version of the existing Windows release
+        required: true
+        type: string
+      source_sha:
+        description: Full lowercase SHA of that release, ancestor of main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate release before signing approval
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.validate.outputs.sourceSha }}
+      version: ${{ steps.validate.outputs.version }}
+      release_id: ${{ steps.validate.outputs.releaseId }}
+    steps:
+      - name: Checkout trusted workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Validate existing release
+        id: validate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import { preflightRelease } from './scripts/macos-release-preflight.mjs';
+          const result = await preflightRelease();
+          for (const [key, value] of Object.entries(result)) {
+            appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + value + '\n');
+          }
+          NODE
+
+  signing:
+    name: Sign, notarize and attach macOS ARM64 DMG
+    needs: preflight
+    if: github.ref == 'refs/heads/main'
+    environment: macos-signing
+    runs-on: macos-15
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      RELEASE_SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      RELEASE_ID: ${{ needs.preflight.outputs.release_id }}
+    steps:
+      - name: Checkout trusted verification tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout validated build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+
+      - name: Require native ARM64 toolchains
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(node -p process.arch)" = arm64
+          rustc -vV | grep -Fx 'host: aarch64-apple-darwin'
+
+      - name: Install locked dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Write private notarization key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/quorb-notary-${{ github.run_id }}-${{ github.run_attempt }}.p8
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const key = process.env.APPLE_API_KEY_P8;
+          if (!key || !key.trim()) throw new Error('Missing notarization key');
+          writeFileSync(process.env.APPLE_API_KEY_PATH, key, { mode: 0o600, flag: 'wx' });
+          NODE
+
+      - name: Build, sign, notarize and staple
+        working-directory: source
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/quorb-notary-${{ github.run_id }}-${{ github.run_attempt }}.p8
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$APPLE_API_ISSUER"
+          test -n "$APPLE_API_KEY"
+          npm run app:build:mac
+          dmg="src-tauri/target/release/bundle/dmg/Quorb_${RELEASE_VERSION}_aarch64.dmg"
+          xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+          xcrun stapler staple "$dmg"
+
+      - name: Remove private notarization key
+        if: always()
+        env:
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/quorb-notary-${{ github.run_id }}-${{ github.run_attempt }}.p8
+        run: |
+          node --input-type=module <<'NODE'
+          import { unlinkSync } from 'node:fs';
+          try { unlinkSync(process.env.APPLE_API_KEY_PATH); }
+          catch (error) { if (error.code !== 'ENOENT') throw error; }
+          NODE
+
+      - name: Verify signed app and stapled DMG, then hash final bytes
+        run: |
+          node --input-type=module <<'NODE'
+          import path from 'node:path';
+          import { writeFileSync } from 'node:fs';
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { verifyMacosBundle } from './scripts/verify-macos-bundle.mjs';
+          const result = verifyMacosBundle({ root: path.resolve('source'), sourceSha: process.env.RELEASE_SOURCE_SHA });
+          const expected = path.resolve('source/src-tauri/target/release/bundle/dmg', 'Quorb_' + process.env.RELEASE_VERSION + '_aarch64.dmg');
+          if (result.version !== process.env.RELEASE_VERSION || result.dmg !== expected) throw new Error('Unexpected release bundle');
+          const run = (command, args) => execFileSync(command, args, { stdio: 'inherit', timeout: 120000 });
+          run('codesign', ['--verify', '--deep', '--strict', result.app]);
+          const signature = spawnSync('codesign', ['-dv', '--verbose=4', result.app], { encoding: 'utf8', timeout: 120000 });
+          if (signature.error || signature.status !== 0 ||
+              !/^Authority=Developer ID Application: .+ \(SRD8T33RU5\)$/m.test(signature.stderr) ||
+              !/^TeamIdentifier=SRD8T33RU5$/m.test(signature.stderr)) throw new Error('Unexpected Developer ID authority or team');
+          console.log(signature.stderr);
+          run('spctl', ['--assess', '--type', 'execute', result.app]);
+          run('spctl', ['--assess', '--type', 'open', '--context', 'context:primary-signature', result.dmg]);
+          run('xcrun', ['stapler', 'validate', result.dmg]);
+          writeFileSync(result.dmg + '.sha256', result.dmgSha256 + '  ' + path.basename(result.dmg) + '\n', { flag: 'wx' });
+          NODE
+
+      - name: Revalidate release and upload only DMG and SHA-256 without overwrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { preflightRelease } from './scripts/macos-release-preflight.mjs';
+          const result = await preflightRelease();
+          if (String(result.releaseId) !== process.env.RELEASE_ID) throw new Error('Release identity changed');
+          NODE
+          dmg="source/src-tauri/target/release/bundle/dmg/Quorb_${RELEASE_VERSION}_aarch64.dmg"
+          name="${dmg##*/}"
+          dmg_id="$(gh api --method POST -H 'Content-Type: application/x-apple-diskimage' "https://uploads.github.com/repos/egdev6/quorb/releases/$RELEASE_ID/assets?name=$name" --input "$dmg" --jq .id)"
+          if ! [[ "$dmg_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::DMG upload returned a non-numeric asset id; deleting nothing."
+            exit 1
+          fi
+          if ! gh api --method POST -H 'Content-Type: text/plain' "https://uploads.github.com/repos/egdev6/quorb/releases/$RELEASE_ID/assets?name=$name.sha256" --input "$dmg.sha256" --jq .id; then
+            echo "::error::SHA-256 upload failed; removing only the DMG this run uploaded."
+            if ! gh api --method DELETE "repos/egdev6/quorb/releases/assets/$dmg_id"; then
+              echo "::error::Rollback failed; manual cleanup needed for $name (asset id $dmg_id)."
+              exit 1
+            fi
+            exit 1
+          fi

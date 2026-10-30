@@ -111,6 +111,7 @@ React 19 y TypeScript gestionan el widget, los ajustes y los overlays. Tauri 2 y
 | NaN Builders | Cuota del plan y tokens diarios | Enlace por correo o API key |
 | Anthropic API / OpenAI API | Coste mensual | Admin API keys |
 | z.ai | GLM Coding Plan: cuota de 5 h y semanal de coding, mensual de web tools y saldo de resets | API key |
+| OpenCode Go | Go / Go Plus: cuotas de 5 h, semanal y del ciclo de facturación | API key de Go |
 
 Algunas integraciones usan endpoints no documentados, que pueden cambiar o dejar de funcionar. Copilot, OpenRouter y las APIs de coste usan APIs oficiales; NaN combina la API documentada con endpoints no documentados del dashboard, y z.ai lee endpoints de cuotas y resets no documentados.
 

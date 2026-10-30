@@ -14,12 +14,13 @@ pub mod nan_cloud;
 pub mod nine_router;
 pub mod nine_router_creds;
 pub mod openai_api;
+pub mod opencode_go;
 pub mod openrouter;
 pub mod zai;
 
 use crate::config::{
-    Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenRouterConfig,
-    SubscriptionConfig, ZaiConfig,
+    Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenCodeGoConfig,
+    OpenRouterConfig, SubscriptionConfig, ZaiConfig,
 };
 use crate::model::{Kind, UsageReport};
 use crate::secrets;
@@ -139,6 +140,14 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
     if cfg.zai.enabled {
         jobs.push(async move { vec![zai::fetch(&cfg.zai, Who::main("zai"), http).await] }.boxed());
     }
+    if cfg.opencode_go.enabled {
+        jobs.push(
+            async move {
+                vec![opencode_go::fetch(&cfg.opencode_go, Who::main("opencode_go"), http).await]
+            }
+            .boxed(),
+        );
+    }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
         jobs.push(async move { vec![fetch_account(cfg, a, http).await] }.boxed());
     }
@@ -181,6 +190,7 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         }
         "openai_api" => openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await,
         "zai" => zai::fetch(&cfg.zai, Who::main("zai"), http).await,
+        "opencode_go" => opencode_go::fetch(&cfg.opencode_go, Who::main("opencode_go"), http).await,
         _ => return None,
     })
 }
@@ -267,6 +277,10 @@ fn fetch_account<'a>(
             async move { nine_router::fetch(&cfg.nine_router, who, http).await }.boxed()
         }
         "zai" => async move { zai::fetch(&ZaiConfig { enabled: true }, who, http).await }.boxed(),
+        "opencode_go" => {
+            async move { opencode_go::fetch(&OpenCodeGoConfig { enabled: true }, who, http).await }
+                .boxed()
+        }
         "anthropic_api" | "openai_api" => {
             let c = ApiCostConfig {
                 enabled: true,

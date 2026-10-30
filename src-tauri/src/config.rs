@@ -92,6 +92,8 @@ pub struct AppConfig {
     pub nan: NanConfig,
     pub minimax: MiniMaxConfig,
     pub nine_router: NineRouterConfig,
+    #[serde(default)]
+    pub opencode_go: OpenCodeGoConfig,
     /// Cuentas adicionales de un proveedor (la principal es la de arriba).
     pub accounts: Vec<Account>,
 }
@@ -175,7 +177,7 @@ impl AppConfig {
 /// Proveedores que admiten cuentas adicionales (todos).
 /// En 9Router las «cuentas» son sus sub-proveedores (`nine_router:claude`…); el
 /// backend las descubre solo, pero el id debe validar como cuenta.
-pub const ACCOUNT_PROVIDERS: [&str; 11] = [
+pub const ACCOUNT_PROVIDERS: [&str; 12] = [
     "claude",
     "codex",
     "gemini",
@@ -187,6 +189,7 @@ pub const ACCOUNT_PROVIDERS: [&str; 11] = [
     "openai_api",
     "nine_router",
     "zai",
+    "opencode_go",
 ];
 
 /// `<proveedor>:<sufijo>`, con sufijo de 1–64 caracteres `[a-z0-9-]`.
@@ -319,6 +322,7 @@ impl Default for AppConfig {
             nan: NanConfig::default(),
             minimax: MiniMaxConfig::default(),
             nine_router: NineRouterConfig::default(),
+            opencode_go: OpenCodeGoConfig::default(),
             accounts: vec![],
         }
     }
@@ -384,6 +388,13 @@ pub struct OpenRouterConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ZaiConfig {
+    pub enabled: bool,
+}
+
+/// OpenCode Go — cuotas de suscripción con API key de Console.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct OpenCodeGoConfig {
     pub enabled: bool,
 }
 

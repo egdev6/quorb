@@ -35,6 +35,7 @@ export const OFFICIAL_USAGE_URL: Record<string, string> = {
   grok: 'https://grok.com/',
   copilot: 'https://github.com/settings/billing/premium_requests_usage',
   openrouter: 'https://openrouter.ai/activity',
+  opencode_go: 'https://opencode.ai/console',
 };
 
 /** URL del dashboard de 9Router a partir de su Base URL configurada (sin barra final). */
