@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { fileFixture } from './macos-notary-artifact-fixtures.mjs';
 import { validateManifest, validateDmg, validateReceipt, signingEnvironment, createCheckpoint, buildSigned } from './macos-notary-checkpoint.mjs';
 import { submitCheckpoint } from './macos-notary-submit.mjs';
 
@@ -18,6 +20,29 @@ export const receipt = {
   schema: 1, ...trusted, checkpointArtifactId: '456', checkpointArtifactDigest: 'c'.repeat(64),
   submissionId: '12345678-1234-1234-1234-123456789abc', dmgSha256: manifest.sha256,
 };
+
+for (const [style, paths] of [['POSIX', path.posix], ['Windows', path.win32]]) {
+  test(`offline filesystem canonicalizes ${style} separators without weakening exclusive writes or exact file checks`, () => {
+    for (const directory of ['notary-checkpoint', 'notary-retained', 'notary-publish']) {
+      const { files, io } = fileFixture();
+      io.mkdirSync(directory);
+      const dmg = paths.join(directory, manifest.dmgName);
+      io.writeFileSync(dmg, bytes, { flag: 'wx' });
+      io.writeFileSync(paths.join(directory, 'manifest.json'), JSON.stringify(manifest), { flag: 'wx' });
+      assert.deepEqual(files.get(`${directory}/${manifest.dmgName}`), bytes);
+      assert.deepEqual(io.readFileSync(`${directory}/${manifest.dmgName}`), bytes);
+      assert.deepEqual(io.readFileSync(dmg), bytes);
+      assert.deepEqual([...files.keys()].filter((name) => name.startsWith(`${directory}/`)).sort(),
+        [`${directory}/${manifest.dmgName}`, `${directory}/manifest.json`]);
+      assert.ok(!files.has(`${directory}/unexpected.dmg`));
+      assert.throws(() => io.writeFileSync(`${directory}/${manifest.dmgName}`, bytes, { flag: 'wx' }), /overwrite/);
+      assert.throws(() => io.writeFileSync(paths.join(directory, 'unexpected.dmg'), bytes, { flag: 'w' }), /overwrite/);
+      assert.throws(() => io.mkdirSync(directory), /exists/);
+      assert.deepEqual(files.get(`${directory}/${manifest.dmgName}`), bytes);
+      assert.ok(!files.has(`${directory}/unexpected.dmg`));
+    }
+  });
+}
 
 test('manifest and receipt are strictly bound to externally trusted values, not self-authenticated', () => {
   assert.deepEqual(validateManifest(manifest, trusted), manifest);
@@ -53,13 +78,8 @@ test('build removes every Tauri notarization credential including alternate Appl
 test('checkpoint contains only signed DMG and strict manifest; successful upload binding is required before key creation or submit', () => {
   const env = { GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: trusted.repository, GITHUB_SHA: trusted.workflowSha,
     GITHUB_RUN_ID: trusted.runId, GITHUB_RUN_ATTEMPT: trusted.runAttempt, RELEASE_SOURCE_SHA: trusted.sourceSha, RELEASE_VERSION: trusted.version, RELEASE_ID: trusted.releaseId };
-  const files = new Map([['/synthetic/Quorb_0.8.0_aarch64.dmg', bytes]]);
+  const { files, io } = fileFixture([['/synthetic/Quorb_0.8.0_aarch64.dmg', bytes]]);
   const signatures = [];
-  const io = {
-    readFileSync: (name) => files.get(name),
-    mkdirSync: (name) => { assert.ok(!files.has(name)); files.set(name, null); },
-    writeFileSync: (name, data, options) => { assert.equal(options.flag, 'wx'); assert.ok(!files.has(name)); files.set(name, data); },
-  };
   const result = createCheckpoint({ env, io, verify: () => ({ version: '0.8.0', app: '/synthetic/Quorb.app', dmg: '/synthetic/Quorb_0.8.0_aarch64.dmg' }), signature: (target) => signatures.push(target) });
   assert.deepEqual(result, manifest);
   assert.equal(signatures.length, 2);
@@ -69,7 +89,7 @@ test('checkpoint contains only signed DMG and strict manifest; successful upload
   assert.throws(() => submitCheckpoint({ env, io, key }), /upload must succeed/);
   assert.equal(keyCalls, 0);
   const uploaded = { ...env, CHECKPOINT_ARTIFACT_ID: '456', CHECKPOINT_ARTIFACT_DIGEST: 'c'.repeat(64) };
-  const saved = submitCheckpoint({ env: uploaded, io, key, run: (command, args) => {
+  const saved = submitCheckpoint({ env: uploaded, io, key, run: (_command, args) => {
     assert.ok(files.has('notary-checkpoint/manifest.json'));
     assert.ok(!args.includes('--wait')); return JSON.stringify({ id: receipt.submissionId });
   } });

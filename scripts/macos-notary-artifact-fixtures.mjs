@@ -13,6 +13,18 @@ sys.stdout.buffer.write(b.getvalue())`], {
   });
 }
 
+export function fileFixture(entries = []) {
+  // Canonical fixture keys only: do not resolve traversal or change manifest/ZIP names.
+  const key = (name) => name.replaceAll('\\', '/');
+  const files = new Map(entries.map(([name, bytes]) => [key(name), bytes]));
+  const io = {
+    readFileSync: (name) => files.get(key(name)),
+    mkdirSync: (name) => { name = key(name); if (files.has(name)) throw new Error('exists'); files.set(name, null); },
+    writeFileSync: (name, bytes, opts) => { name = key(name); if (files.has(name) || opts.flag !== 'wx') throw new Error('overwrite'); files.set(name, bytes); },
+  };
+  return { files, io };
+}
+
 export function producerFixture() {
   const workflowSha = 'a'.repeat(40);
   const sourceSha = 'b'.repeat(40);
@@ -34,13 +46,8 @@ export function producerFixture() {
   const receipt = { schema: 1, ...trusted, checkpointArtifactId: '456', checkpointArtifactDigest: checkpoint.digest.slice(7), submissionId, dmgSha256: manifest.sha256 };
   const receiptArtifact = artifact('macos-notary-receipt-123-2', 457, { 'receipt.json': JSON.stringify(receipt) });
   const artifacts = [checkpoint, receiptArtifact];
-  const files = new Map([[trusted.workflowPath, 'reviewed workflow bytes']]);
+  const { files, io } = fileFixture([[trusted.workflowPath, 'reviewed workflow bytes']]);
   const calls = [];
-  const io = {
-    readFileSync: (name) => files.get(name),
-    mkdirSync: (name) => { if (files.has(name)) throw new Error('exists'); files.set(name, null); },
-    writeFileSync: (name, bytes, opts) => { if (files.has(name) || opts.flag !== 'wx') throw new Error('overwrite'); files.set(name, bytes); },
-  };
   const env = { GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: trusted.repository, GITHUB_SHA: 'd'.repeat(40),
     RELEASE_VERSION: trusted.version, RELEASE_SOURCE_SHA: sourceSha, RELEASE_ID: '42', SOURCE_RUN_ID: '123', SOURCE_RUN_ATTEMPT: '2', GH_TOKEN: 'synthetic' };
   const exec = (command, args) => {
