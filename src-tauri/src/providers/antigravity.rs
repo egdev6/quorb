@@ -27,11 +27,12 @@ const WEEK: i64 = 7 * 86_400;
 /// Margen para el desfase entre el reloj de Antigravity y el nuestro.
 const TOLERANCE: i64 = 120;
 
-/// Último reinicio visto por medidor y la ventana deducida para él.
+/// Último reinicio visto por medidor, la ventana deducida para él y cuándo se vio.
 #[derive(Clone, Debug, PartialEq)]
 struct Seen {
     reset: String,
     window: Option<i64>,
+    seen_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Memoria entre consultas (clave: id del medidor). Solo en memoria: al reiniciar
@@ -188,7 +189,7 @@ fn parse_models(
         }
     }
     let mut out: Vec<Meter> = by_model.into_values().collect();
-    settle_windows(&mut out, memory);
+    settle_windows(&mut out, memory, now);
     out.sort_by(|a, b| {
         b.percent
             .partial_cmp(&a.percent)
@@ -224,8 +225,11 @@ fn slug(name: &str) -> String {
 /// le llega un momento en que le quedan menos de 5 h. Señales que sí son fiables:
 ///   · faltan más de 5 h → solo puede ser semanal;
 ///   · ya vimos este mismo reinicio → se mantiene la ventana deducida entonces;
-///   · el reinicio cambió y el nuevo cae dentro de 5 h → ventana de 5 h (el nuevo
-///     reinicio de una semanal caería a ~7 días).
+///   · el reinicio cambió, el nuevo cae dentro de 5 h y la consulta anterior es de
+///     hace menos de 7 días − 5 h → ventana de 5 h. Si el reinicio cambió, la ventana
+///     nueva empezó después de esa consulta; si fuera semanal acabaría al menos 7 días
+///     después de ella, y no podrían quedarle ≤ 5 h antes de 7 días − 5 h. Tras una
+///     pausa más larga (Antigravity cerrado) el cambio es ambiguo.
 /// Sin ninguna de ellas, `None`: mejor sin ritmo que con uno equivocado.
 fn window_for(prev: Option<&Seen>, reset: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
     let at = chrono::DateTime::parse_from_rfc3339(reset).ok()?;
@@ -238,14 +242,20 @@ fn window_for(prev: Option<&Seen>, reset: &str, now: chrono::DateTime<chrono::Ut
     }
     match prev {
         Some(p) if p.reset == reset => p.window,
-        Some(_) => Some(FIVE_HOURS),
-        None => None,
+        Some(p) if (now - p.seen_at).num_seconds() < WEEK - FIVE_HOURS - 2 * TOLERANCE => {
+            Some(FIVE_HOURS)
+        }
+        _ => None,
     }
 }
 
 /// Completa las ventanas desconocidas con las de los modelos del mismo grupo
 /// (mismo `resetTime` exacto) y guarda lo deducido para la próxima consulta.
-fn settle_windows(meters: &mut [Meter], memory: &mut BTreeMap<String, Seen>) {
+fn settle_windows(
+    meters: &mut [Meter],
+    memory: &mut BTreeMap<String, Seen>,
+    now: chrono::DateTime<chrono::Utc>,
+) {
     let known: BTreeMap<String, i64> = meters
         .iter()
         .filter_map(|m| Some((m.resets_at.clone()?, m.window_seconds?)))
@@ -260,6 +270,7 @@ fn settle_windows(meters: &mut [Meter], memory: &mut BTreeMap<String, Seen>) {
                 Seen {
                     reset: reset.clone(),
                     window: m.window_seconds,
+                    seen_at: now,
                 },
             );
         }
@@ -563,6 +574,58 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
     }
 
     #[test]
+    fn weekly_reset_after_a_pause_is_not_taken_for_five_hours() {
+        let utc = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let mut memory = BTreeMap::new();
+        // 27 oct 15:37: semanal que reinicia el 29 oct 18:37 → se aprende WEEK.
+        let m = parse_models(
+            &one("Gemini 4 Argon", "2026-10-29T18:37:41Z"),
+            utc("2026-10-27T15:37:41Z"),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, Some(WEEK));
+        // Antigravity cerrado hasta el 5 nov 15:37. El siguiente reinicio semanal es
+        // el 5 nov 18:37 (7 días después del anterior): cambió y quedan 3 h, pero tras
+        // la pausa no hay evidencia de que sea una ventana de 5 h.
+        let m = parse_models(
+            &one("Gemini 4 Argon", "2026-11-05T18:37:41Z"),
+            utc("2026-11-05T15:37:41Z"),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, None);
+        // Y no se aprende 5 h para las consultas siguientes del mismo reinicio.
+        let m = parse_models(
+            &one("Gemini 4 Argon", "2026-11-05T18:37:41Z"),
+            utc("2026-11-05T16:37:41Z"),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, None);
+    }
+
+    #[test]
+    fn five_hour_inference_is_bounded_by_the_gap_since_last_seen() {
+        let bound = WEEK - FIVE_HOURS - 2 * TOLERANCE;
+        let prev = |gap: i64| Seen {
+            reset: "2026-10-01T00:00:00Z".into(),
+            window: Some(FIVE_HOURS),
+            seen_at: now() - chrono::Duration::seconds(gap),
+        };
+        let reset = "2026-10-29T18:37:41Z"; // now() + 3 h, distinto del anterior
+                                            // Una semanal no puede haber cambiado de reinicio y quedarse en ≤ 5 h tan pronto.
+        assert_eq!(
+            window_for(Some(&prev(bound - 1)), reset, now()),
+            Some(FIVE_HOURS)
+        );
+        // Con una pausa mayor ya podría ser el siguiente reinicio semanal: ambiguo.
+        assert_eq!(window_for(Some(&prev(bound)), reset, now()), None);
+        assert_eq!(window_for(Some(&prev(10 * 86_400)), reset, now()), None);
+    }
+
+    #[test]
     fn models_sharing_a_reset_share_the_window() {
         let reset = "2026-10-29T18:37:41Z"; // now() + 3 h
         let mut memory = BTreeMap::from([(
@@ -570,6 +633,7 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
             Seen {
                 reset: reset.into(),
                 window: Some(WEEK),
+                seen_at: at(-1),
             },
         )]);
         let v = json!({"cascadeModelConfigData": {"clientModelConfigs": [
