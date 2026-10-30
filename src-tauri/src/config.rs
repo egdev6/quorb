@@ -94,6 +94,8 @@ pub struct AppConfig {
     pub nine_router: NineRouterConfig,
     #[serde(default)]
     pub opencode_go: OpenCodeGoConfig,
+    #[serde(default)]
+    pub antigravity: AntigravityConfig,
     /// Cuentas adicionales de un proveedor (la principal es la de arriba).
     pub accounts: Vec<Account>,
 }
@@ -323,6 +325,7 @@ impl Default for AppConfig {
             minimax: MiniMaxConfig::default(),
             nine_router: NineRouterConfig::default(),
             opencode_go: OpenCodeGoConfig::default(),
+            antigravity: AntigravityConfig::default(),
             accounts: vec![],
         }
     }
@@ -395,6 +398,14 @@ pub struct ZaiConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OpenCodeGoConfig {
+    pub enabled: bool,
+}
+
+/// Antigravity — cuota por modelo leída del servidor local del IDE abierto.
+/// Sin cuentas adicionales: solo hay una sesión del IDE en la máquina.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AntigravityConfig {
     pub enabled: bool,
 }
 

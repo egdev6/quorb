@@ -1,7 +1,7 @@
 import type { AppConfig } from './types';
 import { isNineRouterId } from './visibility';
 
-type MainKey = 'claude' | 'codex' | 'gemini' | 'cursor' | 'grok' | 'copilot' | 'nan' | 'openrouter' | 'minimax' | 'anthropicApi' | 'openaiApi' | 'zai' | 'opencodeGo';
+type MainKey = 'claude' | 'codex' | 'gemini' | 'cursor' | 'grok' | 'copilot' | 'nan' | 'openrouter' | 'minimax' | 'anthropicApi' | 'openaiApi' | 'zai' | 'opencodeGo' | 'antigravity';
 
 /** Clave de configuración de cada cuenta principal; el id del informe puede ser distinto. */
 export const CONFIG_KEY: Readonly<Record<string, MainKey>> = {
@@ -10,6 +10,7 @@ export const CONFIG_KEY: Readonly<Record<string, MainKey>> = {
   anthropic_api: 'anthropicApi', openai_api: 'openaiApi',
   zai: 'zai',
   opencode_go: 'opencodeGo',
+  antigravity: 'antigravity',
 };
 
 /**

@@ -53,6 +53,7 @@ const enabledOnly = (...ids: string[]) => {
     nineRouter: on('nine_router'),
     zai: on('zai'),
     opencodeGo: on('opencode_go'),
+    antigravity: on('antigravity'),
     accounts: [{ id: 'claude:b', provider: 'claude', label: 'Cuenta 2', enabled: true }],
   } as unknown as AppConfig;
 };
@@ -79,6 +80,7 @@ const descriptions: [es: string, en: string][] = [
   ['Pasarela local · uso y gasto agregados', 'Local gateway · aggregated usage and spend'],
   ['GLM Coding Plan · cuotas de 5 h, semanales y web tools', 'GLM Coding Plan · 5 h, weekly quotas and web tools'],
   ['Go / Go Plus · cuotas de 5 h, semanal y ciclo de facturación', 'Go / Go Plus · 5 h, weekly and billing-cycle quotas'],
+  ['Cuota del agente por modelo · IDE abierto', 'Per-model agent quota · open IDE'],
 ];
 
 describe('Providers list: tab descriptions and badges (SSR, i18n)', () => {

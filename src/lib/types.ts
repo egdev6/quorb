@@ -162,6 +162,7 @@ export interface AppConfig {
   openaiApi: ApiCostConfig;
   zai: { enabled: boolean };
   opencodeGo: { enabled: boolean };
+  antigravity: { enabled: boolean };
   nan: NanConfig;
   minimax: MiniMaxConfig;
   nineRouter: NineRouterConfig;

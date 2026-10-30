@@ -212,6 +212,7 @@ export const es = {
         nineRouter: 'Pasarela local · uso y gasto agregados',
         zai: 'GLM Coding Plan · cuotas de 5 h, semanales y web tools',
         opencodeGo: 'Go / Go Plus · cuotas de 5 h, semanal y ciclo de facturación',
+        antigravity: 'Cuota del agente por modelo · IDE abierto',
       },
       badge: {
         on: 'Activo',
@@ -352,6 +353,12 @@ export const es = {
           tokenLabel: 'Token manual (opcional)',
           advanced: 'Avanzado · base de datos de Cursor',
           dbLabel: 'Base de datos de Cursor',
+        },
+        antigravity: {
+          kicker: 'Suscripción · IDE abierto',
+          note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.',
+          openTitle: 'Abre Antigravity con tu cuenta de Google',
+          openBody: 'Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.',
         },
         copilot: {
           note: 'Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).',

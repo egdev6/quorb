@@ -1188,6 +1188,7 @@ const PROVIDER_TABS = [
   { id: 'codex', name: 'ChatGPT y Codex', nameKey: 'settings.providers.codexName', group: 'sub', descKey: 'settings.providers.desc.codex' },
   { id: 'gemini', name: 'Gemini', group: 'sub', descKey: 'settings.providers.desc.gemini' },
   { id: 'cursor', name: 'Cursor', group: 'sub', descKey: 'settings.providers.desc.cursor' },
+  { id: 'antigravity', name: 'Antigravity', group: 'sub', descKey: 'settings.providers.desc.antigravity' },
   { id: 'grok', name: 'Grok', group: 'sub', descKey: 'settings.providers.desc.grok' },
   { id: 'copilot', name: 'GitHub Copilot', group: 'sub', descKey: 'settings.providers.desc.copilot' },
   { id: 'minimax', name: 'MiniMax', group: 'sub', descKey: 'settings.providers.desc.minimax' },
@@ -1727,6 +1728,8 @@ function mainState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): ProviderSt
       return on(cfg.grok.enabled);
     case 'cursor':
       return on(cfg.cursor.enabled);
+    case 'antigravity':
+      return on(cfg.antigravity.enabled);
     case 'copilot':
       return on(cfg.copilot.enabled, !!s.github_token && cfg.copilot.username.trim() !== '');
     case 'nan':
@@ -1967,6 +1970,22 @@ export function CursorPanel({ locale, cfg, secrets, set, setVisibility, loadSecr
           <input type="text" spellCheck={false} value={cfg.cursor.credentialsPath ?? ''} onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })} />
         </Field>
       </details>
+    </Section>
+  );
+}
+
+export function AntigravityPanel({ locale, cfg, setVisibility, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.antigravity.kicker')} title="Antigravity">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)} onChange={(v) => setVisibility('antigravity', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.antigravity.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li>
+          <b>{t(locale, 'settings.providers.panels.antigravity.openTitle')}</b>
+          <span>{t(locale, 'settings.providers.panels.antigravity.openBody')}</span>
+        </li>
+        <HealthStep id="antigravity" {...healthFor('antigravity', !cfg.antigravity.enabled)} />
+      </ol>
     </Section>
   );
 }
@@ -2607,6 +2626,7 @@ export function Settings() {
       )}
 
       {tab === 'cursor' && <CursorPanel {...panel} />}
+      {tab === 'antigravity' && <AntigravityPanel {...panel} />}
 
       {tab === 'copilot' && <CopilotPanel {...panel} />}
 
