@@ -20,6 +20,23 @@ use crate::model::{Kind, Meter, Status, UsageReport};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+const FIVE_HOURS: i64 = 5 * 3600;
+const WEEK: i64 = 7 * 86_400;
+/// Margen para el desfase entre el reloj de Antigravity y el nuestro.
+const TOLERANCE: i64 = 120;
+
+/// Último reinicio visto por medidor y la ventana deducida para él.
+#[derive(Clone, Debug, PartialEq)]
+struct Seen {
+    reset: String,
+    window: Option<i64>,
+}
+
+/// Memoria entre consultas (clave: id del medidor). Solo en memoria: al reiniciar
+/// Quorb se vuelve a deducir desde cero.
+static SEEN: Mutex<BTreeMap<String, Seen>> = Mutex::new(BTreeMap::new());
 
 const METHOD: &str = "/exa.language_server_pb.LanguageServerService/GetUserStatus";
 const NOT_RUNNING: &str =
@@ -78,7 +95,8 @@ pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, http: &reqwest::Clien
         }
         code => return report.fail(Status::Error, format!("HTTP {code} en GetUserStatus")),
     };
-    build_report(report, &v, chrono::Utc::now())
+    let mut memory = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    build_report(report, &v, chrono::Utc::now(), &mut memory)
 }
 
 /// Informe final a partir de la respuesta de `GetUserStatus`. Puro, sin red.
@@ -86,10 +104,11 @@ fn build_report(
     mut report: UsageReport,
     v: &Value,
     now: chrono::DateTime<chrono::Utc>,
+    memory: &mut BTreeMap<String, Seen>,
 ) -> UsageReport {
     let status = v.get("userStatus").unwrap_or(v);
     report.plan = plan_name(status);
-    report.meters = parse_models(status, now);
+    report.meters = parse_models(status, now, memory);
     if report.meters.is_empty() {
         report.status = Status::Warning;
         report.message = Some(
@@ -114,7 +133,11 @@ fn plan_name(status: &Value) -> Option<String> {
 
 /// Un medidor por modelo (el % gastado es 1 − remainingFraction). Las variantes de
 /// esfuerzo («(High)», «(Low)»…) comparten cuota: nos quedamos con la más gastada.
-fn parse_models(status: &Value, now: chrono::DateTime<chrono::Utc>) -> Vec<Meter> {
+fn parse_models(
+    status: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+    memory: &mut BTreeMap<String, Seen>,
+) -> Vec<Meter> {
     let mut by_model: BTreeMap<String, Meter> = BTreeMap::new();
     for c in status
         .pointer("/cascadeModelConfigData/clientModelConfigs")
@@ -142,14 +165,18 @@ fn parse_models(status: &Value, now: chrono::DateTime<chrono::Utc>) -> Vec<Meter
             .and_then(Value::as_str)
             .filter(|s| chrono::DateTime::parse_from_rfc3339(s).is_ok())
             .map(str::to_string);
+        let id = format!("model:{}", slug(&name));
+        let window_seconds = resets_at
+            .as_deref()
+            .and_then(|r| window_for(memory.get(&id), r, now));
         let meter = Meter {
-            id: format!("model:{}", slug(&name)),
+            id,
             label: name.clone(),
             percent: Some(((1.0 - remaining) * 100.0).clamp(0.0, 100.0)),
             used: None,
             limit: None,
             unit: None,
-            window_seconds: resets_at.as_deref().and_then(|r| window_for(r, now)),
+            window_seconds,
             resets_at,
         };
         let keep = by_model
@@ -161,6 +188,7 @@ fn parse_models(status: &Value, now: chrono::DateTime<chrono::Utc>) -> Vec<Meter
         }
     }
     let mut out: Vec<Meter> = by_model.into_values().collect();
+    settle_windows(&mut out, memory);
     out.sort_by(|a, b| {
         b.percent
             .partial_cmp(&a.percent)
@@ -192,15 +220,49 @@ fn slug(name: &str) -> String {
 }
 
 /// Antigravity no dice la duración de la ventana. Las cuotas que conocemos son de
-/// 5 h y semanales; deducimos cuál por el tiempo que falta para el reinicio.
-fn window_for(reset: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
-    let reset = chrono::DateTime::parse_from_rfc3339(reset).ok()?;
-    let left = (reset.with_timezone(&chrono::Utc) - now).num_seconds();
-    match left {
-        l if l <= 0 => None,
-        l if l <= 5 * 3600 => Some(5 * 3600),
-        l if l <= 7 * 86_400 => Some(7 * 86_400),
-        _ => None,
+/// 5 h y semanales, y un solo instante no basta para distinguirlas: a una semanal
+/// le llega un momento en que le quedan menos de 5 h. Señales que sí son fiables:
+///   · faltan más de 5 h → solo puede ser semanal;
+///   · ya vimos este mismo reinicio → se mantiene la ventana deducida entonces;
+///   · el reinicio cambió y el nuevo cae dentro de 5 h → ventana de 5 h (el nuevo
+///     reinicio de una semanal caería a ~7 días).
+/// Sin ninguna de ellas, `None`: mejor sin ritmo que con uno equivocado.
+fn window_for(prev: Option<&Seen>, reset: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+    let at = chrono::DateTime::parse_from_rfc3339(reset).ok()?;
+    let left = (at.with_timezone(&chrono::Utc) - now).num_seconds();
+    if left <= 0 {
+        return None;
+    }
+    if left > FIVE_HOURS + TOLERANCE {
+        return (left <= WEEK + TOLERANCE).then_some(WEEK);
+    }
+    match prev {
+        Some(p) if p.reset == reset => p.window,
+        Some(_) => Some(FIVE_HOURS),
+        None => None,
+    }
+}
+
+/// Completa las ventanas desconocidas con las de los modelos del mismo grupo
+/// (mismo `resetTime` exacto) y guarda lo deducido para la próxima consulta.
+fn settle_windows(meters: &mut [Meter], memory: &mut BTreeMap<String, Seen>) {
+    let known: BTreeMap<String, i64> = meters
+        .iter()
+        .filter_map(|m| Some((m.resets_at.clone()?, m.window_seconds?)))
+        .collect();
+    for m in meters.iter_mut() {
+        if m.window_seconds.is_none() {
+            m.window_seconds = m.resets_at.as_ref().and_then(|r| known.get(r).copied());
+        }
+        if let Some(reset) = &m.resets_at {
+            memory.insert(
+                m.id.clone(),
+                Seen {
+                    reset: reset.clone(),
+                    window: m.window_seconds,
+                },
+            );
+        }
     }
 }
 
@@ -376,6 +438,7 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
             UsageReport::new("antigravity", "Antigravity", Kind::Subscription),
             &v,
             now(),
+            &mut BTreeMap::new(),
         );
         assert_eq!(r.status, Status::Ok);
         assert_eq!(r.plan.as_deref(), Some("Google AI Pro"));
@@ -392,7 +455,8 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
         assert_eq!(r.meters[0].percent, Some(100.0));
         assert_eq!(r.meters[1].label, "Claude Opus 5.5");
         assert_eq!(r.meters[1].percent, Some(75.0));
-        assert_eq!(r.meters[1].window_seconds, Some(5 * 3600));
+        // Primera consulta, faltan justo 5 h y sin historial: ventana desconocida.
+        assert_eq!(r.meters[1].window_seconds, None);
         assert_eq!(r.meters[2].percent, Some(0.0));
         assert_eq!(r.meters[2].window_seconds, Some(7 * 86_400));
         assert_eq!(
@@ -414,6 +478,7 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
             UsageReport::new("antigravity", "Antigravity", Kind::Subscription),
             &json!({"userStatus": {}}),
             now(),
+            &mut BTreeMap::new(),
         );
         assert_eq!(r.status, Status::Warning);
         assert!(r.meters.is_empty());
@@ -425,11 +490,106 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
         let v = json!({"cascadeModelConfigData": {"clientModelConfigs": [
             {"label": "GPT-OSS 120B (Medium)", "quotaInfo": {"remainingFraction": 0.5, "resetTime": "mañana"}}
         ]}});
-        let m = parse_models(&v, now());
+        let m = parse_models(&v, now(), &mut BTreeMap::new());
         assert_eq!(m[0].id, "model:gpt_oss_120b");
         assert_eq!(m[0].percent, Some(50.0));
         assert_eq!(m[0].resets_at, None);
         assert_eq!(m[0].window_seconds, None);
+    }
+
+    /// Una sola cuota con su reinicio, como la devuelve GetUserStatus.
+    fn one(label: &str, reset: &str) -> Value {
+        json!({"cascadeModelConfigData": {"clientModelConfigs": [
+            {"label": label, "quotaInfo": {"remainingFraction": 0.5, "resetTime": reset}}
+        ]}})
+    }
+
+    fn at(h: i64) -> chrono::DateTime<chrono::Utc> {
+        now() + chrono::Duration::hours(h)
+    }
+
+    #[test]
+    fn weekly_quota_near_reset_is_not_taken_for_five_hours() {
+        // Semanal con menos de 5 h para el reinicio y sin historial: sin señal fiable.
+        let reset = "2026-10-29T18:37:41Z"; // now() + 3 h
+        let m = parse_models(
+            &one("Gemini 4 Argon (High)", reset),
+            now(),
+            &mut BTreeMap::new(),
+        );
+        assert_eq!(m[0].window_seconds, None);
+
+        // La misma semanal vista antes con días por delante conserva su ventana
+        // hasta el reinicio, aunque ya le queden menos de 5 h.
+        let mut memory = BTreeMap::new();
+        let m = parse_models(&one("Gemini 4 Argon (High)", reset), at(-48), &mut memory);
+        assert_eq!(m[0].window_seconds, Some(WEEK));
+        let m = parse_models(&one("Gemini 4 Argon (High)", reset), now(), &mut memory);
+        assert_eq!(m[0].window_seconds, Some(WEEK));
+        let m = parse_models(&one("Gemini 4 Argon (High)", reset), at(2), &mut memory);
+        assert_eq!(m[0].window_seconds, Some(WEEK));
+    }
+
+    #[test]
+    fn five_hour_window_needs_a_changed_reset() {
+        let mut memory = BTreeMap::new();
+        // Cuota sin usar: el reinicio se desliza con el reloj (siempre ahora + 5 h).
+        let m = parse_models(
+            &one("Claude Opus 5.5", "2026-10-29T20:37:41Z"),
+            now(),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, None);
+        let m = parse_models(
+            &one("Claude Opus 5.5", "2026-10-29T20:42:41Z"),
+            now() + chrono::Duration::minutes(5),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, Some(FIVE_HOURS));
+        // Ya en uso, el reinicio queda fijo y la ventana aprendida se conserva.
+        let m = parse_models(
+            &one("Claude Opus 5.5", "2026-10-29T20:42:41Z"),
+            at(4),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, Some(FIVE_HOURS));
+        // Pasado el reinicio no se inventa ventana.
+        let m = parse_models(
+            &one("Claude Opus 5.5", "2026-10-29T20:42:41Z"),
+            at(6),
+            &mut memory,
+        );
+        assert_eq!(m[0].window_seconds, None);
+    }
+
+    #[test]
+    fn models_sharing_a_reset_share_the_window() {
+        let reset = "2026-10-29T18:37:41Z"; // now() + 3 h
+        let mut memory = BTreeMap::from([(
+            "model:gemini_4_argon".to_string(),
+            Seen {
+                reset: reset.into(),
+                window: Some(WEEK),
+            },
+        )]);
+        let v = json!({"cascadeModelConfigData": {"clientModelConfigs": [
+            {"label": "Gemini 4 Argon (High)", "quotaInfo": {"remainingFraction": 0.2, "resetTime": reset}},
+            {"label": "Gemini 4 Nuevo", "quotaInfo": {"remainingFraction": 0.9, "resetTime": reset}},
+            {"label": "Otro", "quotaInfo": {"remainingFraction": 0.9, "resetTime": "2026-10-29T17:00:00Z"}}
+        ]}});
+        let m = parse_models(&v, now(), &mut memory);
+        let w = |id: &str| m.iter().find(|x| x.id == id).unwrap().window_seconds;
+        assert_eq!(w("model:gemini_4_nuevo"), Some(WEEK));
+        assert_eq!(w("model:otro"), None);
+        // Lo deducido por el grupo queda guardado para la próxima consulta.
+        assert_eq!(memory["model:gemini_4_nuevo"].window, Some(WEEK));
+    }
+
+    #[test]
+    fn far_or_past_resets_have_no_window() {
+        assert_eq!(window_for(None, "2026-11-05T15:37:41Z", now()), Some(WEEK));
+        assert_eq!(window_for(None, "2026-12-01T00:00:00Z", now()), None);
+        assert_eq!(window_for(None, "2026-10-29T10:00:00Z", now()), None);
     }
 
     #[test]
