@@ -50,7 +50,9 @@ struct Server {
     csrf: String,
 }
 
-pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+/// No usa el cliente HTTP compartido: ese respeta HTTP_PROXY/ALL_PROXY y el token
+/// CSRF acabaría en el proxy. La consulta va con `local_client`.
+pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, _http: &reqwest::Client) -> UsageReport {
     let report = who.report("Antigravity", Kind::Subscription);
     // Listar procesos lanza un comando externo: fuera del hilo del runtime.
     let server = tokio::task::spawn_blocking(find_server)
@@ -70,15 +72,16 @@ pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, http: &reqwest::Clien
         );
     };
 
-    let res = http
-        .post(format!("http://127.0.0.1:{port}{METHOD}"))
-        .header("X-Codeium-Csrf-Token", &server.csrf)
-        .header("Connect-Protocol-Version", "1")
-        .json(&json!({
-            "metadata": { "ideName": "antigravity", "extensionName": "antigravity", "locale": "en" }
-        }))
-        .send()
-        .await;
+    let client = match local_client(reqwest::Client::builder()) {
+        Ok(c) => c,
+        Err(e) => {
+            return report.fail(
+                Status::Error,
+                format!("No puedo preparar la consulta local: {e}"),
+            )
+        }
+    };
+    let res = post_status(&client, port, &server.csrf).await;
     let res = match res {
         Ok(r) => r,
         Err(e) => return report.fail(Status::Warning, format!("{NOT_RUNNING} ({})", net_error(e))),
@@ -98,6 +101,34 @@ pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, http: &reqwest::Clien
     };
     let mut memory = SEEN.lock().unwrap_or_else(|e| e.into_inner());
     build_report(report, &v, chrono::Utc::now(), &mut memory)
+}
+
+/// Cliente solo para la consulta local: el token CSRF no debe salir de la máquina.
+/// Sin proxies (ni los del sistema ni los configurados en `builder`) y sin seguir
+/// redirecciones, que podrían llevar el token a otro destino.
+fn local_client(builder: reqwest::ClientBuilder) -> reqwest::Result<reqwest::Client> {
+    builder
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+}
+
+/// `GetUserStatus` contra el servidor local del IDE.
+async fn post_status(
+    client: &reqwest::Client,
+    port: u16,
+    csrf: &str,
+) -> reqwest::Result<reqwest::Response> {
+    client
+        .post(format!("http://127.0.0.1:{port}{METHOD}"))
+        .header("X-Codeium-Csrf-Token", csrf)
+        .header("Connect-Protocol-Version", "1")
+        .json(&json!({
+            "metadata": { "ideName": "antigravity", "extensionName": "antigravity", "locale": "en" }
+        }))
+        .send()
+        .await
 }
 
 /// Informe final a partir de la respuesta de `GetUserStatus`. Puro, sin red.
@@ -286,18 +317,24 @@ fn log_path() -> PathBuf {
         .join("language_server.log")
 }
 
-/// Puerto HTTP que anunció en el log el proceso `pid`. Se ignora un log de un
-/// arranque anterior (otro pid) para no consultar un puerto ajeno.
+/// Puerto HTTP que anunció en el log el proceso `pid`. Solo se mira el bloque de
+/// su último arranque (hasta el siguiente «Starting…»), con el pid completo: así
+/// nunca se toma el puerto de otro proceso.
 fn http_port(log: &str, pid: u32) -> Option<u16> {
-    let start = format!("Starting language server process with pid {pid}");
-    let from = log.rfind(&start)?;
-    log[from..].lines().find_map(|l| {
-        let rest = l.split("listening on random port at ").nth(1)?;
-        let (port, kind) = rest.split_once(' ')?;
-        kind.trim_end()
-            .ends_with("for HTTP")
-            .then(|| port.parse().ok())?
-    })
+    const START: &str = "Starting language server process with pid ";
+    let start_pid = |l: &str| -> Option<u32> { l.split(START).nth(1)?.trim().parse().ok() };
+    let lines: Vec<&str> = log.lines().collect();
+    let from = lines.iter().rposition(|l| start_pid(l) == Some(pid))?;
+    lines[from + 1..]
+        .iter()
+        .take_while(|l| !l.contains(START))
+        .find_map(|l| {
+            let rest = l.split("listening on random port at ").nth(1)?;
+            let (port, kind) = rest.split_once(' ')?;
+            kind.trim_end()
+                .ends_with("for HTTP")
+                .then(|| port.parse().ok())?
+        })
 }
 
 /// Valor de `--flag valor` o `--flag=valor` en una línea de comandos.
@@ -413,6 +450,113 @@ mod tests {
         assert_eq!(
             pick_server([(4, "language_server --app_data_dir antigravity")]),
             None
+        );
+    }
+
+    #[test]
+    fn port_lookup_matches_the_whole_pid() {
+        let log = "I1029 server.go:1631] Starting language server process with pid 1234
+I1029 server.go:657] Language server listening on random port at 40001 for HTTP
+";
+        // «pid 123» no es «pid 1234».
+        assert_eq!(http_port(log, 123), None);
+        assert_eq!(http_port(log, 1234), Some(40001));
+    }
+
+    #[test]
+    fn port_lookup_stops_at_the_next_start() {
+        let log = "I1029 server.go:1631] Starting language server process with pid 222
+I1029 server.go:649] Language server listening on random port at 51182 for HTTPS (gRPC)
+I1029 server.go:1631] Starting language server process with pid 333
+I1029 server.go:657] Language server listening on random port at 60001 for HTTP
+";
+        // El bloque de 222 no publica puerto HTTP: no se toma el de 333.
+        assert_eq!(http_port(log, 222), None);
+        assert_eq!(http_port(log, 333), Some(60001));
+    }
+
+    /// Servidor HTTP mínimo en loopback: atiende una conexión con `response` y
+    /// devuelve lo que recibió. `None` si nadie se conecta en `wait`.
+    fn one_shot(response: String) -> (u16, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                s.set_read_timeout(Some(std::time::Duration::from_millis(500)))
+                    .ok();
+                let mut buf = vec![0u8; 8192];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let _ = s.write_all(response.as_bytes());
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            }
+        });
+        (port, rx)
+    }
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    const EMPTY_OK: &str = "HTTP/1.1 200 OK
+Content-Length: 2
+Connection: close
+
+{}";
+
+    #[test]
+    fn csrf_token_never_goes_through_a_proxy() {
+        let (proxy, proxy_rx) = one_shot(
+            "HTTP/1.1 502 Bad Gateway
+Content-Length: 0
+
+"
+            .into(),
+        );
+        let (server, server_rx) = one_shot(EMPTY_OK.into());
+        // Mismo efecto que HTTP_PROXY/ALL_PROXY sin NO_PROXY para loopback.
+        let builder = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{proxy}")).unwrap());
+        let client = local_client(builder).unwrap();
+        let res = block_on(post_status(&client, server, "token-ficticio")).unwrap();
+        assert_eq!(res.status().as_u16(), 200);
+        let wait = std::time::Duration::from_secs(2);
+        assert!(server_rx
+            .recv_timeout(wait)
+            .unwrap()
+            .contains("token-ficticio"));
+        assert!(
+            proxy_rx
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "el proxy recibió la consulta"
+        );
+    }
+
+    #[test]
+    fn local_query_does_not_follow_redirects() {
+        let (other, other_rx) = one_shot(EMPTY_OK.into());
+        let (server, _server_rx) = one_shot(format!(
+            "HTTP/1.1 307 Temporary Redirect
+Location: http://127.0.0.1:{other}/x
+Content-Length: 0
+Connection: close
+
+"
+        ));
+        let client = local_client(reqwest::Client::builder()).unwrap();
+        let res = block_on(post_status(&client, server, "token-ficticio")).unwrap();
+        assert_eq!(res.status().as_u16(), 307);
+        assert!(
+            other_rx
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "se siguió la redirección"
         );
     }
 
