@@ -2,6 +2,7 @@
 //! devuelven `Err`: cualquier fallo se refleja en `status` + `message`.
 
 pub mod anthropic_api;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -148,6 +149,14 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
             .boxed(),
         );
     }
+    if cfg.antigravity.enabled {
+        jobs.push(
+            async move {
+                vec![antigravity::fetch(&cfg.antigravity, Who::main("antigravity"), http).await]
+            }
+            .boxed(),
+        );
+    }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
         jobs.push(async move { vec![fetch_account(cfg, a, http).await] }.boxed());
     }
@@ -191,6 +200,7 @@ pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Opt
         "openai_api" => openai_api::fetch(&cfg.openai_api, Who::main("openai_api"), http).await,
         "zai" => zai::fetch(&cfg.zai, Who::main("zai"), http).await,
         "opencode_go" => opencode_go::fetch(&cfg.opencode_go, Who::main("opencode_go"), http).await,
+        "antigravity" => antigravity::fetch(&cfg.antigravity, Who::main("antigravity"), http).await,
         _ => return None,
     })
 }

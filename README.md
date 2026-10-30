@@ -112,8 +112,9 @@ React 19 and TypeScript handle the widget, settings and overlays. Tauri 2 and Ru
 | Anthropic API / OpenAI API | Monthly cost | Admin API keys |
 | z.ai | GLM Coding Plan: 5-hour and weekly coding quotas, monthly web tools, manual reset balance | API key |
 | OpenCode Go | Go / Go Plus: 5-hour, weekly and billing-cycle quotas | Go API key |
+| Antigravity | Per-model agent quota (5-hour and weekly windows). Verified on Windows only for now | Local session of the open IDE |
 
-Some integrations use undocumented endpoints, which may change or stop working. Copilot, OpenRouter and the cost APIs use official APIs; NaN combines documented API access with undocumented dashboard endpoints, and z.ai reads undocumented quota and reset endpoints.
+Some integrations use undocumented endpoints, which may change or stop working. Copilot, OpenRouter and the cost APIs use official APIs; NaN combines documented API access with undocumented dashboard endpoints, z.ai reads undocumented quota and reset endpoints, and Antigravity reads the internal `GetUserStatus` endpoint of the IDE's local language server.
 
 ### Features
 

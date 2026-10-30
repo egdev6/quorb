@@ -36,6 +36,7 @@ export const OFFICIAL_USAGE_URL: Record<string, string> = {
   copilot: 'https://github.com/settings/billing/premium_requests_usage',
   openrouter: 'https://openrouter.ai/activity',
   opencode_go: 'https://opencode.ai/console',
+  antigravity: 'https://antigravity.google/',
 };
 
 /** URL del dashboard de 9Router a partir de su Base URL configurada (sin barra final). */

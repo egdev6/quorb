@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { CodexInstallController } from './lib/codex-install';
 import type { AppConfig, Locale } from './lib/types';
 import {
+  AntigravityPanel,
   CopilotPanel,
   CursorPanel,
   MiniMaxPanel,
@@ -34,6 +35,7 @@ const cfg = {
   gemini: sub('gemini'),
   grok: sub('grok'),
   cursor: { enabled: true, credentialsPath: null },
+  antigravity: { enabled: true },
   copilot: { enabled: true, username: '', plan: 'pro', customAllowance: null },
   minimax: { enabled: true, baseUrl: 'https://api.minimax.io' },
   zai: { enabled: true },
@@ -67,6 +69,7 @@ const common = (locale: Locale) => ({
 const subscription = (locale: Locale, p: 'claude' | 'codex' | 'gemini' | 'grok', cli: Record<string, boolean> = {}) =>
   renderToStaticMarkup(<SubscriptionPanel {...common(locale)} p={p} cli={cli} codexInstall={codexInstall} onCodexRecheck={noop} />);
 const cursor = (locale: Locale) => renderToStaticMarkup(<CursorPanel {...common(locale)} />);
+const antigravity = (locale: Locale) => renderToStaticMarkup(<AntigravityPanel {...common(locale)} />);
 const copilot = (locale: Locale, plan = 'pro') =>
   renderToStaticMarkup(<CopilotPanel {...common(locale)} cfg={{ ...cfg, copilot: { ...cfg.copilot, plan } } as AppConfig} />);
 const minimax = (locale: Locale) => renderToStaticMarkup(<MiniMaxPanel {...common(locale)} />);
@@ -249,6 +252,46 @@ describe('Subscription provider panels (SSR, i18n)', () => {
       html,
       ['Suscripción', 'Mostrar en el widget', 'Uso del plan', 'Cómo conectar', 'Inicia sesión', 'Token manual', 'Avanzado', 'Base de datos', 'Vacío', 'no oficial', 'Comprobando'],
       'en cursor',
+    );
+  });
+
+  it('renders the Spanish literals of Antigravity copied verbatim from the current code', () => {
+    expectAll(
+      antigravity('es'),
+      [
+        'Suscripción · IDE abierto',
+        'Antigravity',
+        'Mostrar en el widget',
+        'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.',
+        'aria-label="Cómo conectar la cuenta"',
+        '<b>Abre Antigravity con tu cuenta de Google</b>',
+        'Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.',
+        'Comprobando la conexión…',
+      ],
+      'es antigravity',
+    );
+  });
+
+  it('renders the English texts of Antigravity when the locale is en, with no Spanish left', () => {
+    const html = antigravity('en');
+    expectAll(
+      html,
+      [
+        'Subscription · open IDE',
+        'Antigravity',
+        'Show in the widget',
+        'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Verified on Windows only for now.',
+        'aria-label="How to connect the account"',
+        '<b>Open Antigravity with your Google account</b>',
+        'Quorb queries the local server the IDE starts on this computer. It is read only while Antigravity is open; no token is stored.',
+        'Checking the connection…',
+      ],
+      'en antigravity',
+    );
+    expectNone(
+      html,
+      ['Suscripción', 'Mostrar en el widget', 'Cuota de cada', 'Cómo conectar', 'Abre Antigravity', 'Quorb consulta', 'no oficial', 'solo verificado', 'Comprobando'],
+      'en antigravity',
     );
   });
 

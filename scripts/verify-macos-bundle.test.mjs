@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { verifyMacosBundle } from './verify-macos-bundle.mjs';
+import { verifyMacosBundle, verifyMountedApp, validateMountEntities, stapleAndVerifyDmg } from './verify-macos-bundle.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const root = path.resolve('/repo');
@@ -44,7 +44,7 @@ function fixture() {
     if (command === '/usr/bin/hdiutil') return '';
     throw new Error('Unexpected command');
   };
-  return { files, plist, calls, verify: (overrides = {}) => verifyMacosBundle({ root, sourceSha, io, run, ...overrides }) };
+  return { files, plist, calls, io, run, verify: (overrides = {}) => verifyMacosBundle({ root, sourceSha, io, run, ...overrides }) };
 }
 
 test('verifies native bundle metadata, DMG integrity and source-linked digest without launching it', () => {
@@ -141,4 +141,103 @@ test('rejects malformed source provenance and propagates plist tool failure', ()
     assert.throws(() => fixture().verify({ sourceSha: sha }), /SHA/);
   }
   assert.throws(() => fixture().verify({ run: () => { throw new Error('plutil exit 1'); } }), /plutil exit 1/);
+});
+
+const signature = 'Authority=Developer ID Application: Synthetic (SRD8T33RU5)\nTeamIdentifier=SRD8T33RU5\n';
+const mount = path.dirname(app);
+function mountedFixture() {
+  const f = fixture();
+  const run = (command, args) => {
+    f.calls.push([command, args]);
+    if (command.endsWith('/plutil')) return JSON.stringify(f.plist);
+    if (command.endsWith('/codesign') && args[0] === '-dv') return signature;
+    return '';
+  };
+  return { ...f, run, mounted: (overrides = {}) => verifyMountedApp({ mount, version: '0.6.0', io: f.io, run, ...overrides }) };
+}
+
+test('verifies only the exact app inside the DMG, with authority, metadata, native ARM64 and Gatekeeper', () => {
+  const f = mountedFixture();
+  assert.equal(f.mounted(), app);
+  assert.ok(f.calls.some(([command, args]) => command.endsWith('/spctl') && args.at(-1) === app));
+  for (const [field, value] of [['CFBundleShortVersionString', '0.7.0'], ['CFBundleIdentifier', 'wrong'], ['LSMinimumSystemVersion', '14.0'], ['CFBundleExecutable', '../escape']]) {
+    const bad = mountedFixture(); bad.plist[field] = value;
+    assert.throws(() => bad.mounted(), /mismatch|executable/);
+  }
+  const binary = mountedFixture();
+  binary.files.get(path.join(app, 'Contents/MacOS/quorb')).data.writeUInt32LE(0x01000007, 4);
+  assert.throws(() => binary.mounted(), /arm64/);
+  for (const value of [signature.replaceAll('SRD8T33RU5', 'WRONGTEAM1'), 'TeamIdentifier=SRD8T33RU5\n']) {
+    const bad = mountedFixture();
+    assert.throws(() => bad.mounted({ run: (command, args) => command.endsWith('/codesign') ? value : bad.run(command, args) }), /authority or team/);
+  }
+  const network = mountedFixture();
+  assert.throws(() => network.mounted({ run: (command, args) => {
+    if (command.endsWith('/spctl')) throw new Error('Gatekeeper offline');
+    return network.run(command, args);
+  } }), /Gatekeeper offline/);
+});
+
+test('mounted app paths reject symlinks, extra or renamed apps and unsafe volume entities', () => {
+  for (const target of [mount, app, path.join(app, 'Contents'), path.join(app, 'Contents/Info.plist'), path.join(app, 'Contents/MacOS/quorb')]) {
+    const f = mountedFixture(); f.files.set(target, { type: 'symbolicLink' });
+    assert.throws(() => f.mounted(), /symlink/);
+  }
+  const extra = mountedFixture(); extra.files.set(path.join(mount, 'Other.app'), { type: 'directory' });
+  assert.throws(() => extra.mounted(), /only contained/);
+  const good = { 'system-entities': [{ 'dev-entry': '/dev/disk4' }, { 'dev-entry': '/dev/disk4s1', 'mount-point': mount }] };
+  assert.doesNotThrow(() => validateMountEntities(good, mount));
+  for (const bad of [{}, { 'system-entities': [] }, { 'system-entities': [{ 'dev-entry': '/dev/disk4', 'mount-point': '/Volumes/Other' }] },
+    { 'system-entities': [...good['system-entities'], { 'dev-entry': '/dev/disk5', 'mount-point': mount }] },
+    { 'system-entities': [{ 'dev-entry': '/dev/disk4; injected', 'mount-point': mount }] }]) {
+    assert.throws(() => validateMountEntities(bad, mount), /entities|volume/);
+  }
+});
+
+test('staples only retained outer DMG, mounts readonly, always detaches, hashes final bytes separately', () => {
+  for (const fail of ['', 'attach', 'metadata', 'entities', 'detach']) {
+    const f = mountedFixture();
+    f.io.mkdtempSync = () => mount;
+    f.io.rmdirSync = () => f.calls.push(['cleanup']);
+    const inputSha256 = createHash('sha256').update('disk image').digest('hex');
+    const run = (command, args) => {
+      if (args[0] === 'stapler' && args[1] === 'staple') f.files.get(dmg).data = Buffer.from('stapled disk image');
+      if (args[0] === fail || (fail === 'metadata' && command.endsWith('/plutil'))) {
+        f.calls.push([command, args]); throw new Error('synthetic failure');
+      }
+      return f.run(command, args);
+    };
+    const verify = () => stapleAndVerifyDmg({ dmg, version: '0.6.0', inputSha256, temp: '/controlled', io: f.io, run,
+      parsePlist: () => fail === 'entities' ? {} : { 'system-entities': [{ 'dev-entry': '/dev/disk4', 'mount-point': mount }] } });
+    if (fail) assert.throws(verify);
+    else {
+      const result = verify();
+      assert.equal(result.inputSha256, inputSha256);
+      assert.equal(result.finalSha256, createHash('sha256').update('stapled disk image').digest('hex'));
+      assert.notEqual(result.finalSha256, result.inputSha256);
+    }
+    const attach = f.calls.find(([, args]) => args?.[0] === 'attach');
+    assert.ok(attach[1].includes('-readonly'));
+    assert.ok(attach[1].includes('-nobrowse'));
+    assert.ok(attach[1].includes('-plist'));
+    assert.ok(f.calls.some(([, args]) => args?.[0] === 'detach' && args[1] === mount));
+    assert.ok(f.calls.filter(([, args]) => args?.[0] === 'stapler').every(([, args]) => args.at(-1) === dmg));
+  }
+});
+
+test('real Python plist parser accepts XML entities and malformed plist still triggers controlled detach', () => {
+  for (const malformed of [false, true]) {
+    const f = mountedFixture();
+    f.io.mkdtempSync = () => mount;
+    f.io.rmdirSync = () => {};
+    const xml = `<?xml version="1.0"?><plist version="1.0"><dict><key>system-entities</key><array><dict><key>dev-entry</key><string>/dev/disk4</string><key>mount-point</key><string>${mount}</string></dict></array></dict></plist>`;
+    const run = (command, args) => {
+      if (args[0] === 'attach') { f.calls.push([command, args]); return malformed ? 'not plist' : xml; }
+      return f.run(command, args);
+    };
+    const verify = () => stapleAndVerifyDmg({ dmg, version: '0.6.0', inputSha256: createHash('sha256').update('disk image').digest('hex'), temp: '/controlled', io: f.io, run });
+    if (malformed) assert.throws(verify);
+    else assert.equal(verify().version, '0.6.0');
+    assert.ok(f.calls.some(([, args]) => args?.[0] === 'detach' && args[1] === mount));
+  }
 });

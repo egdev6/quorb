@@ -200,6 +200,7 @@ export const en = {
         nineRouter: 'Local gateway · aggregated usage and spend',
         zai: 'GLM Coding Plan · 5 h, weekly quotas and web tools',
         opencodeGo: 'Go / Go Plus · 5 h, weekly and billing-cycle quotas',
+        antigravity: 'Per-model agent quota · open IDE',
       },
       badge: {
         on: 'Active',
@@ -329,6 +330,12 @@ export const en = {
           tokenLabel: 'Manual token (optional)',
           advanced: 'Advanced · Cursor database',
           dbLabel: 'Cursor database',
+        },
+        antigravity: {
+          kicker: 'Subscription · open IDE',
+          note: 'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Verified on Windows only for now.',
+          openTitle: 'Open Antigravity with your Google account',
+          openBody: 'Quorb queries the local server the IDE starts on this computer. It is read only while Antigravity is open; no token is stored.',
         },
         copilot: {
           note: 'Premium requests of the month from the GitHub billing API. They reset on the 1st (UTC).',

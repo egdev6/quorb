@@ -1,0 +1,192 @@
+name: macOS notarization resume
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Producer run ID containing the signed checkpoint
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact producer attempt, including canceled attempts
+        required: true
+        type: string
+      version:
+        description: Exact stable version of the existing Windows release
+        required: true
+        type: string
+      source_sha:
+        description: Full lowercase source SHA of that existing release
+        required: true
+        type: string
+      submission_id:
+        description: Optional recovery UUID from diagnostics, requires Apple log hash match
+        required: false
+        type: string
+      publish:
+        description: Explicitly authorize attaching verified DMG and checksum after Environment approval
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate existing release before any Apple credentials
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.validate.outputs.sourceSha }}
+      version: ${{ steps.validate.outputs.version }}
+      release_id: ${{ steps.validate.outputs.releaseId }}
+    steps:
+      - name: Checkout trusted workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Validate existing release
+        id: validate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import { preflightRelease } from './scripts/macos-release-preflight.mjs';
+          const result = await preflightRelease();
+          for (const [key, value] of Object.entries(result)) {
+            appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + value + '\n');
+          }
+          NODE
+
+  resume:
+    name: Validate retained bytes, query exact UUID and verify accepted DMG
+    needs: preflight
+    if: github.ref == 'refs/heads/main'
+    environment: macos-signing
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      outcome: ${{ steps.complete.outputs.outcome }}
+      final_sha256: ${{ steps.complete.outputs.finalSha256 }}
+      artifact_id: ${{ steps.final.outputs.artifact-id }}
+      artifact_digest: ${{ steps.final.outputs.artifact-digest }}
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      RELEASE_SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      RELEASE_ID: ${{ needs.preflight.outputs.release_id }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+      SUBMISSION_ID: ${{ inputs.submission_id }}
+    steps:
+      - name: Checkout trusted verification tools, never build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Authenticate producer run and artifacts, fatal ZIP digest and content validation
+        id: checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/macos-release-resume.mjs validate
+
+      - name: Query Apple and only if Accepted staple and verify retained DMG
+        id: complete
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_WORKFLOW_SHA: ${{ steps.checkpoint.outputs.producerWorkflowSha }}
+          VALIDATED_SUBMISSION_ID: ${{ steps.checkpoint.outputs.submissionId }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/macos-release-resume.mjs complete
+
+      - name: Stage final bytes and distinct post-staple checksum
+        if: steps.complete.outputs.outcome == 'accepted'
+        env:
+          FINAL_SHA256: ${{ steps.complete.outputs.finalSha256 }}
+        run: node scripts/macos-release-resume.mjs stage-final
+
+      - name: Retain verified final bytes for separately authorized publication
+        if: steps.complete.outputs.outcome == 'accepted'
+        id: final
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: macos-notary-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: notary-final/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          overwrite: false
+
+      - name: Remove private notarization key even on cancellation
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import { unlinkSync } from 'node:fs';
+          import path from 'node:path';
+          const key = path.join(process.env.RUNNER_TEMP, 'quorb-notary-' + process.env.GITHUB_RUN_ID + '-' + process.env.GITHUB_RUN_ATTEMPT + '.p8');
+          try { unlinkSync(key); }
+          catch (error) { if (error.code !== 'ENOENT') throw new Error('Private key cleanup failed'); }
+          NODE
+
+  publish:
+    name: Attach only verified final DMG and checksum, no overwrite
+    needs: [preflight, resume]
+    if: github.ref == 'refs/heads/main' && inputs.publish && needs.resume.outputs.outcome == 'accepted'
+    environment: macos-signing
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout trusted publication tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Verify final artifact ID and ZIP digest, revalidate release, upload without overwrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          RELEASE_ID: ${{ needs.preflight.outputs.release_id }}
+          FINAL_ARTIFACT_ID: ${{ needs.resume.outputs.artifact_id }}
+          FINAL_ARTIFACT_DIGEST: ${{ needs.resume.outputs.artifact_digest }}
+          FINAL_SHA256: ${{ needs.resume.outputs.final_sha256 }}
+        run: node scripts/macos-release-resume-publish.mjs
