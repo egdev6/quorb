@@ -233,8 +233,7 @@ impl Default for RealWslAdapter {
 impl WslAdapter for RealWslAdapter {
     /// F4: `wsl --list --verbose` NO despierta ninguna distro.
     fn list_distributions(&self) -> Result<Vec<Distribution>, WslError> {
-        let args = option_args("--list", None);
-        let mut args = args;
+        let mut args = option_args("--list", None);
         args.push("--verbose".to_string());
         let output = self.control(&args, None)?;
         if looks_utf16(&output.stdout) {
@@ -568,7 +567,7 @@ mod tests {
     fn shell_strategy_uses_command_v_script_not_exec() {
         let runner = FakeRunner::default();
         runner.respond("command -v \"$1\"", ok("/bin/bash\n"));
-        let adapter = adapter(runner);
+        let adapter = adapter(runner.clone());
         adapter.shell_strategy("Ubuntu-22.04").expect("shell");
         let calls = runner.calls();
         let argv = calls.last().expect("hay una llamada");

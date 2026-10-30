@@ -34,7 +34,10 @@ fn parse_env(raw: &str) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for line in raw.lines() {
         if let Some((k, v)) = line.split_once('=') {
-            // La última ocurrencia gana (como en un entorno real).
+            // La última ocurrencia gana (como en un entorno real). Un valor
+            // con `=` se conserva entero (split_once); el formato `env`
+            // separa variables por newline, así que un valor con salto de
+            // línea no es representable (limitación conocida del lab).
             map.insert(k.to_string(), v.to_string());
         }
     }
