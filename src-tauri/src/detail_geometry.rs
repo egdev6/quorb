@@ -1,9 +1,9 @@
 //! Update the popup rectangle in one native transaction on Windows.
 //! Moving before resizing can briefly put the old, taller popup over the widget.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::WebviewWindow;
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Bounds {
     pub x: i32,
     pub y: i32,
@@ -14,6 +14,13 @@ pub struct Bounds {
 impl Bounds {
     fn validate(self, label: &str) -> Result<Self, String> {
         self.validate_for(label, "detail")
+    }
+
+    /// Valida que quien llama sea la ventana del widget y que el rectángulo sea
+    /// utilizable (no cero, acotado y sin desbordamiento). Reutilizable desde
+    /// cualquier ruta de colocación, antes de tocar la superficie nativa.
+    pub fn validate_widget(self, label: &str) -> Result<Self, String> {
+        self.validate_for(label, "widget")
     }
 
     fn validate_for(self, label: &str, expected: &str) -> Result<Self, String> {

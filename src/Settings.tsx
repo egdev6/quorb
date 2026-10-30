@@ -576,7 +576,7 @@ export function CliMissing({ provider, locale = 'es' }: { provider: AccountProvi
       <span className="eg-notice__text">
         <b>{t(locale, 'settings.providers.cliMissing.title', { name: how.name })}</b>{' '}
         {t(locale, 'settings.providers.cliMissing.body', {
-          where: how.where === 'una terminal' ? t(locale, 'settings.providers.cliMissing.terminal') : how.where,
+          where: how.whereKey ? t(locale, how.whereKey) : how.where,
           needs: how.needs ? t(locale, 'settings.providers.cliMissing.needs', { needs: how.needs }) : '',
         })}
       </span>
@@ -784,6 +784,7 @@ function useCliSession(id: string, active: boolean): boolean {
  * adicional: instalar el CLI si falta, iniciar sesión y comprobar que funciona.
  */
 function CliConnect({
+  locale,
   id,
   provider,
   loginCommand,
@@ -794,6 +795,8 @@ function CliConnect({
   codexInstall,
   onCodexRecheck,
 }: {
+  /** Idioma de los pasos. */
+  locale: Locale;
   id: string;
   provider: AccountProvider;
   loginCommand: string;
@@ -830,27 +833,87 @@ function CliConnect({
     }
   };
   return (
+    <CliConnectView
+      locale={locale}
+      id={id}
+      provider={provider}
+      loginCommand={loginCommand}
+      cliMissing={cliMissing}
+      persisted={persisted}
+      extra={extra}
+      health={health}
+      codexInstall={codexInstall}
+      onCodexRecheck={onCodexRecheck}
+      connected={connected}
+      busy={busy}
+      loginError={loginError}
+      onConnect={connect}
+    />
+  );
+}
+
+/** Vista de los pasos de conexión por CLI a partir de su estado. Extraída para
+ *  poder renderizar en pruebas cada estado con el locale explícito. */
+export function CliConnectView({
+  locale,
+  id,
+  provider,
+  loginCommand,
+  cliMissing,
+  persisted,
+  extra,
+  health,
+  codexInstall,
+  onCodexRecheck,
+  connected,
+  busy,
+  loginError,
+  onConnect,
+}: {
+  locale: Locale;
+  id: string;
+  provider: AccountProvider;
+  loginCommand: string;
+  cliMissing: boolean;
+  persisted: boolean;
+  extra: boolean;
+  health: HealthProps;
+  codexInstall: CodexInstallController;
+  onCodexRecheck: () => void;
+  /** Hay fichero de sesión del CLI. */
+  connected: boolean;
+  /** Hay un login o guardado en curso. */
+  busy: boolean;
+  /** Diagnóstico del último intento de login que falló. */
+  loginError: string | null;
+  onConnect: () => void;
+}) {
+  return (
     <>
       {cliMissing && (
         <li>
-          <b>Instala {CLI_INSTALL[provider]?.name ?? 'su CLI'}</b>
-          <span>Hace falta para iniciar sesión y para renovarla cuando caduque, aunque ahora funcione.</span>
-          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={health.locale} />}
+          <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
+          <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
+          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
         </li>
       )}
       <li data-done={connected || undefined}>
-        <b>{connected ? 'Fichero de sesión encontrado' : extra ? 'Inicia sesión con la otra cuenta' : 'Inicia sesión'}</b>
+        <b>{connected ? t(locale, 'settings.providers.cliConnect.sessionFound') : extra ? t(locale, 'settings.providers.cliConnect.loginOther') : t(locale, 'settings.providers.cliConnect.login')}</b>
         <span>
-          Se abre una terminal con <code>{loginCommand}</code>
-          {provider === 'claude' && <> (si no te lo pide, escribe <code>/login</code>)</>}
-          {provider === 'gemini' && <> (elige «Login with Google»)</>}. El navegador hace el login oficial y el CLI guarda la sesión, que
-          Quorb solo lee.
-          {connected && ' El fichero existe, pero no confirma que la sesión siga siendo válida: míralo en la comprobación de abajo.'}
-          {extra && ' Entra con la cuenta que quieres añadir, no con la principal: si el navegador ya tiene abierta la principal, usa una ventana privada.'}
+          {t(locale, 'settings.providers.cliConnect.opensTerminal')}{' '}
+          <code>{loginCommand}</code>
+          {provider === 'claude' && <>{t(locale, 'settings.providers.cliConnect.claudeLoginHint')} <code>/login</code>)</>}
+          {provider === 'gemini' && <>{t(locale, 'settings.providers.cliConnect.geminiLoginHint')}</>}{t(locale, 'settings.providers.cliConnect.browserLogin')}
+          {connected && t(locale, 'settings.providers.cliConnect.fileExists')}
+          {extra && t(locale, 'settings.providers.cliConnect.extraNote')}
         </span>
         <span className="q-steps__actions">
-          <button className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`} disabled={busy || cliMissing || health.saving} onClick={connect}>
-            {connected ? 'Volver a abrir el login' : effectivePersisted(persisted, health.dirty) ? 'Iniciar sesión' : 'Guardar e iniciar sesión'}
+          <button className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`} disabled={busy || cliMissing || health.saving} onClick={onConnect}>
+            {connected
+              ? t(locale, 'settings.providers.cliConnect.reopenLogin')
+              : effectivePersisted(persisted, health.dirty)
+                ? t(locale, 'settings.providers.cliConnect.signIn')
+                : t(locale, 'settings.providers.cliConnect.saveAndSignIn')}
           </button>
         </span>
         {loginError && (
@@ -860,11 +923,11 @@ function CliConnect({
         )}
       </li>
       {persisted ? (
-        <HealthStep id={id} {...health} onLogin={connect} loginBusy={busy} refreshKey={connected} />
+        <HealthStep id={id} {...health} onLogin={onConnect} loginBusy={busy} refreshKey={connected} />
       ) : (
         <li>
-          <b>Comprobación</b>
-          <span>Se hace sola en cuanto guardes e inicies sesión.</span>
+          <b>{t(locale, 'settings.providers.checkTitle')}</b>
+          <span>{t(locale, 'settings.providers.cliConnect.checkAuto')}</span>
         </li>
       )}
     </>
@@ -872,7 +935,8 @@ function CliConnect({
 }
 
 /** Configuración de una cuenta adicional: nombre, si se muestra y cómo se conecta, en pasos. */
-function AccountEditor({
+export function AccountEditor({
+  locale,
   account: a,
   visible,
   onVisibility,
@@ -887,6 +951,8 @@ function AccountEditor({
   codexInstall,
   onCodexRecheck,
 }: {
+  /** Idioma del editor. */
+  locale: Locale;
   account: Account;
   visible: boolean;
   onVisibility: (enabled: boolean) => void;
@@ -914,40 +980,40 @@ function AccountEditor({
     <HealthStep id={a.id} {...health} />
   ) : (
     <li>
-      <b>Comprobación</b>
-      <span>Guarda la cuenta para comprobar que funciona.</span>
+      <b>{t(locale, 'settings.providers.checkTitle')}</b>
+      <span>{t(locale, 'settings.providers.accountEditor.checkSave')}</span>
       <span className="q-steps__actions">
         <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={health.saving} onClick={() => void health.onSave()}>
-          Guardar y comprobar
+          {t(locale, 'settings.providers.health.saveAndCheck')}
         </button>
       </span>
     </li>
   );
   return (
-    <Section kicker="Cuenta adicional" title={a.label}>
+    <Section kicker={t(locale, 'settings.providers.accountEditor.kicker')} title={a.label}>
       <div className="q-cols">
-        <Field label="Nombre" hint="Se ve en la tira junto al proveedor.">
+        <Field label={t(locale, 'settings.providers.accountEditor.nameLabel')} hint={t(locale, 'settings.providers.accountEditor.nameHint')}>
           <input type="text" value={a.label} onChange={(e) => onChange({ label: e.target.value })} />
         </Field>
       </div>
-      <Toggle label="Mostrar en el widget" checked={visible} onChange={onVisibility} />
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={visible} onChange={onVisibility} />
 
-      <ol className="q-steps" aria-label="Cómo conectar esta cuenta">
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.accountEditor.stepsAria')}>
         <li data-done={a.label.trim() !== '' || undefined}>
-          <b>Ponle nombre</b>
-          <span>Arriba, para distinguirla de la principal en la tira (por ejemplo, «Trabajo»).</span>
+          <b>{t(locale, 'settings.providers.accountEditor.nameStep')}</b>
+          <span>{t(locale, 'settings.providers.accountEditor.nameStepBody')}</span>
         </li>
 
         {session && (
-          <CliConnect id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} />
+          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} />
         )}
 
         {a.provider === 'cursor' && (
           <>
             <li data-done={has('cursor_token') || undefined}>
-              <b>Pega el token de esta cuenta</b>
-              <span>La app de Cursor guarda una sola sesión (la principal). Entra en cursor.com con esta cuenta y copia la cookie WorkosCursorSessionToken.</span>
-              <SecretInput locale={health.locale} id={key('cursor_token')} label="Token de la cuenta" configured={has('cursor_token')} onSaved={onSecrets} />
+              <b>{t(locale, 'settings.providers.accountEditor.cursorTokenTitle')}</b>
+              <span>{t(locale, 'settings.providers.accountEditor.cursorTokenBody')}</span>
+              <SecretInput locale={locale} id={key('cursor_token')} label={t(locale, 'settings.providers.accountEditor.cursorTokenLabel')} configured={has('cursor_token')} onSaved={onSecrets} />
             </li>
             {check}
           </>
@@ -956,37 +1022,37 @@ function AccountEditor({
         {a.provider === 'copilot' && (
           <>
             <li data-done={a.username.trim() !== '' || undefined}>
-              <b>Usuario y plan de GitHub</b>
+              <b>{t(locale, 'settings.providers.accountEditor.copilotUserPlan')}</b>
               <div className="q-cols">
-                <Field label="Usuario de GitHub">
+                <Field label={t(locale, 'settings.providers.accountEditor.githubUser')}>
                   <input type="text" spellCheck={false} value={a.username} onChange={(e) => onChange({ username: e.target.value })} />
                 </Field>
-                <Field label="Plan">
+                <Field label={t(locale, 'settings.providers.planLabel')}>
                   <select value={a.plan || 'pro'} onChange={(e) => onChange({ plan: e.target.value })}>
                     <option value="free">Free · 50</option>
                     <option value="pro">Pro · 300</option>
                     <option value="pro_plus">Pro+ · 1500</option>
                     <option value="business">Business · 300</option>
                     <option value="enterprise">Enterprise · 1000</option>
-                    <option value="custom">Otra cantidad</option>
+                    <option value="custom">{t(locale, 'settings.providers.accountEditor.planCustom')}</option>
                   </select>
                 </Field>
               </div>
               {a.plan === 'custom' && (
-                <Field label="Peticiones premium incluidas al mes">
+                <Field label={t(locale, 'settings.providers.accountEditor.customAllowance')}>
                   <input type="number" min={1} value={a.customAllowance ?? ''} onChange={(e) => onChange({ customAllowance: numOrNull(e.target.value) })} />
                 </Field>
               )}
             </li>
             <li data-done={has('github_token') || undefined}>
-              <b>Token de solo lectura</b>
+              <b>{t(locale, 'settings.providers.accountEditor.readOnlyToken')}</b>
               <SecretInput
-                locale={health.locale}
+                locale={locale}
                 id={key('github_token')}
-                label="Token de GitHub de esta cuenta (fine-grained)"
+                label={t(locale, 'settings.providers.accountEditor.githubTokenLabel')}
                 configured={has('github_token')}
                 onSaved={onSecrets}
-                hint={<>Créalo con esta cuenta en <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> con el permiso «Plan» (solo lectura).</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.githubTokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> {t(locale, 'settings.providers.accountEditor.githubTokenPermission')}</>}
               />
             </li>
             {check}
@@ -996,13 +1062,13 @@ function AccountEditor({
         {a.provider === 'nan' && (
           <>
             <li data-done={has('nan_session') || has('nan_api_key') || undefined}>
-              <b>Conecta la cuenta o pega una API key</b>
+              <b>{t(locale, 'settings.providers.accountEditor.nanTitle')}</b>
               <NanConnect account={a.id} connected={has('nan_session')} onChange={onSecrets} />
-              <SecretInput locale={health.locale} id={key('nan_api_key')} label="API key (alternativa)" configured={has('nan_api_key')} onSaved={onSecrets} />
+              <SecretInput locale={locale} id={key('nan_api_key')} label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')} configured={has('nan_api_key')} onSaved={onSecrets} />
             </li>
             <li data-done>
-              <b>Plan</b>
-              <Field label="Plan" hint="La URL base y el resto de ajustes avanzados son los de la cuenta principal.">
+              <b>{t(locale, 'settings.providers.planLabel')}</b>
+              <Field label={t(locale, 'settings.providers.planLabel')} hint={t(locale, 'settings.providers.accountEditor.nanPlanHint')}>
                 <select value={a.plan || 'member'} onChange={(e) => onChange({ plan: e.target.value })}>
                   <option value="community">nan_community</option>
                   <option value="member">nan_member</option>
@@ -1017,14 +1083,14 @@ function AccountEditor({
         {a.provider === 'openrouter' && (
           <>
             <li data-done={has('openrouter_api_key') || undefined}>
-              <b>API key</b>
+              <b>{t(locale, 'settings.providers.apiKey')}</b>
               <SecretInput
-                locale={health.locale}
+                locale={locale}
                 id={key('openrouter_api_key')}
-                label="API key"
+                label={t(locale, 'settings.providers.apiKey')}
                 configured={has('openrouter_api_key')}
                 onSaved={onSecrets}
-                hint={<>Puede ser de otra cuenta o de la misma con otro límite. <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link></>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.openrouterHint')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link></>}
               />
             </li>
             {check}
@@ -1034,14 +1100,14 @@ function AccountEditor({
         {a.provider === 'zai' && (
           <>
             <li data-done={has('zai_api_key') || undefined}>
-              <b>API key</b>
+              <b>{t(locale, 'settings.providers.apiKey')}</b>
               <SecretInput
-                locale={health.locale}
+                locale={locale}
                 id={key('zai_api_key')}
-                label="API key"
+                label={t(locale, 'settings.providers.apiKey')}
                 configured={has('zai_api_key')}
                 onSaved={onSecrets}
-                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
               />
             </li>
             {check}
@@ -1051,14 +1117,14 @@ function AccountEditor({
         {a.provider === 'opencode_go' && (
           <>
             <li data-done={has('opencode_go_api_key') || undefined}>
-              <b>API key</b>
+              <b>{t(locale, 'settings.providers.apiKey')}</b>
               <SecretInput
-                locale={health.locale}
+                locale={locale}
                 id={key('opencode_go_api_key')}
-                label="API key de OpenCode Go"
+                label={t(locale, 'settings.providers.accountEditor.apiKeyOf', { name: 'OpenCode Go' })}
                 configured={has('opencode_go_api_key')}
                 onSaved={onSecrets}
-                hint={<>Créala en <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
               />
             </li>
             {check}
@@ -1068,19 +1134,19 @@ function AccountEditor({
         {(a.provider === 'anthropic_api' || a.provider === 'openai_api') && (
           <>
             <li data-done={has(adminKey) || undefined}>
-              <b>Admin key de esta organización</b>
+              <b>{t(locale, 'settings.providers.accountEditor.adminKeyTitle')}</b>
               <SecretInput
-                locale={health.locale}
+                locale={locale}
                 id={key(adminKey)}
-                label="Admin key"
+                label={t(locale, 'settings.providers.accountEditor.adminKey')}
                 configured={has(adminKey)}
                 onSaved={onSecrets}
-                hint={<>Cada organización tiene su propia <Link href={a.provider === 'anthropic_api' ? LINKS.anthropicAdmin : LINKS.openaiAdmin}>Admin key</Link>.</>}
+                hint={<>{t(locale, 'settings.providers.accountEditor.adminKeyOwn')} <Link href={a.provider === 'anthropic_api' ? LINKS.anthropicAdmin : LINKS.openaiAdmin}>{t(locale, 'settings.providers.accountEditor.adminKey')}</Link>.</>}
               />
             </li>
             <li data-done={a.monthlyBudgetUsd != null || undefined}>
-              <b>Presupuesto mensual (opcional)</b>
-              <Field label="USD al mes">
+              <b>{t(locale, 'settings.providers.accountEditor.budgetTitle')}</b>
+              <Field label={t(locale, 'settings.providers.accountEditor.budgetLabel')}>
                 <input type="number" min={0} step="any" value={a.monthlyBudgetUsd ?? ''} onChange={(e) => onChange({ monthlyBudgetUsd: numOrNull(e.target.value) })} />
               </Field>
             </li>
@@ -1091,12 +1157,15 @@ function AccountEditor({
 
       {session && (
         <details className="q-details">
-          <summary>Avanzado · carpeta de sesión</summary>
+          <summary>{t(locale, 'settings.providers.accountEditor.advanced')}</summary>
           <p className="q-note">
-            Cada cuenta guarda su sesión en su propia carpeta, así no toca la principal: el login se abre con <code>{session.env}</code>{' '}
-            apuntando a ella. Si la comprobación pide renovar la sesión, «Volver a abrir el login» abre de nuevo el CLI.
+            {t(locale, 'settings.providers.accountEditor.sessionNoteBefore')} <code>{session.env}</code>{' '}
+            {t(locale, 'settings.providers.accountEditor.sessionNoteAfter', { reopen: t(locale, 'settings.providers.cliConnect.reopenLogin') })}
           </p>
-          <Field label="Carpeta de sesión" hint={<>Vacío = <code>{defaultSessionDir(a, appName)}</code>. Puedes usar una que ya tengas. Quorb lee <code>{session.file}</code> dentro de ella.</>}>
+          <Field
+            label={t(locale, 'settings.providers.accountEditor.sessionDir')}
+            hint={<>{t(locale, 'settings.providers.accountEditor.sessionDirEmpty')} <code>{defaultSessionDir(a, appName)}</code>{t(locale, 'settings.providers.accountEditor.sessionDirMiddle')} <code>{session.file}</code> {t(locale, 'settings.providers.accountEditor.sessionDirEnd')}</>}
+          >
             <input type="text" spellCheck={false} value={a.configDir ?? ''} placeholder={defaultSessionDir(a, appName)} onChange={(e) => onChange({ configDir: strOrNull(e.target.value) })} />
           </Field>
         </details>
@@ -1104,9 +1173,9 @@ function AccountEditor({
 
       <div className="q-inline">
         <button type="button" className="eg-btn eg-btn--destructive eg-btn--sm" onClick={onRemove}>
-          Eliminar esta cuenta
+          {t(locale, 'settings.providers.accountEditor.remove')}
         </button>
-        <small className="eg-field__hint">Al guardar se borran también sus claves del almacén seguro del sistema.</small>
+        <small className="eg-field__hint">{t(locale, 'settings.providers.accountEditor.removeHint')}</small>
       </div>
     </Section>
   );
@@ -1272,7 +1341,7 @@ export function ProviderDrawerHead({ locale, tab, state, closeRef, onClose }: {
   closeRef?: Ref<HTMLButtonElement>;
   onClose: () => void;
 }) {
-  const current = PROVIDER_TABS.find((t) => t.id === tab) ?? PROVIDER_TABS[0];
+  const current = PROVIDER_TABS.find((entry) => entry.id === tab) ?? PROVIDER_TABS[0];
   const badge = PROVIDER_BADGE[state];
   return (
     <header className="q-drawer__head">
@@ -1783,6 +1852,288 @@ export function SettingsNav({
   );
 }
 
+/** Lo que comparten los paneles por proveedor de suscripción de Ajustes › Proveedores. */
+type PanelProps = {
+  locale: Locale;
+  cfg: AppConfig;
+  secrets: SecretStatus;
+  set: <K extends keyof AppConfig>(key: K, patch: Partial<AppConfig[K]> | AppConfig[K]) => void;
+  setVisibility: (id: string, enabled: boolean) => void;
+  loadSecrets: () => void;
+  healthFor: (id: string, hidden: boolean) => HealthProps;
+};
+
+/** Paneles por proveedor de suscripción (Claude, Codex, Gemini, Grok, Cursor, Copilot, MiniMax,
+ *  z.ai y OpenCode Go). Extraídos de `Settings()` para poder renderizarlos en pruebas de i18n.
+ *  Los títulos son marcas con su plan (`Claude (Pro / Max)`) y no se traducen. */
+export function SubscriptionPanel({
+  locale,
+  cfg,
+  set,
+  setVisibility,
+  healthFor,
+  p,
+  cli,
+  codexInstall,
+  onCodexRecheck,
+}: Pick<PanelProps, 'locale' | 'cfg' | 'set' | 'setVisibility' | 'healthFor'> & {
+  p: 'claude' | 'codex' | 'gemini' | 'grok';
+  cli: Record<string, boolean>;
+  codexInstall: CodexInstallController;
+  onCodexRecheck: () => void;
+}) {
+  const info = {
+    claude: {
+      kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
+      title: 'Claude (Pro / Max)',
+      note: t(locale, 'settings.providers.panels.claude.note'),
+      file: t(locale, 'settings.providers.panels.credentialsFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>\\wsl.localhost\Ubuntu\home\{t(locale, 'settings.providers.panels.claude.wslUser')}\.claude\.credentials.json</code></>,
+    },
+    codex: {
+      kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
+      title: 'ChatGPT (Plus / Pro · Codex)',
+      note: t(locale, 'settings.providers.panels.codex.note'),
+      file: t(locale, 'settings.providers.panels.authJsonFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%CODEX_HOME%</code> {t(locale, 'settings.providers.panels.or')} <code>%USERPROFILE%\.codex\auth.json</code></>,
+    },
+    gemini: {
+      kicker: t(locale, 'settings.providers.panels.gemini.kicker'),
+      title: 'Gemini (Google AI Pro / Code Assist)',
+      note: (
+        <>
+          {t(locale, 'settings.providers.panels.gemini.noteBefore')} <Link href={LINKS.geminiCli}>Gemini CLI</Link>{t(locale, 'settings.providers.panels.gemini.noteAfter')}
+        </>
+      ),
+      file: t(locale, 'settings.providers.panels.credentialsFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.gemini\oauth_creds.json</code></>,
+    },
+    grok: {
+      kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
+      title: 'Grok (SuperGrok)',
+      note: (
+        <>
+          {t(locale, 'settings.providers.panels.grok.noteBefore')} <code>grok login</code>{t(locale, 'settings.providers.panels.grok.noteAfter')}
+        </>
+      ),
+      file: t(locale, 'settings.providers.panels.authJsonFile'),
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%GROK_HOME%</code> {t(locale, 'settings.providers.panels.or')} <code>%USERPROFILE%\.grok\auth.json</code></>,
+    },
+  }[p];
+  return (
+    <Section kicker={info.kicker} title={info.title}>
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, p, cfg[p].enabled)} onChange={(v) => setVisibility(p, v)} />
+      <p className="q-note">{info.note}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <CliConnect
+          locale={locale}
+          id={p}
+          provider={p}
+          loginCommand={cfg[p].loginCommand}
+          cliMissing={cli[p] === false}
+          persisted
+          extra={false}
+          health={healthFor(p, !cfg[p].enabled)}
+          codexInstall={codexInstall}
+          onCodexRecheck={onCodexRecheck}
+        />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.advancedSessionLogin')}</summary>
+        <Field label={info.file} hint={info.hint}>
+          <input type="text" spellCheck={false} value={cfg[p].credentialsPath ?? ''} onChange={(e) => set(p, { credentialsPath: strOrNull(e.target.value) })} />
+        </Field>
+        <Field label={t(locale, 'settings.providers.panels.loginCommand')}>
+          <input type="text" spellCheck={false} value={cfg[p].loginCommand} onChange={(e) => set(p, { loginCommand: e.target.value })} />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function CursorPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.cursor.kicker')} title="Cursor">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)} onChange={(v) => setVisibility('cursor', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.cursor.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li>
+          <b>{t(locale, 'settings.providers.panels.cursor.loginTitle')}</b>
+          <span>{t(locale, 'settings.providers.panels.cursor.loginBody')}</span>
+          <SecretInput locale={locale} id="cursor_token" label={t(locale, 'settings.providers.panels.cursor.tokenLabel')} configured={!!secrets.cursor_token} onSaved={loadSecrets} />
+        </li>
+        <HealthStep id="cursor" {...healthFor('cursor', !cfg.cursor.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.cursor.advanced')}</summary>
+        <Field label={t(locale, 'settings.providers.panels.cursor.dbLabel')} hint={<>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%APPDATA%\Cursor\User\globalStorage\state.vscdb</code></>}>
+          <input type="text" spellCheck={false} value={cfg.cursor.credentialsPath ?? ''} onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })} />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function AntigravityPanel({ locale, cfg, setVisibility, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.antigravity.kicker')} title="Antigravity">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)} onChange={(v) => setVisibility('antigravity', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.antigravity.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li>
+          <b>{t(locale, 'settings.providers.panels.antigravity.openTitle')}</b>
+          <span>{t(locale, 'settings.providers.panels.antigravity.openBody')}</span>
+        </li>
+        <HealthStep id="antigravity" {...healthFor('antigravity', !cfg.antigravity.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function CopilotPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.kickerOfficialApi')} title="GitHub Copilot">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)} onChange={(v) => setVisibility('copilot', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.copilot.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={cfg.copilot.username.trim() !== '' || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.copilotUserPlan')}</b>
+          <div className="q-cols">
+            <Field label={t(locale, 'settings.providers.accountEditor.githubUser')}>
+              <input type="text" spellCheck={false} placeholder="egdev6" value={cfg.copilot.username} onChange={(e) => set('copilot', { username: e.target.value })} />
+            </Field>
+            <Field label={t(locale, 'settings.providers.planLabel')}>
+              <select value={cfg.copilot.plan} onChange={(e) => set('copilot', { plan: e.target.value })}>
+                <option value="free">Free · 50</option>
+                <option value="pro">Pro · 300</option>
+                <option value="pro_plus">Pro+ · 1500</option>
+                <option value="business">Business · 300</option>
+                <option value="enterprise">Enterprise · 1000</option>
+                <option value="custom">{t(locale, 'settings.providers.accountEditor.planCustom')}</option>
+              </select>
+            </Field>
+          </div>
+          {cfg.copilot.plan === 'custom' && (
+            <Field label={t(locale, 'settings.providers.accountEditor.customAllowance')}>
+              <input type="number" min={1} value={cfg.copilot.customAllowance ?? ''} onChange={(e) => set('copilot', { customAllowance: numOrNull(e.target.value) })} />
+            </Field>
+          )}
+        </li>
+        <li data-done={!!secrets.github_token || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.readOnlyToken')}</b>
+          <SecretInput
+            locale={locale}
+            id="github_token"
+            label={t(locale, 'settings.providers.panels.copilot.tokenLabel')}
+            configured={!!secrets.github_token}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.copilot.tokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> {t(locale, 'settings.providers.panels.copilot.tokenPermission')}</>}
+          />
+        </li>
+        <HealthStep id="copilot" {...healthFor('copilot', !cfg.copilot.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function MiniMaxPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.kickerOfficialApi')} title="MiniMax">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)} onChange={(v) => setVisibility('minimax', v)} />
+      <p className="q-note">
+        {t(locale, 'settings.providers.panels.minimax.noteBefore')}
+        <b> {t(locale, 'settings.providers.panels.minimax.noteBold')}</b> {t(locale, 'settings.providers.panels.minimax.noteAfter')}
+      </p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.minimax_subscription_key || undefined}>
+          <b>{t(locale, 'settings.providers.panels.minimax.subscriptionTitle')}</b>
+          <SecretInput
+            locale={locale}
+            id="minimax_subscription_key"
+            label="Subscription Key"
+            configured={!!secrets.minimax_subscription_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.minimax.subscriptionHintBefore')} <Link href={LINKS.minimaxKeys}>minimax.io</Link>{t(locale, 'settings.providers.panels.minimax.subscriptionHintChina')} <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link> {t(locale, 'settings.providers.panels.minimax.subscriptionHintAfter')}</>}
+          />
+        </li>
+        <li data-done={!!secrets.minimax_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.panels.minimax.paygTitle')}</b>
+          <SecretInput
+            locale={locale}
+            id="minimax_api_key"
+            label="API key PAYG"
+            configured={!!secrets.minimax_api_key}
+            onSaved={loadSecrets}
+            hint={t(locale, 'settings.providers.panels.minimax.paygHint')}
+          />
+        </li>
+        <HealthStep id="minimax" {...healthFor('minimax', !cfg.minimax.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.minimax.advanced')}</summary>
+        <Field
+          label="Base URL"
+          hint={t(locale, 'settings.providers.panels.minimax.baseUrlHint')}
+        >
+          <input
+            type="text"
+            spellCheck={false}
+            value={cfg.minimax.baseUrl}
+            onChange={(e) => set('minimax', { baseUrl: e.target.value })}
+          />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function ZaiPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.zai.kicker')} title="z.ai">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.zai.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.zai_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.apiKey')}</b>
+          <SecretInput
+            locale={locale}
+            id="zai_api_key"
+            label={t(locale, 'settings.providers.apiKey')}
+            configured={!!secrets.zai_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+          />
+        </li>
+        <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.opencodeGo.kicker')} title="OpenCode Go">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'opencode_go', cfg.opencodeGo.enabled)} onChange={(v) => setVisibility('opencode_go', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.opencodeGo.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.opencode_go_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.apiKey')}</b>
+          <SecretInput
+            locale={locale}
+            id="opencode_go_api_key"
+            label={t(locale, 'settings.providers.accountEditor.apiKeyOf', { name: 'OpenCode Go' })}
+            configured={!!secrets.opencode_go_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
+          />
+        </li>
+        <HealthStep id="opencode_go" {...healthFor('opencode_go', !cfg.opencodeGo.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+
 export function Settings() {
   const appName = useAppName();
   // Idioma de esta ventana: una lectura + `config-changed`; `es` hasta cargar.
@@ -2152,6 +2503,7 @@ export function Settings() {
     return isConnectionDirty(acc, baseline?.accounts.find((a) => a.id === id), k ? cfg[k] : undefined, k ? baseline?.[k] : undefined);
   };
   const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save, locale });
+  const panel = { locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor };
   const selAccount = tabAccounts.find((a) => a.id === accountSel) ?? null;
   const addAccount = () => {
     const a = newAccount(cfg, tab as AccountProvider);
@@ -2245,6 +2597,7 @@ export function Settings() {
       <AccountsBar locale={locale} tab={tab} accounts={tabAccounts} selectedId={selAccount?.id ?? tab} onSelect={setAccountSel} onAdd={addAccount} />
       {selAccount && (
         <AccountEditor
+          locale={locale}
           key={selAccount.id}
           account={selAccount}
           visible={isAccountVisible(cfg, selAccount.id, selAccount.enabled)}
@@ -2268,209 +2621,16 @@ export function Settings() {
       {!selAccount && (
         <>
 
-      {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') &&
-        (() => {
-          const p = tab;
-          const info = {
-            claude: {
-              kicker: 'Suscripción · OAuth',
-              title: 'Claude (Pro / Max)',
-              note: 'Límites de sesión (5 h), semanales y por modelo de tu plan. Quorb lee la sesión que guarda Claude Code: no ve tu contraseña ni toca los tokens.',
-              file: 'Fichero de credenciales',
-              hint: <>Vacío = <code>%USERPROFILE%\.claude\.credentials.json</code>. Para WSL: <code>\\wsl.localhost\Ubuntu\home\TU_USUARIO\.claude\.credentials.json</code></>,
-            },
-            codex: {
-              kicker: 'Suscripción · OAuth',
-              title: 'ChatGPT (Plus / Pro · Codex)',
-              note: 'Límites de 5 h y semanales de tu plan de ChatGPT en Codex. Quorb lee la sesión que guarda el CLI de Codex.',
-              file: 'Fichero auth.json',
-              hint: <>Vacío = <code>%CODEX_HOME%</code> o <code>%USERPROFILE%\.codex\auth.json</code></>,
-            },
-            gemini: {
-              kicker: 'Suscripción · sesión de Gemini CLI',
-              title: 'Gemini (Google AI Pro / Code Assist)',
-              note: (
-                <>
-                  Cuotas diarias por modelo. Quorb lee la sesión que guarda <Link href={LINKS.geminiCli}>Gemini CLI</Link>. Endpoints no oficiales.
-                </>
-              ),
-              file: 'Fichero de credenciales',
-              hint: <>Vacío = <code>%USERPROFILE%\.gemini\oauth_creds.json</code></>,
-            },
-            grok: {
-              kicker: 'Suscripción · OAuth',
-              title: 'Grok (SuperGrok)',
-              note: (
-                <>
-                  Uso semanal de créditos de tu suscripción en el CLI de Grok. Quorb lee la sesión que guarda <code>grok login</code>. Endpoint no oficial.
-                </>
-              ),
-              file: 'Fichero auth.json',
-              hint: <>Vacío = <code>%GROK_HOME%</code> o <code>%USERPROFILE%\.grok\auth.json</code></>,
-            },
-          }[p];
-          return (
-            <Section kicker={info.kicker} title={info.title}>
-              <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, p, cfg[p].enabled)} onChange={(v) => setVisibility(p, v)} />
-              <p className="q-note">{info.note}</p>
-              <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-                <CliConnect
-                  id={p}
-                  provider={p}
-                  loginCommand={cfg[p].loginCommand}
-                  cliMissing={cli[p] === false}
-                  persisted
-                  extra={false}
-                  health={healthFor(p, !cfg[p].enabled)}
-                  codexInstall={codexInstaller}
-                  onCodexRecheck={cliRecheck}
-                />
-              </ol>
-              <details className="q-details">
-                <summary>Avanzado · fichero de sesión y comando de login</summary>
-                <Field label={info.file} hint={info.hint}>
-                  <input type="text" spellCheck={false} value={cfg[p].credentialsPath ?? ''} onChange={(e) => set(p, { credentialsPath: strOrNull(e.target.value) })} />
-                </Field>
-                <Field label="Comando de login">
-                  <input type="text" spellCheck={false} value={cfg[p].loginCommand} onChange={(e) => set(p, { loginCommand: e.target.value })} />
-                </Field>
-              </details>
-            </Section>
-          );
-        })()}
-
-      {tab === 'antigravity' && (
-        <Section kicker="Suscripción · IDE abierto" title="Antigravity">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)} onChange={(v) => setVisibility('antigravity', v)} />
-          <p className="q-note">Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li>
-              <b>Abre Antigravity con tu cuenta de Google</b>
-              <span>
-                Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.
-              </span>
-            </li>
-            <HealthStep id="antigravity" {...healthFor('antigravity', !cfg.antigravity.enabled)} />
-          </ol>
-        </Section>
+      {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') && (
+        <SubscriptionPanel {...panel} p={tab} cli={cli} codexInstall={codexInstaller} onCodexRecheck={cliRecheck} />
       )}
 
-      {tab === 'cursor' && (
-        <Section kicker="Suscripción · sesión de la app" title="Cursor">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)} onChange={(v) => setVisibility('cursor', v)} />
-          <p className="q-note">Uso del plan en el ciclo actual (total, Auto y modelos API) y gasto on-demand. Endpoint no oficial.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li>
-              <b>Inicia sesión en la app de Cursor</b>
-              <span>
-                Quorb lee la sesión que guarda la app de Cursor en este equipo (solo lectura). Si no usas la app aquí, pega un token manual: tiene
-                prioridad sobre la sesión de la app.
-              </span>
-              <SecretInput locale={locale} id="cursor_token" label="Token manual (opcional)" configured={!!secrets.cursor_token} onSaved={loadSecrets} />
-            </li>
-            <HealthStep id="cursor" {...healthFor('cursor', !cfg.cursor.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · base de datos de Cursor</summary>
-            <Field label="Base de datos de Cursor" hint={<>Vacío = <code>%APPDATA%\Cursor\User\globalStorage\state.vscdb</code></>}>
-              <input type="text" spellCheck={false} value={cfg.cursor.credentialsPath ?? ''} onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })} />
-            </Field>
-          </details>
-        </Section>
-      )}
+      {tab === 'cursor' && <CursorPanel {...panel} />}
+      {tab === 'antigravity' && <AntigravityPanel {...panel} />}
 
-      {tab === 'copilot' && (
-        <Section kicker="Suscripción · API oficial" title="GitHub Copilot">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)} onChange={(v) => setVisibility('copilot', v)} />
-          <p className="q-note">Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={cfg.copilot.username.trim() !== '' || undefined}>
-              <b>Usuario y plan de GitHub</b>
-              <div className="q-cols">
-                <Field label="Usuario de GitHub">
-                  <input type="text" spellCheck={false} placeholder="egdev6" value={cfg.copilot.username} onChange={(e) => set('copilot', { username: e.target.value })} />
-                </Field>
-                <Field label="Plan">
-                  <select value={cfg.copilot.plan} onChange={(e) => set('copilot', { plan: e.target.value })}>
-                    <option value="free">Free · 50</option>
-                    <option value="pro">Pro · 300</option>
-                    <option value="pro_plus">Pro+ · 1500</option>
-                    <option value="business">Business · 300</option>
-                    <option value="enterprise">Enterprise · 1000</option>
-                    <option value="custom">Otra cantidad</option>
-                  </select>
-                </Field>
-              </div>
-              {cfg.copilot.plan === 'custom' && (
-                <Field label="Peticiones premium incluidas al mes">
-                  <input type="number" min={1} value={cfg.copilot.customAllowance ?? ''} onChange={(e) => set('copilot', { customAllowance: numOrNull(e.target.value) })} />
-                </Field>
-              )}
-            </li>
-            <li data-done={!!secrets.github_token || undefined}>
-              <b>Token de solo lectura</b>
-              <SecretInput
-                locale={locale}
-                id="github_token"
-                label="Token de GitHub (fine-grained)"
-                configured={!!secrets.github_token}
-                onSaved={loadSecrets}
-                hint={<>Créalo en <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> con el permiso de cuenta «Plan»: solo lectura.</>}
-              />
-            </li>
-            <HealthStep id="copilot" {...healthFor('copilot', !cfg.copilot.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'copilot' && <CopilotPanel {...panel} />}
 
-      {tab === 'minimax' && (
-        <Section kicker="Suscripción · API oficial" title="MiniMax">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)} onChange={(v) => setVisibility('minimax', v)} />
-          <p className="q-note">
-            Cuota del plan y, si añades la segunda clave, tu saldo de pago por uso. Son
-            <b> dos credenciales distintas</b> en la consola: la primera da acceso al plan y la segunda al saldo.
-          </p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.minimax_subscription_key || undefined}>
-              <b>Subscription Key del plan</b>
-              <SecretInput
-                locale={locale}
-                id="minimax_subscription_key"
-                label="Subscription Key"
-                configured={!!secrets.minimax_subscription_key}
-                onSaved={loadSecrets}
-                hint={<>Del panel M/Token en <Link href={LINKS.minimaxKeys}>minimax.io</Link>. En la región de China, en <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link> (el host por región se cambia en Ajustes avanzados).</>}
-              />
-            </li>
-            <li data-done={!!secrets.minimax_api_key || undefined}>
-              <b>API key de pago por uso (opcional)</b>
-              <SecretInput
-                locale={locale}
-                id="minimax_api_key"
-                label="API key PAYG"
-                configured={!!secrets.minimax_api_key}
-                onSaved={loadSecrets}
-                hint={<>Sin ella solo se muestra la cuota del plan; el saldo es opcional y su fallo no lo degrade.</>}
-              />
-            </li>
-            <HealthStep id="minimax" {...healthFor('minimax', !cfg.minimax.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · URL del API</summary>
-            <Field
-              label="Base URL"
-              hint="Las claves son por región: global en api.minimax.io, China en api.minimaxi.com. Si el anillo sale con error 1004 o 2049, prueba con la de tu región."
-            >
-              <input
-                type="text"
-                spellCheck={false}
-                value={cfg.minimax.baseUrl}
-                onChange={(e) => set('minimax', { baseUrl: e.target.value })}
-              />
-            </Field>
-          </details>
-        </Section>
-      )}
+      {tab === 'minimax' && <MiniMaxPanel {...panel} />}
       {tab === 'openrouter' && (
         <Section kicker="Pago por uso · API oficial" title="OpenRouter">
           <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
@@ -2492,47 +2652,9 @@ export function Settings() {
         </Section>
       )}
 
-      {tab === 'zai' && (
-        <Section kicker="Suscripción · GLM Coding Plan" title="z.ai">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
-          <p className="q-note">Cuotas de coding de las últimas 5 h y de la semana, y cuota mensual de web tools del Coding Plan.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.zai_api_key || undefined}>
-              <b>API key</b>
-              <SecretInput
-                locale={locale}
-                id="zai_api_key"
-                label="API key"
-                configured={!!secrets.zai_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
-              />
-            </li>
-            <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'zai' && <ZaiPanel {...panel} />}
 
-      {tab === 'opencode_go' && (
-        <Section kicker="Suscripción · Go / Go Plus" title="OpenCode Go">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'opencode_go', cfg.opencodeGo.enabled)} onChange={(v) => setVisibility('opencode_go', v)} />
-          <p className="q-note">Cuota de las últimas 5 h, cuota semanal y cuota del ciclo de facturación de la suscripción Go / Go Plus.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.opencode_go_api_key || undefined}>
-              <b>API key</b>
-              <SecretInput
-                locale={locale}
-                id="opencode_go_api_key"
-                label="API key de OpenCode Go"
-                configured={!!secrets.opencode_go_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
-              />
-            </li>
-            <HealthStep id="opencode_go" {...healthFor('opencode_go', !cfg.opencodeGo.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'opencode_go' && <OpenCodeGoPanel {...panel} />}
 
       {tab === 'nan' && (
         <Section kicker="Suscripción · cuenta o API key" title="NaN Builders">

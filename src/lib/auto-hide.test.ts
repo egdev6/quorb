@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import hook from './useDockReveal.ts?raw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
+import { resetDragMode, setDragMode } from './drag-session';
 import { contains, stripRect, type Edge } from './dock';
 
 type GripHandlers = {
@@ -35,6 +36,8 @@ const widgetEffects = vi.hoisted(() => ({
   effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
   bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
+  cancel: vi.fn(async () => {}),
+  listeners: new Map<string, (() => void)[]>(),
 }));
 vi.mock('react', async (importOriginal) => {
   const react = await importOriginal() as typeof import('react');
@@ -63,10 +66,17 @@ vi.mock('./useDockReveal', () => ({
   useDockReveal: () => ({ phase: 'open', markPrepared: vi.fn(), finishTransition: vi.fn() }),
 }));
 vi.mock('./useUpdater', () => ({ useUpdaterMode: () => 'unknown' }));
+// #180 (WU2): the widget gates drag gestures behind the startup display
+// decision; these tests exercise the native (X11) pipeline, so resolve the
+// detection seam deterministically instead of letting it hang unresolved.
+vi.mock('./wm-detect', () => ({
+  detectWindowManager: vi.fn(async () => ({ displayBackend: 'x11' })),
+}));
 vi.mock('./api', () => ({ api: {
   setWidgetBounds: widgetEffects.bounds,
   setSurfaceClip: widgetEffects.clip,
   patchConfig: widgetEffects.patch,
+  cancelWidgetPlacement: widgetEffects.cancel,
 } }));
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -74,6 +84,15 @@ vi.mock('@tauri-apps/api/window', () => ({
     outerPosition: widgetEffects.outerPosition, setPosition: widgetEffects.setPosition,
   }),
   availableMonitors: widgetEffects.monitors,
+}));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, handler: () => void) => {
+    const list = widgetEffects.listeners.get(name) ?? [];
+    list.push(handler);
+    widgetEffects.listeners.set(name, list);
+    return () => {};
+  }),
+  emitTo: vi.fn(),
 }));
 
 describe('auto-hide geometry and phases', () => {
@@ -286,14 +305,94 @@ describe('Widget effect mutation ordering', () => {
       borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
       borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
     }));
+    // SSR runs no React effects, so the #180 module decision store never sees
+    // the mount-effect write; these tests drive the native branch directly.
+    setDragMode('native');
   };
 
   afterEach(() => {
     widgetEffects.states = [];
     widgetEffects.refs = [];
     widgetEffects.effects = [];
+    resetDragMode();
     vi.resetAllMocks();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('cancels the pending native placement when the strip starts to be dragged', () => {
+    configureNative();
+    const { placement } = renderWidget(true); // dragging
+    const cleanup = placement.run();
+    expect(widgetEffects.cancel).toHaveBeenCalledTimes(1);
+    if (typeof cleanup === 'function') cleanup();
+  });
+
+  it('asks again for the placement when the backend could not read the window', async () => {
+    configureNative();
+    // El backend no pudo leer una ventana que todavía no era visible: tras
+    // mostrarla, la colocación se pide de nuevo para confirmar la geometría.
+    widgetEffects.bounds.mockResolvedValue({ status: 'unverified', bounds: null, reason: 'not_viewable' });
+    const cleanup = renderWidget(false).placement.run();
+    await flush();
+    expect(widgetEffects.bounds).toHaveBeenCalledTimes(2);
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+    if (typeof cleanup === 'function') cleanup();
+  });
+
+  it('never shows a strip the user hid from the tray, nor re-asks its placement', async () => {
+    configureNative();
+    const { placement } = renderWidget(false);
+    // El usuario oculta la tira desde la bandeja: la visibilidad es suya.
+    const listener = widgetEffects.effects.find((e) => e.run.toString().includes('widget-hidden'));
+    expect(listener).toBeDefined();
+    const cleanupListener = listener!.run();
+    await flush();
+    for (const handler of widgetEffects.listeners.get('widget-hidden') ?? []) handler();
+    widgetEffects.bounds.mockResolvedValue({ status: 'unverified', bounds: null, reason: 'not_viewable' });
+    const cleanup = placement.run();
+    await flush();
+    expect(widgetEffects.show).not.toHaveBeenCalled();
+    expect(widgetEffects.bounds).toHaveBeenCalledTimes(1);
+    if (typeof cleanup === 'function') cleanup();
+    if (typeof cleanupListener === 'function') cleanupListener();
+  });
+
+  it('never shows a strip the user hid from the tray, not even through the safety net', async () => {
+    configureNative();
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+    });
+    renderWidget(false);
+    // El usuario oculta la tira desde la bandeja: la visibilidad es suya.
+    const listener = widgetEffects.effects.find((e) => e.run.toString().includes('widget-hidden'));
+    const cleanupListener = listener!.run();
+    await flush();
+    for (const handler of widgetEffects.listeners.get('widget-hidden') ?? []) handler();
+    // La red de seguridad (2,5 s) muestra la ventana si el ciclo no llegó a
+    // mostrarla: tampoco puede contradecir al usuario.
+    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 0 && e.run.toString().includes('setTimeout'));
+    expect(safetyNet).toBeDefined();
+    const cleanup = safetyNet!.run();
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(widgetEffects.show).not.toHaveBeenCalled();
+    if (typeof cleanup === 'function') cleanup();
+    if (typeof cleanupListener === 'function') cleanupListener();
+  });
+
+  it('shows the strip through the safety net when the user did not hide it', async () => {
+    configureNative();
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+    });
+    renderWidget(false);
+    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 0 && e.run.toString().includes('setTimeout'));
+    const cleanup = safetyNet!.run();
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+    if (typeof cleanup === 'function') cleanup();
   });
 
   it.each([true, false])('last accepted RAF drains before pointerup snap (delayBeforeDispatch=%s)', async (delayBeforeDispatch) => {
@@ -694,5 +793,62 @@ describe('Widget effect mutation ordering', () => {
       .toEqual([[400, 80], [400, 80]]);
     expect(widgetEffects.clip.mock.calls.map(call => call[1])).toEqual([true, !autoHide]);
     if (typeof cleanupDrag === 'function') cleanupDrag();
+  });
+});
+
+describe('the localized placement reason', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above):
+  // 0 config, 5 geo, 6 stripSize, 16 placementFailed, 17 placementReason.
+  const markup = (locale: 'es' | 'en' = 'es', failed = true) => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.states[0] = { autoHide: true, locale, accounts: [], nineRouter: { baseUrl: '' } };
+    widgetEffects.states[5] = geo;
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[16] = failed;
+    widgetEffects.states[17] = failed ? 'size_refused' : null;
+    return renderToStaticMarkup(createElement(Widget));
+  };
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('carries the machine-readable code and shows the localized reason', () => {
+    const es = markup('es');
+    // El atributo lleva el código, no el texto: es machine-readable.
+    expect(es).toContain('data-placement-reason="size_refused"');
+    // El texto visible sale del catálogo, en el idioma de la ventana.
+    expect(es).toContain('title="el gestor no concedió el tamaño"');
+    expect(es).toContain('aria-label="Reintentar mostrar Quorb: el gestor no concedió el tamaño"');
+    // El código aparece una sola vez: en el atributo machine-readable, nunca
+    // en el texto visible.
+    expect(es.split('size_refused').length - 1).toBe(1);
+
+    const en = markup('en');
+    expect(en).toContain('data-placement-reason="size_refused"');
+    expect(en).toContain('title="the window manager did not grant the size"');
+    expect(en).toContain('aria-label="Retry showing Quorb: the window manager did not grant the size"');
+  });
+
+  it('keeps the upstream retry text when no placement failed', () => {
+    // Sin fallo de colocación el botón conserva el texto del catálogo de
+    // upstream (#195): ni motivo, ni título, ni atributo de motivo.
+    const es = markup('es', false);
+    expect(es).toContain('aria-label="Mostrar Quorb"');
+    expect(es).not.toContain('data-placement-reason');
+    expect(es).not.toContain('size_refused');
+    const en = markup('en', false);
+    expect(en).toContain('aria-label="Show Quorb"');
+    expect(en).not.toContain('data-placement-reason');
   });
 });

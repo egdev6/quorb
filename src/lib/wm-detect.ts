@@ -6,6 +6,9 @@
 // El backend decide la recomendación; el frontend solo la presenta.
 
 import { invoke } from '@tauri-apps/api/core';
+// #180: the effective GDK backend owns the union (`./drag-session`, WU1); we
+// only type the mirror field of the Rust `DisplayBackend` (wm_compat.rs).
+import type { DisplayBackend } from './drag-session';
 
 /** Estado de una superficie de escritorio según la sesión detectada. */
 export interface SurfaceStatus {
@@ -21,6 +24,9 @@ export interface DesktopSurfaces {
   autostart: SurfaceStatus;
   notifications: SurfaceStatus;
   transparency: SurfaceStatus;
+  // #180 (WU4): window positioning/drag of the strip, decided by the
+  // effective GDK backend (XWayland → ok; native Wayland → limited).
+  windowPositioning: SurfaceStatus;
 }
 
 export interface WindowManagerInfo {
@@ -31,6 +37,9 @@ export interface WindowManagerInfo {
   isWayland: boolean;
   isHyprland: boolean;
   recommendation: string;
+  // #180: effective GDK backend (runtime display or `GDK_BACKEND` fallback);
+  // decides the drag mode (WU1) and the surface above.
+  displayBackend: DisplayBackend;
   surfaces: DesktopSurfaces;
 }
 

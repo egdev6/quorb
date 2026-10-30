@@ -173,11 +173,14 @@ export const es = {
         autostart: 'Arranque al iniciar sesión',
         notifications: 'Notificaciones',
         transparency: 'Transparencia',
+        // New surface #180: the only row label that names the window; the
+        // backend decides its state by the effective GDK backend.
+        windowPositioning: 'Posicionamiento de la ventana',
       },
     },
     // Página «Proveedores»: lista, panel lateral, comprobación y aviso del CLI.
     // Los nombres de proveedor son marcas y no se traducen (salvo el que lleva una
-    // conjunción española: `codexName`). Los paneles por proveedor van en PR-C.
+    // conjunción española: `codexName`). Los paneles por proveedor van en `panels`.
     providers: {
       refreshEvery: 'Consultar cada',
       refreshUnit: 'min',
@@ -242,6 +245,149 @@ export const es = {
         copy: 'Copiar',
         copied: 'Copiado',
       },
+      // Trozos que comparten los pasos por CLI, el editor de cuentas y los paneles
+      // por proveedor (T2c slice 2 C1, #66).
+      showInWidget: 'Mostrar en el widget',
+      checkTitle: 'Comprobación',
+      apiKey: 'API key',
+      planLabel: 'Plan',
+      // Pasos de conexión por CLI (`CliConnect`). Los marcadores `{…}` son el nombre
+      // del CLI y su comando; el resto de la frase se parte alrededor de `<code>`.
+      cliConnect: {
+        installTitle: 'Instala {name}',
+        cliFallback: 'su CLI',
+        installBody: 'Hace falta para iniciar sesión y para renovarla cuando caduque, aunque ahora funcione.',
+        sessionFound: 'Fichero de sesión encontrado',
+        loginOther: 'Inicia sesión con la otra cuenta',
+        login: 'Inicia sesión',
+        opensTerminal: 'Se abre una terminal con',
+        claudeLoginHint: ' (si no te lo pide, escribe',
+        geminiLoginHint: ' (elige «Login with Google»)',
+        browserLogin: '. El navegador hace el login oficial y el CLI guarda la sesión, que Quorb solo lee.',
+        fileExists: ' El fichero existe, pero no confirma que la sesión siga siendo válida: míralo en la comprobación de abajo.',
+        extraNote: ' Entra con la cuenta que quieres añadir, no con la principal: si el navegador ya tiene abierta la principal, usa una ventana privada.',
+        reopenLogin: 'Volver a abrir el login',
+        signIn: 'Iniciar sesión',
+        saveAndSignIn: 'Guardar e iniciar sesión',
+        checkAuto: 'Se hace sola en cuanto guardes e inicies sesión.',
+      },
+      // Editor de una cuenta adicional (`AccountEditor`). Los nombres de plan con
+      // cifra (`Pro · 300`), las opciones de producto (`nan_community`, `GLM Premium`)
+      // y los textos de enlace de terceros no se traducen.
+      accountEditor: {
+        kicker: 'Cuenta adicional',
+        nameLabel: 'Nombre',
+        nameHint: 'Se ve en la tira junto al proveedor.',
+        stepsAria: 'Cómo conectar esta cuenta',
+        nameStep: 'Ponle nombre',
+        nameStepBody: 'Arriba, para distinguirla de la principal en la tira (por ejemplo, «Trabajo»).',
+        checkSave: 'Guarda la cuenta para comprobar que funciona.',
+        cursorTokenTitle: 'Pega el token de esta cuenta',
+        cursorTokenBody: 'La app de Cursor guarda una sola sesión (la principal). Entra en cursor.com con esta cuenta y copia la cookie WorkosCursorSessionToken.',
+        cursorTokenLabel: 'Token de la cuenta',
+        copilotUserPlan: 'Usuario y plan de GitHub',
+        githubUser: 'Usuario de GitHub',
+        planCustom: 'Otra cantidad',
+        customAllowance: 'Peticiones premium incluidas al mes',
+        readOnlyToken: 'Token de solo lectura',
+        githubTokenLabel: 'Token de GitHub de esta cuenta (fine-grained)',
+        githubTokenCreateIn: 'Créalo con esta cuenta en',
+        githubTokenPermission: 'con el permiso «Plan» (solo lectura).',
+        nanTitle: 'Conecta la cuenta o pega una API key',
+        nanApiKeyAlt: 'API key (alternativa)',
+        nanPlanHint: 'La URL base y el resto de ajustes avanzados son los de la cuenta principal.',
+        openrouterHint: 'Puede ser de otra cuenta o de la misma con otro límite.',
+        createIn: 'Créala en',
+        apiKeyOf: 'API key de {name}',
+        adminKeyTitle: 'Admin key de esta organización',
+        adminKey: 'Admin key',
+        adminKeyOwn: 'Cada organización tiene su propia',
+        budgetTitle: 'Presupuesto mensual (opcional)',
+        budgetLabel: 'USD al mes',
+        advanced: 'Avanzado · carpeta de sesión',
+        sessionNoteBefore: 'Cada cuenta guarda su sesión en su propia carpeta, así no toca la principal: el login se abre con',
+        sessionNoteAfter: 'apuntando a ella. Si la comprobación pide renovar la sesión, «{reopen}» abre de nuevo el CLI.',
+        sessionDir: 'Carpeta de sesión',
+        sessionDirEmpty: 'Vacío =',
+        sessionDirMiddle: '. Puedes usar una que ya tengas. Quorb lee',
+        sessionDirEnd: 'dentro de ella.',
+        remove: 'Eliminar esta cuenta',
+        removeHint: 'Al guardar se borran también sus claves del almacén seguro del sistema.',
+      },
+      // Paneles por proveedor de suscripción (T2c slice 2 C1b, #66). Los títulos son
+      // marcas con su plan y no se traducen; tampoco `Subscription Key`, `API key PAYG`
+      // ni `Base URL` (rótulos de las consolas de terceros). Donde el texto es idéntico
+      // se reutilizan `accountEditor.*` (usuario, plan, token, «Créala en»).
+      panels: {
+        stepsAria: 'Cómo conectar la cuenta',
+        kickerOAuth: 'Suscripción · OAuth',
+        kickerOfficialApi: 'Suscripción · API oficial',
+        emptyEquals: 'Vacío =',
+        or: 'o',
+        credentialsFile: 'Fichero de credenciales',
+        authJsonFile: 'Fichero auth.json',
+        loginCommand: 'Comando de login',
+        advancedSessionLogin: 'Avanzado · fichero de sesión y comando de login',
+        claude: {
+          note: 'Límites de sesión (5 h), semanales y por modelo de tu plan. Quorb lee la sesión que guarda Claude Code: no ve tu contraseña ni toca los tokens.',
+          wsl: 'Para WSL:',
+          wslUser: 'TU_USUARIO',
+        },
+        codex: {
+          note: 'Límites de 5 h y semanales de tu plan de ChatGPT en Codex. Quorb lee la sesión que guarda el CLI de Codex.',
+        },
+        gemini: {
+          kicker: 'Suscripción · sesión de Gemini CLI',
+          noteBefore: 'Cuotas diarias por modelo. Quorb lee la sesión que guarda',
+          noteAfter: '. Endpoints no oficiales.',
+        },
+        grok: {
+          noteBefore: 'Uso semanal de créditos de tu suscripción en el CLI de Grok. Quorb lee la sesión que guarda',
+          noteAfter: '. Endpoint no oficial.',
+        },
+        cursor: {
+          kicker: 'Suscripción · sesión de la app',
+          note: 'Uso del plan en el ciclo actual (total, Auto y modelos API) y gasto on-demand. Endpoint no oficial.',
+          loginTitle: 'Inicia sesión en la app de Cursor',
+          loginBody: 'Quorb lee la sesión que guarda la app de Cursor en este equipo (solo lectura). Si no usas la app aquí, pega un token manual: tiene prioridad sobre la sesión de la app.',
+          tokenLabel: 'Token manual (opcional)',
+          advanced: 'Avanzado · base de datos de Cursor',
+          dbLabel: 'Base de datos de Cursor',
+        },
+        antigravity: {
+          kicker: 'Suscripción · IDE abierto',
+          note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.',
+          openTitle: 'Abre Antigravity con tu cuenta de Google',
+          openBody: 'Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.',
+        },
+        copilot: {
+          note: 'Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).',
+          tokenLabel: 'Token de GitHub (fine-grained)',
+          tokenCreateIn: 'Créalo en',
+          tokenPermission: 'con el permiso de cuenta «Plan»: solo lectura.',
+        },
+        minimax: {
+          noteBefore: 'Cuota del plan y, si añades la segunda clave, tu saldo de pago por uso. Son',
+          noteBold: 'dos credenciales distintas',
+          noteAfter: 'en la consola: la primera da acceso al plan y la segunda al saldo.',
+          subscriptionTitle: 'Subscription Key del plan',
+          subscriptionHintBefore: 'Del panel M/Token en',
+          subscriptionHintChina: '. En la región de China, en',
+          subscriptionHintAfter: '(el host por región se cambia en Ajustes avanzados).',
+          paygTitle: 'API key de pago por uso (opcional)',
+          paygHint: 'Sin ella solo se muestra la cuota del plan; el saldo es opcional y su fallo no lo degrade.',
+          advanced: 'Avanzado · URL del API',
+          baseUrlHint: 'Las claves son por región: global en api.minimax.io, China en api.minimaxi.com. Si el anillo sale con error 1004 o 2049, prueba con la de tu región.',
+        },
+        zai: {
+          kicker: 'Suscripción · GLM Coding Plan',
+          note: 'Cuotas de coding de las últimas 5 h y de la semana, y cuota mensual de web tools del Coding Plan.',
+        },
+        opencodeGo: {
+          kicker: 'Suscripción · Go / Go Plus',
+          note: 'Cuota de las últimas 5 h, cuota semanal y cuota del ciclo de facturación de la suscripción Go / Go Plus.',
+        },
+      },
     },
   },
   // T2c slice 1 (#66): tira del widget y detalle de proveedor. Valores verbatim.
@@ -261,6 +407,11 @@ export const es = {
     updateTo: 'Actualizar a Quorb {version}',
     refreshNow: 'Actualizar ahora',
     settings: 'Ajustes',
+    reasonSizeRefused: 'el gestor no concedió el tamaño',
+    reasonPositionRefused: 'el gestor no colocó la tira donde se pidió',
+    reasonNotViewable: 'la ventana nativa todavía no es visible',
+    reasonReadFailed: 'no se pudo leer la geometría nativa',
+    reasonSuperseded: 'la colocación fue sustituida por otra',
   },
   details: {
     range24h: '24 h',

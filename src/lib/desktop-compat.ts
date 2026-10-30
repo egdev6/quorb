@@ -22,6 +22,8 @@ const SURFACE_LABELS: { key: keyof DesktopSurfaces; label: MessageKey }[] = [
   { key: 'autostart', label: 'settings.shell.surfaces.autostart' },
   { key: 'notifications', label: 'settings.shell.surfaces.notifications' },
   { key: 'transparency', label: 'settings.shell.surfaces.transparency' },
+  // #180: order mirrors the Rust struct (`window_positioning` is the last surface).
+  { key: 'windowPositioning', label: 'settings.shell.surfaces.windowPositioning' },
 ];
 
 /** Filas del bloque «Sesión de escritorio», en orden fijo y sin filtrar. */

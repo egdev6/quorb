@@ -248,7 +248,7 @@ describe('Save bar, unsaved changes and global notices (SSR, i18n)', () => {
     isHyprland: false,
     recommendation: 'texto del backend',
     surfaces: Object.fromEntries(
-      ['alwaysOnTop', 'clickThrough', 'trayIcon', 'globalShortcuts', 'autostart', 'notifications', 'transparency'].map((k, i) => [
+      ['alwaysOnTop', 'clickThrough', 'trayIcon', 'globalShortcuts', 'autostart', 'notifications', 'transparency', 'windowPositioning'].map((k, i) => [
         k,
         { state: i % 2 ? 'limited' : 'ok', note: 'nota del backend' },
       ]),
@@ -430,5 +430,41 @@ describe('HealthStep, healthSummary and CliMissing (SSR, i18n)', () => {
     );
     expectAll(missing('en', 'claude'), ['Claude Code is missing on this computer.', 'Install it from PowerShell;'], 'en');
     expectNone(en, ['Falta', 'en este equipo', 'inicia sesión', 'Instálalo', 'una terminal', 'necesita', 'Copiar', 'solo al terminar'], 'en');
+  });
+});
+
+// `aria-current` y `aria-expanded` deben seguir la tarjeta seleccionada y el panel
+// abierto, no estar fijos (nota 3 de #204, T2c slice 2 C1b).
+describe('Provider cards: aria-current and aria-expanded follow the selection (SSR)', () => {
+  const count = (html: string, needle: string) => html.split(needle).length - 1;
+  const cards = (html: string) => count(html, 'class="eg-module-card q-provider"');
+  /** Fragmento que empieza en la tarjeta marcada como actual (sin pasar a la siguiente). */
+  const current = (html: string) => {
+    const start = html.indexOf('aria-current="true"');
+    return html.slice(start, html.indexOf('</button>', start));
+  };
+
+  it('marks only the selected provider card as current and expanded while the drawer is open', () => {
+    const html = card('es', 'claude', true);
+    expect(count(html, 'aria-current="true"'), 'una sola tarjeta actual').toBe(1);
+    expect(count(html, 'aria-expanded="true"')).toBe(1);
+    expect(current(html)).toContain('Claude');
+    expect(count(html, 'aria-current="false"')).toBe(cards(html) - 1);
+    expect(count(html, 'aria-expanded="false"')).toBe(cards(html) - 1);
+  });
+
+  it('follows the selected tab', () => {
+    const html = card('es', 'copilot', true);
+    expect(count(html, 'aria-current="true"')).toBe(1);
+    expect(current(html)).toContain('GitHub Copilot');
+    expect(current(html)).not.toContain('Claude');
+  });
+
+  it('marks no card as current or expanded when the drawer is closed', () => {
+    const html = card('es', 'claude', false);
+    expect(count(html, 'aria-current="true"')).toBe(0);
+    expect(count(html, 'aria-expanded="true"')).toBe(0);
+    expect(count(html, 'aria-current="false"')).toBe(cards(html));
+    expect(count(html, 'aria-expanded="false"')).toBe(cards(html));
   });
 });
