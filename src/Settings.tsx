@@ -2342,7 +2342,7 @@ export function Settings() {
       {tab === 'antigravity' && (
         <Section kicker="Suscripción · IDE abierto" title="Antigravity">
           <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)} onChange={(v) => setVisibility('antigravity', v)} />
-          <p className="q-note">Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial.</p>
+          <p className="q-note">Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.</p>
           <ol className="q-steps" aria-label="Cómo conectar la cuenta">
             <li>
               <b>Abre Antigravity con tu cuenta de Google</b>
