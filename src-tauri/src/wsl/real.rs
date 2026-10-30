@@ -17,7 +17,7 @@
 //! - **`--terminate`**: solo desde `terminate()`, por acción explícita
 //!   del usuario (nivel 2).
 
-use super::errors::{looks_utf16, parse_list_verbose, parse_passwd_home};
+use super::errors::{classify, looks_utf16, parse_list_verbose, parse_passwd_home};
 use super::process::{
     direct_args, option_args, resolve_wsl_exe, shell_args, WslRunner, WslSearchPaths,
     SCRIPT_COMMAND_V,
@@ -306,6 +306,14 @@ impl WslAdapter for RealWslAdapter {
     /// del lab W3 en WSL real, 2026-10-30) y `control_raw` (el exit code
     /// de la sonda es la respuesta, no un error: sin bash, `command -v`
     /// sale con != 0 y eso significa "usa sh").
+    ///
+    /// No todo exit != 0 es "sin bash": `control_raw` devuelve el output,
+    /// pero si la salida contiene un token WSL reconocido (p. ej.
+    /// `WSL_E_DISTRO_NOT_FOUND` porque la distro desapareció entre la
+    /// enumeración y esta sonda), se propaga como error real
+    /// (`DistroNotFound`), no como una estrategia válida. El fallback a
+    /// `ShPosix` es solo para el caso normal: `command -v` no devolvió
+    /// nada porque bash no existe (salida vacía, sin token WSL).
     fn shell_strategy(&self, distro: &str) -> Result<ShellStrategy, WslError> {
         let argv = shell_args(
             Some(distro),
@@ -317,6 +325,9 @@ impl WslAdapter for RealWslAdapter {
         let output = self
             .runner(&self.env, &cwd)
             .control_raw(&argv, Some(distro))?;
+        if let Some(wsl_error) = classify(&output, Some(distro)) {
+            return Err(wsl_error);
+        }
         Ok(if output.code == 0 && !output.stdout.trim().is_empty() {
             ShellStrategy::BashLogin
         } else {
@@ -604,6 +615,35 @@ mod tests {
         assert_eq!(
             adapter.shell_strategy("Alpine").expect("shell"),
             ShellStrategy::ShPosix
+        );
+    }
+
+    /// La sonda NO confunde un error WSL con "sin bash": si la distro
+    /// desapareció entre la enumeración y la sonda, `wsl.exe` devuelve
+    /// `WSL_E_DISTRO_NOT_FOUND` y la sonda debe propagar `DistroNotFound`,
+    /// no caer a `ShPosix` como estrategia válida (revisión PR #220).
+    #[test]
+    fn shell_strategy_propagates_wsl_distro_loss_not_sh_posix() {
+        let runner = FakeRunner::default();
+        runner.respond(
+            "command -v \"$1\"",
+            CommandOutput {
+                code: -1,
+                stdout: String::new(),
+                stderr: concat!(
+                    "The system cannot find the file specified.",
+                    "Error code: Wsl/Service/WSL_E_DISTRO_NOT_FOUND"
+                )
+                .to_string(),
+            },
+        );
+        let adapter = adapter(runner);
+        let err = adapter
+            .shell_strategy("Ghost-22.04")
+            .expect_err("debe fallar");
+        assert!(
+            matches!(err, WslError::DistroNotFound(ref d) if d == "Ghost-22.04"),
+            "debe ser DistroNotFound, no ShPosix: {err:?}"
         );
     }
 

@@ -170,6 +170,18 @@ pub enum WslState {
 /// Ruta del archivo de credenciales para la precedencia de W1 §5:
 /// `credentials_path` explícito > home del modo activo de la distro.
 ///
+/// ¿Es una ruta ABSOLUTA del guest (semántica POSIX de la distro)?
+///
+/// Las rutas de sesión en modo WSL se pasan al `cat` DENTRO de la distro
+/// (Linux), así que la semántica de "absoluta" es la del guest (empieza
+/// por `/`), NO la del host Windows: `Path::is_absolute()` en Windows
+/// devolvería `false` para `/home/u/...` (no tiene prefijo de unidad) y
+/// `true` para `C:\...`, justo al revés de lo que el guest entiende
+/// (revisión PR #220).
+fn is_guest_absolute(path: &str) -> bool {
+    path.starts_with('/')
+}
+
 /// En modo WSL la ruta explícita DEBE ser absoluta: `read_file` la pasa al
 /// `cat` de la distro, cuyo proceso corre en el directorio de la distro
 /// (F8), no en el home ni en el cwd de Windows — una ruta relativa caería
@@ -183,21 +195,23 @@ pub fn session_path(
 ) -> Result<PathBuf, WslError> {
     match explicit.map(str::trim).filter(|s| !s.is_empty()) {
         Some(p) => {
-            let path = PathBuf::from(p);
-            if !path.is_absolute() {
+            // Semántica del GUEST, no del host: la ruta se consume con
+            // `cat` dentro de la distro. Un path `C:\...` (absoluto para
+            // Windows) NO es válido como ruta de sesión WSL.
+            if !is_guest_absolute(p) {
                 return Err(WslError::InvalidArgument(format!(
-                    "credentials_path en modo WSL debe ser absoluto, se recibió: {p}"
+                    "credentials_path en modo WSL debe ser una ruta absoluta de la distro (empieza por '/'), se recibió: {p}"
                 )));
             }
-            Ok(path)
+            Ok(PathBuf::from(p))
         }
         None => {
             // La ruta relativa al proveedor también debe ser relativa: si
             // fuera absoluta, `join` la dejaría escapar del home del modo.
-            if relative.is_absolute() {
+            let rel = relative.to_string_lossy();
+            if is_guest_absolute(&rel) {
                 return Err(WslError::InvalidArgument(format!(
-                    "la ruta del proveedor dentro del modo debe ser relativa, se recibió: {}",
-                    relative.display()
+                    "la ruta del proveedor dentro del modo debe ser relativa, se recibió: {rel}"
                 )));
             }
             Ok(mode_home.join(relative))
@@ -285,6 +299,34 @@ mod tests {
         let home = PathBuf::from("/home/quorbuser");
         let err = session_path(Some("creds.json"), &home, Path::new(".codex/auth.json"))
             .expect_err("ruta relativa");
+        assert!(matches!(err, WslError::InvalidArgument(_)));
+    }
+
+    /// La semántica de "absoluta" es la del GUEST (POSIX): una ruta de
+    /// Windows `C:\...` (absoluta para el host) NO es una ruta de sesión
+    /// WSL válida, porque `cat` corre dentro de la distro. Antes esto
+    /// pasaba `Path::is_absolute()` en Windows (revisión PR #220).
+    #[test]
+    fn windows_path_is_rejected_as_guest_relative() {
+        let home = PathBuf::from("/home/quorbuser");
+        let err = session_path(
+            Some("C:\\Users\\quorb\\creds.json"),
+            &home,
+            Path::new(".claude/auth.json"),
+        )
+        .expect_err("ruta Windows en modo WSL");
+        assert!(matches!(err, WslError::InvalidArgument(_)));
+    }
+
+    /// Un path del guest sin prefijo de unidad (`/etc/passwd`) es
+    /// ABSOLUTO para la distro y debe rechazarse como ruta relativa del
+    /// proveedor — aunque en Windows `Path::is_absolute()` diga lo
+    /// contrario (revisión PR #220: semántica del guest, no del host).
+    #[test]
+    fn guest_absolute_provider_relative_is_rejected_even_on_windows() {
+        let home = PathBuf::from("/home/quorbuser");
+        let err = session_path(None, &home, Path::new("/etc/passwd"))
+            .expect_err("ruta absoluta del guest como relativa del proveedor");
         assert!(matches!(err, WslError::InvalidArgument(_)));
     }
 

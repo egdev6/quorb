@@ -468,6 +468,14 @@ fn kill_remote_process(
         // Gracia: el TERM es la vía suave; solo si al cabo de esas sondas
         // sigue vivo se escala a KILL (antes el -KILL era instantáneo y la
         // vía suave nunca se ejercitaba).
+        //
+        // Si CUALQUIER sonda observa la desaparición del PID, se rompe y
+        // NO se vuelve a comprobar ni se escala: un `kill -0` posterior
+        // podría devolver 0 porque el PID fue REUTILIZADO por otro proceso
+        // de la distro, y enviarle KILL señalizaría un proceso ajeno
+        // (revisión PR #220; la identidad de la instancia se protege
+        // observando la muerte, no volviendo a preguntar por el número).
+        let mut killer_observed_death = false;
         for _ in 0..TERM_PROBES {
             let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
             let alive = match runner.run(program, &alive, env, cwd, cleanup_timeout) {
@@ -477,16 +485,21 @@ fn kill_remote_process(
                 Err(_) => false,
             };
             if !alive {
+                killer_observed_death = true;
                 break;
             }
             std::thread::sleep(TERM_GRACE);
         }
-        // Segunda comprobación tras la gracia; si sigue, KILL.
-        let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
-        if let Ok(out) = runner.run(program, &alive, env, cwd, cleanup_timeout) {
-            if out.code == 0 {
-                let hard = direct_args(Some(distro), "kill", &["-KILL", pid_str.as_str()]);
-                let _ = runner.run(program, &hard, env, cwd, cleanup_timeout);
+        // Solo si la gracia se agotó SIN observar la muerte (el proceso
+        // seguía vivo en TODAS las sondas) se escala a KILL. Nunca después
+        // de haber visto desaparecer el PID.
+        if !killer_observed_death {
+            let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
+            if let Ok(out) = runner.run(program, &alive, env, cwd, cleanup_timeout) {
+                if out.code == 0 {
+                    let hard = direct_args(Some(distro), "kill", &["-KILL", pid_str.as_str()]);
+                    let _ = runner.run(program, &hard, env, cwd, cleanup_timeout);
+                }
             }
         }
     }
@@ -872,6 +885,79 @@ mod tests {
             (pid, calls)
         }
 
+        /// El PID desaparece y REAPARECE con otra identidad: la primera
+        /// sonda `kill -0` lo ve muerto; a partir de ahí, cualquier
+        /// consulta posterior lo ve VIVO (número reutilizado por otro
+        /// proceso de la distro). Es el caso que exige no volver a
+        /// preguntar por el número una vez observada la muerte.
+        fn case_disappears_then_reappears() -> (i64, Vec<Vec<String>>) {
+            use crate::cli_process::RunError;
+            use std::sync::Mutex;
+
+            struct Reappearing {
+                probes: Mutex<usize>,
+                calls: Mutex<Vec<Vec<String>>>,
+            }
+            impl CommandRunner for Reappearing {
+                fn run(
+                    &self,
+                    _program: &Path,
+                    args: &[String],
+                    _env: &BTreeMap<String, String>,
+                    _cwd: &Path,
+                    _timeout: Duration,
+                ) -> Result<CommandOutput, RunError> {
+                    self.calls.lock().unwrap().push(args.to_vec());
+                    if args.contains(&SCRIPT_READ_PID.to_string()) {
+                        return Ok(CommandOutput {
+                            code: 0,
+                            stdout: "4242\n".to_string(),
+                            stderr: String::new(),
+                        });
+                    }
+                    let joined = args.join(" ");
+                    let code = if joined.contains("-0") {
+                        let n = {
+                            let mut p = self.probes.lock().unwrap();
+                            *p += 1;
+                            *p
+                        };
+                        // La primera sonda ve el PID muerto; las siguientes
+                        // lo ven vivo (reutilizado por otro proceso).
+                        if n == 1 {
+                            1
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    Ok(CommandOutput {
+                        code,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    })
+                }
+            }
+
+            let remote = Reappearing {
+                probes: Mutex::new(0),
+                calls: Mutex::new(Vec::new()),
+            };
+            let env = BTreeMap::new();
+            let pid = kill_remote_process(
+                &remote,
+                Path::new("wsl.exe"),
+                "Ubuntu-22.04",
+                Path::new("/tmp/quorb-base"),
+                &env,
+                Path::new("."),
+                Duration::from_millis(1),
+            );
+            let calls = remote.calls.lock().unwrap().clone();
+            (pid, calls)
+        }
+
         // 1) atiende TERM -> muere sin KILL
         let (pid1, c1) = case(true, true);
         assert_eq!(pid1, 4242);
@@ -894,6 +980,17 @@ mod tests {
         assert!(
             !c3.iter().any(|c| c.iter().any(|a| a == "-KILL")),
             "nada que matar"
+        );
+
+        // 4) el PID desaparece y REAPARECE con otra identidad: la primera
+        //    sonda observa la muerte y se rompe; aunque un `kill -0`
+        //    posterior viera el número vivo (reutilizado), NO debe llegar
+        //    KILL (revisión PR #220: la identidad se protege observando la
+        //    muerte, no volviendo a preguntar por el número).
+        let (_, c4) = case_disappears_then_reappears();
+        assert!(
+            !c4.iter().any(|c| c.iter().any(|a| a == "-KILL")),
+            "no debe escalar si la sonda ya observó la desaparición"
         );
 
         // En ninguno se toco la distro entera; y siempre se limpio el base.
