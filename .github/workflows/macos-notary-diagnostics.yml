@@ -1,0 +1,79 @@
+name: macOS notarization diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      submission_id:
+        description: Optional Apple submission UUID; empty lists recent submissions only
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-notary-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  diagnostics:
+    if: github.ref == 'refs/heads/main'
+    environment: macos-signing
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Read Apple submission history and optional status and log
+        env:
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          python3 <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+
+          submission = os.environ.get('SUBMISSION_ID', '')
+          if submission and not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', submission):
+              raise SystemExit('Invalid submission UUID; no request sent.')
+          for name in ('APPLE_API_KEY_P8', 'APPLE_API_KEY', 'APPLE_API_ISSUER'):
+              if not os.environ.get(name, '').strip():
+                  raise SystemExit('Missing notarization credential: ' + name)
+          key = Path(os.environ['RUNNER_TEMP']) / ('quorb-notary-diagnostics-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'] + '.p8')
+          auth = ['--key', str(key), '--key-id', os.environ['APPLE_API_KEY'], '--issuer', os.environ['APPLE_API_ISSUER']]
+
+          def query(operation, *args):
+              output_args = [] if operation == 'log' else ['--output-format', 'json']
+              try:
+                  result = subprocess.run(['xcrun', 'notarytool', operation, *args, *auth, *output_args],
+                                          capture_output=True, text=True, timeout=120)
+              except (OSError, subprocess.TimeoutExpired):
+                  raise SystemExit('notarytool ' + operation + ' unavailable or timed out; no submission was made.')
+              if result.returncode:
+                  raise SystemExit('notarytool ' + operation + ' failed; check credentials, team access and Apple service availability.')
+              try:
+                  return json.loads(result.stdout)
+              except ValueError:
+                  raise SystemExit('notarytool ' + operation + ' returned invalid JSON.')
+
+          try:
+              with open(key, 'x', opener=lambda name, flags: os.open(name, flags, 0o600)) as file:
+                  file.write(os.environ['APPLE_API_KEY_P8'])
+              history = query('history')
+              print('Recent submissions (up to 20; no new submission):', flush=True)
+              print(json.dumps(history.get('history', [])[:20], indent=2), flush=True)
+              if submission:
+                  info = query('info', submission)
+                  print(json.dumps(info, indent=2), flush=True)
+                  if info.get('status') in ('Accepted', 'Invalid', 'Rejected'):
+                      print(json.dumps(query('log', submission), indent=2), flush=True)
+                  else:
+                      print('No terminal log requested. Re-run diagnostics with this ID later.', flush=True)
+          finally:
+              key.unlink(missing_ok=True)
+          PY
+
+      - name: Remove private key even after interruption
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/quorb-notary-diagnostics-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.p8"

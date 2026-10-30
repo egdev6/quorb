@@ -1,4 +1,5 @@
-import type { AppConfig } from './types';
+import type { AppConfig, Locale } from './types';
+import { t } from '../i18n';
 import { withCanonicalLive } from './settings-dirty';
 import type { AutostartApplyOutcome } from './autostart-controller';
 
@@ -96,16 +97,16 @@ export function configPersistedAfterSave(result: MixedSaveResult): boolean {
  * presenta una parte omitida como guardada y nunca da un éxito conjunto falso:
  * nombra exactamente lo que se confirmó y lo que falló, con su error.
  */
-export function mixedSaveMessage(result: MixedSaveResult): string | null {
-  const cfgError = result.config.status === 'failed' ? `Configuración no guardada: ${result.config.message}` : null;
-  const osError = result.autostart.status === 'failed' ? `Inicio al iniciar sesión no guardado: ${result.autostart.outcome.message}` : null;
+export function mixedSaveMessage(result: MixedSaveResult, locale: Locale = 'es'): string | null {
+  const cfgError = result.config.status === 'failed' ? t(locale, 'settings.shell.configNotSaved', { error: result.config.message }) : null;
+  const osError = result.autostart.status === 'failed' ? t(locale, 'settings.shell.autostartNotSaved', { error: result.autostart.outcome.message }) : null;
   const cfgSaved = result.config.status === 'saved';
   const osConfirmed = result.autostart.status === 'confirmed';
 
   if (cfgError && osError) return `${cfgError} · ${osError}`;
-  if (cfgError) return osConfirmed ? `Inicio al iniciar sesión guardado · ${cfgError}` : cfgError;
-  if (osError) return cfgSaved ? `Configuración guardada · ${osError}` : osError;
-  if (cfgSaved || osConfirmed) return 'Guardado ✓';
+  if (cfgError) return osConfirmed ? `${t(locale, 'settings.shell.autostartSaved')} · ${cfgError}` : cfgError;
+  if (osError) return cfgSaved ? `${t(locale, 'settings.shell.configSaved')} · ${osError}` : osError;
+  if (cfgSaved || osConfirmed) return t(locale, 'settings.shell.saved');
   return null;
 }
 

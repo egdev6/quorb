@@ -6,8 +6,9 @@
 
 Quorb is MIT-licensed and its source is public. Windows distribution is
 referenced on [GitHub Releases](https://github.com/egdev6/quorb/releases).
-This page describes configuration reviewed at `d097bc3`; it does not certify
-published artifacts or the state of external accounts or services.
+This page describes signing configuration, including the new, unexecuted macOS
+workflow; it does not certify published artifacts or the current state of
+external accounts or services.
 
 The [release workflow](../.github/workflows/release.yml) requires Tauri minisign
 signing for updater artifacts and creates a draft from a validated SHA.
@@ -23,13 +24,51 @@ an available download or validated GUI. Minisign does not replace those controls
 
 [Issue #20](https://github.com/egdev6/quorb/issues/20), approved as signing background,
 does not establish a completed integration. This document does not apply to
-SignPath or establish sponsorship, a certificate, compliance or closure of that issue.
+SignPath or establish sponsorship, an Authenticode certificate, compliance or
+closure of that issue.
+
+## macOS Developer ID release (execution pending)
+
+The [separate macOS workflow](../.github/workflows/macos-release.yml), materialized
+byte-for-byte from `.github/security-drafts/macos-release.yml`, accepts only
+`workflow_dispatch` from `main`. It takes a stable version of an existing Windows
+release (draft allowed) and its full source SHA. Before secrets are reachable,
+a job without the signing environment validates the ref, `package.json` version
+at that SHA, ancestry in `origin/main`, release/tag and absence of asset collisions.
+For a draft without a tag, `target_commitish` must equal the full SHA, not a branch.
+It does not modify the Windows workflow or create releases or tags.
+
+The dependent signing job uses the protected `macos-signing` environment (reviewer
+`egdev6`, deployment branch `main`). Its secrets are `APPLE_CERTIFICATE`,
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`,
+`APPLE_API_KEY` and `APPLE_API_KEY_P8`. They are exposed only to the key preparation
+and build/sign steps, never at job or workflow level. The `.p8` content is written
+to a private `0600` file under `RUNNER_TEMP`, passed to Tauri as
+`APPLE_API_KEY_PATH` and removed even after failure.
+
+It builds the validated SHA for ARM64 with minimum macOS 15.0, signs with Developer
+ID, notarizes and staples the DMG ticket. Before upload it requires
+`codesign --verify --deep --strict`, the app's `Developer ID Application` authority
+and team `SRD8T33RU5`, `spctl` assessment of the app and DMG, and
+`xcrun stapler validate` on the DMG. The documented Developer ID certificate expires
+on **2027-11-28**. After revalidating the release, it attaches only
+`Quorb_<version>_aarch64.dmg` and its `.dmg.sha256` file without overwriting assets;
+it does not modify `latest.json` or updater artifacts. macOS updates remain
+**manual**.
+
+**This workflow has not been executed yet.** Actual signing/notarization,
+Gatekeeper validation of the downloaded DMG on a real Mac, and the first-open
+check with quarantine from [#118](https://github.com/egdev6/quorb/issues/118) remain
+pending. Do not remove quarantine to pass that check. Configuration does not prove
+support, installation or GUI functionality; running the workflow, creating tags
+or publishing assets requires separate approval.
 
 ## Responsibilities
 
 The maintainer is [Enrique Gómez Navarro (@egdev6)](https://github.com/egdev6).
-Before integrating signing, confirm who reviews external contributions and who
-approves each signing request; no operational approver is designated here.
+For a future Authenticode integration, confirm who reviews external contributions
+and who approves each signing request; no operational Authenticode approver is
+designated here. The macOS environment is described above.
 MFA for the repository and signing service must be verified as a prerequisite:
 this local review does not check whether it is enabled on any account.
 
