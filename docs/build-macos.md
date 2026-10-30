@@ -108,12 +108,41 @@ Tras volver a validar la identidad de la release y sus colisiones, solo adjunta
 los bytes finales con ticket. No sobrescribe assets, no toca `latest.json` ni
 artefactos del updater. **Las actualizaciones de macOS siguen siendo manuales.**
 
-**Este workflow no se ha ejecutado todavía.** Siguen pendientes la validación de
-Gatekeeper del DMG descargado en un Mac real y la comprobación de primera apertura
+El intento 3 de la ejecución `40949608906` firmó la app, pero quedó esperando en
+`Notarizing` hasta su cancelación, sin respuesta visible de Apple; no publicó el
+DMG. Siguen pendientes la validación de Gatekeeper del DMG descargado en un Mac
+real y la comprobación de primera apertura
 con cuarentena de [#118](https://github.com/egdev6/quorb/issues/118), sin retirar
 la cuarentena. No acredita instalación, GUI ni un rango de macOS soportado.
 Ejecutar firma/notarización, crear tags, lanzar Release o publicar assets requiere
 aprobación separada; escribir esta configuración no autoriza esas operaciones.
+
+## Consultar una notarización sin reenviarla
+
+El workflow manual `.github/workflows/macos-notary-diagnostics.yml` consulta
+Apple sin compilar, firmar, enviar nuevos paquetes ni publicar assets. Solo corre
+en `main`, con `contents: read`, aprobación del Environment `macos-signing` y
+las tres credenciales de API existentes; no recibe el certificado de firma.
+
+1. Una vez integrado, ejecutar **macOS notarization diagnostics** desde Actions
+   sobre `main`, dejando `submission_id` vacío para listar hasta 20 envíos recientes
+   con sus IDs, fechas, nombres y estados. Esto requiere aprobación separada para
+   usar las credenciales; preparar el workflow no autoriza ejecutarlo.
+2. Localizar el envío por nombre y fecha, no asumir que el más reciente es Quorb.
+   Ejecutar de nuevo con su UUID en `submission_id` para consultar `info` y, si
+   terminó (`Accepted`, `Invalid` o `Rejected`), su `log`.
+3. Si sigue `In Progress`, conservar el ID y consultar más tarde, sin reenviar.
+   Si es rechazado, revisar el log antes de cambiar firma o credenciales.
+
+Cada consulta tiene un límite de 120 segundos; el job, 10 minutos. La clave `.p8`
+temporal se crea con permisos `0600` y se elimina al salir y en un step de limpieza
+`always()`. No se imprimen credenciales ni stderr crudo de la herramienta. Los
+resultados de Apple quedan en el log del job (visibilidad del repositorio): no
+pegar allí ni en los inputs claves o valores secretos. Un resultado `Accepted`
+solo describe ese envío: no publica el DMG ni reemplaza las verificaciones del
+workflow de release ni la prueba real de Gatekeeper. Este diagnóstico todavía
+no se ha ejecutado contra Apple. Sus tests locales requieren Python 3 además de
+Node y simulan `notarytool`, sin usar secretos reales ni acceder a la red.
 
 ## Ejecución prevista de CI macOS (sin cambios)
 
