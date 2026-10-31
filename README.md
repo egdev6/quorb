@@ -22,6 +22,15 @@
 
 Your AI quotas, always in sight: usage, remaining capacity and spending across your AI subscriptions and APIs on Windows.
 
+## Downloads
+
+| Platform | v0.8.0 installer |
+| --- | --- |
+| Windows x64 | [Download EXE](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_x64-setup.exe) |
+| macOS Apple Silicon (M1 or later) | [Download signed and notarized DMG](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
+
+[All versions and downloads](https://github.com/egdev6/quorb/releases). These links are pinned to v0.8.0; update them when publishing a new release.
+
 ## What is it
 
 Quorb brings your AI limits into one local desktop utility. Check how much you have used, how fast you are consuming it and when your limits reset, without opening a separate dashboard for every provider.
@@ -179,7 +188,7 @@ For WSL sessions, configure the credential file paths in Settings, for example `
 
 ### Roadmap
 
-Code signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. macOS/Linux public releases and a Linux updater are not part of this project yet; Linux local development is covered in the section below.
+Code signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. A signed and notarized macOS Apple Silicon DMG is available above. Public Linux releases and a Linux updater are not available yet; Linux local development is covered in the section below.
 
 ## Linux development notes
 
@@ -206,7 +215,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the local setup, the provider integ
 
 - [Source code](https://github.com/egdev6/quorb)
 - [Issues](https://github.com/egdev6/quorb/issues)
-- [Releases, when published](https://github.com/egdev6/quorb/releases)
+- [Releases and downloads](https://github.com/egdev6/quorb/releases)
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ## License
