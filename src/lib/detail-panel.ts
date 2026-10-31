@@ -12,6 +12,7 @@ export const DETAIL_EVENTS = {
   interaction: 'detail-interaction',
   widgetHidden: 'widget-hidden',
   dismiss: 'detail-dismiss',
+  escape: 'detail-escape',
 } as const;
 
 export const ORB_BASE = 56;

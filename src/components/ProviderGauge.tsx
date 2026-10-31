@@ -32,6 +32,7 @@ export function ProviderGauge({
   threshold,
   dragging = false,
   onHover,
+  onClick,
   pointer,
 }: {
   report: UsageReport;
@@ -48,6 +49,11 @@ export function ProviderGauge({
   /** Umbral de aviso (%) */
   threshold?: number;
   onHover: (el: HTMLElement) => void;
+  /**
+   * Clic sobre el orbe (#170): ancla el panel. Si no se pasa, el clic abre el
+   * panel como hace el hover.
+   */
+  onClick?: (el: HTMLElement) => void;
   /** Se está arrastrando para reordenar */
   dragging?: boolean;
   /** Manejadores de puntero para reordenar arrastrando */
@@ -92,7 +98,7 @@ export function ProviderGauge({
         if (/Windows/.test(navigator.userAgent) && !e.currentTarget.matches(':focus-visible')) return;
         onHover(e.currentTarget);
       }}
-      onClick={(e) => onHover(e.currentTarget)}
+      onClick={(e) => (onClick ?? onHover)(e.currentTarget)}
       onPointerCancel={pointer?.onPointerUp}
       {...pointer}
     >

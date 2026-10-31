@@ -80,6 +80,18 @@ export function DetailPanel() {
     };
   }, [enqueue]);
 
+  // `Escape` cierra el panel anclado también desde aquí (#170): con el foco en
+  // el panel —al hacer clic dentro para copiar un dato— la tecla la atiende
+  // esta ventana, no la tira.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      emitTo('widget', DETAIL_EVENTS.escape).catch(console.warn);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useLayoutEffect(() => {
     if (!data || !panelRef.current) return;
     let disposed = false;

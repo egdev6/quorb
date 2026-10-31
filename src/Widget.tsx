@@ -17,6 +17,8 @@ import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
 import { placementOutcome, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
+import { clickPanel, closePanel, hoverPanel, isReorderGesture, NO_PANEL, panelHoldsOpen, type PanelState } from './lib/anchor-panel';
+import { createFocusTracker, FOCUS_EVENT, type OwnWindow } from './lib/anchor-focus';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
 import { openDelayForOs, osFromUA } from './lib/os-detect';
@@ -154,7 +156,7 @@ export function Widget() {
   const locale = localeFrom(config);
   const [geo, setGeo] = useState<Geo | null>(null);
   const [stripSize, setStripSize] = useState<Size | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
+  const [panel, setPanel] = useState<PanelState>(NO_PANEL);
   const [anchorRel, setAnchorRel] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [pos, setPos] = useState({ strip: { x: 0, y: 0 } });
@@ -212,7 +214,7 @@ export function Widget() {
         // Direct close timer: never gated by the DOM-only `detailInsideRef`,
         // which is exactly what gets stuck on macOS.
         window.clearTimeout(closeTimer.current);
-        closeTimer.current = window.setTimeout(() => setHovered(null), CLOSE_DELAY);
+        closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
       },
       cancelClose: () => window.clearTimeout(closeTimer.current),
     }),
@@ -413,7 +415,7 @@ export function Widget() {
   const hiddenIds = config?.hiddenProviders ?? [];
   const visible = applyOrder(reports, order).filter((r) => !hiddenIds.includes(r.id));
   const tags = config ? accountTags(config) : {};
-  const active = reports.find((r) => r.id === hovered) ?? null;
+  const active = reports.find((r) => r.id === panel.providerId) ?? null;
 
   // ───── auto-ocultar ─────
   // Actualizaciones: primera comprobación a los 20 s y luego cada 6 h. Los fallos son silenciosos.
@@ -473,7 +475,7 @@ export function Widget() {
       setCollapsed(false);
       return;
     }
-    const busy = inside || focused || hovered != null || dragging || reorder != null;
+    const busy = inside || focused || panel.providerId != null || dragging || reorder != null;
     const wait = Math.max(HIDE_DELAY, revealUntil - Date.now());
     if (busy) {
       setCollapsed(false);
@@ -481,7 +483,7 @@ export function Widget() {
     }
     const t = window.setTimeout(() => setCollapsed(true), wait);
     return () => window.clearTimeout(t);
-  }, [autoHide, inside, focused, hovered, dragging, reorder, revealUntil]);
+  }, [autoHide, inside, focused, panel.providerId, dragging, reorder, revealUntil]);
   useEffect(() => {
     if (revealUntil > Date.now()) setCollapsed(false);
   }, [revealUntil]);
@@ -727,7 +729,7 @@ export function Widget() {
           if (!insideRef.current) scheduleClose();
         } else if (payload.kind === 'hide') {
           cancelTimers();
-          setHovered(null);
+          setPanel(closePanel());
           const hidden = configRef.current?.hiddenProviders ?? [];
           patchConfig({ hiddenProviders: [...new Set([...hidden, payload.provider])] }).catch((err) => setError(String(err)));
         }
@@ -737,12 +739,18 @@ export function Widget() {
         detailInsideRef.current = false;
         insideRef.current = false;
         setInside(false);
-        setHovered(null);
+        setPanel(closePanel());
       }));
       await add(listen(DETAIL_EVENTS.dismiss, () => {
         cancelTimers();
         detailInsideRef.current = false;
-        setHovered(null);
+        setPanel(closePanel());
+      }));
+      // `Escape` desde el panel (#170): con el foco dentro del detalle, la
+      // tecla la atiende esa ventana, no la tira.
+      await add(listen(DETAIL_EVENTS.escape, () => {
+        if (disposed) return;
+        setPanel(closePanel());
       }));
       if (!disposed) await emitTo(DETAIL_WINDOW, DETAIL_EVENTS.requestReady);
     };
@@ -755,50 +763,111 @@ export function Widget() {
     };
   }, [patchConfig]);
 
+  // El foco de nuestras propias ventanas (#170): el anclaje se suelta cuando el
+  // foco sale de las DOS (la tira y el detalle). El seam vive en
+  // `src/lib/anchor-focus.ts`, con su ventana de asentamiento.
+  useEffect(() => {
+    let disposed = false;
+    const tracker = createFocusTracker(() => {
+      if (disposed) return;
+      setPanel((current) => (panelHoldsOpen(current) ? closePanel() : current));
+    });
+    let unlisten: (() => void) | null = null;
+    listen<[OwnWindow, boolean]>(FOCUS_EVENT, ({ payload }) => {
+      if (disposed) return;
+      tracker.setFocus(payload[0], payload[1]);
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(console.warn);
+    return () => {
+      disposed = true;
+      unlisten?.();
+      tracker.cancel();
+    };
+  }, []);
+
+  // `Escape` cierra el panel (#170): lo atiende la tira, que tiene el foco
+  // desde el clic que ancló.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setPanel(closePanel());
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // ───── panel al pasar el ratón ─────
   const cancelTimers = () => {
     window.clearTimeout(closeTimer.current);
     window.clearTimeout(openTimer.current);
   };
 
-  const openFor = (id: string, el: HTMLElement) => {
-    if (phase !== 'open' || drag.current || orbDrag.current?.moved || Date.now() - lastReorderAt.current < 400) return;
-    cancelTimers();
+  /** La posición del panel respecto de la tira, según el orbe. */
+  const relOf = (el: HTMLElement): number => {
     const strip = stripRef.current?.getBoundingClientRect();
     const orb = el.getBoundingClientRect();
-    const rel = strip ? (vertical ? orb.top + orb.height / 2 - strip.top : orb.left + orb.width / 2 - strip.left) : 0;
+    if (!strip) return 0;
+    return vertical ? orb.top + orb.height / 2 - strip.top : orb.left + orb.width / 2 - strip.left;
+  };
+
+  const openFor = (id: string, el: HTMLElement) => {
+    // Con el panel anclado el puntero no lo toca (#170): el anclaje lo eligió
+    // un clic y se cambia con otro clic.
+    if (panel.anchored) return;
+    if (phase !== 'open' || drag.current || orbDrag.current?.moved || isReorderGesture(lastReorderAt.current, Date.now())) return;
+    cancelTimers();
+    const rel = relOf(el);
     const go = () => {
       detailInsideRef.current = false;
       setAnchorRel(rel);
-      setHovered(id);
+      setPanel((current) => hoverPanel(current, id));
     };
-    if (hovered) go();
+    if (panel.providerId) go();
     else openTimer.current = window.setTimeout(go, OPEN_DELAY);
+  };
+
+  // ───── anclar el panel con un clic (#170) ─────
+  const anchorOn = (id: string, el: HTMLElement) => {
+    if (phase !== 'open' || drag.current) return;
+    // Reordenar no ancla: el gesto fue un arrastre, no un clic. El umbral de
+    // 6 px marca `orbDrag.moved` y la guarda tras reordenar
+    // (`lastReorderAt`) cubre el clic que llega después de soltar.
+    if (isReorderGesture(lastReorderAt.current, Date.now())) return;
+    cancelTimers();
+    detailInsideRef.current = false;
+    setAnchorRel(relOf(el));
+    setPanel((current) => clickPanel(current, id));
   };
 
   // Atajo «abrir el más cargado»: muestra la tira y abre el panel del círculo con el % más alto.
   openPeakRef.current = () => {
     const top = [...visible].sort((a, b) => (peakMeter(b)?.percent ?? -1) - (peakMeter(a)?.percent ?? -1))[0];
     if (!top) return;
+    // Con el panel anclado el atajo tampoco lo toca (#170).
+    if (panel.anchored) return;
     setRevealUntil(Date.now() + 8000);
     setCollapsed(false);
     window.setTimeout(() => {
       const el = orbsRef.current?.querySelector<HTMLElement>(`.orb[data-id="${top.id}"]`);
-      const strip = stripRef.current?.getBoundingClientRect();
-      if (!el || !strip) return;
-      const orb = el.getBoundingClientRect();
+      if (!el) return;
       cancelTimers();
-      setAnchorRel(vertical ? orb.top + orb.height / 2 - strip.top : orb.left + orb.width / 2 - strip.left);
-      setHovered(top.id);
-      // Si no pasas el ratón por encima, se cierra solo.
-      closeTimer.current = window.setTimeout(() => setHovered(null), 8000);
+      setAnchorRel(relOf(el));
+      setPanel((current) => hoverPanel(current, top.id));
+      // Si no pasas el ratón por encima, se cierra solo (salvo que se anclara).
+      closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), 8000);
     }, 80);
   };
 
   const scheduleClose = () => {
     cancelTimers();
     if (detailInsideRef.current) return;
-    closeTimer.current = window.setTimeout(() => setHovered(null), CLOSE_DELAY);
+    // Con el panel anclado, el puntero no lo cierra (#170).
+    if (panel.anchored) return;
+    closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
   };
 
   // Muestreo nativo de presencia (#154): mientras el popup esté abierto, la
@@ -809,7 +878,7 @@ export function Widget() {
     // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
     // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
     if (!shouldSampleNativePresence(osFromUA(navigator.userAgent))) return;
-    if (!hovered) {
+    if (!panel.providerId) {
       presenceRef.reset();
       return;
     }
@@ -843,7 +912,7 @@ export function Widget() {
       disposed = true;
       window.clearInterval(interval);
     };
-  }, [hovered, presenceRef]);
+  }, [panel.providerId, presenceRef]);
   // #180: drag strategy decision, fetched ONCE at mount (single fast
   // `get_wm_info` command). Two deterministic defaults, both recorded here:
   // - While the decision is unresolved (`currentDragMode() === null`) the
@@ -923,7 +992,7 @@ export function Widget() {
       // delta from (see onGripUp for the release-side counterpart).
       setDragging(true);
       cancelTimers();
-      setHovered(null);
+      setPanel(closePanel());
       getCurrentWindow().startDragging().catch((err) => {
         setError(String(err));
         setDragging(false);
@@ -933,7 +1002,7 @@ export function Widget() {
     e.currentTarget.setPointerCapture(e.pointerId);
     if (drag.current) cancelAnimationFrame(drag.current.raf);
     cancelTimers();
-    setHovered(null);
+    setPanel(closePanel());
     setDragging(true);
     // `widgetBounds.current` es la verdad incluso cuando el compositor no
     // reporta posición: el caché lo escribe el propio `setWidgetBounds` que
@@ -1060,7 +1129,7 @@ export function Widget() {
       if (!od.moved) {
         od.moved = true;
         cancelTimers();
-        setHovered(null);
+        setPanel(closePanel());
       }
       const ids = visible.map((r) => r.id);
       const others = [...(orbsRef.current?.querySelectorAll<HTMLElement>('.orb') ?? [])].filter((el) => el.dataset.id !== id);
@@ -1172,13 +1241,14 @@ export function Widget() {
               report={r}
               small={small}
               size={orbSize}
-              active={hovered === r.id}
+              active={panel.providerId === r.id}
               account={tags[r.id]}
               locale={locale}
               showResets={config?.showResets ?? true}
               threshold={config?.alerts.threshold}
               dragging={reorder?.id === r.id}
               onHover={(el) => openFor(r.id, el)}
+              onClick={(el) => anchorOn(r.id, el)}
               pointer={orbHandlers(r.id)}
             />
           ))}

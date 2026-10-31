@@ -46,6 +46,9 @@ const SETTINGS_ZOOM: f64 = 0.85;
 const SETTINGS_HEIGHT: f64 = 920.0;
 const OVERLAY: &str = "overlay";
 const DETAIL: &str = "detail";
+/// El canal por el que el frontend recibe el foco de nuestras ventanas
+/// (`src/lib/anchor-focus.ts`): el payload es `(etiqueta, tiene_foco)`.
+const FOCUS_EVENT: &str = "window-focus";
 const TRAY_ID: &str = "main";
 
 #[tauri::command]
@@ -1104,6 +1107,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             #[cfg(target_os = "windows")]
             windows_backdrop::on_window_event(window, event);
+            // El foco de nuestras propias ventanas (#170): el panel anclado se
+            // suelta cuando el foco sale de las dos (la tira y el detalle).
+            // Es un evento de ventana nativo, no del DOM: llega igual en X11,
+            // Wayland, Windows y macOS.
+            if let WindowEvent::Focused(focused) = event {
+                if window.label() == WIDGET || window.label() == DETAIL {
+                    let _ =
+                        window.emit_to(WIDGET, FOCUS_EVENT, (window.label().to_string(), focused));
+                }
+            }
             // Cerrar el widget lo oculta; la app sigue en la bandeja.
             if window.label() == WIDGET {
                 if let WindowEvent::CloseRequested { api, .. } = event {
