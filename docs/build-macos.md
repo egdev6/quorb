@@ -7,6 +7,18 @@ El workflow está en `.github/workflows/macos-ci.yml`, materializado desde
 Las pruebas exigen igualdad exacta entre esa fuente revisada y el workflow.
 No cambia CI de Windows, Rust ni los iconos.
 
+**Estado observado a 2026-10-31:** [v0.8.0](https://github.com/egdev6/quorb/releases/tag/v0.8.0)
+publica `Quorb_0.8.0_aarch64.dmg` y `Quorb_0.8.0_aarch64.dmg.sha256`,
+con Developer ID y notarización, para **Apple Silicon (M1+), macOS 15+**.
+El [productor 41067808525](https://github.com/egdev6/quorb/actions/runs/41067808525)
+preparó y envió el checkpoint firmado. El [diagnóstico 41230153171](https://github.com/egdev6/quorb/actions/runs/41230153171)
+confirmó `Accepted`, `jobId` `e7b22172-716e-4176-a023-2d1d916d6823` y SHA-256 del DMG enviado:
+`224b37f9b3e6d134f7d408ed06995792af73fa05c41ee79eb2e20edc476800be`.
+El [resume 41233474221](https://github.com/egdev6/quorb/actions/runs/41233474221)
+completó verificación, stapling, staging final y publicación. Gatekeeper pasó en
+el runner CI; no equivale a descarga por navegador, cuarentena, instalación ni GUI
+en un Mac real, pendientes en [#118](https://github.com/egdev6/quorb/issues/118).
+
 ## Actualizaciones en macOS
 
 Todos los builds actuales de macOS usan actualización manual: Ajustes muestra la
@@ -14,9 +26,9 @@ versión actual, sin buscar, instalar ni sondear actualizaciones. La política v
 del binario; el plugin updater no se registra y sus permisos solo se conceden en
 Windows/Linux. Windows conserva su updater nativo. Si la política no se puede
 resolver, las acciones quedan bloqueadas hasta reiniciar.
-Esto no publica una preview descargable ni acredita funcionamiento de la GUI.
+Esta política de actualizaciones no publica por sí misma una preview ni acredita funcionamiento de la GUI.
 
-## Fundamentos de preview: preparatorio, no operativo
+## Fundamentos del mecanismo de preview unsigned
 
 La configuración macOS fija `bundle.macOS.minimumSystemVersion` en **15.0**.
 El verificador exige el mismo `LSMinimumSystemVersion` en `Info.plist` y lo reporta.
@@ -30,7 +42,7 @@ El contrato fija ARM64, actualización manual, sin Developer ID ni notarización
 la retención del artifact/manifiesto no implica que la aplicación expire; el digest del ZIP no es el hash del DMG.
 Pruebas sin red ni GUI: `node --test scripts/macos-preview-policy.test.mjs scripts/verify-macos-bundle.test.mjs scripts/macos-ci.test.mjs`.
 El workflow de preview solo se materializa tras aprobar su plan; uploads y readback real requieren ejecución autorizada.
-Estos fundamentos no publican una preview descargable ni una Release, ni acreditan una preview macOS lista.
+Este contrato de preview unsigned es independiente de la release firmada descrita arriba; sus pruebas no acreditan por sí mismas una preview macOS lista.
 
 ## Preflight de fuente: CLI preparatoria
 
@@ -39,7 +51,7 @@ Estos fundamentos no publican una preview descargable ni una Release, ni acredit
 Exige SHA iguales a HEAD y versión estable exacta de `package.json`; consulta una vez los checks de GitHub, sin redirects.
 La lectura tiene límite de 1 MiB y plazo de 10 segundos; falla cerrada ante respuestas incompletas o checks no válidos.
 Devuelve únicamente JSON con `sourceSha` y `version`, o error saneado con salida no cero; no escribe archivos.
-Las pruebas usan Git/API inyectados, sin red real: esta sesión no acredita una consulta GitHub real.
+Las pruebas usan Git/API inyectados, sin red real: no acreditan por sí mismas una consulta GitHub real.
 No habilita workflows ni entrega una preview operativa; no crea tokens, artifacts, manifiestos ni uploads.
 
 ## Staging y readback local: CLI preparatoria
@@ -63,10 +75,10 @@ Preflight antes de Rust/instalación/build exige los cuatro checks del SHA exact
 `npm run app:build:mac` usa Tauri; `beforeBuildCommand` ya ejecuta `npm run build` (TypeScript/Vite).
 Después: staging, upload inmutable de tres archivos, download por nombre en el mismo run y readback.
 Solo `contents: read`/`checks: read`; `GH_TOKEN` solo en preflight, checkout sin persistencia y retención de 14 días.
-No se ha ejecutado este workflow ni realizado uploads/descargas, instalación o prueba GUI en Mac real.
+La configuración y las pruebas de este mecanismo de preview no acreditan por sí solas su ejecución ni uploads/descargas reales. No confundirlo con la release firmada.
 La guía enlazada describe cómo obtener/verificar/informar sin quitar cuarentena; no acredita seguridad.
 
-## Release macOS reanudable: preparación local, runtime pendiente
+## Release macOS reanudable: operación y evidencia
 
 Los workflows [prepare/submit](../.github/workflows/macos-release.yml) y
 [resume](../.github/workflows/macos-release-resume.yml) tienen fuentes revisables
@@ -126,9 +138,9 @@ valores externos de run/preflight, no con sus propias declaraciones.
 - `Accepted` sin log disponible: **pending**, no release completada.
 - `Invalid`/`Rejected`: muestra issues JSON acotados/saneados y falla; no reenvía.
 - `Accepted`: el log debe contener `jobId` igual al UUID y `sha256` igual al DMG
-  **previo** al staple. Ausente o distinto falla cerrado. El fixture `log.sha256`
-  es **sintético**, no prueba que Apple real entregue ese campo; debe verificarse
-  en una ejecución autorizada, nunca omitir el gate para conseguir verde.
+  **previo** al staple. Ausente o distinto falla cerrado. Además del fixture
+  sintético, el diagnóstico real enlazado arriba confirmó ese campo y el resume
+  verificó el vínculo UUID/hash; nunca omitir el gate para conseguir verde.
 
 Después de Accepted grapa **solo el DMG retenido**; Apple procesa tickets de los
 contenedores anidados. No recompila, re-firma, pega tickets a la app ni reempaqueta.
@@ -167,12 +179,13 @@ sustituye bytes automáticamente. Acordar recuperación por separado. El intento
 del run `40949608906`, anterior a este protocolo, esperó en Tauri `Notarizing`
 hasta cancelación y no publicó DMG; no se presume que tenga checkpoint recuperable.
 
-Esta corrección solo tiene pruebas Linux con procesos/HTTP/filesystem simulados
-y ZIP/plist sintéticos. No se ha ejecutado firma, Apple, upload/download real ni
-Gatekeeper nativo. Certificado documentado: caduca **2027-11-28**, sin afirmar su
-validez actual. Siguen pendientes Mac real, primera apertura con cuarentena y GUI
-de [#118](https://github.com/egdev6/quorb/issues/118), sin retirar cuarentena.
-Preparar código no autoriza dispatch, publicación, cambios de Environment ni tags.
+Las pruebas Linux con procesos/HTTP/filesystem y ZIP/plist sintéticos se complementan
+con la ejecución nativa enlazada arriba: firma, Apple, artifacts y Gatekeeper en CI.
+Certificado documentado: caduca **2027-11-28**; el éxito de ese run no certifica su
+validez universal o futura. Siguen pendientes primera descarga por navegador,
+cuarentena, instalación y GUI en Mac real de [#118](https://github.com/egdev6/quorb/issues/118),
+sin retirar cuarentena. Esta evidencia no implica secretos nuevos ni cambios de
+Environment; futuras ejecuciones y publicaciones requieren autorización separada.
 
 ## Consultar una notarización sin reenviarla
 
@@ -197,9 +210,10 @@ temporal se crea con permisos `0600` y se elimina al salir y en un step de limpi
 resultados de Apple quedan en el log del job (visibilidad del repositorio): no
 pegar allí ni en los inputs claves o valores secretos. Un resultado `Accepted`
 solo describe ese envío: no publica el DMG ni reemplaza las verificaciones del
-workflow de release ni la prueba real de Gatekeeper. Este diagnóstico todavía
-no se ha ejecutado contra Apple. Sus tests locales requieren Python 3 además de
-Node y simulan `notarytool`, sin usar secretos reales ni acceder a la red.
+workflow de release ni Gatekeeper en un Mac real. El diagnóstico enlazado arriba
+sí consultó Apple y confirmó `Accepted` con UUID/hash; la publicación la completó
+el resume, no diagnostics. Los tests locales requieren Python 3 además de Node
+y simulan `notarytool`, sin usar secretos reales ni acceder a la red.
 
 ## Ejecución prevista de CI macOS (sin cambios)
 
@@ -219,5 +233,5 @@ Comprueba versión de `package.json`, identificador `es.egdev.quorb`, nombre seg
 Lee `Info.plist` con `plutil`; ejecuta `hdiutil verify` sin montar el DMG y registra su SHA-256 junto al SHA fuente de 40 hexadecimales (`GITHUB_SHA`).
 No abre ni ejecuta la aplicación. La integridad del DMG **no demuestra** que contenga esa `.app`, ni que funcione la GUI.
 Las pruebas locales usan fixtures en memoria y comandos inyectados: `node --test scripts/verify-macos-bundle.test.mjs scripts/macos-ci.test.mjs`.
-No se ha ejecutado macOS localmente; la compilación y las herramientas reales deben validarse en la ejecución nativa de la PR. Un workflow configurado no acredita por sí solo un resultado verde.
-Esto no acredita un rango de versiones de macOS soportadas ni constituye una preview o release.
+La release enlazada aporta compilación y herramientas nativas en CI, no ejecución local de la GUI. Un workflow configurado no acredita por sí solo un resultado verde.
+Este verificador aislado no acredita un rango de versiones de macOS soportadas ni constituye por sí mismo una preview o release.
