@@ -16,7 +16,7 @@ import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
-import { placementOutcome, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
+import { placementOutcome, readPlacementWithRetries, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
 import { openDelayForOs, osFromUA } from './lib/os-detect';
@@ -564,10 +564,19 @@ export function Widget() {
         shown.current = true;
       }
       // El backend no puede leer una ventana que todavía no es visible: se
-      // vuelve a pedir la colocación para confirmar la geometría (#179).
+      // vuelve a pedir la colocación para confirmar la geometría (#179). Si el
+      // compositor tarda en mapear la ventana recién mostrada, ese
+      // `not_viewable` no es un fallo real: se reintenta en silencio en vez
+      // de mostrarse como un fallo que no ha ocurrido.
       if (!same && reason === 'not_viewable' && !hiddenByUser.current) {
-        const report = await api.setWidgetBounds(physical);
-        if (disposed || !current()) return;
+        const report = await readPlacementWithRetries(
+          async () => {
+            if (disposed || !current() || hiddenByUser.current) return null;
+            return api.setWidgetBounds(physical);
+          },
+          { shouldAbort: () => disposed || !current() || hiddenByUser.current },
+        );
+        if (disposed || !current() || hiddenByUser.current || !report) return;
         apply(report);
       }
       if (phase === 'preparing' || phase === 'settling') await waitForViewport();

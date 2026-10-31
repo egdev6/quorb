@@ -159,3 +159,58 @@ export const placementOutcome = (
     readBack: report.read_back === true,
   };
 };
+
+/**
+ * Lecturas totales de la colocación tras `show()` (la primera incluida).
+ *
+ * El compositor puede tardar en mapear la ventana recién mostrada —GNOME/
+ * Mutter con animaciones es el caso conocido— y mientras no lo hace el
+ * backend informa `not_viewable`: eso es «todavía no», no un fallo. El
+ * presupuesto acota la espera para que una ventana que nunca se mapee no
+ * deje la tira colgada.
+ */
+export const PLACEMENT_READ_ATTEMPTS = 5;
+
+/** Espera entre lecturas de la colocación. */
+export const PLACEMENT_READ_DELAY_MS = 100;
+
+/**
+ * Lee la colocación reintentando **en silencio** mientras el backend diga que
+ * la ventana todavía no es visible.
+ *
+ * Un `not_viewable` tras `show()` no es un fallo real: es el compositor
+ * mapeando. Por eso aquí no se informa nada y se devuelve el último informe:
+ * el llamante decide si lo agotado es un fallo (y entonces lo muestra) o si
+ * la ventana ya se pudo leer. `read` devuelve `null` para abandonar la
+ * lectura (la ventana ya no está en pie), y una excepción se propaga.
+ */
+export const readPlacementWithRetries = async (
+  read: () => Promise<WidgetPlacementReport | null>,
+  opts: {
+    /** Lecturas totales, la primera incluida. */
+    attempts?: number;
+    /** Espera entre lecturas. */
+    delayMs?: number;
+    /** Espera inyectable (los tests no usan temporizadores reales). */
+    sleep?: (ms: number) => Promise<void>;
+    /** Aborta antes o después de la espera si la condición se cumple (p. ej. tira ocultada). */
+    shouldAbort?: () => boolean;
+  } = {},
+): Promise<WidgetPlacementReport | null> => {
+  const attempts = Math.max(1, opts.attempts ?? PLACEMENT_READ_ATTEMPTS);
+  const delayMs = opts.delayMs ?? PLACEMENT_READ_DELAY_MS;
+  const sleep =
+    opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms)));
+  const shouldAbort = opts.shouldAbort ?? (() => false);
+  if (shouldAbort()) return null;
+  let report = await read();
+  if (shouldAbort()) return null;
+  for (let attempt = 1; attempt < attempts; attempt++) {
+    if (!report || report.reason !== 'not_viewable') break;
+    await sleep(delayMs);
+    if (shouldAbort()) return null;
+    report = await read();
+    if (shouldAbort()) return null;
+  }
+  return report;
+};

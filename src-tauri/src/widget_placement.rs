@@ -21,7 +21,8 @@
 //! visibilidad es del frontend: el backend nunca muestra la ventana. Los
 //! read-backs salen de GDK: la señal de visibilidad es
 //! `gdk_window_is_viewable()` y el origen sale de `gdk_window_get_origin`
-//! (relativo a la raíz): si esa llamada falla, la lectura no es utilizable.
+//! (relativo a la raíz): si esa llamada no da origen, la lectura no es
+//! utilizable.
 
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -222,10 +223,14 @@ pub fn to_logical(physical: i32, scale: f64) -> i32 {
 
 /// El origen que se informa: el de la raíz (`gdk_window_get_origin`).
 ///
-/// `None` cuando la llamada no pudo responder: el único respaldo disponible
-/// (`gdk_window_get_geometry`) es **relativo al padre** —el marco de la
-/// decoración si el gestor reparenta la ventana— y devolverlo mezclaría dos
-/// espacios de coordenadas: la lectura no es utilizable.
+/// `None` cuando la llamada no dio origen (`gdk_window_get_origin` devolvió
+/// 0). Ese 0 **no** confirma que la traducción de coordenadas haya fallado:
+/// GDK3 documenta su valor de retorno como «not meaningful, ignore» y en la
+/// práctica vale 0 sólo con la ventana destruida. Es la única señal
+/// disponible de «no hay origen», y por eso no se usa el único respaldo
+/// (`gdk_window_get_geometry`), que es **relativo al padre** —el marco de la
+/// decoración si el gestor reparenta la ventana— y mezclaría dos espacios de
+/// coordenadas: la lectura no sería utilizable.
 pub fn rooted_origin(x: i32, y: i32, ok: bool) -> Option<(i32, i32)> {
     if ok {
         Some((x, y))
@@ -601,8 +606,11 @@ pub fn fix_size<W: gtk::prelude::GtkWindowExt + gtk::prelude::WidgetExt>(
 /// arrastre de borde. La petición de tamaño del widget conserva el tamaño
 /// concedido cuando GTK recalcula la configuración.
 ///
-/// Devuelve `true` si el permiso quedó cerrado: el ciclo no puede seguir como
-/// si el resize se hubiera hecho si no se puede confirmar.
+/// Devuelve el estado del permiso **después** de la llamada (`true` =
+/// cerrado). `set_resizable` no puede fallar, así que este valor no es un
+/// canal de error ni una confirmación del resize: es el estado con el que
+/// sigue el ciclo (cerrado ⇒ el gestor no ofrece cursor de redimensionado
+/// ni arranca un arrastre de borde).
 #[cfg(target_os = "linux")]
 pub fn apply_size<W: gtk::prelude::GtkWindowExt + gtk::prelude::WidgetExt>(
     window: &W,
@@ -682,9 +690,9 @@ impl Surface for UiSurface {
             }
             // La pista de tamaño, las pistas `min == max` y el resize, con el
             // permiso de resize abierto **sólo** para el resize: la misma
-            // llamada lo retira y lo confirma.
+            // llamada lo retira.
             let closed = apply_size(window, w, h);
-            // La confirmación: el permiso tiene que quedar cerrado.
+            // El estado del permiso al terminar: tiene que quedar cerrado.
             closed
         })
         .await
@@ -749,11 +757,14 @@ impl Surface for UiSurface {
             let (_, _, gw, gh) = gdk_window.geometry();
             let size = (to_physical(gw, scale), to_physical(gh, scale));
             // El origen: `gdk_window_get_origin` da las coordenadas relativas
-            // a la raíz (que es lo que se informa) y su valor de retorno dice
-            // si la llamada tuvo éxito. Si falla, **no** hay origen usable:
-            // el respaldo de `gdk_window_get_geometry` es relativo al padre
-            // (el marco de la decoración si el gestor reparenta la ventana) y
-            // mezclaría dos espacios de coordenadas.
+            // a la raíz (que es lo que se informa). Su valor de retorno **no**
+            // confirma que la lectura sea utilizable: GDK3 lo documenta como
+            // «not meaningful, ignore» y en la práctica vale 0 sólo con la
+            // ventana destruida. Por eso el 0 se lee como «no hay origen» y
+            // no como una prueba de éxito, y por eso no se usa el respaldo de
+            // `gdk_window_get_geometry`: es relativo al padre (el marco de la
+            // decoración si el gestor reparenta la ventana) y mezclaría dos
+            // espacios de coordenadas.
             let (ox, oy, rooted) = gdk_window.origin();
             let Some((ox, oy)) = rooted_origin(ox, oy, rooted != 0) else {
                 return Err("the native window origin could not be read".to_string());
