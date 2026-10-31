@@ -13,8 +13,10 @@ mod errors;
 mod mock;
 mod process;
 mod real;
+mod session;
 pub use mock::{MockWslAdapter, WslCall};
 pub use real::{build_wslenv_entry, RealWslAdapter, SESSION_ENV_ALLOWLIST};
+pub use session::{SessionEnv, SessionError, SessionResolver};
 
 /// Error tipado de una operación WSL. Se asigna desde el parseo de tokens
 /// del output (F2) o desde fallos del lanzador (F13/timeout).
