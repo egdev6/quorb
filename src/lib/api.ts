@@ -5,6 +5,7 @@ import type { CodexInstallResult, CodexSetupStatus } from './codex-install';
 import type { SurfaceClip } from './surface-clip';
 import type { PhysicalBounds } from './detail-panel';
 import type { WidgetPlacementReport, WidgetPlacementRequest } from './widget-placement';
+import type { DetailPlacementReport } from '../detail-placement';
 
 /** Campos que el widget puede cambiar sin arrastrar el resto de la config. */
 export interface WidgetPatch {
@@ -72,7 +73,13 @@ export const api = {
   checkProvider: (id: string) => invoke<UsageReport | null>('check_provider', { id }),
   openSettings: () => invoke<void>('open_settings'),
   showDetail: () => invoke<boolean>('show_detail'),
-  setDetailBounds: (bounds: PhysicalBounds) => invoke<void>('set_detail_bounds', { bounds }),
+  /**
+   * Coloca el detail y devuelve el informe de lo que quedó en pantalla (#215):
+   * el backend es la autoridad y responde con el read-back, no con la
+   * solicitud; la petición nunca se cachea como confirmada. Los tipos son el
+   * espejo del informe de la tira (`detail_placement.rs` re-exporta `Report`).
+   */
+  setDetailBounds: (bounds: PhysicalBounds) => invoke<DetailPlacementReport>('set_detail_bounds', { bounds }),
   /**
    * Coloca la tira y devuelve la geometría que quedó en pantalla (#179): el
    * backend es la autoridad y responde con el read-back, no con la solicitud.

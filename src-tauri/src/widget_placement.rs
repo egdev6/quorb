@@ -624,7 +624,7 @@ pub fn apply_size<W: gtk::prelude::GtkWindowExt + gtk::prelude::WidgetExt>(
 
 /// Corre una llamada nativa en el hilo de UI y espera su resultado.
 #[cfg(target_os = "linux")]
-async fn on_ui<T: Send + 'static>(
+pub(crate) async fn on_ui<T: Send + 'static>(
     window: &tauri::WebviewWindow,
     call: impl FnOnce(&gtk::ApplicationWindow) -> T + Send + 'static,
 ) -> Option<T> {
@@ -813,7 +813,7 @@ fn transport() -> Transport {
 
 /// Detecta el transporte en el hilo de UI (GDK no admite otro hilo).
 #[cfg(target_os = "linux")]
-async fn transport_on_ui(window: &tauri::WebviewWindow) -> Transport {
+pub(crate) async fn transport_on_ui(window: &tauri::WebviewWindow) -> Transport {
     on_ui(window, |_| transport())
         .await
         .unwrap_or(Transport::Other)

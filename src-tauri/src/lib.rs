@@ -14,6 +14,10 @@ mod uninstall;
 // El módulo se compila también en Windows/macOS (el comando se invoca siempre),
 // pero allí sus piezas de Linux no se usan: sin avisos de código muerto.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod detail_placement;
+#[cfg(test)]
+mod detail_placement_test;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod widget_placement;
 #[cfg(test)]
 mod widget_placement_test;
@@ -74,17 +78,11 @@ async fn set_surface_clip(
 async fn set_detail_bounds(
     window: WebviewWindow,
     bounds: detail_geometry::Bounds,
-) -> Result<(), String> {
-    let (tx, mut rx) = tauri::async_runtime::channel(1);
-    let ui_window = window.clone();
-    window
-        .run_on_main_thread(move || {
-            let _ = tx.try_send(detail_geometry::apply(&ui_window, bounds));
-        })
-        .map_err(|e| e.to_string())?;
-    rx.recv()
-        .await
-        .ok_or_else(|| "Detail bounds UI callback was dropped".to_string())?
+) -> Result<detail_placement::Report, String> {
+    // La generación se reserva al llegar la petición: otra posterior la
+    // cancela. Es la generación **propia** del detalle, nunca la del widget.
+    let generation = detail_placement::next_generation();
+    detail_placement::place(&window, bounds, generation).await
 }
 
 /// Coloca la tira en la superficie nativa y devuelve la geometría que quedó en
