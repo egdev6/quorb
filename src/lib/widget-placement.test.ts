@@ -7,8 +7,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../i18n';
 import {
+  NOT_VIEWABLE_RETRIES,
   placementOutcome,
   reasonKey,
+  retryNotViewable,
   samePhysicalWithin,
   samePlacement,
   type WidgetPlacementReason,
@@ -97,6 +99,54 @@ describe('placementOutcome', () => {
     expect(outcome.bounds).toEqual(requested);
     expect(outcome.failed).toBe(false);
     expect(outcome.reason).toBeNull();
+  });
+});
+
+describe('the not_viewable silent retry (#212)', () => {
+  const notViewable: WidgetPlacementReport = {
+    status: 'unverified',
+    bounds: null,
+    reason: 'not_viewable',
+    read_back: false,
+  };
+  const applied = report();
+
+  it('retries in silence and reports success when a later read succeeds', async () => {
+    // La ventana aún no se había mapeado (informe `not_viewable`), pero la
+    // lectura posterior sí ve la geometría. El resultado final no es un
+    // fallo: el reintento silencioso lo absorbe (#212).
+    const request = vi.fn(async () => applied);
+    const report = await retryNotViewable(notViewable, request, async () => {});
+    expect(report.status).toBe('applied');
+    expect(report.reason ?? null).toBeNull();
+    // Se terminó al ver la geometría: no se insistió.
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry when the window was visible (no not_viewable)', async () => {
+    const request = vi.fn<() => Promise<WidgetPlacementReport>>();
+    const report = await retryNotViewable(applied, request, async () => {});
+    expect(report.status).toBe('applied');
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('bails out and keeps the failure when the budget is exhausted', async () => {
+    // El gestor nunca llega a mapear la ventana dentro del presupuesto: el
+    // último informe sigue siendo `not_viewable` y el widget marca el fallo.
+    const request = vi.fn(async () => notViewable);
+    const report = await retryNotViewable(notViewable, request, async () => {});
+    expect(report.reason).toBe('not_viewable');
+    expect(request).toHaveBeenCalledTimes(NOT_VIEWABLE_RETRIES);
+  });
+
+  it('stops retrying as soon as a non-not_viewable report arrives', async () => {
+    const request = vi.fn(async () =>
+      report({ status: 'limited', bounds: { x: 0, y: 0, w: 320, h: 260 }, reason: 'size_refused' }),
+    );
+    const result = await retryNotViewable(notViewable, request, async () => {});
+    expect(result.reason).toBe('size_refused');
+    // Un `size_refused` no es "todavía no": no hay que volver a intentar.
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
 

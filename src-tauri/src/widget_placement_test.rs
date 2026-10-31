@@ -871,11 +871,9 @@ fn the_native_sequence_grants_the_size_and_leaves_no_resize_permission() {
 
     // La secuencia de producción: la pista fija el tamaño y el permiso de
     // resize se abre **sólo** alrededor del resize programático (la misma
-    // llamada lo retira).
-    assert!(
-        crate::widget_placement::apply_size(&window, 61, 181),
-        "el permiso de resize queda cerrado"
-    );
+    // llamada lo retira). `apply_size` no devuelve confirmación: lo que
+    // verifica el ciclo es el tamaño y el permiso observados después (#212).
+    crate::widget_placement::apply_size(&window, 61, 181);
     settle(600);
     assert_eq!(window.size(), (61, 181), "el tamaño se concede exacto");
     assert!(!window.is_resizable(), "el permiso está cerrado");

@@ -21,7 +21,10 @@
 //! visibilidad es del frontend: el backend nunca muestra la ventana. Los
 //! read-backs salen de GDK: la señal de visibilidad es
 //! `gdk_window_is_viewable()` y el origen sale de `gdk_window_get_origin`
-//! (relativo a la raíz): si esa llamada falla, la lectura no es utilizable.
+//! (relativo a la raíz). El valor de retorno de `get_origin` no confirma la
+//! llamada (GDK3: "Not meaningful, ignore"); la geometría que se informa se
+//! valida contra el read-back del compositor, que es la confirmación real
+//! (revisión #212).
 
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -226,6 +229,15 @@ pub fn to_logical(physical: i32, scale: f64) -> i32 {
 /// (`gdk_window_get_geometry`) es **relativo al padre** —el marco de la
 /// decoración si el gestor reparenta la ventana— y devolverlo mezclaría dos
 /// espacios de coordenadas: la lectura no es utilizable.
+///
+/// `ok` es el valor de retorno de `gdk_window_get_origin`, que GDK3
+/// documenta como *"Not meaningful, ignore"*: **no** confirma que la
+/// traducción de coordenadas haya funcionado. Sólo distingue la ventana
+/// destruida (0) de la ventana viva (≠ 0), y en ese caso el origen
+/// reportado es el que el servidor X tenía en el último
+/// `GdkEventConfigure` procesado —puede ir retrasado respecto al estado
+/// real del servidor. La geometría que se informa se valida después
+/// contra el read-back del compositor (revisión #212).
 pub fn rooted_origin(x: i32, y: i32, ok: bool) -> Option<(i32, i32)> {
     if ok {
         Some((x, y))
@@ -601,17 +613,20 @@ pub fn fix_size<W: gtk::prelude::GtkWindowExt + gtk::prelude::WidgetExt>(
 /// arrastre de borde. La petición de tamaño del widget conserva el tamaño
 /// concedido cuando GTK recalcula la configuración.
 ///
-/// Devuelve `true` si el permiso quedó cerrado: el ciclo no puede seguir como
-/// si el resize se hubiera hecho si no se puede confirmar.
+/// No hay confirmación posible aquí: `gtk_window_set_resizable` es `void`
+/// (no puede fallar) y `is_resizable()` relee la propiedad local que acaba
+/// de escribir — no es una confirmación del gestor (revisión #212). Lo que
+/// de verdad confirma la geometría es el **read-back posterior del
+/// compositor** (el tamaño y la posición que quedaron en pantalla), no esta
+/// llamada.
 #[cfg(target_os = "linux")]
 pub fn apply_size<W: gtk::prelude::GtkWindowExt + gtk::prelude::WidgetExt>(
     window: &W,
     width: i32,
     height: i32,
-) -> bool {
+) {
     fix_size(window, width, height);
     window.set_resizable(false);
-    !window.is_resizable()
 }
 
 /// Corre una llamada nativa en el hilo de UI y espera su resultado.
@@ -682,10 +697,15 @@ impl Surface for UiSurface {
             }
             // La pista de tamaño, las pistas `min == max` y el resize, con el
             // permiso de resize abierto **sólo** para el resize: la misma
-            // llamada lo retira y lo confirma.
-            let closed = apply_size(window, w, h);
-            // La confirmación: el permiso tiene que quedar cerrado.
-            closed
+            // llamada lo retira.
+            //
+            // Esto NO confirma la geometría: `set_resizable` no puede fallar
+            // y `is_resizable()` solo relee la propiedad local (revisión
+            // #212). La confirmación real es el read-back posterior del
+            // compositor, que informa del tamaño y la posición que quedaron
+            // en pantalla.
+            apply_size(window, w, h);
+            true
         })
         .await
         .unwrap_or(false)
@@ -749,8 +769,10 @@ impl Surface for UiSurface {
             let (_, _, gw, gh) = gdk_window.geometry();
             let size = (to_physical(gw, scale), to_physical(gh, scale));
             // El origen: `gdk_window_get_origin` da las coordenadas relativas
-            // a la raíz (que es lo que se informa) y su valor de retorno dice
-            // si la llamada tuvo éxito. Si falla, **no** hay origen usable:
+            // a la raíz (que es lo que se informa). Su valor de retorno NO
+            // confirma que la llamada funcionó (GDK3: "Not meaningful,
+            // ignore"): sólo distingue la ventana destruida de la ventana
+            // viva. Si la ventana está destruida, **no** hay origen usable:
             // el respaldo de `gdk_window_get_geometry` es relativo al padre
             // (el marco de la decoración si el gestor reparenta la ventana) y
             // mezclaría dos espacios de coordenadas.

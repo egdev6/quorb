@@ -16,7 +16,7 @@ import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { needsRefresh } from './lib/widget-refresh';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
-import { placementOutcome, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
+import { placementOutcome, reasonKey, retryNotViewable, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
 import { openDelayForOs, osFromUA } from './lib/os-detect';
@@ -526,6 +526,7 @@ export function Widget() {
       if (disposed || !current()) return;
       let limited = false;
       let reason: WidgetPlacementReason | null = null;
+      let lastReport: WidgetPlacementReport | null = null;
       // La comparación con la geometría cacheada usa la tolerancia del
       // backend **sólo** si esa geometría vino del read-back de X11: en el
       // resto de plataformas un cambio de 1 px sí es un cambio (#179).
@@ -533,6 +534,7 @@ export function Widget() {
       // El backend es la autoridad: responde con la geometría que quedó en
       // pantalla, no con la solicitud encolada (#179).
       const apply = (report: WidgetPlacementReport) => {
+        lastReport = report;
         const outcome = placementOutcome(report, physical);
         // Sólo se cachea geometría fiable: una colocación cancelada (quedó a
         // medias) o una lectura fallida dejan la caché vacía.
@@ -565,8 +567,15 @@ export function Widget() {
       }
       // El backend no puede leer una ventana que todavía no es visible: se
       // vuelve a pedir la colocación para confirmar la geometría (#179).
-      if (!same && reason === 'not_viewable' && !hiddenByUser.current) {
-        const report = await api.setWidgetBounds(physical);
+      // Un `not_viewable` no es un fallo del gestor sino "todavía no": se
+      // reintenta en silencio con un presupuesto acotado y sólo se marca el
+      // fallo si se agota (#212).
+      if (!same && reason === 'not_viewable' && lastReport && !hiddenByUser.current) {
+        const report = await retryNotViewable(
+          lastReport,
+          () => api.setWidgetBounds(physical),
+          (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+        );
         if (disposed || !current()) return;
         apply(report);
       }

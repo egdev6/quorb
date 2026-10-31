@@ -80,6 +80,21 @@ export const reasonKey = (reason?: WidgetPlacementReason | null): MessageKey | n
  */
 export const PLACEMENT_TOLERANCE = 1;
 
+/**
+ * Reintentos silenciosos cuando la ventana nativa todavía no es visible.
+ *
+ * `not_viewable` no es un fallo del gestor: es que la ventana aún no se ha
+ * mapeado. El `show()` es asíncrono y con animaciones (GNOME/Mutter) el
+ * gestor puede tardar más que el presupuesto de lectura del backend, así que
+ * un `not_viewable` seguido de una lectura correcta es normal, no un error.
+ * Se reintenta en silencio y sólo si el presupuesto se agota se informa del
+ * fallo (#212).
+ */
+export const NOT_VIEWABLE_RETRIES = 3;
+
+/** Espera entre reintentos: la misma que el backend usa entre lecturas. */
+export const NOT_VIEWABLE_RETRY_DELAY_MS = 60;
+
 /** True cuando dos geometrías son la misma dentro de la tolerancia. */
 export const samePhysicalWithin = (
   a: PhysicalBounds | null,
@@ -158,4 +173,33 @@ export const placementOutcome = (
     reason,
     readBack: report.read_back === true,
   };
+};
+
+/**
+ * Reintenta en silencio una colocación que el backend no pudo leer porque la
+ * ventana todavía no era visible, y devuelve el último informe.
+ *
+ * El primer `not_viewable` **no es un fallo**: el `show()` es asíncrono y el
+ * gestor puede tardar más que su presupuesto de lectura. Se vuelve a pedir la
+ * colocación con un límite acotado; si una lectura posterior tiene éxito, el
+ * informe final es el bueno y no se marca el fallo (#212). Sólo cuando se
+ * agota el presupuesto se devuelve el `not_viewable` de verdad, que el widget
+ * traduce como motivo de reintento manual.
+ *
+ * El reintento es acotado por diseño: un gestor que nunca mapea la ventana
+ * no puede dejar la tira reintentando sin fin.
+ */
+export const retryNotViewable = async (
+  report: WidgetPlacementReport,
+  request: () => Promise<WidgetPlacementReport>,
+  wait: (ms: number) => Promise<void>,
+  retries: number = NOT_VIEWABLE_RETRIES,
+): Promise<WidgetPlacementReport> => {
+  let current = report;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (current.reason !== 'not_viewable') return current;
+    await wait(NOT_VIEWABLE_RETRY_DELAY_MS);
+    current = await request();
+  }
+  return current;
 };
