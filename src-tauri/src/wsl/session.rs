@@ -19,6 +19,7 @@
 
 use super::{WslAdapter, WslError};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// El entorno en el que se resuelve la sesión de un proveedor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,23 +65,29 @@ impl std::fmt::Display for SessionError {
 /// `adapter` es el doble de `RealWslAdapter` en los tests (o el real en
 /// producción); `read_file` del trait es `wsl cat -- path` con cancelación
 /// acotada. Para `Host` no se usa WSL: la lectura es del disco local.
-pub struct SessionResolver<'a> {
+///
+/// El adaptador va en un `Arc` (y no prestado) para que la lectura pueda
+///derivarse a un hilo propio (`read_async`): en modo WSL cada lectura
+/// espera a `wsl.exe`, y bloquear el executor async congelaría el widget
+/// (revisión PR #220).
+#[derive(Clone)]
+pub struct SessionResolver {
     env: SessionEnv,
-    adapter: &'a dyn WslAdapter,
+    adapter: Arc<dyn WslAdapter>,
     /// Home del entorno elegido: el del host, o el del usuario de la distro.
     home: PathBuf,
 }
 
-impl<'a> SessionResolver<'a> {
+impl SessionResolver {
     /// `home` es el home del entorno: el del host en modo host, o el del
     /// usuario por defecto de la distro (lo resuelve `resolve_home`).
-    pub fn new(env: SessionEnv, adapter: &'a dyn WslAdapter, home: PathBuf) -> Self {
+    pub fn new(env: SessionEnv, adapter: Arc<dyn WslAdapter>, home: PathBuf) -> Self {
         SessionResolver { env, adapter, home }
     }
 
     /// Resolvedor del entorno host: lee del disco local con el home del host.
     /// El `adapter` no se usa en este modo (queda por si el entorno cambia).
-    pub fn for_host(adapter: &'a dyn WslAdapter, home: PathBuf) -> Self {
+    pub fn for_host(adapter: Arc<dyn WslAdapter>, home: PathBuf) -> Self {
         SessionResolver::new(SessionEnv::Host, adapter, home)
     }
 
@@ -91,7 +98,7 @@ impl<'a> SessionResolver<'a> {
     /// `resolve_home` (F7): este constructor no hace I/O, así que puede
     /// fallar quien lo llama con un mensaje acorde al contexto (la UI, la
     /// línea de comandos) en vez de un error genérico de WSL.
-    pub fn for_wsl(adapter: &'a dyn WslAdapter, distro: String, home: PathBuf) -> Self {
+    pub fn for_wsl(adapter: Arc<dyn WslAdapter>, distro: String, home: PathBuf) -> Self {
         SessionResolver::new(SessionEnv::Wsl { distro }, adapter, home)
     }
 
@@ -159,6 +166,26 @@ impl<'a> SessionResolver<'a> {
             },
         }
     }
+
+    /// Lectura sin bloquear el executor async.
+    ///
+    /// En modo WSL la lectura espera a `wsl.exe` (hasta 20 s de presupuesto);
+    /// hacerla en el hilo del executor congelaría el widget y las demás
+    /// tareas async (revisión PR #220). Aquí la operación corre en un hilo
+    /// propio y el error del hilo se distingue del de la sesión.
+    pub async fn read_async(&self, path: &Path) -> Result<String, SessionError> {
+        let me = self.clone();
+        let path = path.to_path_buf();
+        // El path entra (por `move`) en el hilo propio; el mensaje de error se
+        // formatea antes para no usarlo después del move.
+        let display = path.display().to_string();
+        match tokio::task::spawn_blocking(move || me.read(&path)).await {
+            Ok(result) => result,
+            Err(e) => Err(SessionError::Unreadable(format!(
+                "No puedo leer {display}: {e}"
+            ))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -168,8 +195,12 @@ mod tests {
 
     #[test]
     fn host_resolver_reads_from_the_local_disk() {
-        let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
+        let mock = Arc::new(MockWslAdapter::new());
+        let r = SessionResolver::new(
+            SessionEnv::Host,
+            mock.clone(),
+            PathBuf::from("/home/hostuser"),
+        );
         let f = std::env::temp_dir().join("quorb-session-host-test.json");
         std::fs::write(&f, b"{}").expect("escribe fixture");
         assert_eq!(r.read(&f).expect("lee"), "{}");
@@ -178,8 +209,12 @@ mod tests {
 
     #[test]
     fn host_resolver_reports_absent_when_there_is_no_file() {
-        let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
+        let mock = Arc::new(MockWslAdapter::new());
+        let r = SessionResolver::new(
+            SessionEnv::Host,
+            mock.clone(),
+            PathBuf::from("/home/hostuser"),
+        );
         let missing = PathBuf::from("/no/existe/quorb-creds.json");
         assert!(matches!(r.read(&missing), Err(SessionError::Absent(_))));
     }
@@ -189,7 +224,7 @@ mod tests {
     /// cuentas de un entorno nunca se mezclan con las del otro.
     #[test]
     fn the_same_path_resolves_to_the_environment_it_belongs_to() {
-        let mock = MockWslAdapter::new();
+        let mock = Arc::new(MockWslAdapter::new());
         let path = std::env::temp_dir().join("quorb-session-env-path.json");
         std::fs::write(&path, b"{\"origen\":\"host\"}").expect("escribe fixture");
         mock.set_file(
@@ -198,11 +233,14 @@ mod tests {
             "{\"origen\":\"distro\"}".to_string(),
         );
 
-        let host = SessionResolver::for_host(&mock, PathBuf::from("/home/hostuser"));
+        let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
         assert_eq!(host.read(&path).expect("lee host"), "{\"origen\":\"host\"}");
 
-        let wsl =
-            SessionResolver::for_wsl(&mock, "Ubuntu-22.04".into(), PathBuf::from("/home/user"));
+        let wsl = SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
         assert_eq!(
             wsl.read(&path).expect("lee distro"),
             "{\"origen\":\"distro\"}"
@@ -215,14 +253,17 @@ mod tests {
     /// usuario de la distro en WSL, el del host en host.
     #[test]
     fn default_path_is_composed_over_the_environment_home() {
-        let mock = MockWslAdapter::new();
-        let wsl =
-            SessionResolver::for_wsl(&mock, "Ubuntu-22.04".into(), PathBuf::from("/home/user"));
+        let mock = Arc::new(MockWslAdapter::new());
+        let wsl = SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
         assert_eq!(
             wsl.default_path(Path::new(".claude").join(".credentials.json").as_path()),
             PathBuf::from("/home/user/.claude/.credentials.json")
         );
-        let host = SessionResolver::for_host(&mock, PathBuf::from("/home/hostuser"));
+        let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
         assert_eq!(
             host.default_path(Path::new(".codex").join("auth.json").as_path()),
             PathBuf::from("/home/hostuser/.codex/auth.json")
@@ -231,7 +272,7 @@ mod tests {
 
     #[test]
     fn wsl_resolver_reads_through_the_adapter() {
-        let mock = MockWslAdapter::new();
+        let mock = Arc::new(MockWslAdapter::new());
         mock.set_file(
             "Ubuntu-22.04",
             PathBuf::from("/home/user/.claude/.credentials.json"),
@@ -241,7 +282,7 @@ mod tests {
             SessionEnv::Wsl {
                 distro: "Ubuntu-22.04".into(),
             },
-            &mock,
+            mock.clone(),
             PathBuf::from("/home/user"),
         );
         let contents = r
@@ -252,7 +293,7 @@ mod tests {
 
     #[test]
     fn wsl_resolver_reports_absent_when_file_is_missing_in_the_distro() {
-        let mock = MockWslAdapter::new();
+        let mock = Arc::new(MockWslAdapter::new());
         mock.set_file(
             "Ubuntu-22.04",
             PathBuf::from("/home/user/.codex/auth.json"),
@@ -262,7 +303,7 @@ mod tests {
             SessionEnv::Wsl {
                 distro: "Ubuntu-22.04".into(),
             },
-            &mock,
+            mock.clone(),
             PathBuf::from("/home/user"),
         );
         // El fichero de Claude no está en la distro: "necesita login", no
@@ -275,14 +316,14 @@ mod tests {
 
     #[test]
     fn wsl_resolver_propagates_subsystem_failure_as_wsl_error() {
-        let mock = MockWslAdapter::new();
+        let mock = Arc::new(MockWslAdapter::new());
         // WSL no está instalado: el fallo es del subsistema, no de la sesión.
         mock.set_installed(false);
         let r = SessionResolver::new(
             SessionEnv::Wsl {
                 distro: "Ubuntu-22.04".into(),
             },
-            &mock,
+            mock.clone(),
             PathBuf::from("/home/user"),
         );
         let err = r
@@ -293,8 +334,12 @@ mod tests {
 
     #[test]
     fn explicit_path_wins_over_the_default() {
-        let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
+        let mock = Arc::new(MockWslAdapter::new());
+        let r = SessionResolver::new(
+            SessionEnv::Host,
+            mock.clone(),
+            PathBuf::from("/home/hostuser"),
+        );
         let p = r.resolve(
             Some("C:\\Users\\u\\custom.json"),
             Path::new("/home/u/default.json"),
@@ -304,9 +349,38 @@ mod tests {
 
     #[test]
     fn blank_explicit_path_falls_back_to_the_default() {
-        let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
+        let mock = Arc::new(MockWslAdapter::new());
+        let r = SessionResolver::new(
+            SessionEnv::Host,
+            mock.clone(),
+            PathBuf::from("/home/hostuser"),
+        );
         let p = r.resolve(Some("   "), Path::new("/home/u/default.json"));
         assert_eq!(p, PathBuf::from("/home/u/default.json"));
+    }
+
+    /// La lectura asíncrona devuelve lo mismo que la síncrona: en WSL espera
+    /// a `wsl.exe`, y lo hace en un hilo propio para no congelar el
+    /// executor (revisión PR #220).
+    #[test]
+    fn read_async_returns_the_same_content_as_read() {
+        let mock = Arc::new(MockWslAdapter::new());
+        mock.set_file(
+            "Ubuntu-22.04",
+            PathBuf::from("/home/user/.claude/.credentials.json"),
+            "{\"creds\":true}".to_string(),
+        );
+        let r = SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let path = PathBuf::from("/home/user/.claude/.credentials.json");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        let contents = rt.block_on(r.read_async(&path)).expect("lee en la distro");
+        assert_eq!(contents, "{\"creds\":true}");
     }
 }
