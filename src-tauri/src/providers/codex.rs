@@ -8,6 +8,7 @@
 use super::{home, net_error, read_json, resolve_path, unix_to_rfc3339, Who};
 use crate::config::SubscriptionConfig;
 use crate::model::{Kind, Meter, Status, UsageReport, Validity, ValidityKind};
+use crate::wsl::{SessionError, SessionResolver};
 use base64::Engine;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -47,16 +48,55 @@ pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathB
     )
 }
 
-pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+pub async fn fetch(
+    cfg: &SubscriptionConfig,
+    who: Who<'_>,
+    http: &reqwest::Client,
+    resolver: Option<&SessionResolver<'_>>,
+) -> UsageReport {
     let report = who.report("ChatGPT · Codex", Kind::Subscription);
 
-    let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
-        Ok(p) => p,
-        Err(e) => return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «codex login».")),
-    };
-    let auth_json = match read_json(&path) {
-        Ok(v) => v,
-        Err(e) => return report.fail(Status::NeedsLogin, e),
+    // La sesión se resuelve en el ENTORNO elegido (#91): con resolvedor, la
+    // ruta por defecto se compone bajo su home (el del usuario Linux si el
+    // entorno es WSL) y la lectura va por `read_file` del adaptador
+    // (`wsl cat`) en vez del disco del host. Sin resolvedor, el
+    // comportamiento de siempre (disco local).
+    let auth_json: Value = match resolver {
+        Some(r) => {
+            let default = r.default_path(Path::new(".codex").join("auth.json").as_path());
+            let path = r.resolve(cfg.credentials_path.as_deref(), &default);
+            match r.read(&path) {
+                Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return report.fail(Status::Error, format!("{e}. Ejecuta «codex login»."))
+                    }
+                },
+                // Sin credenciales en el entorno elegido: hace falta login
+                // AQUÍ (no en otro entorno).
+                Err(SessionError::Absent(m)) => {
+                    return report.fail(Status::NeedsLogin, format!("{m}. Ejecuta «codex login»."))
+                }
+                // El fallo es del subsistema o de la distro: la acción
+                // correcta no es "inicia sesión".
+                Err(SessionError::Wsl(e)) => {
+                    return report.fail(Status::Error, format!("WSL: {e:?}"))
+                }
+                Err(e) => return report.fail(Status::Error, e.to_string()),
+            }
+        }
+        None => {
+            let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
+                Ok(p) => p,
+                Err(e) => {
+                    return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «codex login»."))
+                }
+            };
+            match read_json(&path) {
+                Ok(v) => v,
+                Err(e) => return report.fail(Status::NeedsLogin, e),
+            }
+        }
     };
     let auth = match Auth::parse(&auth_json) {
         Ok(a) => a,
