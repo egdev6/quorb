@@ -1057,6 +1057,39 @@ pub fn run() {
                     .visible(false);
             #[cfg(target_os = "windows")]
             let detail_builder = detail_builder.no_redirection_bitmap(true);
+            // Issue #214: bajo Wayland nativo el compositor ignora la posición
+            // pedida (`gtk_window_move` no tiene efecto bajo xdg-shell) y el
+            // panel se mapera en el centro de la pantalla, lejos de la tira.
+            // Con backend GDK efectivo Wayland (sonda cacheada del display
+            // real, #180) lo construimos transitorio respecto de la tira para
+            // que el compositor lo coloque junto a ella; el anclaje exacto,
+            // el centrado y el orden respecto de apps ajenas los decide el
+            // compositor: es relación de ventana padre, no posicionamiento.
+            // En X11/XWayland el posicionamiento de cliente funciona y no
+            // cambia nada; sin display legible, tampoco se ancla. Los efectos
+            // secundarios que observa Mutter (centrado sobre la tira) son
+            // evidencia de una sesión, no una garantía de todos los
+            // compositores.
+            #[cfg(target_os = "linux")]
+            let detail_builder = {
+                let anchored = widget_placement::should_anchor_detail_to_widget(
+                    widget_placement::display_kind(),
+                );
+                if anchored {
+                    match app
+                        .get_webview_window(WIDGET)
+                        .as_ref()
+                        .and_then(|widget| widget.gtk_window().ok())
+                    {
+                        // gtk_window() infallible fall-back: sin GtkWindow de la tira
+                        // no hay anclaje y el panel quedó como siempre (best-effort).
+                        Some(parent) => detail_builder.transient_for_raw(&parent),
+                        None => detail_builder,
+                    }
+                } else {
+                    detail_builder
+                }
+            };
             detail_builder.build()?;
 
             // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.

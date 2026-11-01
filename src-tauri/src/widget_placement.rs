@@ -216,6 +216,23 @@ pub fn kind_from_type_name(name: &str) -> DisplayKind {
     }
 }
 
+/// Decisión pura de anclaje del panel de detalle a la tira (issue #214):
+/// bajo Wayland nativo el compositor ignora la posición pedida
+/// (`gtk_window_move` no tiene efecto bajo xdg-shell), así que el panel se
+/// construye transitorio respecto de la tira para que el compositor lo
+/// coloque junto a ella. En X11/XWayland el posicionamiento de cliente
+/// funciona y el panel queda como está; sin display legible o con otro
+/// backend desconocido, tampoco se ancla.
+///
+/// Es **relación con la ventana padre** (`gtk_window_set_transient_for`),
+/// no una promesa de anclaje preciso ni de centrado determinista ni de
+/// visibilidad sobre aplicaciones ajenas: lo que concede y dónde coloca el
+/// diálogo lo decide el compositor.
+#[cfg(any(target_os = "linux", test))]
+pub fn should_anchor_detail_to_widget(kind: DisplayKind) -> bool {
+    matches!(kind, DisplayKind::Wayland)
+}
+
 /// Píxeles lógicos que pide GTK para un tamaño físico (GTK mide en lógicos).
 pub fn to_logical(physical: i32, scale: f64) -> i32 {
     (physical as f64 / scale).round() as i32
@@ -787,10 +804,11 @@ impl Surface for UiSurface {
 /// La única lectura del display GDK del binario (issue #180, revisión del
 /// mantenedor: una sola detección del backend): cacheada en `OnceLock` y
 /// **sólo en el hilo de UI** — GDK no se puede tocar desde otro hilo.
-/// `transport()` (colocación) y `wm_compat::get_wm_info` (Ajustes/arrastre)
-/// derivan de esta misma caché para no poder discrepar.
+/// `transport()` (colocación), `wm_compat::get_wm_info` (Ajustes/arrastre) y
+/// el anclaje del detalle (issue #214) derivan de esta misma caché para no
+/// poder discrepar.
 #[cfg(target_os = "linux")]
-fn display_kind() -> DisplayKind {
+pub(crate) fn display_kind() -> DisplayKind {
     static DISPLAY_KIND: std::sync::OnceLock<DisplayKind> = std::sync::OnceLock::new();
     *DISPLAY_KIND.get_or_init(|| {
         use gtk::prelude::*;

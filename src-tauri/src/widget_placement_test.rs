@@ -677,6 +677,19 @@ fn the_transport_comes_from_the_real_gdk_display_type() {
 }
 
 #[test]
+#[test]
+fn the_detail_anchors_to_the_widget_only_under_native_wayland() {
+    // Issue #214: el panel de detalle se construye transitorio respecto de
+    // la tira **sólo** con backend GDK efectivo Wayland: es el único backend
+    // donde el compositor ignora la posición pedida (el popup iría al centro
+    // de la pantalla). X11/XWayland posiciona de cliente y se queda como
+    // está; sin display legible o con un backend desconocido, sin anclaje.
+    assert!(should_anchor_detail_to_widget(DisplayKind::Wayland));
+    assert!(!should_anchor_detail_to_widget(DisplayKind::X11));
+    assert!(!should_anchor_detail_to_widget(DisplayKind::Unknown));
+}
+
+#[test]
 fn the_size_tolerance_absorbs_the_window_manager_rounding() {
     assert!(size_matches((61, 181), (61, 181)));
     assert!(size_matches((61, 181), (62, 181)));
