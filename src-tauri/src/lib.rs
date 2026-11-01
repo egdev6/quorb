@@ -1059,7 +1059,7 @@ pub fn run() {
             let detail_builder = detail_builder.no_redirection_bitmap(true);
             // Issue #214: bajo Wayland nativo el compositor ignora la posición
             // pedida (`gtk_window_move` no tiene efecto bajo xdg-shell) y el
-            // panel se mapera en el centro de la pantalla, lejos de la tira.
+            // panel se mapea en el centro de la pantalla, lejos de la tira.
             // Con backend GDK efectivo Wayland (sonda cacheada del display
             // real, #180) lo construimos transitorio respecto de la tira para
             // que el compositor lo coloque junto a ella; el anclaje exacto,
@@ -1081,8 +1081,8 @@ pub fn run() {
                         .as_ref()
                         .and_then(|widget| widget.gtk_window().ok())
                     {
-                        // gtk_window() infallible fall-back: sin GtkWindow de la tira
-                        // no hay anclaje y el panel quedó como siempre (best-effort).
+                        // Si no hay GtkWindow de la tira, o `gtk_window()` falla,
+                        // no se ancla y el panel queda como siempre (best-effort).
                         Some(parent) => detail_builder.transient_for_raw(&parent),
                         None => detail_builder,
                     }

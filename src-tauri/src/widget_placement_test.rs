@@ -677,7 +677,6 @@ fn the_transport_comes_from_the_real_gdk_display_type() {
 }
 
 #[test]
-#[test]
 fn the_detail_anchors_to_the_widget_only_under_native_wayland() {
     // Issue #214: el panel de detalle se construye transitorio respecto de
     // la tira **sólo** con backend GDK efectivo Wayland: es el único backend
