@@ -57,8 +57,25 @@ cambio de producto sigue siendo decisión del mantenedor sobre el resultado real
   review `on` (global); START para la unidad devolvió el consentimiento **declinado
   para este candidato** (`consent-declined-this-candidate`, riesgo medio; sin lineage
   creado, nada quemado).
-- **Pendiente**: PR con autorización explícita (paso 8); la validación manual de los
-  pasos 5–6 quedó como hecha y documentada arriba.
+- **Feedback del mantenedor en la PR #230** (2026-11-01, gh#6560260168, sobre
+  `e6fb2d5`): código correcto y checks verdes. Pide: (1) `#[test]` duplicado en
+  `widget_placement_test.rs:679` (warning en CI de Linux, test ejecutado dos veces);
+  (2) «mapera» → «mapea» y reformular «gtk_window() infallible fall-back» en
+  `lib.rs` (la llamada puede fallar y entonces no se ancla); (3) evidencia del
+  cierre al salir (mover el puntero fuera del panel y de la tira, sin ciclo de
+  reapertura por hover; cambio de proveedor por hover con la tira parcialmente
+  tapada; anclaje por clic de #170); (4) actualizar la descripción de la PR: el
+  trade-off ya está aceptado como degradación limitada a Wayland nativo.
+- **Folow-up aplicado (rama, 2026-11-01)**: `#[test]` duplicado eliminado (403
+  passed / 0 failed / 4 ignored, `cargo test --locked`; era 404 con el test
+  registrado dos veces), warning `duplicated attribute` ausente tras
+  recompilación, `cargo fmt --all` sin diffs e `node scripts/i18n-inventory.mjs
+  --check` verde (los comentarios no alteran textos inventariados). Comentarios de
+  `lib.rs` corregidos (ortografía y honestidad sobre la falla de `gtk_window()`).
+- **Pendiente**: (a) evidencia manual del cierre al salir en la máquina del
+  reporte (punto 3 del feedback, requiere sesión Wayland interactiva del
+  contribuidor y no es verificable desde CLI); (b) actualizar el cuerpo de la PR;
+  los demás ajustes pedidos quedan aplicados.
 
 ## Problema
 
