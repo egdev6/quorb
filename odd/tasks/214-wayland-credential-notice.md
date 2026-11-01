@@ -30,13 +30,31 @@ cambio de producto sigue siendo decisión del mantenedor sobre el resultado real
   textos de cara al usuario (los comentarios no cuentan) y `node
   scripts/i18n-inventory.mjs --check` (el mismo gate del CI) pasa.
 - **Commits**: unidad `6cba469` (fix + test), doc ODD `dec1c25`
-  (`fix/214-wayland-detail-transient` sobre `4d21f66`).
-- **Review nativo**: switch de review `on` (global); START para la unidad devolvió el
-  consentimiento **declinado para este candidato** (`consent-declined-this-candidate`,
-  riesgo medio; sin lineage creado, nada quemado). Queda como decisión humana: relanzar
-  el review o aterrizar por política ordinaria de repositorio.
-- **Pendiente**: validación manual del recorrido UX completo bajo Wayland nativo y con
-  `GDK_BACKEND=x11` (paso 6 del plan) y PR con autorización explícita (paso 8).
+  (`fix/214-wayland-detail-transient` sobre `4d21f66`); el amend del doc creó un
+  snapshot de candidato nuevo (`fdbc7e48…`), cuyo START también devolvió
+  consentimiento declinado (sin lineage).
+- **Validación manual (reporter, 2026-11-01, Wayland nativo, `npm run app:dev`)**:
+  (1) el aviso aparece **junto/sobre la tira**, no en el centro de pantalla (el fix
+  funciona); el dialog translúcido centrado por Mutter **tapa la tira** mientras está
+  abierto — trade-off declarado de C. (2) El popup **no** queda sobre otras apps
+  (una terminal lo tapa): esperado por la semántica de `transient_for` (relación con el
+  padre, sin promesa de visibilidad sobre apps ajenas — ajuste 2 del mantenedor) y por
+  `always_on_top` no-op en Wayland (tao, #180); una observación similar del parche
+  temporal («firme sobre la pila») fue evidencia de esa sesión, no criterio válido.
+  (3) Recorrido UX en Wayland: hover → popup → **ESC cierra** sin problemas, cierre y
+  reapertura correctos. (4) `GDK_BACKEND=x11`: comportamiento intacto.
+- **Review**: switch de review desactivado por decisión del usuario
+  (`gentle-ai review mode disable --scope clone`, 2026-11-01); los START previos de
+  esta unidad ya habían vuelto consentimiento declinado (ámbito-de-candidato, sin
+  lineage). Un acuse de candidato doc-only (`review-8adb864bb59b1bc0`) ardió con
+  aprobación; la entrega sigue por política ordinaria. El fix queda **sin review
+  nativo**: la revisión es el trabajo manual documentado aquí y los checks del repo.
+- **Review nativo (historial previo a la decisión de apagar el switch)**: switch de
+  review `on` (global); START para la unidad devolvió el consentimiento **declinado
+  para este candidato** (`consent-declined-this-candidate`, riesgo medio; sin lineage
+  creado, nada quemado).
+- **Pendiente**: PR con autorización explícita (paso 8); la validación manual de los
+  pasos 5–6 quedó como hecha y documentada arriba.
 
 ## Problema
 
