@@ -6,7 +6,9 @@ import hook from './useDockReveal.ts?raw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
 import { resetDragMode, setDragMode } from './drag-session';
-import { contains, stripRect, type Edge } from './dock';
+import { contains, panelHeightLimit, stripRect, type Edge } from './dock';
+import { physicalPanelBounds } from './detail-panel';
+import type { UsageReport } from './types';
 
 type GripHandlers = {
   onPointerDown(event: ReactPointerEvent<HTMLSpanElement>): void;
@@ -38,6 +40,9 @@ const widgetEffects = vi.hoisted(() => ({
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
   cancel: vi.fn(async () => {}),
   listeners: new Map<string, (() => void)[]>(),
+  // Hook results isolated from the useState slots: text scale (#228) and reveal phase.
+  textScale: undefined as number | undefined,
+  phase: undefined as RevealPhase | undefined,
 }));
 vi.mock('react', async (importOriginal) => {
   const react = await importOriginal() as typeof import('react');
@@ -63,8 +68,9 @@ vi.mock('react', async (importOriginal) => {
   };
 });
 vi.mock('./useDockReveal', () => ({
-  useDockReveal: () => ({ phase: 'open', markPrepared: vi.fn(), finishTransition: vi.fn() }),
+  useDockReveal: () => ({ phase: widgetEffects.phase ?? 'open', markPrepared: vi.fn(), finishTransition: vi.fn() }),
 }));
+vi.mock('./useTextScale', () => ({ useTextScale: () => widgetEffects.textScale ?? 1 }));
 vi.mock('./useUpdater', () => ({ useUpdaterMode: () => 'unknown' }));
 // #180 (WU2): the widget gates drag gestures behind the startup display
 // decision; these tests exercise the native (X11) pipeline, so resolve the
@@ -113,6 +119,34 @@ describe('auto-hide geometry and phases', () => {
       if (edge === 'left') expect(peek.x).toBe(strip.x);
       if (edge === 'right') expect(peek.x + peek.w).toBe(strip.x + strip.w);
     }
+  });
+
+  // The `.peek` handle is 48×24 CSS px: in monitor units it grows with the text scale (#228).
+  it.each([1.06, 1.25, 2.25])('scales the handle with text scale %s, centred and inside the area', (scale) => {
+    const area = { x: -1920, y: -100, w: 1920, h: 1080 };
+    for (const edge of ['top', 'bottom', 'left', 'right'] as Edge[]) {
+      const vertical = edge === 'left' || edge === 'right';
+      for (const offset of [0, 0.5, 1]) {
+        const strip = stripRect(area, edge, offset, (vertical ? 64 : 320) * scale, (vertical ? 320 : 64) * scale);
+        const peek = peekRect(strip, edge, scale);
+        expect([peek.w, peek.h]).toEqual(vertical ? [24 * scale, 48 * scale] : [48 * scale, 24 * scale]);
+        expect(contains(area, peek.x, peek.y)).toBe(true);
+        expect(peek.x + peek.w).toBeLessThanOrEqual(area.x + area.w);
+        expect(peek.y + peek.h).toBeLessThanOrEqual(area.y + area.h);
+        if (vertical) expect(peek.y + peek.h / 2).toBeCloseTo(strip.y + strip.h / 2, 9);
+        else expect(peek.x + peek.w / 2).toBeCloseTo(strip.x + strip.w / 2, 9);
+        if (edge === 'top') expect(peek.y).toBe(strip.y);
+        if (edge === 'bottom') expect(peek.y + peek.h).toBe(strip.y + strip.h);
+        if (edge === 'left') expect(peek.x).toBe(strip.x);
+        if (edge === 'right') expect(peek.x + peek.w).toBe(strip.x + strip.w);
+      }
+    }
+  });
+
+  it('keeps the CSS handle size without a text scale', () => {
+    const strip = stripRect({ x: 0, y: 0, w: 1920, h: 1080 }, 'top', 0.5, 320, 64);
+    expect(peekRect(strip, 'top')).toEqual(peekRect(strip, 'top', 1));
+    expect(peekRect(strip, 'top')).toEqual({ x: 936, y: 0, w: 48, h: 24 });
   });
 
   it('keeps the full window until exit finishes and waits for native expansion before entry', () => {
@@ -253,7 +287,7 @@ describe('auto-hide reveal integration', () => {
     expect(widget).toContain('await api.setWidgetBounds(physical)');
     expect(widget).toContain('markPrepared(phase)');
     expect(widget).toContain("phase === 'open'");
-    expect(widget).toContain('usesPeekWindow(phase) ? peekRect(s, edge) : s');
+    expect(widget).toContain('usesPeekWindow(phase) ? peekRect(s, edge, textScale) : s');
     expect(widget).toContain('await waitForViewport()');
     expect(widget).toContain('data-placement-failed={placementFailed');
     expect(widget).toContain("api.setSurfaceClip(c, !autoHide && phase === 'open')");
@@ -296,6 +330,30 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[9] = dragging;
     return commitWidget();
   };
+  // Text scale (#228): the strip is measured in CSS px and placed in monitor units.
+  const renderScaled = (scale: number, sf: number, phase: RevealPhase = 'open') => {
+    widgetEffects.textScale = scale;
+    widgetEffects.phase = phase;
+    widgetEffects.states[0] = null;
+    widgetEffects.states[5] = { ...geo, sf };
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[9] = false;
+    return commitWidget();
+  };
+  const placeScaled = async (scale: number, sf: number, phase: RevealPhase = 'open') => {
+    configureNative();
+    const cleanup = renderScaled(scale, sf, phase).placement.run();
+    await flush();
+    if (typeof cleanup === 'function') cleanup();
+    const strip = stripRect(geo.area, 'top', 0.5, 400 * scale, 80 * scale);
+    const win = usesPeekWindow(phase) ? peekRect(strip, 'top', scale) : strip;
+    return {
+      strip, win,
+      bounds: widgetEffects.bounds.mock.calls[0]?.[0],
+      clip: widgetEffects.clip.mock.calls[0]?.[0],
+      pos: widgetEffects.states[10],
+    };
+  };
   const configureNative = () => {
     widgetEffects.bounds.mockResolvedValue(undefined);
     widgetEffects.clip.mockResolvedValue(undefined);
@@ -314,10 +372,60 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states = [];
     widgetEffects.refs = [];
     widgetEffects.effects = [];
+    widgetEffects.textScale = undefined;
+    widgetEffects.phase = undefined;
     resetDragMode();
     vi.resetAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it('places the text-scaled strip in monitor units and converts to physical once with the monitor scale', async () => {
+    const { strip, bounds, clip, pos } = await placeScaled(1.06, 1.02);
+    expect([strip.w, strip.h]).toEqual([400 * 1.06, 80 * 1.06]);
+    expect(bounds).toEqual({ ...physicalPanelBounds(strip, 1.02), anchor: 'top', scale: 1.02 });
+    expect(pos).toEqual({ strip: { x: 0, y: 0 } });
+    // Radii are CSS px: the clip scale is the text scale times the monitor scale, never the live ratio.
+    expect(clip).toEqual({ width: bounds.w, height: bounds.h, radii: [14 * (1.06 * 1.02), 14 * (1.06 * 1.02), 0, 0] });
+  });
+
+  it('offsets the text-scaled strip inside the peek window in CSS px', async () => {
+    const { strip, win, bounds, pos } = await placeScaled(1.06, 1.02, 'hidden');
+    expect([win.y, win.w, win.h]).toEqual([0, 48 * 1.06, 24 * 1.06]);
+    expect(win.x + win.w / 2).toBeCloseTo(960, 9);
+    expect(bounds).toEqual({ ...physicalPanelBounds(win, 1.02), anchor: 'top', scale: 1.02 });
+    expect(pos).toEqual({ strip: { x: (strip.x - win.x) / 1.06, y: (strip.y - win.y) / 1.06 } });
+    expect((pos as { strip: { x: number } }).strip.x).toBeCloseTo(-(400 - 48) / 2, 9);
+  });
+
+  it.each([1, 1.25, 1.5, 2])('places exactly as before without a text scale (monitor scale %s)', async (sf) => {
+    const open = await placeScaled(1, sf);
+    expect(open.bounds).toEqual({ ...physicalPanelBounds({ x: 760, y: 0, w: 400, h: 80 }, sf), anchor: 'top', scale: sf });
+    expect(open.clip.radii).toEqual([14 * sf, 14 * sf, 0, 0]);
+    expect(open.pos).toEqual({ strip: { x: 0, y: 0 } });
+    vi.resetAllMocks();
+    const peek = await placeScaled(1, sf, 'hidden');
+    expect(peek.bounds).toEqual({ ...physicalPanelBounds({ x: 936, y: 0, w: 48, h: 24 }, sf), anchor: 'top', scale: sf });
+    expect(peek.pos).toEqual({ strip: { x: -176, y: 0 } });
+  });
+
+  it.each([[1, 1], [1.06, 1.02], [1.25, 1.5]])('sends the detail the text-scaled strip and orb anchor (text %s, monitor %s)', (scale, sf) => {
+    const report = {
+      id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+      message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+    } as unknown as UsageReport;
+    widgetEffects.states[1] = [report];
+    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    widgetEffects.states[8] = 30; // Orb centre in CSS px from the strip start.
+    renderScaled(scale, sf);
+    const detail = widgetEffects.effects.find((e) => e.deps?.[0] === report)!;
+    detail.run();
+    const sent = widgetEffects.refs.find((r) => (r.current as { report?: unknown } | null)?.report === report)!.current;
+    const strip = stripRect(geo.area, 'top', 0.5, 400 * scale, 80 * scale);
+    expect(sent).toMatchObject({
+      strip, anchor: strip.x + 30 * scale, scaleFactor: sf,
+      maxHeight: panelHeightLimit(geo.area, 'top', strip),
+    });
   });
 
   it('cancels the pending native placement when the strip starts to be dragged', () => {

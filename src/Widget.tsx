@@ -27,6 +27,8 @@ import { accountTags } from './lib/accounts';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { peekRect, usesPeekWindow, waitForViewport, watchPreparation } from './lib/auto-hide';
 import { useDockReveal } from './lib/useDockReveal';
+import { useTextScale } from './lib/useTextScale';
+import { toCss, toMonitor } from './lib/text-scale';
 import { currentDragMode, dragMode, fallbackDragMode, resetDragMode, setDragMode } from './lib/drag-session';
 import { detectWindowManager } from './lib/wm-detect';
 import { t } from './i18n';
@@ -180,6 +182,8 @@ export function Widget() {
   const [reorder, setReorder] = useState<{ id: string; order: string[] } | null>(null);
   const [update, setUpdate] = useState<UpdatePhase>({ phase: 'idle' });
   const updaterMode = useUpdaterMode();
+  /** Windows text scale (#228): the strip is laid out in CSS px and placed in monitor units. */
+  const textScale = useTextScale();
 
   const stripRef = useRef<HTMLDivElement>(null);
   const peekRef = useRef<HTMLButtonElement>(null);
@@ -516,13 +520,14 @@ export function Widget() {
     }
     if (!geo || !stripSize) return;
     let disposed = false;
-    const s = stripRect(geo.area, edge, offset, stripSize.w, stripSize.h);
-    const win = usesPeekWindow(phase) ? peekRect(s, edge) : s;
+    const s = stripRect(geo.area, edge, offset, toMonitor(stripSize.w, textScale), toMonitor(stripSize.h, textScale));
+    const win = usesPeekWindow(phase) ? peekRect(s, edge, textScale) : s;
     // La petición lleva el borde anclado y el factor con el que se calculó el
     // rectángulo: con otro tamaño efectivo, el borde se conserva y la
     // conversión no depende del factor de la ventana (DPI mixto) (#179).
     const physical = { ...physicalPanelBounds(win, geo.sf), anchor: edge, scale: geo.sf };
-    setPos({ strip: { x: s.x - win.x, y: s.y - win.y } });
+    // The strip offset inside the window is a CSS position (#228).
+    setPos({ strip: { x: toCss(s.x - win.x, textScale), y: toCss(s.y - win.y, textScale) } });
     placementInFlight.current = true;
     widgetQueue(async (current) => {
       if (disposed || !current()) return;
@@ -554,7 +559,9 @@ export function Widget() {
       }
       const surface = usesPeekWindow(phase) ? peekRef.current : stripRef.current;
       if (!surface) throw new Error('Widget surface is not mounted');
-      const clip = measureSurfaceClip(surface, physical, geo.sf);
+      // CSS radii to physical px through the target monitor, not the live ratio: the
+      // window may still be on another monitor (#228).
+      const clip = measureSurfaceClip(surface, physical, textScale * geo.sf);
       // Auto-hide uses CSS blur throughout, so its moving shape has no static native
       // blur rectangle and no blur-radius change at the start/end of the animation.
       await clipSurfaceSafely(clip, (c) => api.setSurfaceClip(c, !autoHide && phase === 'open'), console.warn, surface);
@@ -596,7 +603,7 @@ export function Widget() {
       console.warn(error);
     }).finally(() => { if (!disposed) placementInFlight.current = false; });
     return () => { disposed = true; };
-  }, [geo, stripSize, edge, offset, dragging, phase, autoHide, placementRetry, widgetQueue, markPrepared]);
+  }, [geo, stripSize, edge, offset, dragging, phase, autoHide, placementRetry, widgetQueue, markPrepared, textScale]);
 
   // Windows can displace or resize a normal window without changing the
   // monitor geometry or our cached target. Audit reality without moving healthy
@@ -684,7 +691,9 @@ export function Widget() {
 
   // The detail window owns its dimensions; hovering never mutates widget geometry.
   useEffect(() => {
-    const strip = geo && stripSize ? stripRect(geo.area, edge, offset, stripSize.w, stripSize.h) : null;
+    const strip = geo && stripSize
+      ? stripRect(geo.area, edge, offset, toMonitor(stripSize.w, textScale), toMonitor(stripSize.h, textScale))
+      : null;
     const state: DetailState | null = active && geo && strip && !dragging && !collapsed && phase === 'open' ? {
       // Keep the interaction session valid during background usage/config updates.
       revision: detailStateRef.current?.report.id === active.id
@@ -694,7 +703,7 @@ export function Widget() {
       area: geo.area,
       strip,
       edge,
-      anchor: (vertical ? strip.y : strip.x) + anchorRel,
+      anchor: (vertical ? strip.y : strip.x) + toMonitor(anchorRel, textScale),
       width: panelWidth,
       maxHeight: panelHeightLimit(geo.area, edge, strip),
       scaleFactor: geo.sf,
@@ -711,7 +720,7 @@ export function Widget() {
     detailStateRef.current = state;
     if (!state) detailInsideRef.current = false;
     if (detailReadyRef.current) emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, state).catch(console.warn);
-  }, [active, geo, stripSize, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
+  }, [active, geo, stripSize, textScale, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
 
   // ───── panel al pasar el ratón ─────
   const cancelTimers = () => {
