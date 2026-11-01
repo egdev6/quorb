@@ -62,7 +62,7 @@ pub async fn fetch(
     cfg: &SubscriptionConfig,
     who: Who<'_>,
     http: &reqwest::Client,
-    resolver: Option<&SessionResolver<'_>>,
+    resolver: Option<&SessionResolver>,
 ) -> UsageReport {
     let report = who.report("Grok", Kind::Subscription);
 
@@ -75,7 +75,7 @@ pub async fn fetch(
         Some(r) => {
             let default = r.default_path(Path::new(".grok").join("auth.json").as_path());
             let path = r.resolve(cfg.credentials_path.as_deref(), &default);
-            match r.read(&path) {
+            match r.read_async(&path).await {
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => v,
                     Err(e) => {

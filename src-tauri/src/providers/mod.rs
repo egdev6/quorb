@@ -75,7 +75,7 @@ impl<'a> Who<'a> {
 pub async fn fetch_all(
     cfg: &AppConfig,
     http: &reqwest::Client,
-    resolver: Option<&SessionResolver<'_>>,
+    resolver: Option<&SessionResolver>,
 ) -> Vec<UsageReport> {
     let mut jobs: Vec<BoxFuture<'_, Vec<UsageReport>>> = vec![];
     if cfg.claude.enabled {
@@ -190,7 +190,7 @@ pub async fn fetch_one(
     cfg: &AppConfig,
     id: &str,
     http: &reqwest::Client,
-    resolver: Option<&SessionResolver<'_>>,
+    resolver: Option<&SessionResolver>,
 ) -> Option<UsageReport> {
     if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
         return Some(fetch_account(cfg, a, http, resolver).await);
@@ -252,7 +252,7 @@ fn fetch_account<'a>(
     cfg: &'a AppConfig,
     a: &'a Account,
     http: &'a reqwest::Client,
-    resolver: Option<&'a SessionResolver<'a>>,
+    resolver: Option<&'a SessionResolver>,
 ) -> BoxFuture<'a, UsageReport> {
     let who = Who::extra(a);
     // La cuenta adicional aísla su sesión en su propia carpeta; esa
@@ -413,10 +413,26 @@ pub(crate) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 /// Huella de los ficheros de sesión de los CLIs (Claude Code, Codex, Gemini) de
-/// todas las cuentas: suma de sus fechas de modificación en ms. Cambia en cuanto
-/// un CLI renueva su token o se inicia sesión, y así el widget recarga al momento
-/// sin que la app toque los tokens.
-pub fn session_stamp(cfg: &AppConfig) -> u64 {
+/// todas las cuentas. Cambia en cuanto un CLI renueva su token o se inicia
+/// sesión, y así el widget recarga al momento sin que la app toque los tokens.
+///
+/// En host es la suma de las fechas de modificación en ms; en WSL el fichero
+/// vive dentro de la distro y no hay `mtime` accesible desde el host, así que
+/// se lee su contenido por el adaptador y se suma su huella. Ambas solo
+/// sirven para DETECTAR un cambio, no como identificador absoluto (#91).
+pub async fn session_stamp(cfg: &AppConfig, resolver: Option<&SessionResolver>) -> u64 {
+    match resolver {
+        // WSL: las cuentas que la app lee viven dentro de la distro; el sello
+        // observa exactamente los ficheros que se leen (misma fuente que los
+        // fetch: `credentials_path` > home de la distro).
+        Some(r) => wsl_session_stamp(cfg, r).await,
+        // Host: mtimes del disco local, como siempre.
+        None => host_session_stamp(cfg),
+    }
+}
+
+/// Sello del entorno host: suma de mtimes de los ficheros de sesión.
+fn host_session_stamp(cfg: &AppConfig) -> u64 {
     let h = home();
     let main = |c: &SubscriptionConfig, default: PathBuf| match c
         .credentials_path
@@ -466,6 +482,55 @@ pub fn session_stamp(cfg: &AppConfig) -> u64 {
         .fold(0u64, |acc, d| acc.wrapping_add(d.as_millis() as u64))
 }
 
+/// Sello del entorno WSL: huella del CONTENIDO de cada fichero de sesión
+/// dentro de la distro. Un `codex login` (o la renovación de un token) en la
+/// distro cambia el contenido y por tanto el sello, aunque el host no tenga
+/// mtime accesible (revisión PR #220).
+async fn wsl_session_stamp(cfg: &AppConfig, r: &SessionResolver) -> u64 {
+    let main = |c: &SubscriptionConfig, rel: &str| {
+        r.resolve(
+            c.credentials_path.as_deref(),
+            &r.default_path(Path::new(rel)),
+        )
+    };
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if cfg.claude.enabled {
+        paths.push(main(&cfg.claude, ".claude/.credentials.json"));
+    }
+    if cfg.codex.enabled {
+        paths.push(main(&cfg.codex, ".codex/auth.json"));
+    }
+    if cfg.gemini.enabled {
+        paths.push(main(&cfg.gemini, ".gemini/oauth_creds.json"));
+    }
+    if cfg.grok.enabled {
+        paths.push(main(&cfg.grok, ".grok/auth.json"));
+    }
+    for a in cfg.accounts.iter().filter(|a| a.enabled) {
+        if let Some(name) = credentials_file_name(a.provider.as_str()) {
+            // La carpeta de la cuenta adicional, compuesta sobre el home del
+            // entorno (misma fuente que `fetch_account`).
+            let rel = a.session_dir(Path::new("")).join(name);
+            paths.push(r.default_path(&rel));
+        }
+    }
+    let mut acc = 0u64;
+    for p in paths {
+        if let Ok(contents) = r.read_async(&p).await {
+            acc = acc.wrapping_add(content_hash(contents.as_bytes()));
+        }
+    }
+    acc
+}
+
+/// Huella determinista del contenido (no criptográfica: solo detecta cambios).
+fn content_hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
+}
+
 pub fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
@@ -484,6 +549,49 @@ pub(crate) fn net_error(e: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wsl::{distro, DistroState, MockWslAdapter};
+    use std::sync::Arc;
+
+    /// #91 (revisión PR #220): el sello en WSL observa los ficheros DENTRO de
+    /// la distro — un login allí (contenido que cambia) cambia el sello aunque
+    /// el host no tenga mtime accesible y no vea el fichero.
+    #[test]
+    fn wsl_session_stamp_changes_when_the_token_is_renewed_inside_the_distro() {
+        let mock = Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_home("Ubuntu-22.04", PathBuf::from("/home/user"));
+        let creds = PathBuf::from("/home/user/.claude/.credentials.json");
+        mock.set_file(
+            "Ubuntu-22.04",
+            creds.clone(),
+            "{\"claudeAiOauth\":{\"accessToken\":\"v1\"}}".to_string(),
+        );
+        let r = crate::wsl::SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let cfg = AppConfig {
+            claude: SubscriptionConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        let first = rt.block_on(wsl_session_stamp(&cfg, &r));
+        // El CLI renueva el token dentro de la distro: el contenido cambia.
+        mock.set_file(
+            "Ubuntu-22.04",
+            creds,
+            "{\"claudeAiOauth\":{\"accessToken\":\"v2\"}}".to_string(),
+        );
+        let second = rt.block_on(wsl_session_stamp(&cfg, &r));
+        assert_ne!(first, second, "un login en la distro debe cambiar el sello");
+    }
 
     /// Carpeta temporal propia de cada prueba, sin tocar el HOME real.
     fn temp_dir(tag: &str) -> PathBuf {

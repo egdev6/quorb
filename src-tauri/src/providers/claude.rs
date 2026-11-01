@@ -175,7 +175,7 @@ pub async fn fetch(
     cfg: &SubscriptionConfig,
     who: Who<'_>,
     http: &reqwest::Client,
-    resolver: Option<&SessionResolver<'_>>,
+    resolver: Option<&SessionResolver>,
 ) -> UsageReport {
     let report = who.report("Claude", Kind::Subscription);
 
@@ -191,7 +191,7 @@ pub async fn fetch(
     let creds = match resolver {
         Some(r) => {
             let path = r.resolve(cfg.credentials_path.as_deref(), &default_path);
-            match r.read(&path) {
+            match r.read_async(&path).await {
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => match Credentials::parse(&v) {
                         Ok(c) => c,
