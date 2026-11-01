@@ -49,6 +49,10 @@ cambio de producto sigue siendo decisión del mantenedor sobre el resultado real
   lineage). Un acuse de candidato doc-only (`review-8adb864bb59b1bc0`) ardió con
   aprobación; la entrega sigue por política ordinaria. El fix queda **sin review
   nativo**: la revisión es el trabajo manual documentado aquí y los checks del repo.
+- **Comentario en la issue publicado** (2026-11-01, gh#6559764767): resumen de C con
+  gating, semántica, checks, validación manual y el trade-off del solapado dejado como
+  decisión del mantenedor; PR propuesto a la espera de luz verde. Restan: abrir PR con
+  autorización explícita (paso 8).
 - **Review nativo (historial previo a la decisión de apagar el switch)**: switch de
   review `on` (global); START para la unidad devolvió el consentimiento **declinado
   para este candidato** (`consent-declined-this-candidate`, riesgo medio; sin lineage
