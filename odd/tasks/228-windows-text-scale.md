@@ -20,10 +20,10 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 ## Tasks
 
 - T0 · S11 step 0 · user on Windows (remote debugging of installed v0.8.0) · no commit
-- T1 · S1-S4, S8, S10 · inline · text-scale module + hook
-- T2 · S2, S5, S9, S10 · inline · strip geometry
-- T3 · S6, S10 · inline · drag
-- T4 · S7, S10 · inline · detail panel
+- T1 · S1-S4, S8, S10 · inline · text-scale module + hook · done f5c872a
+- T2 · S2, S5, S9, S10 · worker · strip geometry · done dae140d
+- T3 · S6, S10 · drag · screenX delta waits on T0
+- T4 · S7, S8, S10 · worker · detail panel · done 8981e95
 - T5 · S12 · follow-up issue (publish, needs user OK)
 - T6 · S11 · Windows build + manual validation (user)
 - T7 · S12 · PR (needs user authorization)
@@ -35,3 +35,4 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 - L3: maintainer flow (Discord): issue + debate until spec closes, then PR.
 - L4: maintainer review 1 replaced "positions with sf, sizes with dpr" by normalizing before geometry; proposal refined it to `t` (S1).
 - L5: maintainer approved the spec with S4, assigned matraket, label `status:approved` (2026-11-01).
+- L6: delivery strategy: one PR (S12) made of per-task commits; the branch passes ~400 authored lines after T4 (484, mostly tests), accepted because the maintainer asked for a single PR and each commit stays reviewable alone.
