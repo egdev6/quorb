@@ -13,8 +13,10 @@
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
+use crate::wsl::{SessionError, SessionResolver};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Mutex;
 
 const API: &str = "https://cloudcode-pa.googleapis.com/v1internal";
@@ -25,21 +27,64 @@ const CLIENT_SECRET: &str = "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";
 /// Tokens renovados en memoria por cuenta (clave: refresh token): (access_token, caduca_en_ms).
 static CACHED: Mutex<BTreeMap<String, (String, i64)>> = Mutex::new(BTreeMap::new());
 
-pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+pub async fn fetch(
+    cfg: &SubscriptionConfig,
+    who: Who<'_>,
+    http: &reqwest::Client,
+    resolver: Option<&SessionResolver<'_>>,
+) -> UsageReport {
     let report = who.report("Gemini", Kind::Subscription);
-    let candidates = vec![home().join(".gemini").join("oauth_creds.json")];
-    let path = match resolve_path(cfg.credentials_path.as_deref(), &candidates) {
-        Ok(p) => p,
-        Err(e) => {
-            return report.fail(
-                Status::NeedsLogin,
-                format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
-            )
+    // La sesión se resuelve en el ENTORNO elegido (#91): con resolvedor, la
+    // ruta por defecto se compone bajo su home (el del usuario Linux si el
+    // entorno es WSL) y la lectura va por `read_file` del adaptador
+    // (`wsl cat`) en vez del disco del host. Sin resolvedor, el
+    // comportamiento de siempre (disco local).
+    let creds: Value = match resolver {
+        Some(r) => {
+            let default = r.default_path(Path::new(".gemini").join("oauth_creds.json").as_path());
+            let path = r.resolve(cfg.credentials_path.as_deref(), &default);
+            match r.read(&path) {
+                Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return report.fail(
+                            Status::Error,
+                            format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+                        )
+                    }
+                },
+                // Sin credenciales en el entorno elegido: hace falta login
+                // AQUÍ (no en otro entorno).
+                Err(SessionError::Absent(m)) => {
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{m}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+                    )
+                }
+                // El fallo es del subsistema o de la distro: la acción
+                // correcta no es "inicia sesión".
+                Err(SessionError::Wsl(e)) => {
+                    return report.fail(Status::Error, format!("WSL: {e:?}"))
+                }
+                Err(e) => return report.fail(Status::Error, e.to_string()),
+            }
         }
-    };
-    let creds = match read_json(&path) {
-        Ok(v) => v,
-        Err(e) => return report.fail(Status::Error, e),
+        None => {
+            let candidates = vec![home().join(".gemini").join("oauth_creds.json")];
+            let path = match resolve_path(cfg.credentials_path.as_deref(), &candidates) {
+                Ok(p) => p,
+                Err(e) => {
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+                    )
+                }
+            };
+            match read_json(&path) {
+                Ok(v) => v,
+                Err(e) => return report.fail(Status::Error, e),
+            }
+        }
     };
     let token = match access_token(&creds, http).await {
         Ok(t) => t,

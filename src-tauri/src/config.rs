@@ -44,6 +44,19 @@ fn normalize_hex(s: &str) -> Option<String> {
     }
 }
 
+/// Entorno de sesión de los proveedores CLIs (#91, #90).
+///
+/// Serializa como string (`"host"` por defecto, `"wsl"` para usar la
+/// distro `wsl_distro`). Deserializar es tolerante: cualquier valor
+/// desconocido se trata como `host`.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionEnvConfig {
+    #[default]
+    Host,
+    Wsl,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
@@ -77,6 +90,11 @@ pub struct AppConfig {
     pub provider_order: Vec<String>,
     /// Círculos ocultos en la tira (se siguen consultando y avisando).
     pub hidden_providers: Vec<String>,
+    /// Entorno de sesión: `host` (Windows/macOS) o `wsl` (la distro elegida).
+    pub session_env: SessionEnvConfig,
+    /// Distro WSL elegida cuando `session_env` es `wsl`. Vacía = la que
+    /// marque el usuario; sin distro no hay entorno WSL válido.
+    pub wsl_distro: String,
     pub alerts: AlertsConfig,
     pub shortcuts: ShortcutsConfig,
     pub claude: SubscriptionConfig,
@@ -261,13 +279,22 @@ impl Account {
     /// Fichero de sesión que deja el CLI dentro de su carpeta.
     pub fn credentials_file(&self, home: &Path) -> Option<std::path::PathBuf> {
         let dir = self.session_dir(home);
-        match self.provider.as_str() {
-            "claude" => Some(dir.join(".credentials.json")),
-            "codex" => Some(dir.join("auth.json")),
-            "gemini" => Some(dir.join(".gemini").join("oauth_creds.json")),
-            "grok" => Some(dir.join("auth.json")),
-            _ => None,
-        }
+        credentials_file_name(self.provider.as_str()).map(|name| dir.join(name))
+    }
+}
+
+/// Nombre (relativo) del fichero de sesión de un proveedor.
+///
+/// Una sola fuente de verdad: lo usan `Account::credentials_file` (host) y la
+/// resolución de sesiones en WSL, para que ambas compongan la misma ruta
+/// (#91). `None` = el proveedor no tiene login por CLI.
+pub fn credentials_file_name(provider: &str) -> Option<&'static str> {
+    match provider {
+        "claude" => Some(".credentials.json"),
+        "codex" => Some("auth.json"),
+        "gemini" => Some(".gemini/oauth_creds.json"),
+        "grok" => Some("auth.json"),
+        _ => None,
     }
 }
 
@@ -289,6 +316,8 @@ impl Default for AppConfig {
             auto_update: true,
             provider_order: vec![],
             hidden_providers: vec![],
+            session_env: SessionEnvConfig::default(),
+            wsl_distro: String::new(),
             alerts: AlertsConfig::default(),
             claude: SubscriptionConfig {
                 enabled: true,
@@ -577,6 +606,24 @@ impl Default for NineRouterConfig {
 }
 
 impl AppConfig {
+    /// El `SessionEnv` del módulo wsl que este config describe (#91).
+    ///
+    /// `host` → sesión del host; `wsl` con distro no vacía → la distro
+    /// elegida. `wsl` sin distro todavía no es un entorno válido: se
+    /// trata como host hasta que el usuario elija una distro en Ajustes
+    /// (la resolución nunca inventa una).
+    pub fn session_env(&self) -> crate::wsl::SessionEnv {
+        match self.session_env {
+            SessionEnvConfig::Host => crate::wsl::SessionEnv::Host,
+            SessionEnvConfig::Wsl if self.wsl_distro.trim().is_empty() => {
+                crate::wsl::SessionEnv::Host
+            }
+            SessionEnvConfig::Wsl => crate::wsl::SessionEnv::Wsl {
+                distro: self.wsl_distro.trim().to_string(),
+            },
+        }
+    }
+
     /// Corrige valores fuera de rango.
     pub fn sanitized(mut self) -> Self {
         let locale = self.locale.trim().to_ascii_lowercase();
@@ -733,6 +780,33 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str(r#"{}"#).unwrap();
         let json = serde_json::to_value(cfg).unwrap();
         assert_eq!(json.get("showResets"), Some(&serde_json::json!(true)));
+    }
+
+    /// #91: el entorno por defecto es host — una config antigua (sin los
+    /// campos nuevos) sigue resolviendo sesión del host.
+    #[test]
+    fn session_env_defaults_to_host_in_legacy_config() {
+        let cfg: AppConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(cfg.session_env(), crate::wsl::SessionEnv::Host);
+    }
+
+    /// #91: `wsl` con distro elegida resuelve esa distro; `wsl` sin distro
+    /// todavía no es un entorno válido y se trata como host (la resolución
+    /// nunca inventa una distro).
+    #[test]
+    fn session_env_maps_wsl_with_distro_and_guards_empty_distro() {
+        let mut cfg = AppConfig::default();
+        cfg.session_env = SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-24.04".into();
+        assert_eq!(
+            cfg.session_env(),
+            crate::wsl::SessionEnv::Wsl {
+                distro: "Ubuntu-24.04".into()
+            }
+        );
+
+        cfg.wsl_distro = "  ".into();
+        assert_eq!(cfg.session_env(), crate::wsl::SessionEnv::Host);
     }
 
     #[test]

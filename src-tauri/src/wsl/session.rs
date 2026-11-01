@@ -67,11 +67,37 @@ impl std::fmt::Display for SessionError {
 pub struct SessionResolver<'a> {
     env: SessionEnv,
     adapter: &'a dyn WslAdapter,
+    /// Home del entorno elegido: el del host, o el del usuario de la distro.
+    home: PathBuf,
 }
 
 impl<'a> SessionResolver<'a> {
-    pub fn new(env: SessionEnv, adapter: &'a dyn WslAdapter) -> Self {
-        SessionResolver { env, adapter }
+    /// `home` es el home del entorno: el del host en modo host, o el del
+    /// usuario por defecto de la distro (lo resuelve `resolve_home`).
+    pub fn new(env: SessionEnv, adapter: &'a dyn WslAdapter, home: PathBuf) -> Self {
+        SessionResolver { env, adapter, home }
+    }
+
+    /// Resolvedor del entorno host: lee del disco local con el home del host.
+    /// El `adapter` no se usa en este modo (queda por si el entorno cambia).
+    pub fn for_host(adapter: &'a dyn WslAdapter, home: PathBuf) -> Self {
+        SessionResolver::new(SessionEnv::Host, adapter, home)
+    }
+
+    /// Resolvedor de la distro elegida (#91): la sesión se resuelve y se lee
+    /// DENTRO de la distro, con `read_file` del adaptador (`wsl cat`).
+    ///
+    /// `home` es el home del default user de la distro, ya resuelto por
+    /// `resolve_home` (F7): este constructor no hace I/O, así que puede
+    /// fallar quien lo llama con un mensaje acorde al contexto (la UI, la
+    /// línea de comandos) en vez de un error genérico de WSL.
+    pub fn for_wsl(adapter: &'a dyn WslAdapter, distro: String, home: PathBuf) -> Self {
+        SessionResolver::new(SessionEnv::Wsl { distro }, adapter, home)
+    }
+
+    /// El home del entorno elegido.
+    pub fn home(&self) -> &Path {
+        &self.home
     }
 
     /// La ruta de la sesión, con la precedencia de la #91: explícita > default.
@@ -88,6 +114,16 @@ impl<'a> SessionResolver<'a> {
             Some(p) => PathBuf::from(p),
             None => default.to_path_buf(),
         }
+    }
+
+    /// La ruta estándar del proveedor bajo el home del entorno elegido.
+    ///
+    /// `relative` es la ruta relativa del proveedor (`.claude/.credentials.json`,
+    /// `.codex/auth.json`, `.gemini/oauth_creds.json`): la misma que se usa
+    /// hoy contra el home del host, pero compuesta sobre el home del
+    /// entorno activo (el del usuario Linux cuando el entorno es WSL).
+    pub fn default_path(&self, relative: &Path) -> PathBuf {
+        self.home.join(relative)
     }
 
     /// Lee el contenido de la sesión en el entorno elegido.
@@ -133,7 +169,7 @@ mod tests {
     #[test]
     fn host_resolver_reads_from_the_local_disk() {
         let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock);
+        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
         let f = std::env::temp_dir().join("quorb-session-host-test.json");
         std::fs::write(&f, b"{}").expect("escribe fixture");
         assert_eq!(r.read(&f).expect("lee"), "{}");
@@ -143,9 +179,54 @@ mod tests {
     #[test]
     fn host_resolver_reports_absent_when_there_is_no_file() {
         let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock);
+        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
         let missing = PathBuf::from("/no/existe/quorb-creds.json");
         assert!(matches!(r.read(&missing), Err(SessionError::Absent(_))));
+    }
+
+    /// #91 (camino 1): el MISMO path significa dos cosas según el entorno — en
+    /// la distro se lee el fichero de la distro, en el host el del host. Las
+    /// cuentas de un entorno nunca se mezclan con las del otro.
+    #[test]
+    fn the_same_path_resolves_to_the_environment_it_belongs_to() {
+        let mock = MockWslAdapter::new();
+        let path = std::env::temp_dir().join("quorb-session-env-path.json");
+        std::fs::write(&path, b"{\"origen\":\"host\"}").expect("escribe fixture");
+        mock.set_file(
+            "Ubuntu-22.04",
+            path.clone(),
+            "{\"origen\":\"distro\"}".to_string(),
+        );
+
+        let host = SessionResolver::for_host(&mock, PathBuf::from("/home/hostuser"));
+        assert_eq!(host.read(&path).expect("lee host"), "{\"origen\":\"host\"}");
+
+        let wsl =
+            SessionResolver::for_wsl(&mock, "Ubuntu-22.04".into(), PathBuf::from("/home/user"));
+        assert_eq!(
+            wsl.read(&path).expect("lee distro"),
+            "{\"origen\":\"distro\"}"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// La ruta por defecto se compone sobre el home del ENTORNO: el del
+    /// usuario de la distro en WSL, el del host en host.
+    #[test]
+    fn default_path_is_composed_over_the_environment_home() {
+        let mock = MockWslAdapter::new();
+        let wsl =
+            SessionResolver::for_wsl(&mock, "Ubuntu-22.04".into(), PathBuf::from("/home/user"));
+        assert_eq!(
+            wsl.default_path(Path::new(".claude").join(".credentials.json").as_path()),
+            PathBuf::from("/home/user/.claude/.credentials.json")
+        );
+        let host = SessionResolver::for_host(&mock, PathBuf::from("/home/hostuser"));
+        assert_eq!(
+            host.default_path(Path::new(".codex").join("auth.json").as_path()),
+            PathBuf::from("/home/hostuser/.codex/auth.json")
+        );
     }
 
     #[test]
@@ -161,6 +242,7 @@ mod tests {
                 distro: "Ubuntu-22.04".into(),
             },
             &mock,
+            PathBuf::from("/home/user"),
         );
         let contents = r
             .read(Path::new("/home/user/.claude/.credentials.json"))
@@ -181,6 +263,7 @@ mod tests {
                 distro: "Ubuntu-22.04".into(),
             },
             &mock,
+            PathBuf::from("/home/user"),
         );
         // El fichero de Claude no está en la distro: "necesita login", no
         // un fallo de WSL.
@@ -200,6 +283,7 @@ mod tests {
                 distro: "Ubuntu-22.04".into(),
             },
             &mock,
+            PathBuf::from("/home/user"),
         );
         let err = r
             .read(Path::new("/home/user/.claude/.credentials.json"))
@@ -210,7 +294,7 @@ mod tests {
     #[test]
     fn explicit_path_wins_over_the_default() {
         let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock);
+        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
         let p = r.resolve(
             Some("C:\\Users\\u\\custom.json"),
             Path::new("/home/u/default.json"),
@@ -221,7 +305,7 @@ mod tests {
     #[test]
     fn blank_explicit_path_falls_back_to_the_default() {
         let mock = MockWslAdapter::new();
-        let r = SessionResolver::new(SessionEnv::Host, &mock);
+        let r = SessionResolver::new(SessionEnv::Host, &mock, PathBuf::from("/home/hostuser"));
         let p = r.resolve(Some("   "), Path::new("/home/u/default.json"));
         assert_eq!(p, PathBuf::from("/home/u/default.json"));
     }

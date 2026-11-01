@@ -505,10 +505,44 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
     Ok(())
 }
 
+/// Resolvedor de sesiones del entorno configurado (#91): `None` en host (el
+/// comportamiento de siempre, incluido el respaldo del Keychain de macOS), y
+/// en WSL el resolvedor de la distro elegida, con el home de su default user
+/// resuelto por el adaptador (`resolve_home`, F7).
+///
+/// `Err` cuando el adaptador no puede resolver el home (WSL sin instalar,
+/// distro ausente): el llamador decide cómo reflejarlo; nunca se cae a una
+/// cuenta de otro entorno.
+fn session_resolver<'a>(
+    cfg: &AppConfig,
+    adapter: &'a wsl::RealWslAdapter,
+) -> Result<Option<wsl::SessionResolver<'a>>, String> {
+    match cfg.session_env() {
+        wsl::SessionEnv::Host => Ok(None),
+        wsl::SessionEnv::Wsl { distro } => {
+            let home = adapter
+                .resolve_home(&distro)
+                .map_err(|e| format!("WSL: {e:?}"))?;
+            Ok(Some(wsl::SessionResolver::for_wsl(adapter, distro, home)))
+        }
+    }
+}
+
 #[tauri::command]
 async fn fetch_usage(state: State<'_, AppState>) -> Result<Vec<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
-    let reports = providers::fetch_all(&cfg, &state.http).await;
+    let adapter = wsl::RealWslAdapter::new();
+    let reports =
+        match session_resolver(&cfg, &adapter) {
+            // Host: el comportamiento de siempre (sin resolvedor).
+            Ok(None) => providers::fetch_all(&cfg, &state.http, None).await,
+            // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
+            Ok(Some(resolver)) => providers::fetch_all(&cfg, &state.http, Some(&resolver)).await,
+            // El entorno configurado no se puede resolver: fallo explícito en el
+            // orbe, nunca una lectura silenciosa del otro entorno (#91).
+            Err(e) => vec![UsageReport::new("wsl", "WSL", model::Kind::Subscription)
+                .fail(model::Status::Error, e)],
+        };
     state
         .history
         .record(&reports, chrono::Utc::now().timestamp());
@@ -726,7 +760,9 @@ async fn check_provider(
     id: String,
 ) -> Result<Option<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
-    Ok(providers::fetch_one(&cfg, &id, &state.http).await)
+    let adapter = wsl::RealWslAdapter::new();
+    let resolver = session_resolver(&cfg, &adapter)?;
+    Ok(providers::fetch_one(&cfg, &id, &state.http, resolver.as_ref()).await)
 }
 
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?

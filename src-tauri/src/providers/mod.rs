@@ -20,11 +20,12 @@ pub mod openrouter;
 pub mod zai;
 
 use crate::config::{
-    Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig, OpenCodeGoConfig,
-    OpenRouterConfig, SubscriptionConfig, ZaiConfig,
+    credentials_file_name, Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig,
+    OpenCodeGoConfig, OpenRouterConfig, SubscriptionConfig, ZaiConfig,
 };
 use crate::model::{Kind, UsageReport};
 use crate::secrets;
+use crate::wsl::SessionResolver;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -71,28 +72,34 @@ impl<'a> Who<'a> {
     }
 }
 
-pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageReport> {
+pub async fn fetch_all(
+    cfg: &AppConfig,
+    http: &reqwest::Client,
+    resolver: Option<&SessionResolver<'_>>,
+) -> Vec<UsageReport> {
     let mut jobs: Vec<BoxFuture<'_, Vec<UsageReport>>> = vec![];
     if cfg.claude.enabled {
         jobs.push(
-            async move { vec![claude::fetch(&cfg.claude, Who::main("claude"), http).await] }
+            async move { vec![claude::fetch(&cfg.claude, Who::main("claude"), http, resolver).await] }
                 .boxed(),
         );
     }
     if cfg.codex.enabled {
         jobs.push(
-            async move { vec![codex::fetch(&cfg.codex, Who::main("codex"), http).await] }.boxed(),
+            async move { vec![codex::fetch(&cfg.codex, Who::main("codex"), http, resolver).await] }
+                .boxed(),
         );
     }
     if cfg.gemini.enabled {
         jobs.push(
-            async move { vec![gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await] }
+            async move { vec![gemini::fetch(&cfg.gemini, Who::main("gemini"), http, resolver).await] }
                 .boxed(),
         );
     }
     if cfg.grok.enabled {
         jobs.push(
-            async move { vec![grok::fetch(&cfg.grok, Who::main("grok"), http).await] }.boxed(),
+            async move { vec![grok::fetch(&cfg.grok, Who::main("grok"), http, resolver).await] }
+                .boxed(),
         );
     }
     if cfg.cursor.enabled {
@@ -158,7 +165,7 @@ pub async fn fetch_all(cfg: &AppConfig, http: &reqwest::Client) -> Vec<UsageRepo
         );
     }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
-        jobs.push(async move { vec![fetch_account(cfg, a, http).await] }.boxed());
+        jobs.push(async move { vec![fetch_account(cfg, a, http, resolver).await] }.boxed());
     }
     futures::future::join_all(jobs)
         .await
@@ -179,15 +186,20 @@ fn nine_router_all<'a>(
 }
 /// Consulta una sola cuenta (principal o adicional) aunque esté oculta en el widget,
 /// para comprobar la conexión desde Ajustes. `None` si el id no existe.
-pub async fn fetch_one(cfg: &AppConfig, id: &str, http: &reqwest::Client) -> Option<UsageReport> {
+pub async fn fetch_one(
+    cfg: &AppConfig,
+    id: &str,
+    http: &reqwest::Client,
+    resolver: Option<&SessionResolver<'_>>,
+) -> Option<UsageReport> {
     if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
-        return Some(fetch_account(cfg, a, http).await);
+        return Some(fetch_account(cfg, a, http, resolver).await);
     }
     Some(match id {
-        "claude" => claude::fetch(&cfg.claude, Who::main("claude"), http).await,
-        "codex" => codex::fetch(&cfg.codex, Who::main("codex"), http).await,
-        "gemini" => gemini::fetch(&cfg.gemini, Who::main("gemini"), http).await,
-        "grok" => grok::fetch(&cfg.grok, Who::main("grok"), http).await,
+        "claude" => claude::fetch(&cfg.claude, Who::main("claude"), http, resolver).await,
+        "codex" => codex::fetch(&cfg.codex, Who::main("codex"), http, resolver).await,
+        "gemini" => gemini::fetch(&cfg.gemini, Who::main("gemini"), http, resolver).await,
+        "grok" => grok::fetch(&cfg.grok, Who::main("grok"), http, resolver).await,
         "cursor" => cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await,
         "copilot" => copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await,
         "nan" => nan::fetch(&cfg.nan, Who::main("nan"), http).await,
@@ -240,20 +252,49 @@ fn fetch_account<'a>(
     cfg: &'a AppConfig,
     a: &'a Account,
     http: &'a reqwest::Client,
+    resolver: Option<&'a SessionResolver<'a>>,
 ) -> BoxFuture<'a, UsageReport> {
     let who = Who::extra(a);
-    let session = |main: &SubscriptionConfig| SubscriptionConfig {
+    // La cuenta adicional aísla su sesión en su propia carpeta; esa
+    // carpeta se compone sobre el home del ENTORNO elegido (el del host o
+    // el del usuario de la distro) para que resolver y leer sean la misma
+    // cuenta (#91). `move`: el closure (un Copia del `&'a` del resolvedor)
+    // sobrevive al retorno dentro del BoxFuture<'a>.
+    let session = move |main: &SubscriptionConfig| SubscriptionConfig {
         enabled: true,
-        credentials_path: a
-            .credentials_file(&home())
-            .map(|p| p.to_string_lossy().into_owned()),
+        credentials_path: match resolver {
+            Some(r) => {
+                // La carpeta de la cuenta adicional se compone sobre el home
+                // del ENTORNO (host o distro WSL) y el fichero de sesión va
+                // relativo a ella — una sola fuente (credentials_file_name).
+                let relative = a
+                    .session_dir(Path::new(""))
+                    .join(credentials_file_name(a.provider.as_str()).unwrap_or_default());
+                Some(
+                    r.default_path(relative.as_path())
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            }
+            None => a
+                .credentials_file(&home())
+                .map(|p| p.to_string_lossy().into_owned()),
+        },
         login_command: main.login_command.clone(),
     };
     match a.provider.as_str() {
-        "claude" => async move { claude::fetch(&session(&cfg.claude), who, http).await }.boxed(),
-        "codex" => async move { codex::fetch(&session(&cfg.codex), who, http).await }.boxed(),
-        "gemini" => async move { gemini::fetch(&session(&cfg.gemini), who, http).await }.boxed(),
-        "grok" => async move { grok::fetch(&session(&cfg.grok), who, http).await }.boxed(),
+        "claude" => {
+            async move { claude::fetch(&session(&cfg.claude), who, http, resolver).await }.boxed()
+        }
+        "codex" => {
+            async move { codex::fetch(&session(&cfg.codex), who, http, resolver).await }.boxed()
+        }
+        "gemini" => {
+            async move { gemini::fetch(&session(&cfg.gemini), who, http, resolver).await }.boxed()
+        }
+        "grok" => {
+            async move { grok::fetch(&session(&cfg.grok), who, http, resolver).await }.boxed()
+        }
         // Solo con su token: la sesión de la app de Cursor es la de la cuenta principal.
         "cursor" => {
             async move { cursor::fetch(&SubscriptionConfig::default(), who, http).await }.boxed()

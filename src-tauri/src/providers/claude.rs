@@ -11,7 +11,9 @@
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
+use crate::wsl::{SessionError, SessionResolver};
 use serde_json::Value;
+use std::path::Path;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
@@ -169,41 +171,88 @@ fn parse_keychain_secret(raw: &str) -> Option<Credentials> {
         .and_then(|v| Credentials::parse(&v).ok())
 }
 
-pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+pub async fn fetch(
+    cfg: &SubscriptionConfig,
+    who: Who<'_>,
+    http: &reqwest::Client,
+    resolver: Option<&SessionResolver<'_>>,
+) -> UsageReport {
     let report = who.report("Claude", Kind::Subscription);
 
-    let candidates = vec![home().join(".claude").join(".credentials.json")];
-    let creds = match resolve_path(cfg.credentials_path.as_deref(), &candidates) {
-        Ok(p) => match read_json(&p).and_then(|v| Credentials::parse(&v)) {
-            Ok(c) => c,
-            Err(e) => return report.fail(Status::Error, e),
-        },
-        // El archivo no existe: en macOS Claude Code guarda la sesión OAuth en
-        // el Keychain, no en ~/.claude. El respaldo es solo de la sesión
-        // principal sin ruta explícita (ver `should_fallback_keychain`).
-        Err(e) => {
-            if !should_fallback_keychain(cfg.credentials_path.as_deref()) {
-                return report.fail(
-                    Status::NeedsLogin,
-                    format!("{e}. Inicia sesión en Claude Code."),
-                );
-            }
-            match keychain_fallback().await {
-                KeychainOutcome::Session(c) => c,
-                KeychainOutcome::TimedOut => {
+    // La sesión se resuelve en el ENTORNO elegido (#91): con resolvedor, la
+    // ruta por defecto se compone bajo su home (el del usuario Linux si el
+    // entorno es WSL) y la lectura va por `read_file` del adaptador
+    // (`wsl cat`) en vez del disco del host. Sin resolvedor, el
+    // comportamiento de siempre (disco local).
+    let default_path = match resolver {
+        Some(r) => r.default_path(Path::new(".claude").join(".credentials.json").as_path()),
+        None => home().join(".claude").join(".credentials.json"),
+    };
+    let creds = match resolver {
+        Some(r) => {
+            let path = r.resolve(cfg.credentials_path.as_deref(), &default_path);
+            match r.read(&path) {
+                Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                    Ok(v) => match Credentials::parse(&v) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return report
+                                .fail(Status::Error, format!("{e}. Inicia sesión en Claude Code."))
+                        }
+                    },
+                    Err(e) => {
+                        return report
+                            .fail(Status::Error, format!("{e}. Inicia sesión en Claude Code."))
+                    }
+                },
+                // Sin credenciales en el entorno elegido: hace falta login
+                // AQUÍ (no en otro entorno).
+                Err(SessionError::Absent(m)) => {
                     return report.fail(
-                        Status::Warning,
-                        "La autorización del Keychain no se completó a tiempo. Concede el acceso a «Claude Code-credentials» y espera al próximo refresco.",
+                        Status::NeedsLogin,
+                        format!("{m}. Inicia sesión en Claude Code."),
                     )
                 }
-                KeychainOutcome::NoSession => {
+                // El fallo es del subsistema o de la distro: la acción
+                // correcta no es "inicia sesión".
+                Err(SessionError::Wsl(e)) => {
+                    return report.fail(Status::Error, format!("WSL: {e:?}"))
+                }
+                Err(e) => return report.fail(Status::Error, e.to_string()),
+            }
+        }
+        None => match resolve_path(cfg.credentials_path.as_deref(), &[default_path]) {
+            Ok(p) => match read_json(&p).and_then(|v| Credentials::parse(&v)) {
+                Ok(c) => c,
+                Err(e) => return report.fail(Status::Error, e),
+            },
+            // El archivo no existe: en macOS Claude Code guarda la sesión OAuth en
+            // el Keychain, no en ~/.claude. El respaldo es solo de la sesión
+            // principal sin ruta explícita (ver `should_fallback_keychain`).
+            Err(e) => {
+                if !should_fallback_keychain(cfg.credentials_path.as_deref()) {
                     return report.fail(
                         Status::NeedsLogin,
                         format!("{e}. Inicia sesión en Claude Code."),
-                    )
+                    );
+                }
+                match keychain_fallback().await {
+                    KeychainOutcome::Session(c) => c,
+                    KeychainOutcome::TimedOut => {
+                        return report.fail(
+                            Status::Warning,
+                            "La autorización del Keychain no se completó a tiempo. Concede el acceso a «Claude Code-credentials» y espera al próximo refresco.",
+                        )
+                    }
+                    KeychainOutcome::NoSession => {
+                        return report.fail(
+                            Status::NeedsLogin,
+                            format!("{e}. Inicia sesión en Claude Code."),
+                        )
+                    }
                 }
             }
-        }
+        },
     };
 
     let mut report = report;

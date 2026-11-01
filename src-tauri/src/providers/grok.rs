@@ -14,6 +14,7 @@
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
+use crate::wsl::{SessionError, SessionResolver};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -57,16 +58,55 @@ pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathB
     )
 }
 
-pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+pub async fn fetch(
+    cfg: &SubscriptionConfig,
+    who: Who<'_>,
+    http: &reqwest::Client,
+    resolver: Option<&SessionResolver<'_>>,
+) -> UsageReport {
     let report = who.report("Grok", Kind::Subscription);
 
-    let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
-        Ok(p) => p,
-        Err(e) => return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «grok login».")),
-    };
-    let auth_json = match read_json(&path) {
-        Ok(v) => v,
-        Err(e) => return report.fail(Status::NeedsLogin, e),
+    // La sesión se resuelve en el ENTORNO elegido (#91): con resolvedor, la
+    // ruta por defecto se compone bajo su home (el del usuario Linux si el
+    // entorno es WSL) y la lectura va por `read_file` del adaptador
+    // (`wsl cat`) en vez del disco del host. Sin resolvedor, el
+    // comportamiento de siempre (disco local).
+    let auth_json: Value = match resolver {
+        Some(r) => {
+            let default = r.default_path(Path::new(".grok").join("auth.json").as_path());
+            let path = r.resolve(cfg.credentials_path.as_deref(), &default);
+            match r.read(&path) {
+                Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return report.fail(Status::Error, format!("{e}. Ejecuta «grok login»."))
+                    }
+                },
+                // Sin credenciales en el entorno elegido: hace falta login
+                // AQUÍ (no en otro entorno).
+                Err(SessionError::Absent(m)) => {
+                    return report.fail(Status::NeedsLogin, format!("{m}. Ejecuta «grok login»."))
+                }
+                // El fallo es del subsistema o de la distro: la acción
+                // correcta no es "inicia sesión".
+                Err(SessionError::Wsl(e)) => {
+                    return report.fail(Status::Error, format!("WSL: {e:?}"))
+                }
+                Err(e) => return report.fail(Status::Error, e.to_string()),
+            }
+        }
+        None => {
+            let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
+                Ok(p) => p,
+                Err(e) => {
+                    return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «grok login»."))
+                }
+            };
+            match read_json(&path) {
+                Ok(v) => v,
+                Err(e) => return report.fail(Status::NeedsLogin, e),
+            }
+        }
     };
     let now = Utc::now();
     let auth = match Auth::parse(&auth_json, now) {
