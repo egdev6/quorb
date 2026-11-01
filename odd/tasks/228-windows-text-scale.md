@@ -22,9 +22,9 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 - T0 · S11 step 0 · user on Windows (remote debugging of installed v0.8.0) · no commit
 - T1 · S1-S4, S8, S10 · inline · text-scale module + hook · done f5c872a
 - T2 · S2, S5, S9, S10 · worker · strip geometry · done dae140d
-- T3 · S6, S10 · drag · screenX delta waits on T0
+- T3 · S6, S10 · worker · drag · done c24eb0b
 - T4 · S7, S8, S10 · worker · detail panel · done 8981e95
-- T5 · S12 · follow-up issue (publish, needs user OK)
+- T5 · S12 · follow-up issue · done egdev6/quorb#229
 - T6 · S11 · Windows build + manual validation (user)
 - T7 · S12 · PR (needs user authorization)
 
@@ -37,3 +37,4 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 - L5: maintainer approved the spec with S4, assigned matraket, label `status:approved` (2026-11-01).
 - L6: delivery strategy: one PR (S12) made of per-task commits; the branch passes ~400 authored lines after T4 (484, mostly tests), accepted because the maintainer asked for a single PR and each commit stays reviewable alone.
 - L7 (T0, user on Windows, installed v0.8.0, text size 106 %, remote debugging): `{"dpr": 1.059999942779541, "sf": 1, "screenX": 2390.566162109375, "physX": 2534, "ratio": "1.0600"}`. `screenX` is CSS px (physical / dpr), so the drag delta must be `Δcss × sf × t` (S6 confirmed). Custom scale 102 % is not active on that monitor (sf = 1); dpr carries float32 noise that `textScale` rounding absorbs.
+- L8: follow-up issue for the detail max width published as egdev6/quorb#229 (user approved). Branch at 575 authored lines after T3, still one PR per S12.
