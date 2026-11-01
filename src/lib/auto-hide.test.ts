@@ -6,7 +6,7 @@ import hook from './useDockReveal.ts?raw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
 import { resetDragMode, setDragMode } from './drag-session';
-import { contains, panelHeightLimit, stripRect, type Edge } from './dock';
+import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
 import { physicalPanelBounds } from './detail-panel';
 import type { UsageReport } from './types';
 
@@ -322,10 +322,10 @@ describe('Widget effect mutation ordering', () => {
       grip: grip!,
     };
   };
-  const renderWidget = (dragging: boolean, autoHide = false) => {
+  const renderWidget = (dragging: boolean, autoHide = false, sf = geo.sf) => {
     // Hook slots belong to Widget (useDockReveal/useUpdaterMode are isolated above).
     widgetEffects.states[0] = autoHide ? { autoHide, accounts: [], nineRouter: { baseUrl: '' } } : null;
-    widgetEffects.states[5] = geo;
+    widgetEffects.states[5] = sf === geo.sf ? geo : { ...geo, sf };
     widgetEffects.states[6] = { w: 400, h: 80 };
     widgetEffects.states[9] = dragging;
     return commitWidget();
@@ -600,8 +600,10 @@ describe('Widget effect mutation ordering', () => {
     }
   });
 
-  const dragFixture = () => {
+  // Text scale and monitor scale of the docked strip, and the grip's CSS offset (#228).
+  const dragFixture = (scale = 1, sf = geo.sf, gripLeft = 0) => {
     configureNative();
+    widgetEffects.textScale = scale;
     let position = { x: 760, y: 0 };
     const frames = new Map<number, FrameRequestCallback>();
     let frameId = 0;
@@ -624,13 +626,13 @@ describe('Widget effect mutation ordering', () => {
     });
     const target = {
       setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(),
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 16, height: 80 }),
+      getBoundingClientRect: () => ({ left: gripLeft, top: 0, width: 16, height: 80 }),
     };
     const pointer = (screenY: number, pointerId = 7) => ({
       button: 0, pointerId, screenX: 768, screenY, currentTarget: target,
       target: { closest: () => target }, preventDefault: vi.fn(),
     }) as unknown as ReactPointerEvent<HTMLSpanElement>;
-    const { grip } = renderWidget(false);
+    const { grip } = renderWidget(false, false, sf);
     const runFrame = () => {
       const [id, callback] = [...frames.entries()][0];
       frames.delete(id);
@@ -646,6 +648,50 @@ describe('Widget effect mutation ordering', () => {
       applyPosition: (next: { x: number; y: number }) => { position = { x: next.x, y: next.y }; },
     };
   };
+
+  // PointerEvent.screenX is CSS px on Windows (#228, L7): physical = Δcss × sf × t.
+  it.each([[1.06, 1], [1.2, 1.25]])('moves the window by the CSS pointer delta times text scale %s and monitor scale %s', async (scale, sf) => {
+    const f = dragFixture(scale, sf);
+    f.grip.onPointerDown(f.pointer(40));
+    await flush();
+    f.acceptFrame(1000);
+    await flush();
+    expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
+    expect(widgetEffects.setPosition.mock.calls[0][0]).toMatchObject({ x: 760, y: Math.round(960 * (sf * scale)) });
+  });
+
+  it.each([
+    // [case, text scale, live ratio, scale expected for the grip centre]
+    ['the live ratio of a window moved to another monitor', 1.06, 2, 2],
+    ['the drag scale when the ratio is unreadable', 1.06, undefined, 1.06],
+    ['the monitor scale without a text scale', 1, undefined, 1],
+  ] as const)('snaps by the grip centre measured through %s', async (_, scale, ratio, expected) => {
+    const f = dragFixture(scale, geo.sf, 400);
+    if (ratio) vi.stubGlobal('devicePixelRatio', ratio);
+    f.grip.onPointerDown(f.pointer(40));
+    await flush();
+    await f.grip.onPointerUp(f.pointer(40));
+    const snap = nearestEdge(geo.area, 760 + 408 * expected, 40 * expected);
+    expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
+    expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: snap.edge, dockOffset: snap.offset });
+    expect(widgetEffects.states[9]).toBe(false);
+  });
+
+  it.each([
+    // [text scale, monitor scale, live ratio, expected clip scale]
+    [1, 1, 1.25, 1.25],
+    [1.06, 1.02, undefined, 1.02 * 1.06],
+    [1, 1.5, undefined, 1.5],
+  ] as const)('clips the dragged strip with text scale %s, monitor scale %s and live ratio %s', async (scale, sf, ratio, expected) => {
+    configureNative();
+    widgetEffects.textScale = scale;
+    if (ratio) vi.stubGlobal('devicePixelRatio', ratio);
+    const cleanup = renderWidget(true, false, sf).drag.run();
+    await flush();
+    expect(widgetEffects.clip).toHaveBeenCalledTimes(1);
+    expect(widgetEffects.clip.mock.calls[0][0].radii).toEqual([14 * expected, 14 * expected, 0, 0]);
+    if (typeof cleanup === 'function') cleanup();
+  });
 
   it('drains every accepted RAF before snap, including an older pending dispatch', async () => {
     const f = dragFixture();

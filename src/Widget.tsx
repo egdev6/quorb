@@ -147,6 +147,15 @@ interface Size {
 
 const sameSize = (a: Size | null, b: Size) => !!a && a.w === b.w && a.h === b.h;
 
+/**
+ * CSS px to physical px of this WebView where it is now, which during a drag may
+ * already be another monitor (#228); `fallback` when the ratio is unreadable.
+ */
+const liveRatio = (fallback: number) => {
+  const ratio = globalThis.devicePixelRatio;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : fallback;
+};
+
 export function Widget() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [reports, setReports] = useState<UsageReport[]>([]);
@@ -226,7 +235,7 @@ export function Widget() {
   const shown = useRef(false);
   /** El usuario ocultó la tira desde la bandeja: la visibilidad es suya (#179). */
   const hiddenByUser = useRef(false);
-  const drag = useRef<{ sx: number; sy: number; start: PhysicalPosition | null; sf: number; raf: number; pointerId: number; ending: boolean } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; start: PhysicalPosition | null; scale: number; raf: number; pointerId: number; ending: boolean } | null>(null);
   const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const lastReorderAt = useRef(0);
   const openPeakRef = useRef<() => void>(() => {});
@@ -666,12 +675,12 @@ export function Widget() {
       const size = await getCurrentWindow().innerSize();
       if (disposed || !current() || !stripRef.current) return;
       await clipSurfaceSafely(
-        measureSurfaceClip(stripRef.current, { w: size.width, h: size.height }, geo.sf),
+        measureSurfaceClip(stripRef.current, { w: size.width, h: size.height }, liveRatio(geo.sf * textScale)),
         (clip) => api.setSurfaceClip(clip, !autoHide), console.warn, stripRef.current,
       );
     }).catch(console.warn);
     return () => { disposed = true; };
-  }, [dragging, geo, autoHide, widgetQueue]);
+  }, [dragging, geo, autoHide, widgetQueue, textScale]);
 
   // Safety net for the compositor drag (issue #180, maintainer review point
   // 3): under the compositor's move grab the client may never receive the
@@ -1044,7 +1053,9 @@ export function Widget() {
     const initialStart = widgetBounds.current
       ? new PhysicalPosition(widgetBounds.current.x, widgetBounds.current.y)
       : null;
-    const d = { sx: e.screenX, sy: e.screenY, start: initialStart, sf: geo.sf, raf: 0, pointerId: e.pointerId, ending: false };
+    // `screenX`/`screenY` are CSS px of the docked window (#228): its monitor scale
+    // times the text scale turns their delta into physical px.
+    const d = { sx: e.screenX, sy: e.screenY, start: initialStart, scale: geo.sf * textScale, raf: 0, pointerId: e.pointerId, ending: false };
     drag.current = d;
     const current = () => dragMounted.current && drag.current === d;
     enqueueDrag(async () => {
@@ -1071,8 +1082,8 @@ export function Widget() {
     const d = drag.current;
     if (!d?.start || d.ending || e.pointerId !== d.pointerId) return;
     const current = () => dragMounted.current && drag.current === d;
-    const x = Math.round(d.start.x + (e.screenX - d.sx) * d.sf);
-    const y = Math.round(d.start.y + (e.screenY - d.sy) * d.sf);
+    const x = Math.round(d.start.x + (e.screenX - d.sx) * d.scale);
+    const y = Math.round(d.start.y + (e.screenY - d.sy) * d.scale);
     cancelAnimationFrame(d.raf);
     d.raf = requestAnimationFrame(() => {
       enqueueDrag(async () => {
@@ -1120,12 +1131,14 @@ export function Widget() {
         // reporta el orbe imantado en esa esquina, revisar primero el redondeo.
         const posX = (wpos.x !== 0 || wpos.y !== 0)
           ? wpos.x
-          : (d.start?.x ?? 0) + (e.screenX - d.sx) * d.sf;
+          : (d.start?.x ?? 0) + (e.screenX - d.sx) * d.scale;
         const posY = (wpos.x !== 0 || wpos.y !== 0)
           ? wpos.y
-          : (d.start?.y ?? 0) + (e.screenY - d.sy) * d.sf;
-        const cx = posX + (grip ? grip.left + grip.width / 2 : 0) * d.sf;
-        const cy = posY + (grip ? grip.top + grip.height / 2 : 0) * d.sf;
+          : (d.start?.y ?? 0) + (e.screenY - d.sy) * d.scale;
+        // The grip offset is CSS px of the window where it was dropped (#228).
+        const ratio = liveRatio(d.scale);
+        const cx = posX + (grip ? grip.left + grip.width / 2 : 0) * ratio;
+        const cy = posY + (grip ? grip.top + grip.height / 2 : 0) * ratio;
         const mon =
           mons.find((m) => contains({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height }, cx, cy)) ??
           (await currentMonitor());
