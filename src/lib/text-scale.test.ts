@@ -56,3 +56,16 @@ describe('settled text scale (#228, S4)', () => {
     expect(settleTextScale(1.06, { dprBefore: 1, sf: 0, dprAfter: 1 })).toBe(1.06);
   });
 });
+
+describe('settled text scale boundaries (#228, S4)', () => {
+  it('accepts exactly 100 % and 225 % and rejects just outside', () => {
+    expect(settleTextScale(1.5, { dprBefore: 1.25, sf: 1.25, dprAfter: 1.25 })).toBe(1);
+    expect(settleTextScale(1, { dprBefore: 2.25, sf: 1, dprAfter: 2.25 })).toBe(2.25);
+    expect(settleTextScale(1.06, { dprBefore: 0.99, sf: 1, dprAfter: 0.99 })).toBe(1.06);
+    expect(settleTextScale(1.06, { dprBefore: 2.26, sf: 1, dprAfter: 2.26 })).toBe(1.06);
+  });
+
+  it('absorbs the float32 noise measured on Windows', () => {
+    expect(settleTextScale(1, { dprBefore: 1.059999942779541, sf: 1, dprAfter: 1.059999942779541 })).toBe(1.06);
+  });
+});
