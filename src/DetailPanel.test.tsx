@@ -8,6 +8,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { DetailPanel } from './DetailPanel';
+import source from './DetailPanel.tsx?raw';
 import { confirmDetailPlacement, type DetailPlacementReport } from './detail-placement';
 import type { PhysicalBounds } from './lib/detail-panel';
 import { samePlacement } from './lib/widget-placement';
@@ -16,6 +17,16 @@ describe('DetailPanel (SSR)', () => {
   it('renders nothing until the widget sends state', () => {
     // Los efectos no corren en el servidor: sin estado no hay marcado.
     expect(renderToStaticMarkup(<DetailPanel />)).toBe('');
+  });
+
+  // Text scale (#228): the detail window measures its own text scale and fits,
+  // clips and re-lays out with it; physical bounds keep the monitor scale alone.
+  it('fits and clips with the text scale of its own window', () => {
+    expect(source).toContain('const textScale = useTextScale();');
+    expect(source).toContain('fitPanel(data, layoutHeightOf(panel, entry), base, textScale)');
+    expect(source).toContain('measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor)');
+    expect(source).toContain('physicalPanelBounds(detailBounds(data, next), data.scaleFactor)');
+    expect(source).toContain('}, [data, enqueue, textScale]);');
   });
 });
 

@@ -81,18 +81,20 @@ export interface PanelFit {
  * Fits the panel's natural content into the available work area.
  *
  * `layoutHeight` is the panel's unscaled CSS height (transforms do not reflow, so
- * this is stable regardless of the scale currently applied). The natural logical
- * height is that value at basal zoom. When it exceeds `maxHeight` the whole panel
- * is scaled down proportionally; otherwise it keeps its basal zoom and natural
- * height. Returning `maxHeight` verbatim when scaling avoids the ceil() phantom
- * pixel that a 600.000061 rendered box would otherwise produce.
+ * this is stable regardless of the scale currently applied). The natural height,
+ * in monitor units, is that value at basal zoom times `scale`, the text scale of
+ * the detail window (#228). When it exceeds `maxHeight` the whole panel is scaled
+ * down proportionally; otherwise it keeps its basal zoom and natural height. The
+ * zoom is a CSS transform, so it never carries the text scale; width and height
+ * are monitor units. Returning `maxHeight` verbatim when scaling avoids the ceil()
+ * phantom pixel that a 600.000061 rendered box would otherwise produce.
  */
-export function fitPanel(placement: DetailPlacement, layoutHeight: number, base: number): PanelFit {
-  const natural = Math.max(1, layoutHeight) * base;
+export function fitPanel(placement: DetailPlacement, layoutHeight: number, base: number, scale = 1): PanelFit {
+  const natural = Math.max(1, layoutHeight) * base * scale;
   const factor = natural > placement.maxHeight ? placement.maxHeight / natural : 1;
   return {
     zoom: base * factor,
-    width: placement.width * factor,
+    width: placement.width * scale * factor,
     height: factor < 1 ? Math.max(1, placement.maxHeight) : Math.max(1, Math.ceil(natural)),
     scaled: factor < 1,
   };

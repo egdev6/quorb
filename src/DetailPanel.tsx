@@ -7,6 +7,7 @@ import { ProviderDetails } from './components/ProviderDetails';
 import { api } from './lib/api';
 import { intlLocale, t } from './i18n';
 import { useLocale } from './i18n/use-locale';
+import { useTextScale } from './lib/useTextScale';
 import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
@@ -32,6 +33,8 @@ export function DetailPanel() {
   const [data, setData] = useState<DetailState | null>(null);
   // Idioma de esta ventana: una lectura + `config-changed`; `es` hasta cargar.
   const locale = useLocale();
+  /** Text scale of this window, measured here and never derived from the widget (#228). */
+  const textScale = useTextScale();
   const [positioned, setPositioned] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -115,7 +118,7 @@ export function DetailPanel() {
     const layout = (entry?: ResizeObserverEntry) => {
       const panel = panelRef.current;
       if (disposed || !panel) return;
-      const next = fitPanel(data, layoutHeightOf(panel, entry), base);
+      const next = fitPanel(data, layoutHeightOf(panel, entry), base, textScale);
       setFit((old) => (old && sameFit(old, next) ? old : next));
       // Compare native (physical) bounds, not logical ones: a DPI change with identical
       // logical geometry must still resize the window.
@@ -138,7 +141,7 @@ export function DetailPanel() {
         const cache = (confirmed: PhysicalBounds) => { lastAppliedRef.current = confirmed; lastAppliedReadBackRef.current = true; };
         let retry = confirmDetailPlacement(await api.setDetailBounds(physical), cache);
         if (!current() || disposed) return;
-        await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
+        await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
         if (!current() || disposed) return;
         positionedRef.current = true;
         setPositioned(true);
@@ -161,7 +164,7 @@ export function DetailPanel() {
     const observer = new ResizeObserver((entries) => layout(entries[0]));
     observer.observe(panelRef.current);
     return () => { disposed = true; observer.disconnect(); };
-  }, [data, enqueue]);
+  }, [data, enqueue, textScale]);
 
   useEffect(() => {
     if (!toast) return;
