@@ -67,7 +67,7 @@ impl std::fmt::Display for SessionError {
 /// acotada. Para `Host` no se usa WSL: la lectura es del disco local.
 ///
 /// El adaptador va en un `Arc` (y no prestado) para que la lectura pueda
-///derivarse a un hilo propio (`read_async`): en modo WSL cada lectura
+/// derivarse a un hilo propio (`read_async`): en modo WSL cada lectura
 /// espera a `wsl.exe`, y bloquear el executor async congelaría el widget
 /// (revisión PR #220).
 #[derive(Clone)]
