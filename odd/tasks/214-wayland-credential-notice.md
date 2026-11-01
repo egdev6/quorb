@@ -76,6 +76,16 @@ cambio de producto sigue siendo decisión del mantenedor sobre el resultado real
   reporte (punto 3 del feedback, requiere sesión Wayland interactiva del
   contribuidor y no es verificable desde CLI); (b) actualizar el cuerpo de la PR;
   los demás ajustes pedidos quedan aplicados.
+- **Evidencia manual del cierre (2026-11-01, sesión Wayland nativa del
+  contribuidor) — hallazgo negativo**: al mover el puntero fuera del panel, el
+  popup **no se cierra** con apertura por hover **ni** con apertura por clic
+  (#170); ESC cierra y la reapertura anda bien. Además, el panel translúcido
+  cubre por completo la tira: el cambio de proveedor por hover es imposible y
+  el clic sobre otro orbe no es alcanzable mientras el popup está abierto. El
+  "cierre sin ciclo de reapertura" que pidió el mantenedor no se cumple y la
+cobertura real es completa, peor que la "parcial" del trade-off declarado.
+  Reportar con honestidad en #230; el caso a favor de la candidata B (render
+  inline en la tira) se refuerza.
 
 ## Problema
 
