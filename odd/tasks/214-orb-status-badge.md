@@ -47,7 +47,7 @@ No-goals: C (`transient_for`), detalle B completo (panel inline en la tira), cam
    - Nota observada: al abrir el panel por hover el tooltip desaparece y el panel sigue apareciendo centrado en Wayland nativo — limitación conocida de `main`, fuera de alcance de este cambio (decisión #230: sin C).
    - Halo rojo al hover identificado como dependiente del color de aro elegido en Ajustes (`--ring-1`), no un estado.
    - Tamaños: el punto escala y se ve bien; `GDK_BACKEND=x11` intacto.
-5. **[ ] Commit de unidad** en rama propia (`fix/214-orb-status-badge`, desde `main`; push al fork remoto local `fork` (SrStamm/quorb)): tests y docs junto al comportamiento, mensaje Conventional Commit (`fix(widget): ...` o equivalente). Registrar la identidad del commit acá.
+5. **[x] Commit de unidad** en rama propia desde `main`: `fix/214-orb-status-badge` → commit `94e7334` (`fix(widget): el orbe avisa la falta de credencial con badge y motivo (#214)`; 3 archivos, +111/-3: implementación, tests y este documento).
 6. **[ ] Evidencia y PR**: presentar evidencia al mantenedor en #214 y abrir la PR autorizada (ya con luz verde por el mantenedor: «Con ese ajuste… Adelante con la PR»), asignada a SrStamm, con la validación manual documentada; revalidar assignees/estado antes de abrir.
 
 ## Notas
