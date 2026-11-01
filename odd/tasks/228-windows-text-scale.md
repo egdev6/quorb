@@ -26,7 +26,7 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 - T4 · S7, S8, S10 · worker · detail panel · done 8981e95
 - T5 · S12 · follow-up issue · done egdev6/quorb#229
 - T6 · S11 · Windows build + manual validation (user)
-- T7 · S12 · PR (needs user authorization)
+- T7 · S12 · PR · draft egdev6/quorb#231
 
 ## Log
 
@@ -41,3 +41,4 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 - L9 (T6, user on Windows, local build of ef3a3e3 `quorb.exe --no-bundle`, text size 106 %, one monitor, strip on the right edge): strip complete (three rings, actions, rounded corners) and Claude detail complete in width and height (percentages, bars, history expanded, footer, four rounded corners). Checks 1-2 of S11 pass; pending: drag, live text-size change, 100 % no-regression, 3 monitors at work.
 - L10 (T6, user on Windows, same local build): S11 checks 3-5 pass: drag follows the cursor and snaps to the edge; live text-size change re-places without restart; 100 % looks like the installed v0.8.0. Extra: text size 140 % applied live, strip scaled and complete on the right edge. Pending: 3 monitors with different scales (at work).
 - L11 (T6, video /mnt/c/Users/acester/Videos/arrastre-tira.mp4, 8.8 s, frames at 5 fps): during the whole horizontal sweep the cursor stays on the grip (no cumulative drift, so the delta scale is right); only in the fastest frames (1.0-1.2 s, moving right) the cursor runs ~30 px ahead of the grip, the usual rAF + IPC lag, which recovers in the next frame.
+- L12 (T7): draft PR egdev6/quorb#231 opened with user authorization; npm test (vitest 898, node 298), typecheck and cargo test --locked on Windows (404 passed, 1 ignored) green. Pending: 3-monitor validation, attach drag video.
