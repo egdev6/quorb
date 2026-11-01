@@ -36,3 +36,4 @@ Strip and detail windows are undersized on Windows when Accessibility "Text size
 - L4: maintainer review 1 replaced "positions with sf, sizes with dpr" by normalizing before geometry; proposal refined it to `t` (S1).
 - L5: maintainer approved the spec with S4, assigned matraket, label `status:approved` (2026-11-01).
 - L6: delivery strategy: one PR (S12) made of per-task commits; the branch passes ~400 authored lines after T4 (484, mostly tests), accepted because the maintainer asked for a single PR and each commit stays reviewable alone.
+- L7 (T0, user on Windows, installed v0.8.0, text size 106 %, remote debugging): `{"dpr": 1.059999942779541, "sf": 1, "screenX": 2390.566162109375, "physX": 2534, "ratio": "1.0600"}`. `screenX` is CSS px (physical / dpr), so the drag delta must be `Δcss × sf × t` (S6 confirmed). Custom scale 102 % is not active on that monitor (sf = 1); dpr carries float32 noise that `textScale` rounding absorbs.
