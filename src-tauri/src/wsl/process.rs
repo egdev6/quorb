@@ -889,6 +889,7 @@ mod tests {
     ///  - atiende TERM y muere -> NO se escala a KILL;
     ///  - IGNORA TERM -> si se escala a KILL;
     ///  - ya terminado -> nada que matar (sin error).
+    ///
     /// En los tres, la distro NO se toca (nunca `--terminate`) y el base
     /// de la operacion se limpia.
     #[test]

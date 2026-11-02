@@ -795,9 +795,11 @@ mod tests {
     /// nunca inventa una distro).
     #[test]
     fn session_env_maps_wsl_with_distro_and_guards_empty_distro() {
-        let mut cfg = AppConfig::default();
-        cfg.session_env = SessionEnvConfig::Wsl;
-        cfg.wsl_distro = "Ubuntu-24.04".into();
+        let mut cfg = AppConfig {
+            session_env: SessionEnvConfig::Wsl,
+            wsl_distro: "Ubuntu-24.04".into(),
+            ..Default::default()
+        };
         assert_eq!(
             cfg.session_env(),
             crate::wsl::SessionEnv::Wsl {

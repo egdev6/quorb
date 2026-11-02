@@ -816,7 +816,7 @@ mod tests {
 
     /// La sonda de WSL es `--version` (contrato W1 §6); la build antigua
     /// sin soporte se cubre en `diagnose_maps_old_build_without_version_*`.
-
+    ///
     /// `terminate()` es el nivel 2: `--terminate <distro>`, sin el
     /// separador `--` (es una opción de `wsl.exe`, no un comando).
     #[test]
