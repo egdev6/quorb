@@ -29,7 +29,6 @@ pub mod wsl;
 
 use config::AppConfig;
 use model::UsageReport;
-use wsl::WslAdapter;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -43,6 +42,7 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 const SETTINGS: &str = "settings";
