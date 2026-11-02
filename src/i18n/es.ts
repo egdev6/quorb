@@ -355,10 +355,10 @@ export const es = {
           dbLabel: 'Base de datos de Cursor',
         },
         antigravity: {
-          kicker: 'Suscripción · IDE abierto',
-          note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. En Windows usa el IDE; en macOS usa la sesión local de agy CLI.',
+          kicker: 'Suscripción · IDE de escritorio',
+          note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Sesión del IDE de escritorio. El agy CLI en macOS no expone el token CSRF que exige este endpoint.',
           openTitle: 'Abre Antigravity con tu cuenta de Google',
-          openBody: 'Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.',
+          openBody: 'Quorb consulta el servidor local que arranca el IDE de escritorio en este equipo. Solo se lee con ese IDE abierto; no se guarda ningún token. El agy CLI en macOS no expone el token CSRF, así que esa sesión no se puede leer.',
         },
         copilot: {
           note: 'Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).',

@@ -12,6 +12,13 @@
 //!   · puerto HTTP → línea «listening on random port at N for HTTP» del log
 //!     `language_server.log`, que se reescribe en cada arranque.
 //!
+//! En macOS se intenta primero esa detección del IDE de escritorio. El log del
+//! agy CLI (`~/.gemini/antigravity-cli/log/cli-*.log`) solo se usa como
+//! alternativa, y únicamente si el proceso sigue vivo, su ejecutable es `agy`
+//! o `language_server`, y la línea de comandos trae `--csrf_token`. El endpoint
+//! local responde 401 `missing CSRF token` si el header va vacío: no se envía
+//! un token vacío ni se anuncia soporte del CLI mientras no lo exponga.
+//!
 //! Nada sale de la máquina: la petición va a localhost y el token no se guarda.
 
 use super::{net_error, Who};
@@ -62,9 +69,7 @@ pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, _http: &reqwest::Clie
     let Some(server) = server else {
         return report.fail(Status::Warning, NOT_RUNNING);
     };
-    let port = log_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|log| http_port(&log, server.pid));
+    let port = http_port_for(server.pid);
     let Some(port) = port else {
         return report.fail(
             Status::Warning,
@@ -308,41 +313,51 @@ fn settle_windows(
     }
 }
 
-/// Ruta del log del language server de Antigravity según el SO.
-///
-/// · Windows → `%APPDATA%\Antigravity\logs\language_server.log` (IDE desktop)
-/// · macOS   → `~/.gemini/antigravity-cli/log/cli-*.log` más reciente (agy CLI)
-/// · Linux   → `~/.config/Antigravity/logs/language_server.log` (IDE / agy CLI)
-fn log_path() -> Option<PathBuf> {
+/// Log del IDE de escritorio. En macOS es `~/Library/Application Support/…`.
+fn ide_log_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(super::home)
+        .join("Antigravity")
+        .join("logs")
+        .join("language_server.log")
+}
+
+/// Logs donde puede estar el puerto del `pid`: primero el del IDE y, en macOS,
+/// después los del agy CLI, del más reciente al más antiguo.
+fn log_candidates() -> Vec<PathBuf> {
+    let mut paths = vec![ide_log_path()];
     #[cfg(target_os = "macos")]
-    {
-        // El agy CLI escribe en ~/.gemini/antigravity-cli/log/cli-YYYYMMDD_HHMMSS.log.
-        // Hay un archivo por sesión; tomamos el más reciente (orden lexicográfico del nombre).
-        let log_dir = dirs::home_dir()?
-            .join(".gemini")
-            .join("antigravity-cli")
-            .join("log");
-        return std::fs::read_dir(&log_dir)
-            .ok()?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                let n = e.file_name();
-                let s = n.to_string_lossy();
-                s.starts_with("cli-") && s.ends_with(".log")
-            })
-            .max_by_key(|e| e.file_name())
-            .map(|e| e.path());
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Some(
-            dirs::config_dir()
-                .unwrap_or_else(super::home)
-                .join("Antigravity")
-                .join("logs")
-                .join("language_server.log"),
-        )
-    }
+    paths.extend(cli_log_paths());
+    paths
+}
+
+fn http_port_for(pid: u32) -> Option<u16> {
+    log_candidates().into_iter().find_map(|path| {
+        let log = std::fs::read_to_string(path).ok()?;
+        http_port(&log, pid)
+    })
+}
+
+/// Logs `cli-*.log` del agy CLI, del nombre más reciente al más antiguo.
+#[cfg(target_os = "macos")]
+fn cli_log_paths() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let log_dir = home.join(".gemini").join("antigravity-cli").join("log");
+    let mut logs: Vec<PathBuf> = std::fs::read_dir(log_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("cli-") && name.ends_with(".log")
+        })
+        .map(|e| e.path())
+        .collect();
+    logs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    logs
 }
 
 /// Puerto HTTP que anunció en el log el proceso `pid`. Solo se mira el bloque de
@@ -397,6 +412,23 @@ fn pick_server<'a>(procs: impl IntoIterator<Item = (u32, &'a str)>) -> Option<Se
     })
 }
 
+#[cfg(not(windows))]
+fn find_server_from_ps() -> Option<Server> {
+    let out = std::process::Command::new("ps")
+        .args(["-ww", "-eo", "pid=,args="])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let procs: Vec<(u32, &str)> = text
+        .lines()
+        .filter_map(|l| {
+            let (pid, cmd) = l.trim_start().split_once(' ')?;
+            Some((pid.parse().ok()?, cmd))
+        })
+        .collect();
+    pick_server(procs)
+}
+
 #[cfg(windows)]
 fn find_server() -> Option<Server> {
     use std::os::windows::process::CommandExt;
@@ -428,59 +460,83 @@ fn find_server() -> Option<Server> {
     pick_server(procs.iter().map(|(p, c)| (*p, c.as_str())))
 }
 
-
-/// En macOS el agy CLI gestiona su language server internamente y no expone
-/// `--app_data_dir` ni `--csrf_token` en los argumentos del proceso visible
-/// por `ps`. El PID se lee del log más reciente del CLI.
-///
-/// El endpoint local del IDE no requiere CSRF desde loopback cuando se lanza
-/// a través del CLI; si llega a requerir token se devolverá 401 y el usuario
-/// lo verá en el mensaje de error.
+/// En macOS, el IDE de escritorio primero. El agy CLI solo entra si el proceso
+/// del log es el language server y publica `--csrf_token`.
 #[cfg(target_os = "macos")]
 fn find_server() -> Option<Server> {
-    let log = log_path().and_then(|p| std::fs::read_to_string(p).ok())?;
-    let pid = latest_server_pid(&log)?;
-    // Verificar que el proceso sigue vivo (kill -0 no envía señal, solo comprueba).
-    let alive = std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !alive {
-        return None;
+    if let Some(server) = find_server_from_ps() {
+        return Some(server);
     }
-    // El CLI no expone el CSRF token via ps; se envía sin token y el servidor
-    // responde 401 si lo requiere (el usuario verá el error correspondiente).
-    Some(Server {
-        pid,
-        csrf: String::new(),
-    })
+    for path in cli_log_paths() {
+        let Ok(log) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Some(pid) = latest_server_pid(&log) else {
+            continue;
+        };
+        let Some(comm) = process_field(pid, "comm=") else {
+            continue;
+        };
+        let args = process_field(pid, "args=").unwrap_or_default();
+        if let Some(server) = server_from_cli(&log, &comm, &args) {
+            return Some(server);
+        }
+    }
+    None
 }
 
-/// Extrae el PID más reciente de la línea «Starting language server process with pid NNN».
-/// Se recorre el log al revés para tomar siempre el último arranque.
-fn latest_server_pid(log: &str) -> Option<u32> {
-    const START: &str = "Starting language server process with pid ";
-    log.lines()
-        .rev()
-        .find_map(|l| l.split(START).nth(1)?.split_whitespace().next()?.parse().ok())
+#[cfg(target_os = "macos")]
+fn process_field(pid: u32, field: &str) -> Option<String> {
+    let out = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-ww", "-o", field])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn find_server() -> Option<Server> {
-    let out = std::process::Command::new("ps")
-        .args(["-ww", "-eo", "pid=,args="])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let procs: Vec<(u32, &str)> = text
-        .lines()
-        .filter_map(|l| {
-            let (pid, cmd) = l.trim_start().split_once(' ')?;
-            Some((pid.parse().ok()?, cmd))
-        })
-        .collect();
-    pick_server(procs)
+    find_server_from_ps()
+}
+
+/// `comm` del proceso: el IDE se llama `language_server…` y el agy CLI, `agy`.
+#[cfg(any(target_os = "macos", test))]
+fn comm_is_antigravity_server(comm: &str) -> bool {
+    let base = comm.rsplit(['/', '\\']).next().unwrap_or(comm).trim();
+    base.starts_with("language_server") || base == "agy"
+}
+
+/// Servidor leído del log del CLI. Sin token, o si el PID ya no es ese
+/// proceso, no hay servidor utilizable: un PID reutilizado no debe consultarse.
+#[cfg(any(target_os = "macos", test))]
+fn server_from_cli(log: &str, comm: &str, args: &str) -> Option<Server> {
+    let pid = latest_server_pid(log)?;
+    if !comm_is_antigravity_server(comm) || http_port(log, pid).is_none() {
+        return None;
+    }
+    let csrf = arg_value(args, "--csrf_token")?
+        .trim_matches('"')
+        .to_string();
+    (!csrf.is_empty()).then_some(Server { pid, csrf })
+}
+
+/// Extrae el PID más reciente de la línea «Starting language server process with pid NNN».
+/// Se recorre el log al revés para tomar siempre el último arranque.
+#[cfg(any(target_os = "macos", test))]
+fn latest_server_pid(log: &str) -> Option<u32> {
+    const START: &str = "Starting language server process with pid ";
+    log.lines().rev().find_map(|l| {
+        l.split(START)
+            .nth(1)?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    })
 }
 
 #[cfg(test)]
@@ -917,5 +973,41 @@ I1102 08:48:08.038616      37 server.go:639] Language server listening on random
         assert_eq!(http_port(log, 96831), Some(57615));
         // El puerto gRPC (HTTPS) no se debe devolver.
         assert_ne!(http_port(log, 96831), Some(57614));
+    }
+
+    #[test]
+    fn cli_server_requires_the_language_server_process_and_a_csrf_token() {
+        let log = "\
+Starting language server process with pid 97576
+Language server listening on random port at 57748 for HTTP
+";
+        let with_token = "agy --csrf_token abc-123";
+        assert_eq!(
+            server_from_cli(log, "agy", with_token),
+            Some(Server {
+                pid: 97576,
+                csrf: "abc-123".into()
+            })
+        );
+        // El proceso `agy` no publica el token: no se consulta con el header vacío.
+        assert_eq!(server_from_cli(log, "agy", "agy"), None);
+        // Un PID reutilizado deja de ser el language server.
+        assert_eq!(
+            server_from_cli(
+                log,
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                with_token
+            ),
+            None
+        );
+        assert_eq!(
+            server_from_cli(
+                log,
+                "/Applications/Antigravity.app/Contents/Resources/bin/language_server_macos_arm",
+                with_token
+            )
+            .map(|s| s.csrf),
+            Some("abc-123".into())
+        );
     }
 }
