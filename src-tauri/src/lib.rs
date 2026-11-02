@@ -25,6 +25,7 @@ pub mod wsl;
 
 use config::AppConfig;
 use model::UsageReport;
+use wsl::WslAdapter;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -753,17 +754,20 @@ fn overlay_done(app: AppHandle) {
 }
 
 /// Huella de los ficheros de sesión de los CLIs (ver `providers::session_stamp`).
+///
+/// `Result` porque es un comando `async`: Tauri exige que los commands async
+/// con `State` devuelvan `Result` (el futuro vive más que el borrow).
 #[tauri::command]
-async fn session_stamp(state: State<'_, AppState>) -> u64 {
+async fn session_stamp(state: State<'_, AppState>) -> Result<u64, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    match session_resolver(&cfg, adapter.clone()).await {
+    Ok(match session_resolver(&cfg, adapter.clone()).await {
         // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
         Ok(resolver) => providers::session_stamp(&cfg, resolver.as_ref()).await,
         // El entorno no se puede resolver: sin sello (0), el widget espera al
         // próximo refresco en vez de observar cuentas de otro entorno (#91).
         Err(_) => 0,
-    }
+    })
 }
 
 /// Comprueba la conexión de una cuenta (principal o adicional) con la config guardada,
