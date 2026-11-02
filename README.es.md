@@ -20,7 +20,19 @@
 
 # Quorb
 
-Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de tus suscripciones y APIs de IA en Windows.
+Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de tus suscripciones y APIs de IA en Windows y macOS.
+
+## Descargas — v0.8.0
+
+| Plataforma | Instalador |
+| --- | --- |
+| Windows x64 | [Descargar .exe](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_x64-setup.exe) |
+| macOS 15+ · Apple Silicon (M1+) | [Descargar .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
+
+Ejecutad el instalador de Windows, o abrid el DMG de macOS y copiad Quorb a Aplicaciones.
+La release macOS usa firma Developer ID y notarización de Apple; las actualizaciones son **manuales**.
+La primera descarga por navegador, cuarentena, instalación y GUI en un Mac real siguen pendientes en [#118](https://github.com/egdev6/quorb/issues/118); no retiréis la cuarentena para eludir un aviso.
+Estos enlaces apuntan a **v0.8.0**; consultad [todas las releases](https://github.com/egdev6/quorb/releases) para otras versiones.
 
 ## Qué es
 
@@ -54,7 +66,7 @@ El port nativo a Linux está en curso. El baseline, la matriz de soporte (distro
 </div>
 <!-- egdev:stack:end -->
 
-## Inicio rápido
+## Inicio rápido para desarrollo
 
 Quorb está dirigido actualmente a Windows como plataforma principal. Existe además un port Linux en marcha (ver [Notas de Linux](#notas-de-desarrollo-linux)); macOS está integrado aparte para Apple Silicon.
 
@@ -70,8 +82,6 @@ npm run app:dev
 Abrid Ajustes y activad los proveedores que utilizáis. Claude, Codex, Gemini y Cursor leen las sesiones de sus herramientas oficiales; los demás requieren las credenciales indicadas más abajo.
 
 Para compilar un instalador local, ejecutad `npm run app:build`. Los archivos se guardan bajo `src-tauri/target/release/bundle`.
-
-> No había ninguna release pública de GitHub al preparar este README. El repositorio es privado actualmente; clonarlo requiere acceso. No se presupone que exista un instalador público.
 
 ## Scripts
 
@@ -124,7 +134,7 @@ Algunas integraciones usan endpoints no documentados, que pueden cambiar o dejar
 - Recibid notificaciones de Windows y efectos configurables al superar el umbral y al reiniciarse los límites.
 - Ajustad tamaño, acento RGB, opacidad, orden, proveedores ocultos y ocultación automática.
 - Usad atajos globales reasignables: `Ctrl+Alt+U`, `Ctrl+Alt+I`, `Ctrl+Alt+R`.
-- Actualizad desde releases firmadas de GitHub cuando se publiquen; la app consulta al arrancar y cada seis horas.
+- En Windows, el updater consulta las releases de GitHub al arrancar y cada seis horas y verifica firmas del updater Tauri (no Authenticode). En macOS las actualizaciones son manuales.
 
 ### Conectar y comprobar cuentas
 
@@ -182,7 +192,7 @@ Para sesiones en WSL, configurad las rutas de credenciales en Ajustes, por ejemp
 
 ### Hoja de ruta
 
-La firma de código y distribución por winget, el modo click-through y la ventana de cuatro horas de GLM en NaN siguen siendo objetivos, no funcionalidades actuales. Las releases públicas de macOS/Linux y el updater de Linux no forman parte del proyecto por ahora; el desarrollo local de Linux está recogido en la sección siguiente.
+La firma Authenticode de Windows y distribución por winget, el modo click-through y la ventana de cuatro horas de GLM en NaN siguen siendo objetivos, no funcionalidades actuales. La release macOS ARM64 firmada y notarizada está enlazada arriba, con actualizaciones manuales. Las releases públicas de Linux y el updater de Linux no forman parte del proyecto por ahora; el desarrollo local de Linux está recogido en la sección siguiente.
 
 ## Notas de desarrollo Linux
 
@@ -209,7 +219,7 @@ Consultad [CONTRIBUTING.md](./CONTRIBUTING.md) para el entorno local, los pasos 
 
 - [Código fuente](https://github.com/egdev6/quorb)
 - [Issues](https://github.com/egdev6/quorb/issues)
-- [Releases, cuando se publiquen](https://github.com/egdev6/quorb/releases)
+- [Releases](https://github.com/egdev6/quorb/releases)
 - [Requisitos de Tauri](https://v2.tauri.app/start/prerequisites/)
 
 ## Licencia

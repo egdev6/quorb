@@ -7,9 +7,12 @@ import { ProviderDetails } from './components/ProviderDetails';
 import { api } from './lib/api';
 import { intlLocale, t } from './i18n';
 import { useLocale } from './i18n/use-locale';
+import { useTextScale } from './lib/useTextScale';
 import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
-import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, samePhysical, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
+import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
+import { samePlacement } from './lib/widget-placement';
+import { confirmDetailPlacement, retryDetailPlacement } from './detail-placement';
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -30,6 +33,8 @@ export function DetailPanel() {
   const [data, setData] = useState<DetailState | null>(null);
   // Idioma de esta ventana: una lectura + `config-changed`; `es` hasta cargar.
   const locale = useLocale();
+  /** Text scale of this window, measured here and never derived from the widget (#228). */
+  const textScale = useTextScale();
   const [positioned, setPositioned] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -37,9 +42,13 @@ export function DetailPanel() {
   const enqueue = useRef(createLatestQueue()).current;
   // Fitted geometry; `null` until the first measurement, when the basal zoom is used.
   const [fit, setFit] = useState<PanelFit | null>(null);
-  // Last native geometry actually applied (physical, incl. DPI). Only recorded after a
-  // successful apply so superseded or failed jobs cannot skip a needed retry.
+  // Last native geometry actually applied (physical, incl. DPI). #215: only the
+  // geometry the backend read back from the compositor is ever recorded — the
+  // requested one never is, so a soft report cannot skip a needed retry.
   const lastAppliedRef = useRef<PhysicalBounds | null>(null);
+  // Whether `lastAppliedRef` came from the X11 read-back (the only cacheable
+  // kind): exactly that geometry admits the ±1 px rounding tolerance.
+  const lastAppliedReadBackRef = useRef(false);
   const positionedRef = useRef(false);
 
   const interact = (kind: DetailInteraction['kind']) => {
@@ -61,7 +70,9 @@ export function DetailPanel() {
         dataRef.current = payload;
         // Invalidate an in-flight show immediately, before React commits new content.
         enqueue(async () => { if (!payload) await getCurrentWindow().hide(); }).catch(console.warn);
-        if (!payload || wasClosed) { setPositioned(false); positionedRef.current = false; lastAppliedRef.current = null; }
+        // #215: the read-back cache resets with `positioned` so the first
+        // placement after a reopen is never deduped against the old geometry.
+        if (!payload || wasClosed) { setPositioned(false); positionedRef.current = false; lastAppliedRef.current = null; lastAppliedReadBackRef.current = false; }
         setData(payload);
       });
       if (disposed) { stateListener(); return; }
@@ -80,6 +91,18 @@ export function DetailPanel() {
     };
   }, [enqueue]);
 
+  // `Escape` cierra el panel anclado también desde aquí (#170): con el foco en
+  // el panel —al hacer clic dentro para copiar un dato— la tecla la atiende
+  // esta ventana, no la tira.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      emitTo('widget', DETAIL_EVENTS.escape).catch(console.warn);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useLayoutEffect(() => {
     if (!data || !panelRef.current) return;
     let disposed = false;
@@ -95,38 +118,53 @@ export function DetailPanel() {
     const layout = (entry?: ResizeObserverEntry) => {
       const panel = panelRef.current;
       if (disposed || !panel) return;
-      const next = fitPanel(data, layoutHeightOf(panel, entry), base);
+      const next = fitPanel(data, layoutHeightOf(panel, entry), base, textScale);
       setFit((old) => (old && sameFit(old, next) ? old : next));
       // Compare native (physical) bounds, not logical ones: a DPI change with identical
       // logical geometry must still resize the window.
       const physical = physicalPanelBounds(detailBounds(data, next), data.scaleFactor);
-      if (positionedRef.current && samePhysical(lastAppliedRef.current, physical)) return;
+      // #215: the cache only ever holds
+      // read-back-confirmed geometry, so the ±1 px rounding tolerance of X11 applies
+      // by the same rule as the widget; on a platform without read-back the cache
+      // stays empty and every comparison applies exactly (no tolerance).
+      if (positionedRef.current && samePlacement(lastAppliedRef.current, physical, lastAppliedReadBackRef.current)) return;
       enqueue(async (current) => {
         if (!current() || disposed) return;
         // An in-flight move can outlive its layout. Clear the old geometry before
         // awaiting it, so a return to that geometry cannot incorrectly dedupe.
         lastAppliedRef.current = null;
+        lastAppliedReadBackRef.current = false;
         // Move and resize together: moving a taller previous panel first briefly
         // covers the widget below it. Physical bounds already include DPI rounding.
-        await api.setDetailBounds(physical);
+        // Only the confirmed (read-back) geometry reaches the cache; the requested
+        // one never does (S3/D2).
+        const cache = (confirmed: PhysicalBounds) => { lastAppliedRef.current = confirmed; lastAppliedReadBackRef.current = true; };
+        let retry = confirmDetailPlacement(await api.setDetailBounds(physical), cache);
         if (!current() || disposed) return;
-        await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
+        await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
         if (!current() || disposed) return;
         positionedRef.current = true;
         setPositioned(true);
         // The native command refuses to show an orphan panel when the widget is hidden.
         await api.showDetail();
         if (!current() || disposed) return;
-        // Cache only after the whole native apply succeeded, so a stale or failed job
-        // never marks a geometry as applied while the window still holds the old one.
-        lastAppliedRef.current = physical;
+        // The backend could not confirm the geometry because the window was still
+        // hidden (`not_viewable`): re-ask after showing, in silence and within the
+        // bounded budget, aborting if the detail closed or changed meanwhile
+        // (#215/#221). An exhausted budget stays soft: nothing is cached and the
+        // opening already succeeded.
+        if (retry) {
+          const report = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
+          if (!current() || disposed || !report) return;
+          confirmDetailPlacement(report, cache);
+        }
       }).catch(console.warn);
     };
     layout();
     const observer = new ResizeObserver((entries) => layout(entries[0]));
     observer.observe(panelRef.current);
     return () => { disposed = true; observer.disconnect(); };
-  }, [data, enqueue]);
+  }, [data, enqueue, textScale]);
 
   useEffect(() => {
     if (!toast) return;

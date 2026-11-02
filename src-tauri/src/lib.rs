@@ -14,6 +14,10 @@ mod uninstall;
 // El módulo se compila también en Windows/macOS (el comando se invoca siempre),
 // pero allí sus piezas de Linux no se usan: sin avisos de código muerto.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod detail_placement;
+#[cfg(test)]
+mod detail_placement_test;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod widget_placement;
 #[cfg(test)]
 mod widget_placement_test;
@@ -47,6 +51,9 @@ const SETTINGS_ZOOM: f64 = 0.85;
 const SETTINGS_HEIGHT: f64 = 920.0;
 const OVERLAY: &str = "overlay";
 const DETAIL: &str = "detail";
+/// El canal por el que el frontend recibe el foco de nuestras ventanas
+/// (`src/lib/anchor-focus.ts`): el payload es `(etiqueta, tiene_foco)`.
+const FOCUS_EVENT: &str = "window-focus";
 const TRAY_ID: &str = "main";
 
 #[tauri::command]
@@ -75,17 +82,11 @@ async fn set_surface_clip(
 async fn set_detail_bounds(
     window: WebviewWindow,
     bounds: detail_geometry::Bounds,
-) -> Result<(), String> {
-    let (tx, mut rx) = tauri::async_runtime::channel(1);
-    let ui_window = window.clone();
-    window
-        .run_on_main_thread(move || {
-            let _ = tx.try_send(detail_geometry::apply(&ui_window, bounds));
-        })
-        .map_err(|e| e.to_string())?;
-    rx.recv()
-        .await
-        .ok_or_else(|| "Detail bounds UI callback was dropped".to_string())?
+) -> Result<detail_placement::Report, String> {
+    // La generación se reserva al llegar la petición: otra posterior la
+    // cancela. Es la generación **propia** del detalle, nunca la del widget.
+    let generation = detail_placement::next_generation();
+    detail_placement::place(&window, bounds, generation).await
 }
 
 /// Coloca la tira en la superficie nativa y devuelve la geometría que quedó en
@@ -1033,12 +1034,13 @@ pub fn run() {
             if let Some(w) = app.get_webview_window(WIDGET) {
                 let _ = w.set_always_on_top(cfg.always_on_top);
             }
-            // En macOS una ventana queda clavada en su Space a menos que se marque
-            // «visible en todos los Spaces» (NSWindow.canJoinAllSpaces): sin esto la
-            // tira no sigue al usuario entre Spaces ni sobre apps fullscreen, y el
-            // detalle/overlay quedarían en otro Space distinto al de la tira.
-            // Windows/Linux no lo necesitan: no hay Spaces y siempre-encina ya
-            // cubre el caso.
+            // En macOS y Linux una ventana queda clavada en su escritorio/Space a
+            // menos que se marque «visible en todos los escritorios» (en macOS
+            // NSWindow.canJoinAllSpaces, en Linux X11/XWayland _NET_WM_STATE_STICKY
+            // vía gtk_window_stick): sin esto la tira no sigue al usuario entre
+            // escritorios/Spaces ni sobre apps fullscreen, y el detalle/overlay
+            // quedarían en un escritorio distinto al de la tira.
+            // En Windows siempre-encima ya cubre el caso.
             let history = history::History::load(data_dir.join("history.json"));
 
             // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
@@ -1079,12 +1081,12 @@ pub fn run() {
             // `play_effect()` después de `show()`.
 
             // Se aplica tras construir DETAIL y OVERLAY: si corre antes, esos dos
-            // get_webview_window devuelven None y quedan clavados a su Space.
-            #[cfg(target_os = "macos")]
+            // get_webview_window devuelven None y quedan clavados a su escritorio.
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             for label in [WIDGET, DETAIL, OVERLAY] {
                 if let Some(w) = app.get_webview_window(label) {
                     if let Err(e) = w.set_visible_on_all_workspaces(true) {
-                        eprintln!("No pude marcar «{label}» visible en todos los Spaces: {e}");
+                        eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
                     }
                 }
             }
@@ -1105,6 +1107,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             #[cfg(target_os = "windows")]
             windows_backdrop::on_window_event(window, event);
+            // El foco de nuestras propias ventanas (#170): el panel anclado se
+            // suelta cuando el foco sale de las dos (la tira y el detalle).
+            // Es un evento de ventana nativo, no del DOM: llega igual en X11,
+            // Wayland, Windows y macOS.
+            if let WindowEvent::Focused(focused) = event {
+                if window.label() == WIDGET || window.label() == DETAIL {
+                    let _ =
+                        window.emit_to(WIDGET, FOCUS_EVENT, (window.label().to_string(), focused));
+                }
+            }
             // Cerrar el widget lo oculta; la app sigue en la bandeja.
             if window.label() == WIDGET {
                 if let WindowEvent::CloseRequested { api, .. } = event {

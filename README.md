@@ -20,7 +20,19 @@
 
 # Quorb
 
-Your AI quotas, always in sight: usage, remaining capacity and spending across your AI subscriptions and APIs on Windows.
+Your AI quotas, always in sight: usage, remaining capacity and spending across your AI subscriptions and APIs on Windows and macOS.
+
+## Downloads — v0.8.0
+
+| Platform | Installer |
+| --- | --- |
+| Windows x64 | [Download .exe](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_x64-setup.exe) |
+| macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
+
+Run the Windows installer, or open the macOS DMG and copy Quorb to Applications.
+The macOS release uses Developer ID signing and Apple notarization; updates are **manual**.
+First browser download, quarantine, installation and GUI checks on a real Mac remain pending in [#118](https://github.com/egdev6/quorb/issues/118); do not remove quarantine to bypass a warning.
+These links are pinned to **v0.8.0**; see [all releases](https://github.com/egdev6/quorb/releases) for other versions.
 
 ## What is it
 
@@ -54,7 +66,7 @@ A native Linux port is in progress. The current baseline, support matrix (distro
 </div>
 <!-- egdev:stack:end -->
 
-## Quick start
+## Developer quick start
 
 Quorb currently targets Windows as its main platform. There is also a Linux port in progress (see the [Linux notes](#linux-development-notes)); macOS has been integrated separately for Apple Silicon.
 
@@ -70,8 +82,6 @@ npm run app:dev
 Open Settings and enable the providers you use. Claude, Codex, Gemini and Cursor read existing sessions from their official tools; other providers require the credentials listed below.
 
 To build a local installer, run `npm run app:build`. Outputs are written under `src-tauri/target/release/bundle`.
-
-> No public GitHub release was available when this README was written. The repository is currently private; cloning requires access. Do not assume a public installer is available.
 
 ## Scripts
 
@@ -124,7 +134,7 @@ Some integrations use undocumented endpoints, which may change or stop working. 
 - Receive Windows notifications and configurable effects at the threshold and when limits reset.
 - Adjust size, RGB accent, opacity, order, hidden providers and auto-hide.
 - Use remappable global shortcuts: `Ctrl+Alt+U`, `Ctrl+Alt+I`, `Ctrl+Alt+R`.
-- Update from signed GitHub releases when published; the app checks on startup and every six hours.
+- On Windows, the updater checks GitHub releases on startup and every six hours and verifies Tauri updater signatures (not Authenticode). macOS updates are manual.
 
 ### Connect and check accounts
 
@@ -180,7 +190,7 @@ For WSL sessions, configure the credential file paths in Settings, for example `
 
 ### Roadmap
 
-Code signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. macOS/Linux public releases and a Linux updater are not part of this project yet; Linux local development is covered in the section below.
+Windows Authenticode signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. A signed, notarized macOS ARM64 release is available above, with manual updates. Linux public releases and a Linux updater are not part of this project yet; Linux local development is covered in the section below.
 
 ## Linux development notes
 
@@ -207,7 +217,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the local setup, the provider integ
 
 - [Source code](https://github.com/egdev6/quorb)
 - [Issues](https://github.com/egdev6/quorb/issues)
-- [Releases, when published](https://github.com/egdev6/quorb/releases)
+- [Releases](https://github.com/egdev6/quorb/releases)
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ## License

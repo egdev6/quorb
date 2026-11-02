@@ -212,7 +212,7 @@ describe('detail panel surface (#95)', () => {
     expect(resize).toBeGreaterThan(0);
     expect(clip).toBeGreaterThan(resize);
     expect(show).toBeGreaterThan(clip);
-    expect(widget).toContain('usesPeekWindow(phase) ? peekRect(s, edge) : s');
+    expect(widget).toContain('usesPeekWindow(phase) ? peekRect(s, edge, textScale) : s');
     expect(widget).toContain("api.setSurfaceClip(c, !autoHide && phase === 'open')");
   });
 });

@@ -4,11 +4,10 @@
 
 ## Current status
 
-Quorb is MIT-licensed and its source is public. Windows distribution is
-referenced on [GitHub Releases](https://github.com/egdev6/quorb/releases).
-This page describes signing configuration, including the new, unexecuted macOS
-workflow; it does not certify published artifacts or the current state of
-external accounts or services.
+Quorb is MIT-licensed and its source is public. Windows and macOS ARM64 are on
+[GitHub Releases](https://github.com/egdev6/quorb/releases).
+This page describes signing configuration and macOS evidence observed as of
+**2026-10-31**; it does not certify the current state of external accounts or services.
 
 The [release workflow](../.github/workflows/release.yml) requires Tauri minisign
 signing for updater artifacts and creates a draft from a validated SHA.
@@ -27,7 +26,17 @@ does not establish a completed integration. This document does not apply to
 SignPath or establish sponsorship, an Authenticode certificate, compliance or
 closure of that issue.
 
-## macOS Developer ID release (execution pending)
+## macOS Developer ID release
+
+[v0.8.0](https://github.com/egdev6/quorb/releases/tag/v0.8.0) includes the signed,
+notarized ARM64 DMG and `.dmg.sha256`, for **macOS 15+, Apple Silicon (M1+)**.
+[Producer 41067808525](https://github.com/egdev6/quorb/actions/runs/41067808525)
+prepared and submitted the checkpoint. [Diagnostics 41230153171](https://github.com/egdev6/quorb/actions/runs/41230153171)
+confirmed `Accepted`, `jobId` `e7b22172-716e-4176-a023-2d1d916d6823` and submitted-DMG SHA-256:
+`224b37f9b3e6d134f7d408ed06995792af73fa05c41ee79eb2e20edc476800be`.
+[Resume 41233474221](https://github.com/egdev6/quorb/actions/runs/41233474221)
+completed verification, stapling, final staging and publication, including
+Gatekeeper on the CI runner, not a real-Mac GUI test.
 
 The [separate macOS workflow](../.github/workflows/macos-release.yml), materialized
 byte-for-byte from `.github/security-drafts/macos-release.yml`, accepts only
@@ -63,8 +72,8 @@ digest, extraction allowlist and manifest against external trusted values. It
 needs no private Developer ID certificate and never rebuilds, re-signs or
 resubmits. `In Progress` or Accepted without an available log is **pending**, with
 no publication; rejection reports sanitized issues and fails. Accepted requires
-Apple log `jobId` and `sha256` to match the UUID and original DMG. That hash field
-has only a **synthetic** fixture, not real Apple evidence; absence fails closed.
+Apple log `jobId` and `sha256` to match the UUID and original DMG. Beyond the synthetic
+fixture, real diagnostics confirmed that field and resume verified the binding; absence fails closed.
 
 It staples only the retained DMG, checks signature/ticket and Gatekeeper, mounts
 readonly using a real plist parser, and verifies the contained `Quorb.app`
@@ -86,13 +95,14 @@ successful run. If interrupted submit is ambiguous before receipt persistence,
 investigate via diagnostics/history/info/log: **never resubmit or link by name**.
 Optional recovery `submission_id` authorizes continuation only after Apple log
 UUID/hash binding. Expired/deleted artifacts require a separate recovery decision,
-not an automatic rebuild. See [the operational guide](./build-macos.md#release-macos-reanudable-preparación-local-runtime-pendiente).
+not an automatic rebuild. See [the operational guide](./build-macos.md#release-macos-reanudable-operación-y-evidencia).
 
-**This correction has not run against Apple or real macOS.** Linux tests simulate
-processes, HTTP and files. Downloaded-DMG Gatekeeper, first open with quarantine
-from [#118](https://github.com/egdev6/quorb/issues/118), and GUI checks remain
-pending; do not remove quarantine. Configuration proves neither support nor
-installation. Dispatch, publication and Environment changes need separate approval.
+Native evidence complements the simulated Linux tests; first browser download,
+quarantine, installation and GUI on a real Mac remain pending in
+[#118](https://github.com/egdev6/quorb/issues/118); do not remove quarantine.
+CI success does not certify universal or future certificate validity, nor imply
+new secrets or Environment changes. Future runs and publication require separate
+approval.
 
 ## Responsibilities
 

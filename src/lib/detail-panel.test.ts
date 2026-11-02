@@ -13,6 +13,8 @@ import {
   type DetailPlacement,
 } from './detail-panel';
 import { contains, panelHeightLimit, stripRect, type Edge } from './dock';
+import { surfaceClipFor } from './surface-clip';
+import { toMonitor } from './text-scale';
 
 const area = { x: -1920, y: -100, w: 1920, h: 900 };
 const topStrip = stripRect(area, 'top', 0.5, 400, 80);
@@ -137,6 +139,71 @@ describe('panel fit', () => {
     expect(samePhysical(at125, at2)).toBe(false);
     expect(samePhysical(at1, physicalPanelBounds(bounds, 1))).toBe(true);
     expect(samePhysical(null, at1)).toBe(false);
+  });
+});
+
+// Text scale (#228): the layout height is CSS px of the detail window, `maxHeight`
+// and the returned size are monitor units, and the zoom stays a CSS transform.
+describe('panel fit with text scale', () => {
+  it('shrinks with text scale content that fits without it', () => {
+    const p = placement({ maxHeight: 900 });
+    expect(fitPanel(p, 870, 1)).toEqual({ zoom: 1, width: 300, height: 870, scaled: false });
+    const fit = fitPanel(p, 870, 1, 1.06);
+    const factor = 900 / (870 * 1.06);
+    expect(fit).toEqual({ zoom: factor, width: 300 * 1.06 * factor, height: 900, scaled: true });
+  });
+
+  it.each([
+    // [text scale, layout height, base, expected fit]
+    [1.06, 500, 1, { zoom: 1, width: 318, height: 530, scaled: false }],
+    [1.25, 500, 0.75, { zoom: 0.75, width: 375, height: 469, scaled: false }],
+    [1.5, 500, 1, { zoom: 1, width: 450, height: 750, scaled: false }],
+    [2.25, 400, 1, { zoom: 1, width: 675, height: 900, scaled: false }],
+    [1.25, 870, 1, { zoom: 900 / 1087.5, width: 375 * (900 / 1087.5), height: 900, scaled: true }],
+    [1.5, 849, 0.75, { zoom: 0.75 * (900 / 955.125), width: 450 * (900 / 955.125), height: 900, scaled: true }],
+    [2.25, 500, 1, { zoom: 900 / 1125, width: 675 * (900 / 1125), height: 900, scaled: true }],
+  ] as const)('multiplies the size, never the zoom, by text scale %s (layout %s, base %s)', (scale, layoutHeight, base, expected) => {
+    const fit = fitPanel(placement({ maxHeight: 900 }), layoutHeight, base, scale);
+    expect(fit.scaled).toBe(expected.scaled);
+    expect(fit.height).toBe(expected.height);
+    expect(fit.zoom).toBeCloseTo(expected.zoom, 12);
+    expect(fit.width).toBeCloseTo(expected.width, 9);
+  });
+
+  it('returns a fractional maxHeight verbatim when a text-scaled panel shrinks', () => {
+    const fit = fitPanel(placement({ maxHeight: 803.9216 }), 1000, 1, 1.0812);
+    expect(fit.scaled).toBe(true);
+    expect(fit.height).toBe(803.9216);
+  });
+
+  it.each([[1.0812, 1.02], [1.25, 1], [1.5, 1.25], [2.25, 1.5]])('keeps the exact gap to a bottom and right strip with text scale %s on monitor scale %s', (scale, sf) => {
+    const monitor = { x: 0, y: 0, w: 1920 / sf, h: 1040 / sf };
+    for (const edge of ['bottom', 'right'] as Edge[]) {
+      const vertical = edge === 'right';
+      const strip = stripRect(monitor, edge, 0.5, toMonitor(vertical ? 80 : 400, scale), toMonitor(vertical ? 400 : 80, scale));
+      const p: DetailPlacement = {
+        area: monitor, strip, edge, anchor: (vertical ? strip.y : strip.x) + toMonitor(40, scale),
+        width: 300, maxHeight: panelHeightLimit(monitor, edge, strip),
+      };
+      for (const layoutHeight of [260, 5000]) {
+        const rect = detailBounds(p, fitPanel(p, layoutHeight, 1, scale));
+        if (edge === 'bottom') expect(rect.y + rect.h).toBe(strip.y - 8);
+        else expect(rect.x + rect.w).toBe(strip.x - 8);
+      }
+    }
+  });
+
+  it.each([[1.06, 1.02], [1.25, 1.5]])('clips the CSS radii by zoom × text scale %s × monitor scale %s', (scale, sf) => {
+    const fit = fitPanel(placement({ maxHeight: 900 }), 5000, 0.75, scale);
+    const clip = surfaceClipFor({ w: 400, h: 900 }, [16, 16, 16, 16], fit.zoom * scale * sf);
+    expect(clip.radii).toEqual(Array(4).fill(16 * (fit.zoom * scale * sf)));
+  });
+
+  it('fits exactly as before without a text scale', () => {
+    for (const [layoutHeight, base] of [[260, 1], [760, 1], [900, 0.75], [2400, 1], [1000.1, 1], [1401.5, 1.5]]) {
+      const p = placement();
+      expect(fitPanel(p, layoutHeight, base, 1)).toEqual(fitPanel(p, layoutHeight, base));
+    }
   });
 });
 

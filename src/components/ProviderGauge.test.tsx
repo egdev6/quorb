@@ -18,6 +18,40 @@ function colors(meters: Meter[], small = false, size = 60, id = 'claude') {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe('ProviderGauge credential status badge', () => {
+  function statusReport(status: Exclude<UsageReport['status'], 'warning'>): UsageReport {
+    return {
+      id: 'claude', name: 'Claude', kind: 'subscription', status, plan: null,
+      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+    };
+  }
+  function gauge(status: Exclude<UsageReport['status'], 'warning'>) {
+    const html = renderToStaticMarkup(<ProviderGauge report={statusReport(status)} small={false} size={60} active={false} onHover={() => {}} />);
+    const ariaLabel = html.match(/aria-label="([^"]*)"/)?.[1] ?? '';
+    return { html, ariaLabel };
+  }
+
+  it.each(['needsLogin', 'unconfigured'] as const)('shows the amber action badge and reason for %s', (status) => {
+    const { html, ariaLabel } = gauge(status);
+    expect(html).toContain('orb__badge');
+    expect(html).toContain('data-kind="action"');
+    expect(ariaLabel).toMatch(/Claude · Sin (sesión|configurar)/);
+  });
+
+  it('exposes the reason for error without any badge', () => {
+    const { html, ariaLabel } = gauge('error');
+    expect(html).not.toContain('orb__badge');
+    expect(ariaLabel).toBe('Claude · Error');
+  });
+
+  it('keeps ok unchanged: no badge and no reason in the accessible title', () => {
+    const { html, ariaLabel } = gauge('ok');
+    expect(html).not.toContain('orb__badge');
+    expect(ariaLabel).toBe('Claude');
+    expect(html).not.toContain('title=');
+  });
+});
+
 describe('ProviderGauge popup focus', () => {
   function gauge(userAgent: string, focusVisible: boolean) {
     vi.stubGlobal('navigator', { userAgent });
