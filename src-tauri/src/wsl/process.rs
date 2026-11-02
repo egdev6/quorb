@@ -30,7 +30,7 @@ use std::time::Duration;
 /// ruta + exit 0 si el binario existe; salida vacía + exit != 0 si no.
 pub const SCRIPT_COMMAND_V: &str = "command -v \"$1\"";
 
-/// Script constante con pidfile endurecido.
+/// Script constante con pidfile endurecido e identidad de instancia.
 ///
 /// `$1` es un DIRECTORIO BASE que crea este script de forma atómica con
 /// `mkdir -m 700` (falla con EEXIST si ya existe: no sigue enlaces
@@ -38,6 +38,14 @@ pub const SCRIPT_COMMAND_V: &str = "command -v \"$1\"";
 /// symlink). Dentro del base se crea el directorio de la operación con
 /// `mktemp -d` (O_EXCL, sufijo aleatorio): el PID vive en
 /// `<base>/<aleatorio>/pid`, solo legible por el dueño (`umask 077`).
+///
+/// Además del PID, se publica un TOKEN de instancia (el sufijo aleatorio
+/// del directorio, `basename "$d"`) en `<base>/<aleatorio>/token` y el
+/// proceso final lo hereda como `QUORB_WSL_TOKEN` vía `exec`. Antes de
+/// señalar TERM/KILL, el host comprueba que el proceso que hoy ocupa ese
+/// PID sigue siendo esta instancia (`SCRIPT_VERIFY_IDENTITY`), de modo que
+/// un número reutilizado por otro proceso de la distro jamás se señala
+/// (revisión del mantenedor, 2026-11-02).
 ///
 /// `exec` conserva el PID, así que el pidfile apunta al proceso final de la
 /// operación. La limpieza del base (`rm -rf`) la hace el host en éxito,
@@ -48,7 +56,9 @@ pub const SCRIPT_EXEC_PIDFILE: &str = concat!(
     "d=$(mktemp -d \"$b/XXXXXX\") && ",
     "umask 077 && ",
     "echo $$ > \"$d/pid\" && ",
-    "exec \"$@\""
+    "t=$(basename \"$d\") && ",
+    "echo \"$t\" > \"$d/token\" && ",
+    "QUORB_WSL_TOKEN=\"$t\" exec \"$@\""
 );
 
 /// Nombre de cortesía para `$0`. No es un dato: solo ocupa la posición.
@@ -86,6 +96,23 @@ pub fn pidfile_base() -> PathBuf {
 /// el host lo descubre con un glob dentro del base. `$1` entra como
 /// parámetro posicional: nada se interpola en el script.
 pub const SCRIPT_READ_PID: &str = "cat \"$1\"/*/pid";
+
+/// Script constante para leer PID **y token de instancia** en la misma
+/// llamada: así ambos corresponden a la misma operación (una lectura con
+/// menos de dos líneas invalida la identidad). `$1` es el base.
+pub const SCRIPT_READ_IDENTITY: &str = "cat \"$1\"/*/pid \"$1\"/*/token";
+
+/// COMPROBACIÓN de identidad de instancia antes de señalar (revisión del
+/// mantenedor, 2026-11-02). Confirma que el proceso que hoy ocupa el PID
+/// es el nuestro: la instancia dejó `QUORB_WSL_TOKEN=<token>` en su
+/// entorno vía `exec`, y `/proc/<pid>/environ` lo conserva.
+///
+/// `$1` = token, `$2` = pid (posicionales: nada se interpola). Fail-closed:
+/// si no se puede comprobar (sin `/proc`, sin permisos sobre el environ),
+/// la salida NO es 0 y el llamador NO señala — el proceso quedaría para la
+/// recuperación explícita del nivel 2 (`--terminate`).
+pub const SCRIPT_VERIFY_IDENTITY: &str =
+    "tr '\\0' '\\n' < \"/proc/$2/environ\" | grep -qxF \"QUORB_WSL_TOKEN=$1\"";
 
 /// Script constante para borrar el base de la operación (éxito, error o
 /// cancelación).
@@ -452,53 +479,82 @@ fn kill_remote_process(
     cleanup_timeout: Duration,
 ) -> i64 {
     let base_str = base.to_string_lossy().to_string();
-    let read = script_args(Some(distro), SCRIPT_READ_PID, &[base_str.as_str()]);
-    let pid = runner
+    let read = script_args(Some(distro), SCRIPT_READ_IDENTITY, &[base_str.as_str()]);
+    let identity = runner
         .run(program, &read, env, cwd, cleanup_timeout)
         .ok()
         .filter(|o| o.code == 0)
-        .and_then(|o| o.stdout.trim().parse::<i64>().ok())
-        .unwrap_or(0);
-
-    if pid > 0 {
-        let pid_str = pid.to_string();
-        // `kill` con el PID como argv: sin shell, sin interpolación.
-        let term = direct_args(Some(distro), "kill", &["-TERM", pid_str.as_str()]);
-        let _ = runner.run(program, &term, env, cwd, cleanup_timeout);
-        // Gracia: el TERM es la vía suave; solo si al cabo de esas sondas
-        // sigue vivo se escala a KILL (antes el -KILL era instantáneo y la
-        // vía suave nunca se ejercitaba).
-        //
-        // Si CUALQUIER sonda observa la desaparición del PID, se rompe y
-        // NO se vuelve a comprobar ni se escala: un `kill -0` posterior
-        // podría devolver 0 porque el PID fue REUTILIZADO por otro proceso
-        // de la distro, y enviarle KILL señalizaría un proceso ajeno
-        // (revisión PR #220; la identidad de la instancia se protege
-        // observando la muerte, no volviendo a preguntar por el número).
-        let mut killer_observed_death = false;
-        for _ in 0..TERM_PROBES {
-            let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
-            let alive = match runner.run(program, &alive, env, cwd, cleanup_timeout) {
-                Ok(out) => out.code == 0,
-                // Comandos de limpieza acotados; un fallo aquí es indicio
-                // de que el pid ya no está: se trata como "murió".
-                Err(_) => false,
-            };
-            if !alive {
-                killer_observed_death = true;
-                break;
+        .and_then(|o| {
+            let mut lines = o.stdout.lines();
+            let pid = lines.next()?.trim().parse::<i64>().ok()?;
+            let token = lines.next()?.trim().to_string();
+            if token.is_empty() {
+                None
+            } else {
+                Some((pid, token))
             }
-            std::thread::sleep(TERM_GRACE);
-        }
-        // Solo si la gracia se agotó SIN observar la muerte (el proceso
-        // seguía vivo en TODAS las sondas) se escala a KILL. Nunca después
-        // de haber visto desaparecer el PID.
-        if !killer_observed_death {
-            let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
-            if let Ok(out) = runner.run(program, &alive, env, cwd, cleanup_timeout) {
-                if out.code == 0 {
-                    let hard = direct_args(Some(distro), "kill", &["-KILL", pid_str.as_str()]);
-                    let _ = runner.run(program, &hard, env, cwd, cleanup_timeout);
+        });
+
+    let mut killed_pid = 0i64;
+    if let Some((pid, token)) = identity {
+        let pid_str = pid.to_string();
+        // ANTES de señalar: comprobar que el proceso que hoy ocupa el PID
+        // sigue siendo ESTA instancia (token en /proc/<pid>/environ). Si el
+        // pidfile solo guardara el número, un PID reutilizado por otro
+        // proceso de la distro recibiría aquí un TERM/KILL ajeno (revisión
+        // del mantenedor). Fail-closed: identidad no verificada -> no se
+        // señala (recuperación explícita del nivel 2).
+        let verify = script_args(
+            Some(distro),
+            SCRIPT_VERIFY_IDENTITY,
+            &[token.as_str(), pid_str.as_str()],
+        );
+        let identity_ok = runner
+            .run(program, &verify, env, cwd, cleanup_timeout)
+            .map(|o| o.code == 0)
+            .unwrap_or(false);
+        if identity_ok {
+            killed_pid = pid;
+            // `kill` con el PID como argv: sin shell, sin interpolación.
+            let term = direct_args(Some(distro), "kill", &["-TERM", pid_str.as_str()]);
+            let _ = runner.run(program, &term, env, cwd, cleanup_timeout);
+            // Gracia: el TERM es la vía suave; solo si al cabo de esas
+            // sondas sigue vivo se escala a KILL (antes el -KILL era
+            // instantáneo y la vía suave nunca se ejercitaba).
+            //
+            // Si CUALQUIER sonda observa la desaparición del PID, se rompe
+            // y NO se vuelve a comprobar ni se escala: un `kill -0`
+            // posterior podría devolver 0 porque el PID fue REUTILIZADO por
+            // otro proceso de la distro, y enviarle KILL señalizaría un
+            // proceso ajeno (revisión PR #220; la identidad de la instancia
+            // se protege observando la muerte, no volviendo a preguntar por
+            // el número).
+            let mut killer_observed_death = false;
+            for _ in 0..TERM_PROBES {
+                let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
+                let alive = match runner.run(program, &alive, env, cwd, cleanup_timeout) {
+                    Ok(out) => out.code == 0,
+                    // Comandos de limpieza acotados; un fallo aquí es
+                    // indicio de que el pid ya no está: se trata como
+                    // "murió".
+                    Err(_) => false,
+                };
+                if !alive {
+                    killer_observed_death = true;
+                    break;
+                }
+                std::thread::sleep(TERM_GRACE);
+            }
+            // Solo si la gracia se agotó SIN observar la muerte (el proceso
+            // seguía vivo en TODAS las sondas) se escala a KILL. Nunca
+            // después de haber visto desaparecer el PID.
+            if !killer_observed_death {
+                let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
+                if let Ok(out) = runner.run(program, &alive, env, cwd, cleanup_timeout) {
+                    if out.code == 0 {
+                        let hard = direct_args(Some(distro), "kill", &["-KILL", pid_str.as_str()]);
+                        let _ = runner.run(program, &hard, env, cwd, cleanup_timeout);
+                    }
                 }
             }
         }
@@ -507,7 +563,7 @@ fn kill_remote_process(
     // El base de la operación no se deja en la distro.
     let rm = cleanup_args(Some(distro), base);
     let _ = runner.run(program, &rm, env, cwd, cleanup_timeout);
-    pid
+    killed_pid
 }
 
 #[cfg(test)]
@@ -659,6 +715,28 @@ mod tests {
         assert_eq!(SCRIPT_READ_PID, "cat \"$1\"/*/pid");
     }
 
+    /// Identidad de instancia (revision del mantenedor, 2026-11-02): el
+    /// pidfile no guarda solo el PID, sino tambien un TOKEN que el proceso
+    /// hereda via `exec`. La lectura trae PID y token en la misma llamada, y
+    /// la verificacion compara el token con `/proc/<pid>/environ` ANTES de
+    /// cualquier señal.
+    #[test]
+    fn pidfile_publishes_an_instance_token_that_the_process_inherits() {
+        // El token se publica en un fichero propio del base...
+        assert!(SCRIPT_EXEC_PIDFILE.contains("> \"$d/token\""));
+        // ...y el proceso final lo hereda como variable de entorno.
+        assert!(SCRIPT_EXEC_PIDFILE.contains("QUORB_WSL_TOKEN=\"$t\" exec \"$@\""));
+        // La identidad se lee en una sola llamada (pid + token).
+        assert_eq!(SCRIPT_READ_IDENTITY, "cat \"$1\"/*/pid \"$1\"/*/token");
+        // La comprobacion mira el environ del PID y exige coincidencia
+        // EXACTA de la linea (fail-closed si no se puede comprobar).
+        assert!(SCRIPT_VERIFY_IDENTITY.contains("/proc/$2/environ"));
+        assert!(SCRIPT_VERIFY_IDENTITY.contains("grep -qxF"));
+        // Ni el token ni el PID se interpolan en el texto del script: los
+        // dos entran como posicionales ($1 y $2).
+        assert!(!SCRIPT_VERIFY_IDENTITY.contains("cat"));
+    }
+
     /// La limpieza es un script constante con el base como parametro: se
     /// ejecuta en exito, error y cancelacion.
     #[test]
@@ -766,7 +844,7 @@ mod tests {
             .responses
             .lock()
             .unwrap()
-            .push(("/tmp/quorb-wsl-".to_string(), "4242\n".to_string()));
+            .push(("/tmp/quorb-wsl-".to_string(), "4242\ntokABC\n".to_string()));
 
         let env = BTreeMap::new();
         let cwd = Path::new(".");
@@ -794,7 +872,7 @@ mod tests {
         // con glob: el nombre lo decidio `mktemp -d`).
         assert!(calls
             .iter()
-            .any(|c| c.contains(&SCRIPT_READ_PID.to_string())));
+            .any(|c| c.contains(&SCRIPT_READ_IDENTITY.to_string())));
         // ...se mató el proceso remoto (kill -TERM/-KILL), sin --terminate.
         assert!(calls
             .iter()
@@ -834,10 +912,10 @@ mod tests {
             ) -> Result<CommandOutput, RunError> {
                 self.calls.lock().unwrap().push(args.to_vec());
                 // La lectura del pid: script constante con glob.
-                if args.contains(&SCRIPT_READ_PID.to_string()) {
+                if args.contains(&SCRIPT_READ_IDENTITY.to_string()) {
                     return Ok(CommandOutput {
                         code: 0,
-                        stdout: "4242\n".to_string(),
+                        stdout: "4242\ntokABC\n".to_string(),
                         stderr: String::new(),
                     });
                 }
@@ -908,10 +986,10 @@ mod tests {
                     _timeout: Duration,
                 ) -> Result<CommandOutput, RunError> {
                     self.calls.lock().unwrap().push(args.to_vec());
-                    if args.contains(&SCRIPT_READ_PID.to_string()) {
+                    if args.contains(&SCRIPT_READ_IDENTITY.to_string()) {
                         return Ok(CommandOutput {
                             code: 0,
-                            stdout: "4242\n".to_string(),
+                            stdout: "4242\ntokABC\n".to_string(),
                             stderr: String::new(),
                         });
                     }
@@ -993,12 +1071,103 @@ mod tests {
             "no debe escalar si la sonda ya observó la desaparición"
         );
 
+        // 5) IDENTIDAD CAMBIADA sin que ninguna sonda intermedia observe el
+        //    PID ausente (revision del mantenedor, 2026-11-02): el pidfile
+        //    aporta pid + token, pero el proceso que hoy ocupa ese PID es
+        //    OTRO (su environ no lleva nuestro token) y esta VIVO. Con solo
+        //    el numero en el pidfile, aqui se habria enviado TERM/KILL a un
+        //    proceso ajeno. Con la comprobacion de identidad, no se señala
+        //    nada.
+        let (pid5, c5) = case_foreign_instance();
+        assert_eq!(pid5, 0, "sin identidad verificada no se mata nada");
+        assert!(
+            c5.iter()
+                .any(|c| c.contains(&SCRIPT_VERIFY_IDENTITY.to_string())),
+            "la identidad se comprueba ANTES de cualquier señal"
+        );
+        assert!(
+            !c5.iter()
+                .any(|c| c.iter().any(|a| a == "-TERM" || a == "-KILL")),
+            "un proceso ajeno no debe recibir TERM ni KILL"
+        );
+        assert!(c5.iter().all(|c| !c.iter().any(|a| a == "--terminate")));
+
         // En ninguno se toco la distro entera; y siempre se limpio el base.
-        for calls in [&c1, &c2, &c3] {
+        for calls in [&c1, &c2, &c3, &c5] {
             assert!(calls.iter().all(|c| !c.iter().any(|a| a == "--terminate")));
             assert!(calls
                 .iter()
                 .any(|c| c.contains(&SCRIPT_CLEANUP.to_string())));
         }
+
+        // La comprobacion de identidad precede a la señal en el caso feliz.
+        for calls in [&c1, &c2, &c3] {
+            assert!(calls
+                .iter()
+                .any(|c| c.contains(&SCRIPT_VERIFY_IDENTITY.to_string())));
+        }
+    }
+
+    /// Regresión de identidad: el PID existe y está VIVO, pero es de otro
+    /// proceso (el token de su entorno no es el nuestro).
+    fn case_foreign_instance() -> (i64, Vec<Vec<String>>) {
+        use crate::cli_process::RunError;
+        use std::sync::Mutex;
+
+        struct Foreign {
+            calls: Mutex<Vec<Vec<String>>>,
+        }
+        impl CommandRunner for Foreign {
+            fn run(
+                &self,
+                _program: &Path,
+                args: &[String],
+                _env: &BTreeMap<String, String>,
+                _cwd: &Path,
+                _timeout: Duration,
+            ) -> Result<CommandOutput, RunError> {
+                self.calls.lock().unwrap().push(args.to_vec());
+                if args.contains(&SCRIPT_READ_IDENTITY.to_string()) {
+                    return Ok(CommandOutput {
+                        code: 0,
+                        stdout: "4242\ntokABC\n".to_string(),
+                        stderr: String::new(),
+                    });
+                }
+                let joined = args.join(" ");
+                // La comprobacion de identidad falla: el proceso que ocupa
+                // ese PID no lleva nuestro token en su environ.
+                if args.contains(&SCRIPT_VERIFY_IDENTITY.to_string()) {
+                    return Ok(CommandOutput {
+                        code: 1,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    });
+                }
+                // Si se preguntara, el PID parecería vivo.
+                let code = if joined.contains("-0") { 0 } else { 0 };
+                Ok(CommandOutput {
+                    code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let remote = Foreign {
+            calls: Mutex::new(Vec::new()),
+        };
+        let env = BTreeMap::new();
+        let pid = kill_remote_process(
+            &remote,
+            Path::new("wsl.exe"),
+            "Ubuntu-22.04",
+            Path::new("/tmp/quorb-base"),
+            &env,
+            Path::new("."),
+            Duration::from_millis(1),
+        );
+        let calls = remote.calls.lock().unwrap().clone();
+        (pid, calls)
     }
 }

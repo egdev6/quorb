@@ -182,6 +182,33 @@ fn is_guest_absolute(path: &str) -> bool {
     path.starts_with('/')
 }
 
+/// ¿La ruta lleva el separador del HOST (`\`)?
+///
+/// En el guest (Linux) la `\` es un carácter NORMAL del nombre de fichero,
+/// no un separador: una ruta con `\`Travelaría al `cat` tal cual y buscaría
+/// un fichero distinto (o inexistente). En Windows, además, `Path::join`
+/// introduce `\` al componer. Por eso las rutas de sesión se componen y se
+/// validan con semántica POSIX (revisión del mantenedor, 2026-11-02).
+fn has_host_separator(path: &str) -> bool {
+    path.contains('\\')
+}
+
+/// Compone `base` + `relative` con semántica POSIX (separador `/`).
+///
+/// `Path::join` NO sirve aquí: en Windows usa `\` como separador, y la ruta
+/// compuesta viaja literal al `cat` de la distro (Linux), donde `\` no
+/// separa nada. Con esta función el argumento que llega al guest es
+/// siempre POSIX, también en Windows.
+pub fn join_guest_path(base: &Path, relative: &Path) -> PathBuf {
+    let base = base.to_string_lossy();
+    let relative = relative.to_string_lossy();
+    PathBuf::from(format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        relative.trim_start_matches('/')
+    ))
+}
+
 /// En modo WSL la ruta explícita DEBE ser absoluta: `read_file` la pasa al
 /// `cat` de la distro, cuyo proceso corre en el directorio de la distro
 /// (F8), no en el home ni en el cwd de Windows — una ruta relativa caería
@@ -203,6 +230,13 @@ pub fn session_path(
                     "credentials_path en modo WSL debe ser una ruta absoluta de la distro (empieza por '/'), se recibió: {p}"
                 )));
             }
+            // La ruta del guest es POSIX: un `\` en ella no es un separador
+            // y apuntaría a otro fichero (o a ninguno).
+            if has_host_separator(p) {
+                return Err(WslError::InvalidArgument(format!(
+                    "credentials_path en modo WSL usa separadores POSIX ('/'), se recibió: {p}"
+                )));
+            }
             Ok(PathBuf::from(p))
         }
         None => {
@@ -214,7 +248,12 @@ pub fn session_path(
                     "la ruta del proveedor dentro del modo debe ser relativa, se recibió: {rel}"
                 )));
             }
-            Ok(mode_home.join(relative))
+            if has_host_separator(&rel) {
+                return Err(WslError::InvalidArgument(format!(
+                    "la ruta del proveedor dentro del modo usa separadores POSIX ('/'), se recibió: {rel}"
+                )));
+            }
+            Ok(join_guest_path(mode_home, relative))
         }
     }
 }
@@ -327,6 +366,64 @@ mod tests {
         let home = PathBuf::from("/home/quorbuser");
         let err = session_path(None, &home, Path::new("/etc/passwd"))
             .expect_err("ruta absoluta del guest como relativa del proveedor");
+        assert!(matches!(err, WslError::InvalidArgument(_)));
+    }
+
+    /// Las rutas de sesión del guest se componen con `/` SIEMPRE, también en
+    /// Windows: el argumento que llega al `cat` de la distro no puede
+    /// llevar `\` (allí es un carácter normal, no un separador). Este test
+    /// falla si `session_path` vuelve a usar `Path::join` (revisión del
+    /// mantenedor, 2026-11-02).
+    #[test]
+    fn composed_session_paths_are_posix_on_every_platform() {
+        let home = PathBuf::from("/home/quorbuser");
+        for (relative, expected) in [
+            (
+                ".claude/.credentials.json",
+                "/home/quorbuser/.claude/.credentials.json",
+            ),
+            (".codex/auth.json", "/home/quorbuser/.codex/auth.json"),
+            (
+                ".gemini/oauth_creds.json",
+                "/home/quorbuser/.gemini/oauth_creds.json",
+            ),
+            (".grok/auth.json", "/home/quorbuser/.grok/auth.json"),
+        ] {
+            let p = session_path(None, &home, Path::new(relative)).expect("ruta del home");
+            let s = p.to_string_lossy().replace('\\', "/");
+            assert_eq!(s, expected);
+            assert!(
+                !p.to_string_lossy().contains('\\'),
+                "el argumento al guest no puede llevar separadores del host: {p:?}"
+            );
+        }
+        // El path explícito también llega POSIX.
+        let explicit = session_path(
+            Some("/mnt/c/a b/c.json"),
+            &home,
+            Path::new(".codex/auth.json"),
+        )
+        .expect("explícita");
+        let s = explicit.to_string_lossy().replace('\\', "/");
+        assert_eq!(s, "/mnt/c/a b/c.json");
+        assert!(!explicit.to_string_lossy().contains('\\'));
+    }
+
+    /// En modo WSL un `\` en la ruta EXPLÍCITA o en la relativa se rechaza:
+    /// llegarían al guest como caracteres normales y apuntarían a otro
+    /// fichero (o a ninguno). Es semántica POSIX, no un fallo silencioso.
+    #[test]
+    fn host_separators_in_session_paths_are_rejected() {
+        let home = PathBuf::from("/home/quorbuser");
+        let err = session_path(
+            Some("/mnt/c/Users/yo\\config"),
+            &home,
+            Path::new(".codex/auth.json"),
+        )
+        .expect_err("backslash en la explícita");
+        assert!(matches!(err, WslError::InvalidArgument(_)));
+        let err = session_path(None, &home, Path::new(".codex\\auth.json"))
+            .expect_err("backslash en la relativa");
         assert!(matches!(err, WslError::InvalidArgument(_)));
     }
 
