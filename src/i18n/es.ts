@@ -356,7 +356,7 @@ export const es = {
         },
         antigravity: {
           kicker: 'Suscripción · IDE abierto',
-          note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.',
+          note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. En Windows usa el IDE; en macOS usa la sesión local de agy CLI.',
           openTitle: 'Abre Antigravity con tu cuenta de Google',
           openBody: 'Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.',
         },

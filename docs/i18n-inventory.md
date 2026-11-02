@@ -1045,7 +1045,7 @@ tuples (e.g. the `"req"` unit in `providers/nan.rs`) are only listed when they a
 - Quorb signs in with its official login. Install it from {where}{needs}; Quorb detects it on its own when it finishes.
 - Quorb {version} available
 - Quota for the last 5 h, weekly quota and billing-cycle quota of the Go / Go Plus subscription.
-- Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Verified on Windows only for now.
+- Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. On Windows uses the desktop IDE; on macOS uses the agy CLI local session.
 - Read-only token
 - Refresh now
 - Remove
@@ -1317,7 +1317,7 @@ tuples (e.g. the `"req"` unit in `providers/nan.rs`) are only listed when they a
 - Créalo en
 - Cuenta adicional
 - Cuentas
-- Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.
+- Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. En Windows usa el IDE; en macOS usa la sesión local de agy CLI.
 - Cuota de las últimas 5 h, cuota semanal y cuota del ciclo de facturación de la suscripción Go / Go Plus.
 - Cuota del agente por modelo · IDE abierto
 - Cuota del plan M/Token y saldo de pago por uso
