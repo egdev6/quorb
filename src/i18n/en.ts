@@ -332,10 +332,10 @@ export const en = {
           dbLabel: 'Cursor database',
         },
         antigravity: {
-          kicker: 'Subscription · open IDE',
-          note: 'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Verified on Windows only for now.',
+          kicker: 'Subscription · desktop IDE',
+          note: 'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Desktop IDE session. The macOS agy CLI does not expose the CSRF token this endpoint requires.',
           openTitle: 'Open Antigravity with your Google account',
-          openBody: 'Quorb queries the local server the IDE starts on this computer. It is read only while Antigravity is open; no token is stored.',
+          openBody: 'Quorb queries the local server the desktop IDE starts on this computer. It is read only while that IDE is open; no token is stored. The macOS agy CLI does not expose the CSRF token, so that session cannot be read.',
         },
         copilot: {
           note: 'Premium requests of the month from the GitHub billing API. They reset on the 1st (UTC).',
