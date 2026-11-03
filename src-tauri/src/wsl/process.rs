@@ -43,7 +43,7 @@ pub const SCRIPT_COMMAND_V: &str = "command -v \"$1\"";
 /// del directorio, `basename "$d"`) en `<base>/<aleatorio>/token` y el
 /// proceso final lo hereda como `QUORB_WSL_TOKEN` vía `exec`. Antes de
 /// señalar TERM/KILL, el host comprueba que el proceso que hoy ocupa ese
-/// PID sigue siendo esta instancia (`SCRIPT_VERIFY_IDENTITY`), de modo que
+/// PID sigue siendo esta instancia (`SCRIPT_SIGNAL_IF_IDENTITY`), de modo que
 /// un número reutilizado por otro proceso de la distro jamás se señala
 /// (revisión del mantenedor, 2026-11-02).
 ///
@@ -102,17 +102,23 @@ pub const SCRIPT_READ_PID: &str = "cat \"$1\"/*/pid";
 /// menos de dos líneas invalida la identidad). `$1` es el base.
 pub const SCRIPT_READ_IDENTITY: &str = "cat \"$1\"/*/pid \"$1\"/*/token";
 
-/// COMPROBACIÓN de identidad de instancia antes de señalar (revisión del
-/// mantenedor, 2026-11-02). Confirma que el proceso que hoy ocupa el PID
-/// es el nuestro: la instancia dejó `QUORB_WSL_TOKEN=<token>` en su
-/// entorno vía `exec`, y `/proc/<pid>/environ` lo conserva.
+/// Señala una instancia **si y solo si** sigue siendo la misma, en UNA
+/// sola invocación (revisión del mantenedor, 2026-11-03).
 ///
-/// `$1` = token, `$2` = pid (posicionales: nada se interpola). Fail-closed:
-/// si no se puede comprobar (sin `/proc`, sin permisos sobre el environ),
-/// la salida NO es 0 y el llamador NO señala — el proceso quedaría para la
-/// recuperación explícita del nivel 2 (`--terminate`).
-pub const SCRIPT_VERIFY_IDENTITY: &str =
-    "tr '\\0' '\\n' < \"/proc/$2/environ\" | grep -qxF \"QUORB_WSL_TOKEN=$1\"";
+/// `tr … | grep … && kill -<señal> <pid>`: la comprobación de identidad y
+/// el envío de la señal van en el MISMO proceso shell, sin un proceso
+/// nuevo entre verificar y señalizar. Si la identidad ya no coincide (el
+/// PID fue reutilizado por otro proceso de la distro) o `/proc` no es
+/// legible, el `grep` falla y el `kill` no se ejecuta: fail-closed.
+///
+/// Se usa para TERM **y** para KILL: la escalada vuelve a comprobar la
+/// identidad en el mismo acto de señalar, así un PID reutilizado durante
+/// la espera de gracia jamás recibe el KILL.
+///
+/// `$1` = token, `$2` = pid, `$3` = señal (TERM/KILL) — posicionales,
+/// nada se interpola en el texto. Exit 0 solo si verificó y señalizó.
+pub const SCRIPT_SIGNAL_IF_IDENTITY: &str =
+    "tr '\\0' '\\n' < \"/proc/$2/environ\" | grep -qxF \"QUORB_WSL_TOKEN=$1\" && kill \"-$3\" \"$2\"";
 
 /// Script constante para borrar el base de la operación (éxito, error o
 /// cancelación).
@@ -498,37 +504,32 @@ fn kill_remote_process(
     let mut killed_pid = 0i64;
     if let Some((pid, token)) = identity {
         let pid_str = pid.to_string();
-        // ANTES de señalar: comprobar que el proceso que hoy ocupa el PID
-        // sigue siendo ESTA instancia (token en /proc/<pid>/environ). Si el
-        // pidfile solo guardara el número, un PID reutilizado por otro
-        // proceso de la distro recibiría aquí un TERM/KILL ajeno (revisión
-        // del mantenedor). Fail-closed: identidad no verificada -> no se
-        // señala (recuperación explícita del nivel 2).
-        let verify = script_args(
-            Some(distro),
-            SCRIPT_VERIFY_IDENTITY,
-            &[token.as_str(), pid_str.as_str()],
-        );
-        let identity_ok = runner
-            .run(program, &verify, env, cwd, cleanup_timeout)
-            .map(|o| o.code == 0)
-            .unwrap_or(false);
-        if identity_ok {
+        // TERM y KILL van LIGADOS a la comprobación de identidad en el
+        // mismo proceso shell (`SCRIPT_SIGNAL_IF_IDENTITY`): no hay un
+        // proceso de verificación separado que deje una ventana entre
+        // verificar y señalizar (revisión del mantenedor, 2026-11-03).
+        //
+        // Si la identidad ya no coincide, el script no señala y no hay
+        // nada que escalar. La escalada vuelve a pasar por el mismo script
+        // con KILL: si durante la gracia el PID fue reutilizado por otro
+        // proceso de la distro, el grep falla y el proceso nuevo NO recibe
+        // el KILL.
+        let signal = |sig: &str| {
+            let argv = script_args(
+                Some(distro),
+                SCRIPT_SIGNAL_IF_IDENTITY,
+                &[token.as_str(), pid_str.as_str(), sig],
+            );
+            runner
+                .run(program, &argv, env, cwd, cleanup_timeout)
+                .map(|o| o.code == 0)
+                .unwrap_or(false)
+        };
+        if signal("TERM") {
             killed_pid = pid;
-            // `kill` con el PID como argv: sin shell, sin interpolación.
-            let term = direct_args(Some(distro), "kill", &["-TERM", pid_str.as_str()]);
-            let _ = runner.run(program, &term, env, cwd, cleanup_timeout);
             // Gracia: el TERM es la vía suave; solo si al cabo de esas
-            // sondas sigue vivo se escala a KILL (antes el -KILL era
-            // instantáneo y la vía suave nunca se ejercitaba).
-            //
-            // Si CUALQUIER sonda observa la desaparición del PID, se rompe
-            // y NO se vuelve a comprobar ni se escala: un `kill -0`
-            // posterior podría devolver 0 porque el PID fue REUTILIZADO por
-            // otro proceso de la distro, y enviarle KILL señalizaría un
-            // proceso ajeno (revisión PR #220; la identidad de la instancia
-            // se protege observando la muerte, no volviendo a preguntar por
-            // el número).
+            // sondas sigue vivo se escala a KILL. Si CUALQUIER sonda
+            // observa la desaparición del PID, se rompe y NO se escala.
             let mut killer_observed_death = false;
             for _ in 0..TERM_PROBES {
                 let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
@@ -545,17 +546,11 @@ fn kill_remote_process(
                 }
                 std::thread::sleep(TERM_GRACE);
             }
-            // Solo si la gracia se agotó SIN observar la muerte (el proceso
-            // seguía vivo en TODAS las sondas) se escala a KILL. Nunca
-            // después de haber visto desaparecer el PID.
+            // La escalada RE-VERIFICA la identidad en el mismo acto de
+            // señalar: si el PID fue reutilizado durante la espera, el
+            // KILL no se envía a un proceso ajeno (fail-closed).
             if !killer_observed_death {
-                let alive = direct_args(Some(distro), "kill", &["-0", pid_str.as_str()]);
-                if let Ok(out) = runner.run(program, &alive, env, cwd, cleanup_timeout) {
-                    if out.code == 0 {
-                        let hard = direct_args(Some(distro), "kill", &["-KILL", pid_str.as_str()]);
-                        let _ = runner.run(program, &hard, env, cwd, cleanup_timeout);
-                    }
-                }
+                let _ = signal("KILL");
             }
         }
     }
@@ -728,13 +723,16 @@ mod tests {
         assert!(SCRIPT_EXEC_PIDFILE.contains("QUORB_WSL_TOKEN=\"$t\" exec \"$@\""));
         // La identidad se lee en una sola llamada (pid + token).
         assert_eq!(SCRIPT_READ_IDENTITY, "cat \"$1\"/*/pid \"$1\"/*/token");
-        // La comprobacion mira el environ del PID y exige coincidencia
-        // EXACTA de la linea (fail-closed si no se puede comprobar).
-        assert!(SCRIPT_VERIFY_IDENTITY.contains("/proc/$2/environ"));
-        assert!(SCRIPT_VERIFY_IDENTITY.contains("grep -qxF"));
-        // Ni el token ni el PID se interpolan en el texto del script: los
-        // dos entran como posicionales ($1 y $2).
-        assert!(!SCRIPT_VERIFY_IDENTITY.contains("cat"));
+        // La señal va LIGADA a la comprobacion: el mismo proceso shell
+        // verifica el environ y, solo si coincide, mata (fail-closed).
+        let sig = SCRIPT_SIGNAL_IF_IDENTITY;
+        assert!(sig.contains("/proc/$2/environ"));
+        assert!(sig.contains("grep -qxF"));
+        assert!(sig.contains("&& kill"));
+        // Token, PID y señal entran como posicionales ($1,$2,$3): nada se
+        // interpola en el texto del script.
+        assert!(sig.contains("\"-$3\""));
+        assert!(!sig.contains("cat"));
     }
 
     /// La limpieza es un script constante con el base como parametro: se
@@ -873,8 +871,11 @@ mod tests {
         assert!(calls
             .iter()
             .any(|c| c.contains(&SCRIPT_READ_IDENTITY.to_string())));
-        // ...se mató el proceso remoto (kill -TERM/-KILL), sin --terminate.
-        assert!(calls
+        // ...se señaló el proceso remoto por el SCRIPT ligado a la
+        // identidad (TERM y KILL), sin --terminate y sin kill directo.
+        assert!(signaled(&calls, "TERM"));
+        assert!(signaled(&calls, "KILL"));
+        assert!(!calls
             .iter()
             .any(|c| c.iter().any(|a| a == "-TERM" || a == "-KILL")));
         assert!(calls.iter().all(|c| !c.iter().any(|a| a == "--terminate")));
@@ -919,13 +920,24 @@ mod tests {
                         stderr: String::new(),
                     });
                 }
+                // Señal LIGADA a la identidad: el argv termina en la
+                // señal (TERM/KILL) y el script es
+                // SCRIPT_SIGNAL_IF_IDENTITY (aquí simula verificación OK).
+                if args.contains(&SCRIPT_SIGNAL_IF_IDENTITY.to_string()) {
+                    let sig = args.last().cloned().unwrap_or_default();
+                    if sig == "TERM" && self.term_works {
+                        *self.alive.lock().unwrap() = false;
+                    }
+                    if sig == "KILL" {
+                        *self.alive.lock().unwrap() = false;
+                    }
+                    return Ok(CommandOutput {
+                        code: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    });
+                }
                 let joined = args.join(" ");
-                if joined.contains("-TERM") && self.term_works {
-                    *self.alive.lock().unwrap() = false;
-                }
-                if joined.contains("-KILL") {
-                    *self.alive.lock().unwrap() = false;
-                }
                 let code = if joined.contains("-0") {
                     if *self.alive.lock().unwrap() {
                         0
@@ -1039,26 +1051,17 @@ mod tests {
         // 1) atiende TERM -> muere sin KILL
         let (pid1, c1) = case(true, true);
         assert_eq!(pid1, 4242);
-        assert!(c1.iter().any(|c| c.iter().any(|a| a == "-TERM")));
-        assert!(
-            !c1.iter().any(|c| c.iter().any(|a| a == "-KILL")),
-            "no debe escalar si TERM basta"
-        );
+        assert!(signaled(&c1, "TERM"));
+        assert!(!signaled(&c1, "KILL"), "no debe escalar si TERM basta");
 
         // 2) ignora TERM -> escala a KILL
         let (_, c2) = case(false, true);
-        assert!(c2.iter().any(|c| c.iter().any(|a| a == "-TERM")));
-        assert!(
-            c2.iter().any(|c| c.iter().any(|a| a == "-KILL")),
-            "debe escalar si ignora TERM"
-        );
+        assert!(signaled(&c2, "TERM"));
+        assert!(signaled(&c2, "KILL"), "debe escalar si ignora TERM");
 
         // 3) ya terminado -> sin KILL
         let (_, c3) = case(true, false);
-        assert!(
-            !c3.iter().any(|c| c.iter().any(|a| a == "-KILL")),
-            "nada que matar"
-        );
+        assert!(!signaled(&c3, "KILL"), "nada que matar");
 
         // 4) el PID desaparece y REAPARECE con otra identidad: la primera
         //    sonda observa la muerte y se rompe; aunque un `kill -0`
@@ -1067,7 +1070,7 @@ mod tests {
         //    muerte, no volviendo a preguntar por el número).
         let (_, c4) = case_disappears_then_reappears();
         assert!(
-            !c4.iter().any(|c| c.iter().any(|a| a == "-KILL")),
+            !signaled(&c4, "KILL"),
             "no debe escalar si la sonda ya observó la desaparición"
         );
 
@@ -1081,31 +1084,136 @@ mod tests {
         let (pid5, c5) = case_foreign_instance();
         assert_eq!(pid5, 0, "sin identidad verificada no se mata nada");
         assert!(
-            c5.iter()
-                .any(|c| c.contains(&SCRIPT_VERIFY_IDENTITY.to_string())),
-            "la identidad se comprueba ANTES de cualquier señal"
+            signaled(&c5, "TERM"),
+            "la señal TERM va ligada a la comprobación de identidad"
         );
-        assert!(
-            !c5.iter()
-                .any(|c| c.iter().any(|a| a == "-TERM" || a == "-KILL")),
-            "un proceso ajeno no debe recibir TERM ni KILL"
-        );
+        assert!(!signaled(&c5, "KILL"), "sin identidad no se escala");
         assert!(c5.iter().all(|c| !c.iter().any(|a| a == "--terminate")));
 
+        // 6) IDENTIDAD CAMBIA DURANTE LA ESPERA (bloqueo de la revisión
+        //    2026-11-03): TERM con identidad correcta; el original muere y
+        //    el PID se reutiliza entre sondas (todas las `kill -0` ven
+        //    vivo). La escalada re-verifica en el mismo acto de señalar, así
+        //    que el proceso NUEVO no recibe KILL.
+        let (_, c6, foreign_killed) = case_identity_changes_after_term();
+        assert!(signaled(&c6, "TERM"), "el TERM inicial sí se envía");
+        assert!(
+            signaled(&c6, "KILL"),
+            "la escalada se intenta ligada a la identidad"
+        );
+        assert!(
+            !foreign_killed,
+            "el proceso nuevo (PID reutilizado) NO debe recibir KILL"
+        );
+
         // En ninguno se toco la distro entera; y siempre se limpio el base.
-        for calls in [&c1, &c2, &c3, &c5] {
+        for calls in [&c1, &c2, &c3, &c5, &c6] {
             assert!(calls.iter().all(|c| !c.iter().any(|a| a == "--terminate")));
             assert!(calls
                 .iter()
                 .any(|c| c.contains(&SCRIPT_CLEANUP.to_string())));
         }
 
-        // La comprobacion de identidad precede a la señal en el caso feliz.
-        for calls in [&c1, &c2, &c3] {
-            assert!(calls
+        // Ninguna señal se envía "a ciegas": solo por el script ligado a
+        // la comprobación de identidad, nunca con `kill` directo.
+        for calls in [&c1, &c2, &c3, &c4, &c5, &c6] {
+            assert!(!calls
                 .iter()
-                .any(|c| c.contains(&SCRIPT_VERIFY_IDENTITY.to_string())));
+                .any(|c| c.iter().any(|a| a == "-TERM" || a == "-KILL")));
         }
+    }
+
+    /// ¿Se invocó la señal `sig` LIGADA a la verificación de identidad?
+    fn signaled(calls: &[Vec<String>], sig: &str) -> bool {
+        calls.iter().any(|c| {
+            c.contains(&SCRIPT_SIGNAL_IF_IDENTITY.to_string()) && c.iter().any(|a| a == sig)
+        })
+    }
+
+    /// Regresión del bloqueo de escalada (revisión del mantenedor,
+    /// 2026-11-03): la identidad es correcta al inicio (el TERM se envía),
+    /// el proceso original muere y su PID se reutiliza ENTRE sondas: todas
+    /// las `kill -0` posteriores ven el PID vivo. La escalada re-verifica
+    /// la identidad en el mismo acto de señalar, así que el proceso NUEVO
+    /// no recibe KILL.
+    ///
+    /// El tercer valor es "se señaló un proceso ajeno": el runner lo pone
+    /// a true si ve un `kill -TERM/-KILL` DIRECTO (no ligado). Debe quedar
+    /// en false.
+    fn case_identity_changes_after_term() -> (i64, Vec<Vec<String>>, bool) {
+        use crate::cli_process::RunError;
+        use std::sync::Mutex;
+
+        struct Reused {
+            calls: Mutex<Vec<Vec<String>>>,
+            foreign_killed: Mutex<bool>,
+        }
+        impl CommandRunner for Reused {
+            fn run(
+                &self,
+                _program: &Path,
+                args: &[String],
+                _env: &BTreeMap<String, String>,
+                _cwd: &Path,
+                _timeout: Duration,
+            ) -> Result<CommandOutput, RunError> {
+                self.calls.lock().unwrap().push(args.to_vec());
+                if args.contains(&SCRIPT_READ_IDENTITY.to_string()) {
+                    return Ok(CommandOutput {
+                        code: 0,
+                        stdout: "4242\ntokABC\n".to_string(),
+                        stderr: String::new(),
+                    });
+                }
+                let joined = args.join(" ");
+                // Señal DIRECTA (no ligada): modelo de "se señaló a ciegas".
+                if joined.contains("-TERM") || joined.contains("-KILL") {
+                    *self.foreign_killed.lock().unwrap() = true;
+                }
+                if args.contains(&SCRIPT_SIGNAL_IF_IDENTITY.to_string()) {
+                    let sig = args.last().cloned().unwrap_or_default();
+                    if sig == "TERM" {
+                        // Identidad correcta al inicio: el TERM se envía.
+                        return Ok(CommandOutput {
+                            code: 0,
+                            stdout: String::new(),
+                            stderr: String::new(),
+                        });
+                    }
+                    // KILL: durante la espera el original murió y el PID
+                    // fue reutilizado; el grep falla y el script NO mata.
+                    return Ok(CommandOutput {
+                        code: 1,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    });
+                }
+                // Cualquier sonda `kill -0` ve el PID vivo (el nuevo dueño).
+                Ok(CommandOutput {
+                    code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let remote = Reused {
+            calls: Mutex::new(Vec::new()),
+            foreign_killed: Mutex::new(false),
+        };
+        let env = BTreeMap::new();
+        let pid = kill_remote_process(
+            &remote,
+            Path::new("wsl.exe"),
+            "Ubuntu-22.04",
+            Path::new("/tmp/quorb-base"),
+            &env,
+            Path::new("."),
+            Duration::from_millis(1),
+        );
+        let calls = remote.calls.lock().unwrap().clone();
+        let foreign = *remote.foreign_killed.lock().unwrap();
+        (pid, calls, foreign)
     }
 
     /// Regresión de identidad: el PID existe y está VIVO, pero es de otro
@@ -1136,8 +1244,9 @@ mod tests {
                 }
                 let joined = args.join(" ");
                 // La comprobacion de identidad falla: el proceso que ocupa
-                // ese PID no lleva nuestro token en su environ.
-                if args.contains(&SCRIPT_VERIFY_IDENTITY.to_string()) {
+                // ese PID no lleva nuestro token en su environ. El script
+                // ligado no señala (fail-closed).
+                if args.contains(&SCRIPT_SIGNAL_IF_IDENTITY.to_string()) {
                     return Ok(CommandOutput {
                         code: 1,
                         stdout: String::new(),
