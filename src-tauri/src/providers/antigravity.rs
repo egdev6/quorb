@@ -12,6 +12,14 @@
 //!   · puerto HTTP → línea «listening on random port at N for HTTP» del log
 //!     `language_server.log`, que se reescribe en cada arranque.
 //!
+//! En macOS se intenta primero esa detección del IDE de escritorio. El log del
+//! agy CLI (`~/.gemini/antigravity-cli/log/cli-*.log`) solo se usa como
+//! alternativa, y únicamente si el proceso sigue vivo, su ejecutable es `agy`
+//! o `language_server`, y la línea de comandos trae `--csrf_token`. El puerto se
+//! toma de ese mismo log, nunca de otro que repita el PID. El endpoint
+//! local responde 401 `missing CSRF token` si el header va vacío: no se envía
+//! un token vacío ni se anuncia soporte del CLI mientras no lo exponga.
+//!
 //! Nada sale de la máquina: la petición va a localhost y el token no se guarda.
 
 use super::{net_error, Who};
@@ -48,6 +56,9 @@ const NOT_RUNNING: &str =
 struct Server {
     pid: u32,
     csrf: String,
+    /// Puerto HTTP leído del mismo log que identificó el proceso (agy CLI).
+    /// `None` en el IDE, cuyo puerto se busca en `language_server.log`.
+    port: Option<u16>,
 }
 
 /// No usa el cliente HTTP compartido: ese respeta HTTP_PROXY/ALL_PROXY y el token
@@ -62,9 +73,7 @@ pub async fn fetch(_cfg: &AntigravityConfig, who: Who<'_>, _http: &reqwest::Clie
     let Some(server) = server else {
         return report.fail(Status::Warning, NOT_RUNNING);
     };
-    let port = std::fs::read_to_string(log_path())
-        .ok()
-        .and_then(|log| http_port(&log, server.pid));
+    let port = server_port(&server, || std::fs::read_to_string(ide_log_path()).ok());
     let Some(port) = port else {
         return report.fail(
             Status::Warning,
@@ -308,13 +317,44 @@ fn settle_windows(
     }
 }
 
-/// `language_server.log` en la carpeta de datos de Antigravity del SO.
-fn log_path() -> PathBuf {
+/// Log del IDE de escritorio. En macOS es `~/Library/Application Support/…`.
+fn ide_log_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(super::home)
         .join("Antigravity")
         .join("logs")
         .join("language_server.log")
+}
+
+/// Puerto del servidor elegido. Si vino del log del agy CLI se usa ese, aunque
+/// el log del IDE repita el PID; si no, el del IDE.
+fn server_port(server: &Server, ide_log: impl FnOnce() -> Option<String>) -> Option<u16> {
+    match server.port {
+        Some(port) => Some(port),
+        None => http_port(&ide_log()?, server.pid),
+    }
+}
+
+/// Logs `cli-*.log` del agy CLI, del nombre más reciente al más antiguo.
+#[cfg(target_os = "macos")]
+fn cli_log_paths() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let log_dir = home.join(".gemini").join("antigravity-cli").join("log");
+    let mut logs: Vec<PathBuf> = std::fs::read_dir(log_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("cli-") && name.ends_with(".log")
+        })
+        .map(|e| e.path())
+        .collect();
+    logs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    logs
 }
 
 /// Puerto HTTP que anunció en el log el proceso `pid`. Solo se mira el bloque de
@@ -365,8 +405,29 @@ fn pick_server<'a>(procs: impl IntoIterator<Item = (u32, &'a str)>) -> Option<Se
         let csrf = arg_value(cmd, "--csrf_token")?
             .trim_matches('"')
             .to_string();
-        (!csrf.is_empty()).then_some(Server { pid, csrf })
+        (!csrf.is_empty()).then_some(Server {
+            pid,
+            csrf,
+            port: None,
+        })
     })
+}
+
+#[cfg(not(windows))]
+fn find_server_from_ps() -> Option<Server> {
+    let out = std::process::Command::new("ps")
+        .args(["-ww", "-eo", "pid=,args="])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let procs: Vec<(u32, &str)> = text
+        .lines()
+        .filter_map(|l| {
+            let (pid, cmd) = l.trim_start().split_once(' ')?;
+            Some((pid.parse().ok()?, cmd))
+        })
+        .collect();
+    pick_server(procs)
 }
 
 #[cfg(windows)]
@@ -400,21 +461,92 @@ fn find_server() -> Option<Server> {
     pick_server(procs.iter().map(|(p, c)| (*p, c.as_str())))
 }
 
-#[cfg(not(windows))]
+/// En macOS, el IDE de escritorio primero. El agy CLI solo entra si el proceso
+/// del log es el language server y publica `--csrf_token`.
+#[cfg(target_os = "macos")]
 fn find_server() -> Option<Server> {
+    find_server_from_ps().or_else(|| {
+        let logs = cli_log_paths()
+            .into_iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok());
+        server_from_cli_logs(logs, |pid| {
+            let comm = process_field(pid, "comm=")?;
+            Some((comm, process_field(pid, "args=").unwrap_or_default()))
+        })
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn process_field(pid: u32, field: &str) -> Option<String> {
     let out = std::process::Command::new("ps")
-        .args(["-ww", "-eo", "pid=,args="])
+        .args(["-p", &pid.to_string(), "-ww", "-o", field])
         .output()
         .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let procs: Vec<(u32, &str)> = text
-        .lines()
-        .filter_map(|l| {
-            let (pid, cmd) = l.trim_start().split_once(' ')?;
-            Some((pid.parse().ok()?, cmd))
-        })
-        .collect();
-    pick_server(procs)
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn find_server() -> Option<Server> {
+    find_server_from_ps()
+}
+
+/// `comm` del proceso: el IDE se llama `language_server…` y el agy CLI, `agy`.
+#[cfg(any(target_os = "macos", test))]
+fn comm_is_antigravity_server(comm: &str) -> bool {
+    let base = comm.rsplit(['/', '\\']).next().unwrap_or(comm).trim();
+    base.starts_with("language_server") || base == "agy"
+}
+
+/// Primer log del CLI (del más reciente al más antiguo) cuyo último proceso es
+/// un servidor utilizable. `probe` da `(comm, args)` del PID si sigue vivo.
+#[cfg(any(target_os = "macos", test))]
+fn server_from_cli_logs(
+    logs: impl IntoIterator<Item = String>,
+    probe: impl Fn(u32) -> Option<(String, String)>,
+) -> Option<Server> {
+    logs.into_iter().find_map(|log| {
+        let (comm, args) = probe(latest_server_pid(&log)?)?;
+        server_from_cli(&log, &comm, &args)
+    })
+}
+
+/// Servidor leído del log del CLI, con el puerto de ese mismo log. Sin token, o
+/// si el PID ya no es ese proceso, no hay servidor utilizable: un PID reutilizado
+/// no debe consultarse.
+#[cfg(any(target_os = "macos", test))]
+fn server_from_cli(log: &str, comm: &str, args: &str) -> Option<Server> {
+    let pid = latest_server_pid(log)?;
+    if !comm_is_antigravity_server(comm) {
+        return None;
+    }
+    let port = http_port(log, pid)?;
+    let csrf = arg_value(args, "--csrf_token")?
+        .trim_matches('"')
+        .to_string();
+    (!csrf.is_empty()).then_some(Server {
+        pid,
+        csrf,
+        port: Some(port),
+    })
+}
+
+/// Extrae el PID más reciente de la línea «Starting language server process with pid NNN».
+/// Se recorre el log al revés para tomar siempre el último arranque.
+#[cfg(any(target_os = "macos", test))]
+fn latest_server_pid(log: &str) -> Option<u32> {
+    const START: &str = "Starting language server process with pid ";
+    log.lines().rev().find_map(|l| {
+        l.split(START)
+            .nth(1)?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    })
 }
 
 #[cfg(test)]
@@ -439,7 +571,8 @@ mod tests {
             got,
             Some(Server {
                 pid: 3,
-                csrf: "abc-123".into()
+                csrf: "abc-123".into(),
+                port: None,
             })
         );
         assert_eq!(pick_server([(2, windsurf)]), None);
@@ -807,5 +940,126 @@ I1029 server.go:657] Language server listening on random port at 51183 for HTTP\
         assert_eq!(slug("GPT-OSS 120B"), "gpt_oss_120b");
         assert_eq!(arg_value("a --x 1", "--x"), Some("1"));
         assert_eq!(arg_value("a --xy 1", "--x"), None);
+    }
+
+    // ── Tests for macOS log-based PID extraction ─────────────────────────────
+
+    #[test]
+    fn latest_server_pid_returns_last_pid_on_multiple_restarts() {
+        // Simula un log del agy CLI con dos arranques del language server.
+        // Se espera el PID del arranque más reciente.
+        let log = "\
+I1102 08:48:08.031915  37 server.go:1585] Starting language server process with pid 11111
+I1102 08:48:08.038616  37 server.go:639]  Language server listening on random port at 50001 for HTTP
+I1102 09:00:00.000000  37 server.go:1585] Starting language server process with pid 22222
+I1102 09:00:00.004000  37 server.go:639]  Language server listening on random port at 50002 for HTTP
+";
+        assert_eq!(latest_server_pid(log), Some(22222));
+    }
+
+    #[test]
+    fn latest_server_pid_returns_none_on_empty_log() {
+        assert_eq!(latest_server_pid(""), None);
+        assert_eq!(latest_server_pid("no relevant lines here\n"), None);
+    }
+
+    #[test]
+    fn latest_server_pid_ignores_malformed_pid() {
+        // Si el PID no es un número válido no debe panicar.
+        let log = "Starting language server process with pid NOT_A_NUMBER\n\
+Starting language server process with pid 99999\n";
+        assert_eq!(latest_server_pid(log), Some(99999));
+    }
+
+    #[test]
+    fn http_port_works_with_agy_cli_log_format() {
+        // El log real del agy CLI en macOS usa el mismo formato de línea que el IDE de Windows.
+        let log = "\
+I1102 08:48:08.031915      37 server.go:1585] Starting language server process with pid 96831
+I1102 08:48:08.034829      37 server.go:1636] Language server version: 1.2.13
+I1102 08:48:08.034844      37 server.go:616] Language server will attempt to listen on host localhost
+I1102 08:48:08.038186      37 server.go:631] Language server listening on random port at 57614 for HTTPS (gRPC)
+I1102 08:48:08.038616      37 server.go:639] Language server listening on random port at 57615 for HTTP
+";
+        assert_eq!(http_port(log, 96831), Some(57615));
+        // El puerto gRPC (HTTPS) no se debe devolver.
+        assert_ne!(http_port(log, 96831), Some(57614));
+    }
+
+    #[test]
+    fn cli_server_requires_the_language_server_process_and_a_csrf_token() {
+        let log = "\
+Starting language server process with pid 97576
+Language server listening on random port at 57748 for HTTP
+";
+        let with_token = "agy --csrf_token abc-123";
+        assert_eq!(
+            server_from_cli(log, "agy", with_token),
+            Some(Server {
+                pid: 97576,
+                csrf: "abc-123".into(),
+                port: Some(57748),
+            })
+        );
+        // El proceso `agy` no publica el token: no se consulta con el header vacío.
+        assert_eq!(server_from_cli(log, "agy", "agy"), None);
+        // Un PID reutilizado deja de ser el language server.
+        assert_eq!(
+            server_from_cli(
+                log,
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                with_token
+            ),
+            None
+        );
+        assert_eq!(
+            server_from_cli(
+                log,
+                "/Applications/Antigravity.app/Contents/Resources/bin/language_server_macos_arm",
+                with_token
+            )
+            .map(|s| s.csrf),
+            Some("abc-123".into())
+        );
+    }
+
+    #[test]
+    fn port_comes_from_the_log_that_selected_the_server() {
+        // Dos logs del CLI con el mismo PID (reutilizado) y puertos distintos, más
+        // un log del IDE que también lo repite. El más reciente es el vigente.
+        let newest = "\
+Starting language server process with pid 4242
+Language server listening on random port at 50002 for HTTP
+"
+        .to_string();
+        let oldest = "\
+Starting language server process with pid 4242
+Language server listening on random port at 50001 for HTTP
+"
+        .to_string();
+        let ide = "\
+Starting language server process with pid 4242
+Language server listening on random port at 40001 for HTTP
+";
+        let probe = |pid: u32| {
+            (pid == 4242).then(|| ("agy".to_string(), "agy --csrf_token t1".to_string()))
+        };
+        let server = server_from_cli_logs([newest.clone(), oldest.clone()], probe).unwrap();
+        assert_eq!(server.port, Some(50002));
+        assert_eq!(server_port(&server, || Some(ide.to_string())), Some(50002));
+        // En el orden inverso manda el primer log que identifica el servidor.
+        let server = server_from_cli_logs([oldest, newest], probe).unwrap();
+        assert_eq!(server_port(&server, || Some(ide.to_string())), Some(50001));
+        // El servidor del IDE sigue leyendo su puerto de `language_server.log`.
+        let ide_server = Server {
+            pid: 4242,
+            csrf: "t1".into(),
+            port: None,
+        };
+        assert_eq!(
+            server_port(&ide_server, || Some(ide.to_string())),
+            Some(40001)
+        );
+        assert_eq!(server_port(&ide_server, || None), None);
     }
 }
