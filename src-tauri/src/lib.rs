@@ -232,6 +232,11 @@ struct AppState {
     config_path: PathBuf,
     http: reqwest::Client,
     history: history::History,
+    /// Home del default user de cada distro WSL, resuelto una sola vez
+    /// (el proceso de sesión se consulta cada 15 s y `resolve_home` lanza
+    /// dos procesos wsl.exe). Se invalida solo al cambiar la distro
+    /// configurada (#91, revisión del mantenedor 2026-11-02).
+    wsl_homes: wsl::WslHomeCache,
     /// Single-flight para aperturas de login CLI en curso. Protege contra
     /// doble clic en «Iniciar sesión» (HealthStep/CliConnect) y contra reenvíos
     /// duplicados: mientras un `provider` esté en este set, una segunda llamada
@@ -518,20 +523,31 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
 ///
 /// `resolve_home` lanza dos procesos WSL y va en un hilo propio
 /// (`spawn_blocking`), igual que las lecturas del resolvedor: nada de esto
-/// bloquea el executor async (revisión PR #220).
+/// bloquea el executor async (revisión PR #220). El home se resuelve UNA
+/// vez por distro (`homes`) y se reutiliza en los ticks de `session_stamp`
+/// (cada 15 s), para no mantener la VM de WSL activa (revisión del
+/// mantenedor, 2026-11-02).
 async fn session_resolver(
     cfg: &AppConfig,
     adapter: std::sync::Arc<wsl::RealWslAdapter>,
+    homes: &wsl::WslHomeCache,
 ) -> Result<Option<wsl::SessionResolver>, String> {
     match cfg.session_env() {
         wsl::SessionEnv::Host => Ok(None),
         wsl::SessionEnv::Wsl { distro } => {
-            let a = adapter.clone();
-            let d = distro.clone();
-            let home = tokio::task::spawn_blocking(move || a.resolve_home(&d))
-                .await
-                .map_err(|e| format!("WSL: {e}"))?
-                .map_err(|e| format!("WSL: {e:?}"))?;
+            let home = match homes.home_for(&distro) {
+                Some(h) => h,
+                None => {
+                    let a = adapter.clone();
+                    let d = distro.clone();
+                    let home = tokio::task::spawn_blocking(move || a.resolve_home(&d))
+                        .await
+                        .map_err(|e| format!("WSL: {e}"))?
+                        .map_err(|e| format!("WSL: {e:?}"))?;
+                    homes.insert(&distro, home.clone());
+                    home
+                }
+            };
             Ok(Some(wsl::SessionResolver::for_wsl(adapter, distro, home)))
         }
     }
@@ -542,7 +558,7 @@ async fn fetch_usage(state: State<'_, AppState>) -> Result<Vec<UsageReport>, Str
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
     let reports =
-        match session_resolver(&cfg, adapter.clone()).await {
+        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
             // Host: el comportamiento de siempre (sin resolvedor).
             Ok(None) => providers::fetch_all(&cfg, &state.http, None).await,
             // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
@@ -762,13 +778,15 @@ fn overlay_done(app: AppHandle) {
 async fn session_stamp(state: State<'_, AppState>) -> Result<u64, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    Ok(match session_resolver(&cfg, adapter.clone()).await {
-        // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
-        Ok(resolver) => providers::session_stamp(&cfg, resolver.as_ref()).await,
-        // El entorno no se puede resolver: sin sello (0), el widget espera al
-        // próximo refresco en vez de observar cuentas de otro entorno (#91).
-        Err(_) => 0,
-    })
+    Ok(
+        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+            // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
+            Ok(resolver) => providers::session_stamp(&cfg, resolver.as_ref()).await,
+            // El entorno no se puede resolver: sin sello (0), el widget espera al
+            // próximo refresco en vez de observar cuentas de otro entorno (#91).
+            Err(_) => 0,
+        },
+    )
 }
 
 /// Comprueba la conexión de una cuenta (principal o adicional) con la config guardada,
@@ -780,7 +798,7 @@ async fn check_provider(
 ) -> Result<Option<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    let resolver = session_resolver(&cfg, adapter.clone()).await?;
+    let resolver = session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await?;
     Ok(providers::fetch_one(&cfg, &id, &state.http, resolver.as_ref()).await)
 }
 
@@ -1154,6 +1172,7 @@ pub fn run() {
                 http,
                 history,
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
+                wsl_homes: wsl::WslHomeCache::default(),
             });
             build_tray(app, locale)?;
             Ok(())

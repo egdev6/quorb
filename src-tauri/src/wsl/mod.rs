@@ -7,7 +7,9 @@
 //! Decisiones del paso 0: `ADR-W2.md`. Contrato firmado: `W2-WSLADAPTER.md`.
 
 pub use crate::cli_process::{CommandOutput, RunError};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 mod errors;
 mod mock;
@@ -17,6 +19,38 @@ mod session;
 pub use mock::{MockWslAdapter, WslCall};
 pub use real::{build_wslenv_entry, RealWslAdapter, SESSION_ENV_ALLOWLIST};
 pub use session::{SessionEnv, SessionError, SessionResolver};
+
+/// Caché del home del default user de una distro (#91).
+///
+/// `resolve_home` lanza dos procesos `wsl.exe` y `session_stamp` se
+/// consulta cada 15 s (`SESSION_CHECK_MS`): sin caché, cada consulta paga
+/// dos procesos y puede mantener la VM de WSL siempre activa. El home de
+/// una distro solo cambia si cambia su default user; la invalidación es
+/// automática al cambiar la distro configurada: `home_for` descarta el
+/// mapa en cuanto ve una distro distinta de la cacheada (revisión del
+/// mantenedor, 2026-11-02).
+#[derive(Default)]
+pub struct WslHomeCache(Mutex<(Option<String>, HashMap<String, PathBuf>)>);
+
+impl WslHomeCache {
+    /// Home cacheado para `distro`, o `None` si no está. Si la distro
+    /// activa cambió, el caché se limpia y `None` fuerza a resolver el
+    /// home nuevo.
+    pub fn home_for(&self, distro: &str) -> Option<PathBuf> {
+        let mut inner = self.0.lock().unwrap();
+        if inner.0.as_deref() != Some(distro) {
+            inner.0 = Some(distro.to_string());
+            inner.1.clear();
+            return None;
+        }
+        inner.1.get(distro).cloned()
+    }
+
+    /// Guarda el home resuelto de `distro`.
+    pub fn insert(&self, distro: &str, home: PathBuf) {
+        self.0.lock().unwrap().1.insert(distro.to_string(), home);
+    }
+}
 
 /// Error tipado de una operación WSL. Se asigna desde el parseo de tokens
 /// del output (F2) o desde fallos del lanzador (F13/timeout).
@@ -495,6 +529,30 @@ mod tests {
         assert_eq!(resolve_distro_name("Quorb-Pgone", &enumerated), None);
         assert_eq!(resolve_distro_name("   ", &enumerated), None);
         assert_eq!(resolve_distro_name("", &enumerated), None);
+    }
+
+    /// El home se cachea por distro y se invalida SOLO al cambiar la distro
+    /// activa (revisión del mantenedor, 2026-11-02): `session_stamp` se
+    /// consulta cada 15 s y no debe lanzar `resolve_home` (dos procesos
+    /// wsl.exe) por cada tick.
+    #[test]
+    fn home_cache_resolves_once_and_invalidates_on_distro_change() {
+        let cache = WslHomeCache::default();
+        assert_eq!(cache.home_for("Ubuntu-22.04"), None);
+        cache.insert("Ubuntu-22.04", PathBuf::from("/home/u1"));
+        assert_eq!(
+            cache.home_for("Ubuntu-22.04").as_deref(),
+            Some(Path::new("/home/u1"))
+        );
+        // Cambio de distro configurada: se descarta lo cacheado.
+        assert_eq!(cache.home_for("Debian"), None);
+        cache.insert("Debian", PathBuf::from("/home/u2"));
+        assert_eq!(
+            cache.home_for("Debian").as_deref(),
+            Some(Path::new("/home/u2"))
+        );
+        // La distro anterior quedó invalidada al cambiar.
+        assert_eq!(cache.home_for("Ubuntu-22.04"), None);
     }
 
     /// La comparación contra la enumeración es trim + case-insensitive, y

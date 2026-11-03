@@ -17,7 +17,7 @@
 //! - No se copian tokens: WSL lee el fichero en su casa, Windows lo lee del
 //!   disco; ninguno importa el valor a otro lado.
 
-use super::{WslAdapter, WslError};
+use super::{join_guest_path, WslAdapter, WslError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -129,8 +129,13 @@ impl SessionResolver {
     /// `.codex/auth.json`, `.gemini/oauth_creds.json`): la misma que se usa
     /// hoy contra el home del host, pero compuesta sobre el home del
     /// entorno activo (el del usuario Linux cuando el entorno es WSL).
+    ///
+    /// En WSL se compone con semántica POSIX (`join_guest_path`): la ruta
+    /// viaja literal al `cat` de la distro, y `Path::join` introduciría `\`
+    /// en Windows — donde `\` no es un separador (revisión del mantenedor,
+    /// 2026-11-02).
     pub fn default_path(&self, relative: &Path) -> PathBuf {
-        self.home.join(relative)
+        join_guest_path(&self.home, relative)
     }
 
     /// Lee el contenido de la sesión en el entorno elegido.
@@ -268,6 +273,33 @@ mod tests {
             host.default_path(Path::new(".codex").join("auth.json").as_path()),
             PathBuf::from("/home/hostuser/.codex/auth.json")
         );
+    }
+
+    /// POSIX siempre, también en Windows (revisión del mantenedor,
+    /// 2026-11-02): la ruta de sesión WSL viaja literal al `cat` de la
+    /// distro; `Path::join` habría introducido `\` en Windows. Aquí se
+    /// comprueba el argumento EXACTO que llega al guest.
+    #[test]
+    fn default_path_produces_posix_arguments_for_the_guest() {
+        let mock = Arc::new(MockWslAdapter::new());
+        let wsl = SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        for relative in [
+            ".claude/.credentials.json",
+            ".codex/auth.json",
+            ".gemini/oauth_creds.json",
+        ] {
+            let p = wsl.default_path(Path::new(relative));
+            let s = p.to_string_lossy();
+            assert_eq!(s, format!("/home/user/{relative}"));
+            assert!(
+                !s.contains('\\'),
+                "el argumento al guest no puede llevar separadores del host: {s}"
+            );
+        }
     }
 
     #[test]
