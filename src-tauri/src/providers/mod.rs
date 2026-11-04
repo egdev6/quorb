@@ -272,8 +272,12 @@ fn account_session_path(
             .credentials_file(&home())
             .map(|p| p.to_string_lossy().into_owned()));
     };
-    let name = credentials_file_name(a.provider.as_str())
-        .ok_or_else(|| format!("El proveedor {} no tiene login por CLI", a.provider))?;
+    // Proveedores SIN login por CLI (openrouter, zai, nan, copilot…): la
+    // cuenta no resuelve sesión en este entorno; su fetch usa su token
+    // normal. NO cortar `fetch_account` (revisión rust 2026-11-04).
+    let Some(name) = credentials_file_name(a.provider.as_str()) else {
+        return Ok(None);
+    };
     match &a.config_dir {
         Some(d) => {
             let d = d.trim();
@@ -291,7 +295,7 @@ fn account_session_path(
             }
             // La carpeta que eligió el usuario, tal cual (sin re-enraizar
             // bajo el home): una absoluta del guest no se compone con nada.
-            Ok(Some(format!("{d}/{name}")))
+            Ok(Some(format!("{}/{}", d.trim_end_matches('/'), name)))
         }
         None => {
             // La carpeta por defecto (`~/.quorb`) se compone bajo el home
@@ -743,6 +747,60 @@ mod tests {
         let err = account_session_path(&mk(Some("accounts/claude-1".into())), Some(&resolver))
             .unwrap_err();
         assert!(err.contains("absoluta"), "{err}");
+    }
+
+    /// Los proveedores SIN login por CLI (openrouter, zai, nan…) no resuelven
+    /// sesión en WSL: `Ok(None)` y su fetch normal sigue usando su token
+    /// (review rust 2026-11-04).
+    #[test]
+    fn shellless_providers_are_not_truncated_in_wsl() {
+        let mock = Arc::new(MockWslAdapter::new());
+        let resolver = crate::wsl::SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let a = Account {
+            id: "openrouter:w1".into(),
+            provider: "openrouter".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            account_session_path(&a, Some(&resolver)).expect("sin error"),
+            None
+        );
+    }
+
+    /// Documenta el layout por defecto (review rust 2026-11-04): sin
+    /// `config_dir`, dos cuentas del mismo proveedor comparten
+    /// `~/.quorb/<fichero>` — igual que en host. El aislamiento real de la
+    /// UI viene del `config_dir` que crea Ajustes (subcarpeta por cuenta).
+    #[test]
+    fn default_extra_account_path_is_shared_without_config_dir() {
+        let mock = Arc::new(MockWslAdapter::new());
+        let resolver = crate::wsl::SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let mk = |id: &str| Account {
+            id: id.into(),
+            provider: "claude".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        let p1 = account_session_path(&mk("claude:w1"), Some(&resolver))
+            .expect("p1")
+            .expect("some");
+        let p2 = account_session_path(&mk("claude:w2"), Some(&resolver))
+            .expect("p2")
+            .expect("some");
+        assert_eq!(p1, "/home/user/.quorb/.credentials.json");
+        assert_eq!(
+            p1, p2,
+            "sin config_dir comparten la carpeta por defecto (como el host);              el aislamiento real lo da el config_dir de Ajustes"
+        );
     }
 
     /// Carpeta temporal propia de cada prueba, sin tocar el HOME real.

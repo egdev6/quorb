@@ -17,7 +17,7 @@
 //! - No se copian tokens: WSL lee el fichero en su casa, Windows lo lee del
 //!   disco; ninguno importa el valor a otro lado.
 
-use super::{guest_relative, join_guest_path, WslAdapter, WslError};
+use super::{join_guest_path, WslAdapter, WslError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -231,7 +231,7 @@ impl SessionResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wsl::MockWslAdapter;
+    use crate::wsl::{guest_relative, MockWslAdapter};
 
     #[test]
     fn host_resolver_reads_from_the_local_disk() {
