@@ -17,7 +17,7 @@
 //! - No se copian tokens: WSL lee el fichero en su casa, Windows lo lee del
 //!   disco; ninguno importa el valor a otro lado.
 
-use super::{join_guest_path, WslAdapter, WslError};
+use super::{guest_relative, join_guest_path, WslAdapter, WslError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -300,12 +300,12 @@ mod tests {
             PathBuf::from("/home/user"),
         );
         assert_eq!(
-            wsl.default_path(Path::new(".claude").join(".credentials.json").as_path()),
+            wsl.default_path(guest_relative(&[".claude", ".credentials.json"]).as_path()),
             PathBuf::from("/home/user/.claude/.credentials.json")
         );
         let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
         assert_eq!(
-            host.default_path(Path::new(".codex").join("auth.json").as_path()),
+            host.default_path(guest_relative(&[".codex", "auth.json"]).as_path()),
             PathBuf::from("/home/hostuser/.codex/auth.json")
         );
     }

@@ -41,7 +41,9 @@ pub async fn fetch(
     // comportamiento de siempre (disco local).
     let creds: Value = match resolver {
         Some(r) => {
-            let default = r.default_path(Path::new(".gemini").join("oauth_creds.json").as_path());
+            let default = r.default_path(
+                crate::wsl::guest_relative(&[".gemini", "oauth_creds.json"]).as_path(),
+            );
             let path = match r.resolve(cfg.credentials_path.as_deref(), &default) {
                 Ok(p) => p,
                 Err(e) => return report.fail(Status::Error, e.to_string()),

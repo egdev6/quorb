@@ -296,7 +296,7 @@ fn account_session_path(
         None => {
             // La carpeta por defecto (`~/.quorb`) se compone bajo el home
             // del entorno con POSIX (r.default_path usa join_guest_path).
-            let rel = Path::new(".quorb").join(name);
+            let rel = crate::wsl::guest_relative(&[".quorb", name]);
             Ok(Some(
                 r.default_path(rel.as_path()).to_string_lossy().into_owned(),
             ))

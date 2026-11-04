@@ -229,6 +229,16 @@ fn has_host_separator(path: &str) -> bool {
     path.contains('\\')
 }
 
+/// Ruta RELATIVA dentro del home del entorno, con separador POSIX (`/`).
+///
+/// NUNCA `Path::join` para rutas del guest: en Windows insertaría `\` en el
+/// INTERIOR, y esa ruta viaja literal al `cat` de la distro (Linux), donde
+/// `\` no separa nada — el guest buscaría otro fichero (revisión del
+/// mantenedor, 2026-11-04).
+pub fn guest_relative(parts: &[&str]) -> PathBuf {
+    PathBuf::from(parts.join("/"))
+}
+
 /// Compone `base` + `relative` con semántica POSIX (separador `/`).
 ///
 /// `Path::join` NO sirve aquí: en Windows usa `\` como separador, y la ruta
@@ -529,6 +539,19 @@ mod tests {
         assert_eq!(resolve_distro_name("Quorb-Pgone", &enumerated), None);
         assert_eq!(resolve_distro_name("   ", &enumerated), None);
         assert_eq!(resolve_distro_name("", &enumerated), None);
+    }
+
+    /// `guest_relative` compone con `/` en cualquier plataforma (el
+    /// `Path::join` de Windows introduciría `\` en el interior; revisión del
+    /// mantenedor, 2026-11-04).
+    #[test]
+    fn guest_relative_uses_posix_separators_on_every_platform() {
+        let p = guest_relative(&[".claude", ".credentials.json"]);
+        assert_eq!(p.to_string_lossy(), ".claude/.credentials.json");
+        assert!(!p.to_string_lossy().contains('\\'));
+        let nested = guest_relative(&[".quorb", ".gemini/oauth_creds.json"]);
+        assert_eq!(nested.to_string_lossy(), ".quorb/.gemini/oauth_creds.json");
+        assert!(!nested.to_string_lossy().contains('\\'));
     }
 
     /// El home se cachea por distro y se invalida SOLO al cambiar la distro

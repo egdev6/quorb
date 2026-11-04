@@ -73,7 +73,8 @@ pub async fn fetch(
     // comportamiento de siempre (disco local).
     let auth_json: Value = match resolver {
         Some(r) => {
-            let default = r.default_path(Path::new(".grok").join("auth.json").as_path());
+            let default =
+                r.default_path(crate::wsl::guest_relative(&[".grok", "auth.json"]).as_path());
             let path = match r.resolve(cfg.credentials_path.as_deref(), &default) {
                 Ok(p) => p,
                 Err(e) => return report.fail(Status::Error, e.to_string()),
