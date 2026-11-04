@@ -42,7 +42,10 @@ pub async fn fetch(
     let creds: Value = match resolver {
         Some(r) => {
             let default = r.default_path(Path::new(".gemini").join("oauth_creds.json").as_path());
-            let path = r.resolve(cfg.credentials_path.as_deref(), &default);
+            let path = match r.resolve(cfg.credentials_path.as_deref(), &default) {
+                Ok(p) => p,
+                Err(e) => return report.fail(Status::Error, e.to_string()),
+            };
             match r.read_async(&path).await {
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => v,

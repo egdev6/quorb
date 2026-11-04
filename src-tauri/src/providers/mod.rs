@@ -23,7 +23,7 @@ use crate::config::{
     credentials_file_name, Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig,
     OpenCodeGoConfig, OpenRouterConfig, SubscriptionConfig, ZaiConfig,
 };
-use crate::model::{Kind, UsageReport};
+use crate::model::{Kind, Status, UsageReport};
 use crate::secrets;
 use crate::wsl::SessionResolver;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
@@ -248,6 +248,62 @@ pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
 }
 
 /// Consulta una cuenta adicional con la config de su proveedor adaptada a ella.
+/// La ruta de sesión de una cuenta ADICIONAL en el entorno del resolvedor
+/// (#91, revisión del mantenedor 2026-11-04).
+///
+/// En WSL se compone con semántica POSIX en TODO el recorrido: el
+/// `PathBuf::join` de Windows insertaría `\` en el interior (y
+/// `join_guest_path` solo normaliza la frontera), y el `cat` del guest no
+/// puede leer una ruta con separadores del host. Por eso:
+/// - `config_dir` con separador del host (`\`) o NO absoluto del guest
+///   (empieza por `/`) → error de configuración ACCIONABLE, no una ruta
+///   inválida que luego falla en silencio como «Sin sesión».
+/// - `config_dir` absoluto del guest → se usa tal cual (la carpeta que
+///   eligió el usuario), sin re-enraizar bajo el home.
+/// - Sin `config_dir` → la carpeta por defecto (`~/.quorb`) compuesta bajo
+///   el home del entorno.
+/// En host devuelve la ruta de `credentials_file` de siempre.
+fn account_session_path(
+    a: &Account,
+    resolver: Option<&SessionResolver>,
+) -> Result<Option<String>, String> {
+    let Some(r) = resolver else {
+        return Ok(a
+            .credentials_file(&home())
+            .map(|p| p.to_string_lossy().into_owned()));
+    };
+    let name = credentials_file_name(a.provider.as_str())
+        .ok_or_else(|| format!("El proveedor {} no tiene login por CLI", a.provider))?;
+    match &a.config_dir {
+        Some(d) => {
+            let d = d.trim();
+            if d.contains('\\') {
+                return Err(format!(
+                    "La carpeta de la cuenta {} tiene separadores de Windows (\\), no válida en modo WSL: {d}",
+                    a.id
+                ));
+            }
+            if !d.starts_with('/') {
+                return Err(format!(
+                    "La carpeta de la cuenta {} debe ser una ruta absoluta del guest en modo WSL (empieza por '/'): {d}",
+                    a.id
+                ));
+            }
+            // La carpeta que eligió el usuario, tal cual (sin re-enraizar
+            // bajo el home): una absoluta del guest no se compone con nada.
+            Ok(Some(format!("{d}/{name}")))
+        }
+        None => {
+            // La carpeta por defecto (`~/.quorb`) se compone bajo el home
+            // del entorno con POSIX (r.default_path usa join_guest_path).
+            let rel = Path::new(".quorb").join(name);
+            Ok(Some(
+                r.default_path(rel.as_path()).to_string_lossy().into_owned(),
+            ))
+        }
+    }
+}
+
 fn fetch_account<'a>(
     cfg: &'a AppConfig,
     a: &'a Account,
@@ -255,31 +311,23 @@ fn fetch_account<'a>(
     resolver: Option<&'a SessionResolver>,
 ) -> BoxFuture<'a, UsageReport> {
     let who = Who::extra(a);
-    // La cuenta adicional aísla su sesión en su propia carpeta; esa
-    // carpeta se compone sobre el home del ENTORNO elegido (el del host o
-    // el del usuario de la distro) para que resolver y leer sean la misma
-    // cuenta (#91). `move`: el closure (un Copia del `&'a` del resolvedor)
-    // sobrevive al retorno dentro del BoxFuture<'a>.
+    // La ruta de la cuenta adicional se compone en el ENTORNO del resolvedor
+    // (POSIX en WSL). Una configuración no POSIX en modo WSL (ruta del host,
+    // relativa) es un error EXPLÍCITO de la cuenta, no un «Sin sesión»
+    // silencioso (revisión del mantenedor, 2026-11-04).
+    let account_path = match account_session_path(a, resolver) {
+        Ok(p) => p,
+        Err(message) => {
+            return (async move {
+                who.report(a.provider.as_str(), Kind::Subscription)
+                    .fail(Status::Error, message)
+            })
+            .boxed();
+        }
+    };
     let session = move |main: &SubscriptionConfig| SubscriptionConfig {
         enabled: true,
-        credentials_path: match resolver {
-            Some(r) => {
-                // La carpeta de la cuenta adicional se compone sobre el home
-                // del ENTORNO (host o distro WSL) y el fichero de sesión va
-                // relativo a ella — una sola fuente (credentials_file_name).
-                let relative = a
-                    .session_dir(Path::new(""))
-                    .join(credentials_file_name(a.provider.as_str()).unwrap_or_default());
-                Some(
-                    r.default_path(relative.as_path())
-                        .to_string_lossy()
-                        .into_owned(),
-                )
-            }
-            None => a
-                .credentials_file(&home())
-                .map(|p| p.to_string_lossy().into_owned()),
-        },
+        credentials_path: account_path.clone(),
         login_command: main.login_command.clone(),
     };
     match a.provider.as_str() {
@@ -492,26 +540,27 @@ async fn wsl_session_stamp(cfg: &AppConfig, r: &SessionResolver) -> u64 {
             c.credentials_path.as_deref(),
             &r.default_path(Path::new(rel)),
         )
+        .ok()
     };
     let mut paths: Vec<PathBuf> = Vec::new();
-    if cfg.claude.enabled {
-        paths.push(main(&cfg.claude, ".claude/.credentials.json"));
+    if let Some(p) = main(&cfg.claude, ".claude/.credentials.json") {
+        paths.push(p);
     }
-    if cfg.codex.enabled {
-        paths.push(main(&cfg.codex, ".codex/auth.json"));
+    if let Some(p) = main(&cfg.codex, ".codex/auth.json") {
+        paths.push(p);
     }
-    if cfg.gemini.enabled {
-        paths.push(main(&cfg.gemini, ".gemini/oauth_creds.json"));
+    if let Some(p) = main(&cfg.gemini, ".gemini/oauth_creds.json") {
+        paths.push(p);
     }
-    if cfg.grok.enabled {
-        paths.push(main(&cfg.grok, ".grok/auth.json"));
+    if let Some(p) = main(&cfg.grok, ".grok/auth.json") {
+        paths.push(p);
     }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
-        if let Some(name) = credentials_file_name(a.provider.as_str()) {
-            // La carpeta de la cuenta adicional, compuesta sobre el home del
-            // entorno (misma fuente que `fetch_account`).
-            let rel = a.session_dir(Path::new("")).join(name);
-            paths.push(r.default_path(&rel));
+        // La cuenta adicional se compone en el ENTORNO con POSIX del guest;
+        // una cuenta mal configurada (ruta del host) no contribuye a la
+        // huella: el error explícito lo da el fetch de esa cuenta.
+        if let Ok(Some(path)) = account_session_path(a, Some(r)) {
+            paths.push(PathBuf::from(path));
         }
     }
     let mut acc = 0u64;
@@ -591,6 +640,109 @@ mod tests {
         );
         let second = rt.block_on(wsl_session_stamp(&cfg, &r));
         assert_ne!(first, second, "un login en la distro debe cambiar el sello");
+    }
+
+    /// Revisión del mantenedor (2026-11-04): la cuenta adicional en WSL se
+    /// compone con POSIX en TODO el recorrido (el `PathBuf::join` de Windows
+    /// insertaría `\` en el interior). El `WslCall` exacto que recibe el
+    /// guest es `/home/user/.quorb/.credentials.json`, sin separadores del
+    /// host.
+    #[test]
+    fn wsl_session_stamp_reads_extra_accounts_with_guest_posix_paths() {
+        let mock = Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_home("Ubuntu-22.04", PathBuf::from("/home/user"));
+        let extra = PathBuf::from("/home/user/.quorb/.credentials.json");
+        mock.set_file(
+            "Ubuntu-22.04",
+            extra.clone(),
+            "{\"claudeAiOauth\":{\"accessToken\":\"v1\"}}".to_string(),
+        );
+        let r = crate::wsl::SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let cfg = AppConfig {
+            accounts: vec![Account {
+                id: "claude:w1".into(),
+                provider: "claude".into(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        let stamp = rt.block_on(wsl_session_stamp(&cfg, &r));
+        assert_ne!(stamp, 0, "la cuenta adicional contribuye a la huella");
+        assert!(
+            mock.calls().iter().any(|c| matches!(
+                c,
+                crate::wsl::WslCall::ReadFile(d, p)
+                    if d == "Ubuntu-22.04" && p == &extra
+            )),
+            "el guest recibe la ruta POSIX exacta de la cuenta adicional, llamadas: {:?}",
+            mock.calls()
+        );
+        assert!(
+            mock.calls()
+                .iter()
+                .all(|c| !format!("{:?}", c).contains('\\')),
+            "ninguna ruta del guest lleva separadores del host"
+        );
+    }
+
+    /// La composición POSIX de la cuenta adicional (revisión del
+    /// mantenedor, 2026-11-04) es la única puerta de entrada de la cuenta en
+    /// `fetch_account` y en `wsl_session_stamp`; un `Err` se convierte en el
+    /// report de error de la cuenta sin tocar el adaptador ni la red.
+    ///
+    /// (El test directo de `fetch_account` necesita un cliente reqwest con
+    /// reactor, que el tokio de CI no expone; la decisión de ruta está
+    /// aislada aquí y su consumidor en el sello se prueba con el `WslCall`
+    /// exacto.)
+    /// La composición POSIX de la cuenta adicional: absoluta del guest se
+    /// usa tal cual; separadores del host o rutas relativas se rechazan con
+    /// mensaje accionable (revisión del mantenedor, 2026-11-04).
+    #[test]
+    fn account_path_is_posix_and_rejects_host_shaped_config_dirs() {
+        let mock = Arc::new(MockWslAdapter::new());
+        let resolver = crate::wsl::SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let mk = |dir: Option<String>| Account {
+            id: "claude:w1".into(),
+            provider: "claude".into(),
+            config_dir: dir,
+            enabled: true,
+            ..Default::default()
+        };
+        // Absoluta del guest: la carpeta que eligió el usuario, sin
+        // re-enraizar bajo el home.
+        assert_eq!(
+            account_session_path(&mk(Some("/mnt/c/Users/yo/quorb".into())), Some(&resolver))
+                .expect("config_dir absoluto del guest"),
+            Some("/mnt/c/Users/yo/quorb/.credentials.json".to_string())
+        );
+        // Sin config_dir: la carpeta por defecto compuesta bajo el home del
+        // entorno, POSIX.
+        assert_eq!(
+            account_session_path(&mk(None), Some(&resolver)).expect("defecto"),
+            Some("/home/user/.quorb/.credentials.json".to_string())
+        );
+        // Separadores del host: rechazo explícito.
+        let err = account_session_path(&mk(Some(r"C:\Users\yo\quorb".into())), Some(&resolver))
+            .unwrap_err();
+        assert!(err.contains("Windows"), "{err}");
+        // Relativa: rechazo explícito (no debe caer al cwd del guest).
+        let err = account_session_path(&mk(Some("accounts/claude-1".into())), Some(&resolver))
+            .unwrap_err();
+        assert!(err.contains("absoluta"), "{err}");
     }
 
     /// Carpeta temporal propia de cada prueba, sin tocar el HOME real.

@@ -190,7 +190,10 @@ pub async fn fetch(
     };
     let creds = match resolver {
         Some(r) => {
-            let path = r.resolve(cfg.credentials_path.as_deref(), &default_path);
+            let path = match r.resolve(cfg.credentials_path.as_deref(), &default_path) {
+                Ok(p) => p,
+                Err(e) => return report.fail(Status::Error, e.to_string()),
+            };
             match r.read_async(&path).await {
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => match Credentials::parse(&v) {

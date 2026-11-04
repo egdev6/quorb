@@ -60,6 +60,27 @@ impl std::fmt::Display for SessionError {
     }
 }
 
+/// Problema de una ruta explícita para el GUEST (modo WSL), o `None` si es
+/// POSIX aceptable (revisión del mantenedor, 2026-11-04).
+///
+/// Un separador `\` (ruta UNC `\\wsl.localhost\…` o `C:\…`) o una ruta
+/// relativa viajan literal al `cat` del guest y fallan como «no existe»,
+/// ocultando un error de configuración detrás de «Sin sesión».
+fn guest_path_problem(path: &str) -> Option<String> {
+    if path.contains('\\') {
+        return Some(format!(
+            "La ruta de sesión en modo WSL no puede llevar separadores de Windows (\\). \
+             Pega la ruta del guest (por ejemplo /home/usuario/...) en lugar de la ruta UNC: {path}"
+        ));
+    }
+    if !path.starts_with('/') {
+        return Some(format!(
+            "La ruta de sesión en modo WSL debe ser absoluta del guest (empieza por '/'), se recibió: {path}"
+        ));
+    }
+    None
+}
+
 /// Un resolvedor de sesiones: el entorno y cómo leer dentro de él.
 ///
 /// `adapter` es el doble de `RealWslAdapter` en los tests (o el real en
@@ -116,10 +137,24 @@ impl SessionResolver {
     /// No cae a otro entorno: si la ruta explícita no existe o la default del
     /// entorno elegido no está, es `Absent` — nunca se busca en Windows cuando
     /// el entorno es WSL ni al revés.
-    pub fn resolve(&self, explicit: Option<&str>, default: &Path) -> PathBuf {
+    ///
+    /// En WSL la ruta explícita debe ser una ruta POSIX del guest
+    /// (revisión del mantenedor, 2026-11-04): un valor con separadores del
+    /// host (`C:\…`, `\\wsl.localhost\…`) viajaría literal al `cat`, fallaría
+    /// como "no existe" y se presentaría como «Sin sesión», ocultando un
+    /// error de configuración. Se devuelve `Invalid` con un mensaje
+    /// accionable en su lugar.
+    pub fn resolve(&self, explicit: Option<&str>, default: &Path) -> Result<PathBuf, SessionError> {
         match explicit.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(p) => PathBuf::from(p),
-            None => default.to_path_buf(),
+            Some(p) => {
+                if matches!(self.env, SessionEnv::Wsl { .. }) {
+                    if let Some(message) = guest_path_problem(p) {
+                        return Err(SessionError::Invalid(message));
+                    }
+                }
+                Ok(PathBuf::from(p))
+            }
+            None => Ok(default.to_path_buf()),
         }
     }
 
@@ -372,11 +407,13 @@ mod tests {
             mock.clone(),
             PathBuf::from("/home/hostuser"),
         );
-        let p = r.resolve(
-            Some("C:\\Users\\u\\custom.json"),
-            Path::new("/home/u/default.json"),
-        );
-        assert_eq!(p, PathBuf::from("C:\\Users\\u\\custom.json"));
+        let p = r
+            .resolve(
+                Some("/mnt/c/Users/u/custom.json"),
+                Path::new("/home/u/default.json"),
+            )
+            .expect("explícita");
+        assert_eq!(p, PathBuf::from("/mnt/c/Users/u/custom.json"));
     }
 
     #[test]
@@ -387,8 +424,54 @@ mod tests {
             mock.clone(),
             PathBuf::from("/home/hostuser"),
         );
-        let p = r.resolve(Some("   "), Path::new("/home/u/default.json"));
+        let p = r
+            .resolve(Some("   "), Path::new("/home/u/default.json"))
+            .expect("default");
         assert_eq!(p, PathBuf::from("/home/u/default.json"));
+    }
+
+    /// La ruta explícita en modo WSL se valida como ruta del GUEST
+    /// (revisión del mantenedor, 2026-11-04): una UNC (`\\wsl.localhost\…`)
+    /// viajaría literal al `cat` y fallaría como «no existe», ocultando un
+    /// error de configuración tras «Sin sesión». Se devuelve `Invalid`.
+    #[test]
+    fn explicit_host_style_paths_are_rejected_in_wsl_mode() {
+        let mock = Arc::new(MockWslAdapter::new());
+        let r = SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        for bad in [
+            r"\\wsl.localhost\Ubuntu\home\user\.claude\.credentials.json",
+            r"C:\Users\yo\.claude\.credentials.json",
+            "relativa.json",
+        ] {
+            let err = r
+                .resolve(Some(bad), Path::new("/home/user/.claude/.credentials.json"))
+                .expect_err("ruta no POSIX del guest en modo WSL");
+            assert!(
+                matches!(err, SessionError::Invalid(_)),
+                "debe ser Invalid: {bad}"
+            );
+        }
+        // Una ruta POSIX absoluta del guest es válida.
+        assert!(r
+            .resolve(
+                Some("/mnt/c/Users/yo/.claude/.credentials.json"),
+                Path::new("/home/user/.claude/.credentials.json"),
+            )
+            .is_ok());
+        // En host, la ruta explícita de Windows sigue siendo válida (legado).
+        let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
+        assert_eq!(
+            host.resolve(
+                Some(r"C:\Users\yo\.claude\.credentials.json"),
+                Path::new("/home/hostuser/.claude/.credentials.json"),
+            )
+            .expect("host sin validación guest"),
+            PathBuf::from(r"C:\Users\yo\.claude\.credentials.json")
+        );
     }
 
     /// La lectura asíncrona devuelve lo mismo que la síncrona: en WSL espera
