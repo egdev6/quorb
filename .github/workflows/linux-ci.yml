@@ -125,6 +125,18 @@ jobs:
         run: |
           echo "► Arrancando Secret Service efímero (dbus-run-session + gnome-keyring)..."
           dbus-run-session -- bash -euo pipefail -c '
+            # HOME y XDG_DATA_HOME TEMPORALES (revisión del mantenedor,
+            # 2026-10-31): el keyring se crea bajo un directorio desechable,
+            # nunca en el HOME del runner; el smoke verifica que este
+            # directorio es de donde cuelgan HOME y XDG_DATA_HOME antes de
+            # tocar nada.
+            export QUORB_SECRETS_SMOKE_TMPHOME="$(mktemp -d)"
+            export HOME="$QUORB_SECRETS_SMOKE_TMPHOME"
+            export XDG_DATA_HOME="$QUORB_SECRETS_SMOKE_TMPHOME/.local/share"
+            mkdir -p "$XDG_DATA_HOME"
+            echo "  TMPHOME=$QUORB_SECRETS_SMOKE_TMPHOME"
+            echo "  HOME=$HOME"
+            echo "  XDG_DATA_HOME=$XDG_DATA_HOME"
             eval $(printf "%s" "quorb-ci-testpass" | gnome-keyring-daemon --unlock --components=secrets)
             echo "  DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
             echo "  GNOME_KEYRING_CONTROL=${GNOME_KEYRING_CONTROL:-<none>}"

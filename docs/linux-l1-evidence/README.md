@@ -101,9 +101,11 @@ Lo que demuestra (criterio 2 de #106):
 **Migración del servicio legacy — ejercitada (criterio 2, revisión del owner 2026-10-28)**:
 la migración (`migrate_legacy()` en `secrets.rs`: copia un secreto de
 `LEGACY_SERVICE` al servicio actual y borra el antiguo) queda validada por el
-smoke `linux_legacy_migrate_once_then_legacy_is_gone` en el run
-[`40651008234`](https://github.com/sosan/quorb/actions/runs/40651008234)
-(SHA `0c75fab`), log: `linux_legacy_migrate_once_then_legacy_is_gone ... ok`.
+smoke `linux_legacy_migrate_once_then_legacy_is_gone`. La PR #203 se re-ejecutó
+sobre el head corregido (revisión 2026-10-31): run [_PENDIENTE_](…) — el
+anterior [`40651008234`](https://github.com/sosan/quorb/actions/runs/40651008234)
+(SHA `0c75fab`) corresponde al código previo, sin el guard reordenado, y NO
+acredita el head actual.
 Qué verifica:
 - Escribe **directamente** en `LEGACY_SERVICE` (`es.egdev.ai-usage`) una clave
   base de la allowlist (`nan_session`, sin `@` — las claves con `@` no migran
@@ -119,12 +121,27 @@ Qué verifica:
 real `nan_session` del llavero, así que **solo se ejecuta en el entorno
 aislado del CI** — `dbus-run-session` + `gnome-keyring` efímero con
 `QUORB_SECRETS_SMOKE_ISOLATED=1` (var definida únicamente dentro de esa sesión
-en `linux-ci.yml`). Sin esa variable, el smoke **falla antes de tocar nada**:
-no debe ejecutarse a mano en un escritorio con llavero real. El `CleanupGuard`
-se crea antes de cualquier lectura y su limpieza solo corre en ese entorno
-aislado, así que nunca borra datos reales. Los smokes de llavero (round trip y
-migración) se ejecutan únicamente vía el paso "Secret Service smoke" de
-`linux-ci.yml`, no como ejecución manual en escritorio.
+en `linux-ci.yml`). En la revisión 2026-10-31 el aislamiento pasó de
+*declarado* a *verificado*:
+
+- El workflow crea `HOME` y `XDG_DATA_HOME` **temporales** bajo
+  `QUORB_SECRETS_SMOKE_TMPHOME`; el keyring del runner vive en ese directorio
+  desechable, no en el HOME real de la VM.
+- El smoke **comprueba** que `HOME` == `QUORB_SECRETS_SMOKE_TMPHOME` y que
+  `XDG_DATA_HOME` cuelga de él antes de tocar nada; sin esa comprobación, la
+  variable solo *declara* aislamiento.
+- **Precondición antes del guard**: el destino actual **y** el legado deben
+  devolver `NoEntry`. Si alguno tuviera un secreto real, el smoke falla AQUÍ,
+  sin haber creado ninguna limpieza (no puede borrar nada).
+- **Limpieza acotada**: `CleanupGuard` solo borra lo que el test escribió
+  (el legado y, tras la migración, el destino actual), activando flags justo
+  antes de cada escritura.
+
+Sin `QUORB_SECRETS_SMOKE_ISOLATED=1` (o con las rutas fuera del directorio
+temporal), el smoke **falla antes de tocar nada**: no debe ejecutarse a mano en
+un escritorio con llavero real. Los smokes de llavero (round trip y migración)
+se ejecutan únicamente vía el paso "Secret Service smoke" de `linux-ci.yml`,
+no como ejecución manual en escritorio.
 
 Dependencias añadidas al runner: `libsecret-1-dev`, `gnome-keyring`, `dbus`, `dbus-x11`, `xvfb`.
 
