@@ -130,9 +130,19 @@ jobs:
             # nunca en el HOME del runner; el smoke verifica que este
             # directorio es de donde cuelgan HOME y XDG_DATA_HOME antes de
             # tocar nada.
+            #
+            # La toolchain NO puede perder su HOME: rustup/cargo buscan allí
+            # la toolchain por defecto (error "no default is configured" si
+            # no), así que CARGO_HOME/RUSTUP_HOME se mantienen en el HOME
+            # original mientras el resto del proceso usa el temporal.
+            export _ORIG_HOME="$HOME"
+            export _ORIG_CARGO_HOME="${CARGO_HOME:-$_ORIG_HOME/.cargo}"
+            export _ORIG_RUSTUP_HOME="${RUSTUP_HOME:-$_ORIG_HOME/.rustup}"
             export QUORB_SECRETS_SMOKE_TMPHOME="$(mktemp -d)"
             export HOME="$QUORB_SECRETS_SMOKE_TMPHOME"
             export XDG_DATA_HOME="$QUORB_SECRETS_SMOKE_TMPHOME/.local/share"
+            export CARGO_HOME="$_ORIG_CARGO_HOME"
+            export RUSTUP_HOME="$_ORIG_RUSTUP_HOME"
             mkdir -p "$XDG_DATA_HOME"
             echo "  TMPHOME=$QUORB_SECRETS_SMOKE_TMPHOME"
             echo "  HOME=$HOME"
