@@ -12,7 +12,7 @@ pub struct Bounds {
 }
 
 impl Bounds {
-    fn validate(self, label: &str) -> Result<Self, String> {
+    pub fn validate(self, label: &str) -> Result<Self, String> {
         self.validate_for(label, "detail")
     }
 

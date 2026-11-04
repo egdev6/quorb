@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { nearestEdge, panelHeightLimit, panelRect, panelWindowRect, stripRect, union } from './dock';
+import { toMonitor } from './text-scale';
 
 const area = { x: 0, y: 0, w: 1920, h: 1040 }; // pantalla menos barra de tareas
 
@@ -15,6 +16,19 @@ describe('dock', () => {
     expect(stripRect(area, 'top', 0.5, 400, 80)).toEqual({ x: 760, y: 0, w: 400, h: 80 });
     expect(stripRect(area, 'bottom', 0, 400, 80)).toEqual({ x: 0, y: 960, w: 400, h: 80 });
     expect(stripRect(area, 'right', 1, 80, 400)).toEqual({ x: 1840, y: 640, w: 80, h: 400 });
+  });
+
+  // Text scale (#228): the CSS strip size enters in monitor units and keeps the anchored edge exact.
+  it.each([[1.0812, 1.02], [1.25, 1], [1.5, 1.25], [2.25, 1.5]])('keeps the right and bottom edges with text scale %s on monitor scale %s', (t, sf) => {
+    const monitor = { x: -1920 / sf, y: 0, w: 1920 / sf, h: 1040 / sf };
+    for (const offset of [0, 0.5, 1]) {
+      const right = stripRect(monitor, 'right', offset, toMonitor(64, t), toMonitor(320, t));
+      expect(right.x + right.w).toBe(monitor.x + monitor.w);
+      expect([right.w, right.h]).toEqual([64 * t, 320 * t]);
+      const bottom = stripRect(monitor, 'bottom', offset, toMonitor(400, t), toMonitor(80, t));
+      expect(bottom.y + bottom.h).toBe(monitor.y + monitor.h);
+      expect([bottom.w, bottom.h]).toEqual([400 * t, 80 * t]);
+    }
   });
 
   it('opens the panel towards the inside, clamped', () => {

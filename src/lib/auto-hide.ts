@@ -46,11 +46,15 @@ export function waitForViewport(): Promise<void> {
   });
 }
 
-/** Same center in either window size, so the handle never jumps while resizing. */
-export function peekRect(strip: Rect, edge: Edge): Rect {
+/**
+ * Same center in either window size, so the handle never jumps while resizing.
+ * The `.peek` handle is 48×24 CSS px; `scale` (the text scale) turns them into
+ * monitor units like the strip (#228).
+ */
+export function peekRect(strip: Rect, edge: Edge, scale = 1): Rect {
   const vertical = isVertical(edge);
-  const span = Math.min(48, vertical ? strip.h : strip.w);
-  const depth = Math.min(24, vertical ? strip.w : strip.h);
+  const span = Math.min(48 * scale, vertical ? strip.h : strip.w);
+  const depth = Math.min(24 * scale, vertical ? strip.w : strip.h);
   if (vertical) return { x: edge === 'left' ? strip.x : strip.x + strip.w - depth, y: strip.y + (strip.h - span) / 2, w: depth, h: span };
   return { x: strip.x + (strip.w - span) / 2, y: edge === 'top' ? strip.y : strip.y + strip.h - depth, w: span, h: depth };
 }

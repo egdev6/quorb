@@ -4,11 +4,10 @@
 
 ## Estado actual
 
-Quorb tiene licencia MIT y su código es público. La distribución Windows se
-referencia en [GitHub Releases](https://github.com/egdev6/quorb/releases).
-Esta página describe la configuración de firma, incluido el nuevo workflow macOS
-no ejecutado; no certifica artefactos publicados ni el estado actual de cuentas
-o servicios externos.
+Quorb tiene licencia MIT y su código es público. Windows y macOS ARM64 están en
+[GitHub Releases](https://github.com/egdev6/quorb/releases).
+Esta página describe la configuración de firma y la evidencia macOS observada a
+**2026-10-31**; no certifica el estado actual de cuentas ni servicios externos.
 
 El [workflow de release](../.github/workflows/release.yml) exige firma minisign de
 Tauri para los artefactos del updater y crea un borrador desde un SHA validado.
@@ -27,7 +26,17 @@ de firma, no acredita una integración completada. Este documento no solicita
 SignPath ni acredita patrocinio, certificado Authenticode, cumplimiento o cierre
 de esa issue.
 
-## Release macOS con Developer ID (pendiente de ejecución)
+## Release macOS con Developer ID
+
+[v0.8.0](https://github.com/egdev6/quorb/releases/tag/v0.8.0) publica el DMG ARM64
+firmado/notarizado y `.dmg.sha256`, para **macOS 15+, Apple Silicon (M1+)**.
+El [productor 41067808525](https://github.com/egdev6/quorb/actions/runs/41067808525)
+preparó y envió el checkpoint. El [diagnóstico 41230153171](https://github.com/egdev6/quorb/actions/runs/41230153171)
+confirmó `Accepted`, `jobId` `e7b22172-716e-4176-a023-2d1d916d6823` y SHA-256 del DMG enviado:
+`224b37f9b3e6d134f7d408ed06995792af73fa05c41ee79eb2e20edc476800be`.
+El [resume 41233474221](https://github.com/egdev6/quorb/actions/runs/41233474221)
+completó verificación, stapling, staging final y publicación, incluido Gatekeeper
+en el runner CI, no la prueba GUI en un Mac real.
 
 El [workflow macOS separado](../.github/workflows/macos-release.yml), materializado
 byte a byte desde `.github/security-drafts/macos-release.yml`, solo admite
@@ -60,8 +69,8 @@ ID/digest ZIP autenticado, allowlist de extracción y manifiesto ligado a valore
 externos antes de acceder a API Apple. No requiere certificado privado, recompila,
 re-firma ni reenvía. `In Progress` o Accepted sin log disponible queda **pending**,
 sin publicación; rechazo muestra issues saneados y falla. Accepted exige `jobId`
-y `sha256` del log iguales al UUID y DMG original. Ese campo hash solo se ha
-probado con fixture **sintético**, no Apple real; ausente falla cerrado.
+y `sha256` del log iguales al UUID y DMG original. Además del fixture sintético,
+el diagnóstico real confirmó ese campo y el resume verificó el vínculo; ausente falla cerrado.
 
 Solo grapa el DMG retenido, verifica firma/ticket y Gatekeeper, monta readonly con
 plist real y valida la `Quorb.app` contenida (autoridad/team, bundle ID, versión,
@@ -81,13 +90,14 @@ quedó ambiguo antes del recibo, investigar con diagnostics/history/info/log:
 **no reenviar ni enlazar por nombre**. `submission_id` opcional solo autoriza
 continuación si el log Apple coincide con UUID y hash retenido. Artifacts
 caducados/borrados requieren decisión separada, no rebuild automático. Detalles
-y pasos en [build-macos.md](./build-macos.md#release-macos-reanudable-preparación-local-runtime-pendiente).
+y pasos en [build-macos.md](./build-macos.md#release-macos-reanudable-operación-y-evidencia).
 
-**Esta corrección no se ha ejecutado contra Apple ni macOS real.** Tests Linux
-simulan procesos, HTTP y archivos. Gatekeeper del DMG descargado, primera apertura
-con cuarentena de [#118](https://github.com/egdev6/quorb/issues/118) y GUI siguen
-pendientes; no quitar cuarentena. No acredita soporte ni instalación. Dispatch,
-publicación y cambios de Environment requieren autorización separada.
+La evidencia nativa complementa los tests Linux simulados; no demuestra la primera
+descarga por navegador, cuarentena, instalación ni GUI en un Mac real, pendientes
+en [#118](https://github.com/egdev6/quorb/issues/118); no quitar cuarentena.
+El éxito en CI no certifica validez universal o futura del certificado ni implica
+secretos nuevos o cambios de Environment. Futuras ejecuciones y publicaciones
+requieren autorización separada.
 
 ## Responsabilidades
 

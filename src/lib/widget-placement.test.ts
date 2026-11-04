@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../i18n';
 import {
   placementOutcome,
+  readPlacementWithRetries,
   reasonKey,
   samePhysicalWithin,
   samePlacement,
@@ -97,6 +98,114 @@ describe('placementOutcome', () => {
     expect(outcome.bounds).toEqual(requested);
     expect(outcome.failed).toBe(false);
     expect(outcome.reason).toBeNull();
+  });
+});
+
+describe('readPlacementWithRetries', () => {
+  const notViewable = (): WidgetPlacementReport =>
+    report({ status: 'unverified', bounds: null, reason: 'not_viewable' });
+
+  /** Devuelve los informes de la secuencia, repitiendo el último. */
+  const sequence = (...reports: WidgetPlacementReport[]) => {
+    let index = 0;
+    return vi.fn(async () => reports[Math.min(index++, reports.length - 1)]);
+  };
+
+  it('reads once when the native window is already readable', async () => {
+    const read = sequence(report());
+    const result = await readPlacementWithRetries(read, { sleep: async () => {} });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(report());
+  });
+
+  it('retries in silence while the native window is not viewable yet', async () => {
+    // El compositor puede tardar en mapear la ventana recién mostrada: ese
+    // `not_viewable` no es un fallo, así que se reintenta sin molejar al
+    // usuario.
+    const read = sequence(notViewable(), notViewable(), report());
+    const result = await readPlacementWithRetries(read, { sleep: async () => {} });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(result?.reason).toBeUndefined();
+  });
+
+  it('gives up after the bounded budget and returns the last report', async () => {
+    const read = sequence(notViewable());
+    const result = await readPlacementWithRetries(read, { attempts: 4, sleep: async () => {} });
+    expect(read).toHaveBeenCalledTimes(4);
+    // Agotado el presupuesto, el llamante recibe el `not_viewable` y decide
+    // si es un fallo real.
+    expect(result?.reason).toBe('not_viewable');
+  });
+
+  it('does not retry for the other reasons', async () => {
+    for (const reason of ['read_failed', 'size_refused', 'position_refused', 'superseded'] as const) {
+      const read = sequence(report({ status: 'unverified', bounds: null, reason }));
+      await readPlacementWithRetries(read, { sleep: async () => {} });
+      expect(read).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('waits between the retries', async () => {
+    const sleep = vi.fn(async () => {});
+    const read = sequence(notViewable());
+    await readPlacementWithRetries(read, { attempts: 3, delayMs: 120, sleep });
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(120);
+  });
+
+  it('stops when the read is abandoned', async () => {
+    const read = vi.fn(async () => null);
+    const result = await readPlacementWithRetries(read, { sleep: async () => {} });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it('aborts retries when shouldAbort triggers during the wait', async () => {
+    // Si el usuario oculta la tira durante la espera entre reintentos,
+    // se detiene inmediatamente sin realizar más lecturas nativas.
+    let hidden = false;
+    const sleep = vi.fn(async () => {
+      hidden = true; // el usuario ocultó la tira mientras esperaba
+    });
+    const read = sequence(notViewable(), report());
+    const result = await readPlacementWithRetries(read, {
+      attempts: 3,
+      sleep,
+      shouldAbort: () => hidden,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it('discards report if shouldAbort triggers while read was in flight', async () => {
+    // Si la lectura nativa estaba en vuelo cuando se ocultó la tira,
+    // el resultado se descarta y devuelve null para no aplicar nada.
+    let hidden = false;
+    let callCount = 0;
+    const read = vi.fn(async () => {
+      callCount++;
+      if (callCount === 2) {
+        hidden = true; // se ocultó durante la llamada
+      }
+      return notViewable();
+    });
+    const result = await readPlacementWithRetries(read, {
+      attempts: 3,
+      sleep: async () => {},
+      shouldAbort: () => hidden,
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(result).toBeNull();
+  });
+
+  it('aborts immediately before the first read if shouldAbort is already true', async () => {
+    const read = vi.fn(async () => report());
+    const result = await readPlacementWithRetries(read, {
+      shouldAbort: () => true,
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(result).toBeNull();
   });
 });
 

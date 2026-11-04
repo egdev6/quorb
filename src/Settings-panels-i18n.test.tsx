@@ -259,13 +259,13 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     expectAll(
       antigravity('es'),
       [
-        'Suscripción · IDE abierto',
+        'Suscripción · IDE de escritorio',
         'Antigravity',
         'Mostrar en el widget',
-        'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Por ahora solo verificado en Windows.',
+        'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Sesión del IDE de escritorio. El agy CLI en macOS no expone el token CSRF que exige este endpoint.',
         'aria-label="Cómo conectar la cuenta"',
         '<b>Abre Antigravity con tu cuenta de Google</b>',
-        'Quorb consulta el servidor local que arranca el IDE en este equipo. Solo se lee con Antigravity abierto; no se guarda ningún token.',
+        'Quorb consulta el servidor local que arranca el IDE de escritorio en este equipo. Solo se lee con ese IDE abierto; no se guarda ningún token. El agy CLI en macOS no expone el token CSRF, así que esa sesión no se puede leer.',
         'Comprobando la conexión…',
       ],
       'es antigravity',
@@ -277,13 +277,13 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     expectAll(
       html,
       [
-        'Subscription · open IDE',
+        'Subscription · desktop IDE',
         'Antigravity',
         'Show in the widget',
-        'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Verified on Windows only for now.',
+        'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Desktop IDE session. The macOS agy CLI does not expose the CSRF token this endpoint requires.',
         'aria-label="How to connect the account"',
         '<b>Open Antigravity with your Google account</b>',
-        'Quorb queries the local server the IDE starts on this computer. It is read only while Antigravity is open; no token is stored.',
+        'Quorb queries the local server the desktop IDE starts on this computer. It is read only while that IDE is open; no token is stored. The macOS agy CLI does not expose the CSRF token, so that session cannot be read.',
         'Checking the connection…',
       ],
       'en antigravity',

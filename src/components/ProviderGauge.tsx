@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties } from 'react';
-import type { Locale, UsageReport } from '../lib/types';
+import type { Locale, Status, UsageReport } from '../lib/types';
+import { t } from '../i18n';
 import { peakMeter } from '../lib/format';
 import { meterColor } from '../lib/meter-colors';
 import { ProviderLogo } from './ProviderLogo';
@@ -17,6 +18,14 @@ export function gaugeState(report: UsageReport, threshold = 90): 'over' | 'warni
   return null;
 }
 
+/** Motivo accesible de los tres estados atenuados (#214): falta credencial, sin configurar o error.
+ *  Solo `needsLogin` y `unconfigured` tienen acción asociada (login/settings), y esa pareja muestra badge. */
+const STATUS_REASON: Partial<Record<Status, 'details.status.needsLogin' | 'details.status.unconfigured' | 'details.status.error'>> = {
+  needsLogin: 'details.status.needsLogin',
+  unconfigured: 'details.status.unconfigured',
+  error: 'details.status.error',
+};
+
 /**
  * Círculo de la tira: Gauge del DS (hasta tres anillos concéntricos + logo), sin texto.
  * Los detalles se ven en el panel que se abre al pasar el ratón.
@@ -32,6 +41,7 @@ export function ProviderGauge({
   threshold,
   dragging = false,
   onHover,
+  onClick,
   pointer,
 }: {
   report: UsageReport;
@@ -48,6 +58,11 @@ export function ProviderGauge({
   /** Umbral de aviso (%) */
   threshold?: number;
   onHover: (el: HTMLElement) => void;
+  /**
+   * Clic sobre el orbe (#170): ancla el panel. Si no se pasa, el clic abre el
+   * panel como hace el hover.
+   */
+  onClick?: (el: HTMLElement) => void;
   /** Se está arrastrando para reordenar */
   dragging?: boolean;
   /** Manejadores de puntero para reordenar arrastrando */
@@ -55,7 +70,10 @@ export function ProviderGauge({
 }) {
   const validity = validityInfo(report, locale);
   const resets = showResets ? resetCreditsInfo(report, locale) : null;
-  const accessibleTitle = [report.name, validity?.title, resets?.title].filter(Boolean).join(' · ');
+  // Motivo del estado atenuado (#214): entra al título accesible entre el nombre y la validez.
+  const reasonKey = STATUS_REASON[report.status];
+  const reason = reasonKey ? t(locale, reasonKey) : null;
+  const accessibleTitle = [report.name, reason, validity?.title, resets?.title].filter(Boolean).join(' · ');
   const peak = peakMeter(report);
   const all = report.meters.filter((m) => m.percent != null);
   // Pequeños: un único anillo con el límite más cercano. Con círculos muy pequeños, máximo dos.
@@ -81,7 +99,7 @@ export function ProviderGauge({
       data-status={report.status}
       data-account={account}
       aria-label={accessibleTitle}
-      title={account || validity || resets ? accessibleTitle : undefined}
+      title={account || reason || validity || resets ? accessibleTitle : undefined}
       aria-expanded={active}
       style={{ '--size': `${size}px`, '--w': `${w}px`, '--gap': `${gap}px` } as CSSProperties}
       onMouseEnter={(e) => onHover(e.currentTarget)}
@@ -92,7 +110,7 @@ export function ProviderGauge({
         if (/Windows/.test(navigator.userAgent) && !e.currentTarget.matches(':focus-visible')) return;
         onHover(e.currentTarget);
       }}
-      onClick={(e) => onHover(e.currentTarget)}
+      onClick={(e) => (onClick ?? onHover)(e.currentTarget)}
       onPointerCancel={pointer?.onPointerUp}
       {...pointer}
     >
@@ -103,6 +121,11 @@ export function ProviderGauge({
         <ProviderLogo id={report.id} name={report.name} />
       </span>
       <ValidityBadge report={report} compact showResets={showResets} locale={locale} />
+      {/* Badge ámbar (#214): solo los estados con acción; decorativo, el motivo legible va en el título. */}
+      {/* Sin badge para `error`: la señal queda solo en el texto accesible. */}
+      {report.status === 'needsLogin' || report.status === 'unconfigured' ? (
+        <span className="orb__badge" data-kind="action" aria-hidden="true" />
+      ) : null}
       {account && (
         <span className="orb__acct" aria-hidden="true">
           {account}
