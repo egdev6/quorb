@@ -41,6 +41,7 @@ export function ProviderGauge({
   threshold,
   dragging = false,
   onHover,
+  onPointerEnter,
   onClick,
   pointer,
 }: {
@@ -58,6 +59,11 @@ export function ProviderGauge({
   /** Umbral de aviso (%) */
   threshold?: number;
   onHover: (el: HTMLElement) => void;
+  /**
+   * Entrada del puntero (#222): solo `mouseenter`. Si no se pasa, la entrada
+   * abre como `onHover`; el foco y el clic siguen usando `onHover`.
+   */
+  onPointerEnter?: (el: HTMLElement) => void;
   /**
    * Clic sobre el orbe (#170): ancla el panel. Si no se pasa, el clic abre el
    * panel como hace el hover.
@@ -102,7 +108,7 @@ export function ProviderGauge({
       title={account || reason || validity || resets ? accessibleTitle : undefined}
       aria-expanded={active}
       style={{ '--size': `${size}px`, '--w': `${w}px`, '--gap': `${gap}px` } as CSSProperties}
-      onMouseEnter={(e) => onHover(e.currentTarget)}
+      onMouseEnter={(e) => (onPointerEnter ?? onHover)(e.currentTarget)}
       onFocus={(e) => {
         // Windows can restore pointer-acquired focus when the popup hides.
         // Treating that as hover reopens it outside both windows, causing a loop.

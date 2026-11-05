@@ -97,6 +97,37 @@ describe('ProviderGauge popup focus', () => {
   );
 });
 
+describe('ProviderGauge pointer-only enter', () => {
+  function gauge(onPointerEnter?: (el: HTMLElement) => void) {
+    vi.stubGlobal('navigator', { userAgent: 'X11; Linux x86_64' });
+    const onHover = vi.fn();
+    const report: UsageReport = {
+      id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
+      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+    };
+    const button = ProviderGauge({ report, small: false, size: 60, active: false, onHover, onPointerEnter });
+    const target = { matches: vi.fn(() => true) };
+    return { button, event: { currentTarget: target }, onHover, target };
+  }
+
+  it('routes mouseenter to onPointerEnter and not to onHover, while focus still opens', () => {
+    const onPointerEnter = vi.fn();
+    const { button, event, onHover, target } = gauge(onPointerEnter);
+    button.props.onMouseEnter(event);
+    expect(onPointerEnter).toHaveBeenCalledWith(target);
+    expect(onHover).not.toHaveBeenCalled();
+    button.props.onFocus(event);
+    expect(onHover).toHaveBeenCalledWith(target);
+    expect(onPointerEnter).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps mouseenter on onHover when onPointerEnter is not given', () => {
+    const { button, event, onHover, target } = gauge();
+    button.props.onMouseEnter(event);
+    expect(onHover).toHaveBeenCalledWith(target);
+  });
+});
+
 describe('ProviderGauge semantic colors', () => {
   it.each(['nan', 'nan:work', 'gemini', 'cursor', 'copilot', 'openrouter'])('keeps one configured color per ring for %s', (id) => {
     const meters = [meter('Modelo A', 2592000), meter('Modelo B', null), meter('Modelo C', 86400)];
