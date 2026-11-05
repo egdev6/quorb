@@ -102,7 +102,7 @@ Lo que demuestra (criterio 2 de #106):
 la migración (`migrate_legacy()` en `secrets.rs`: copia un secreto de
 `LEGACY_SERVICE` al servicio actual y borra el antiguo) queda validada por el
 smoke `linux_legacy_migrate_once_then_legacy_is_gone`. La PR #203 se re-ejecutó
-sobre el head corregido (revisión 2026-10-31): run [`41885715837`](https://github.com/sosan/quorb/actions/runs/41885715837) (SHA `55d3d75`) — el
+sobre el head corregido (revisión 2026-10-31): run [`42128707783`](https://github.com/sosan/quorb/actions/runs/42128707783) (SHA `98061b8`) — el
 anterior [`40651008234`](https://github.com/sosan/quorb/actions/runs/40651008234)
 (SHA `0c75fab`) corresponde al código previo, sin el guard reordenado, y NO
 acredita el head actual.
