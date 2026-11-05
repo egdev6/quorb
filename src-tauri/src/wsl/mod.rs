@@ -17,6 +17,7 @@ mod process;
 mod real;
 mod session;
 pub use mock::{MockWslAdapter, WslCall};
+pub use process::SCRIPT_COMMAND_V;
 pub use real::{build_wslenv_entry, RealWslAdapter, SESSION_ENV_ALLOWLIST};
 pub use session::{SessionEnv, SessionError, SessionResolver};
 

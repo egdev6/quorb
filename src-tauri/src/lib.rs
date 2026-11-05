@@ -805,9 +805,25 @@ async fn check_provider(
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
 /// `async` lo saca del hilo principal: consulta el PATH fresco del registro.
 #[tauri::command(async)]
-fn cli_status(state: State<'_, AppState>) -> BTreeMap<String, bool> {
+async fn cli_status(state: State<'_, AppState>) -> BTreeMap<String, bool> {
     let cfg = state.config.lock().unwrap().clone();
-    login::cli_status(&cfg)
+    // #92: la detección en WSL lanza procesos `wsl.exe` (enumeración + `command
+    // -v`), así que va en un hilo bloqueante: en el hilo del executor
+    // congelaría la UI (hasta 20 s de timeout por operación).
+    tauri::async_runtime::spawn_blocking(move || {
+        let adapter = wsl::RealWslAdapter::new();
+        let distro = match cfg.session_env() {
+            wsl::SessionEnv::Wsl { distro } => Some(distro),
+            wsl::SessionEnv::Host => None,
+        };
+        let wsl = distro.as_deref().map(|d| login::WslLogin {
+            adapter: &adapter,
+            distro: d,
+        });
+        login::cli_status(&cfg, wsl)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// ¿Existe el fichero de sesión de una cuenta? `home` se inyecta para poder
@@ -825,7 +841,7 @@ fn account_session(state: State<'_, AppState>, id: String) -> bool {
 }
 
 #[tauri::command]
-fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+async fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     // Single-flight: si hay una apertura en curso para este id, no abrir
     // una segunda terminal (doble clic / reenvío del frontend).
     // `unwrap_or_else(into_inner)`: si otro hanco pánicara con el lock tomado,
@@ -838,9 +854,27 @@ fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String
     if !inflight.insert(provider.clone()) {
         return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
     }
-    drop(inflight); // no mantener el lock mientras spawn_terminal corre
+    drop(inflight); // no mantener el lock mientras el login corre
     let cfg = state.config.lock().unwrap().clone();
-    let r = login::open(&provider, &cfg);
+    // #92: en WSL el login consulta la distro (y su home), así que son
+    // procesos bloqueantes: fuera del executor, en un hilo propio.
+    let provider_for_task = provider.clone();
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        let adapter = wsl::RealWslAdapter::new();
+        let distro = match cfg.session_env() {
+            wsl::SessionEnv::Wsl { distro } => Some(distro),
+            wsl::SessionEnv::Host => None,
+        };
+        let wsl = distro.as_deref().map(|d| login::WslLogin {
+            adapter: &adapter,
+            distro: d,
+        });
+        login::open(&provider_for_task, &cfg, wsl)
+    });
+    let r = match task.await {
+        Ok(r) => r,
+        Err(e) => Err(format!("No pude abrir la terminal: {e}")),
+    };
     state
         .login_in_flight
         .lock()
@@ -865,6 +899,18 @@ async fn install_codex(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<codex_setup::CodexInstallResult, String> {
+    // #92: en modo WSL no se ofrece el instalador de Windows como solución a
+    // una CLI ausente dentro de la distro; la instalación automática en WSL
+    // queda fuera del alcance, y el login ya dirige a instalar allí.
+    let install_cfg = app.state::<AppState>().config.lock().unwrap().clone();
+    if matches!(install_cfg.session_env(), wsl::SessionEnv::Wsl { .. }) {
+        return Err(
+            "El modo WSL no usa el instalador de Codex de Windows: instala Codex dentro \
+             de la distro (p. ej. `sudo npm i -g @openai/codex`). La instalación automática \
+             en WSL queda fuera de alcance."
+                .to_string(),
+        );
+    }
     let label = window.label().to_string();
     if !codex_setup::settings_window_ok(&label) {
         return Err(codex_setup::MSG_WRONG_WINDOW.to_string());
