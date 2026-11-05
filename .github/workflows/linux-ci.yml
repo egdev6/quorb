@@ -150,6 +150,10 @@ jobs:
             eval $(printf "%s" "quorb-ci-testpass" | gnome-keyring-daemon --unlock --components=secrets)
             echo "  DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
             echo "  GNOME_KEYRING_CONTROL=${GNOME_KEYRING_CONTROL:-<none>}"
+            # El bus es la puerta real a Secret Service: el smoke verifica
+            # que la sesión usa EL DE ESTE RUN (revisión del mantenedor,
+            # 2026-11-05), no el de un escritorio.
+            export QUORB_SECRETS_SMOKE_DBUS_ADDR="$DBUS_SESSION_BUS_ADDRESS"
             export QUORB_SECRETS_SMOKE_ISOLATED=1
             cd src-tauri
             echo "► Corriendo smoke linux_secret_service_round_trip (--ignored)..."

@@ -115,7 +115,6 @@ Qué verifica:
 - El valor queda reescrito en el **destino actual** (`es.egdev.quorb`),
   comprobado leyendo el entry actual sin volver a migrar.
 - El legado desaparece de lecturas directas posteriores (**`NoEntry`**).
-- Sin imprimir valores; `CleanupGuard` limpia ambos servicios al terminar.
 
 **Ejecución segura (aislamiento obligatorio)**: el smoke escribe en la clave
 real `nan_session` del llavero, así que **solo se ejecuta en el entorno
@@ -127,12 +126,21 @@ en `linux-ci.yml`). En la revisión 2026-10-31 el aislamiento pasó de
 - El workflow crea `HOME` y `XDG_DATA_HOME` **temporales** bajo
   `QUORB_SECRETS_SMOKE_TMPHOME`; el keyring del runner vive en ese directorio
   desechable, no en el HOME real de la VM.
+- **El bus D-Bus también está verificado** (revisión del mantenedor,
+  2026-11-05): Secret Service se alcanza por `DBUS_SESSION_BUS_ADDRESS`, no
+  por el HOME, así que el workflow exporta la dirección de la sesión
+  efímera en `QUORB_SECRETS_SMOKE_DBUS_ADDR` y el smoke la compara con la
+  que el proceso realmente usa. Un escritorio con las variables exportadas
+  pero su bus propio no pasa esta puerta.
+- Ambos smokes (round trip y migración) aplican la **misma regla** vía el
+  helper compartido `assert_smoke_isolation()`.
 - El smoke **comprueba** que `HOME` == `QUORB_SECRETS_SMOKE_TMPHOME` y que
   `XDG_DATA_HOME` cuelga de él antes de tocar nada; sin esa comprobación, la
   variable solo *declara* aislamiento.
 - **Precondición antes del guard**: el destino actual **y** el legado deben
-  devolver `NoEntry`. Si alguno tuviera un secreto real, el smoke falla AQUÍ,
-  sin haber creado ninguna limpieza (no puede borrar nada).
+  devolver `NoEntry` ESTRICTO (una entrada existente aunque vacía aborta el
+  smoke). Si alguno tuviera un secreto real, el smoke falla AQUÍ, sin haber
+  creado ninguna limpieza (no puede borrar nada).
 - **Limpieza acotada**: `CleanupGuard` solo borra lo que el test escribió
   (el legado y, tras la migración, el destino actual), activando flags justo
   antes de cada escritura.

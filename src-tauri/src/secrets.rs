@@ -261,6 +261,103 @@ mod tests {
         assert!(get("api_key_cualquiera@openrouter:a1b2c3").is_none());
     }
 
+    /// AISLAMIENTO VERIFICADO de los smokes de llavero (revisión del
+    /// mantenedor, 2026-11-05). Comprueba, antes de tocar nada, que el
+    /// proceso corre en el entorno desechable que arma el workflow:
+    ///
+    /// - `QUORB_SECRETS_SMOKE_ISOLATED=1` (contrato del paso del CI).
+    /// - `HOME` y `XDG_DATA_HOME` bajo `QUORB_SECRETS_SMOKE_TMPHOME`
+    ///   (el llavero se crea ahí, no en el HOME real).
+    /// - `DBUS_SESSION_BUS_ADDRESS` **es el del bus efímero**: el workflow
+    ///   exporta su `abstract=` dentro de la sesión `dbus-run-session` y el
+    ///   smoke compara — un escritorio con las variables exportadas pero su
+    ///   bus propio no pasa esta puerta (Secret Service se alcanza por el
+    ///   bus, no por el HOME).
+    ///
+    /// Cualquier desajuste hace fallar el smoke SIN tocar el llavero.
+    #[cfg(target_os = "linux")]
+    fn assert_smoke_isolation() {
+        assert!(
+            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            "smoke de llavero solo en entorno aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
+        );
+        let tmp = std::env::var("QUORB_SECRETS_SMOKE_TMPHOME").expect(
+            "el workflow debe exportar QUORB_SECRETS_SMOKE_TMPHOME; sin él el aislamiento no está verificado",
+        );
+        let home = std::env::var("HOME").expect("HOME debe estar definido en el entorno aislado");
+        let data = std::env::var("XDG_DATA_HOME")
+            .expect("XDG_DATA_HOME debe estar definido en el entorno aislado");
+        assert!(
+            std::path::Path::new(&home) == std::path::Path::new(&tmp),
+            "HOME debe ser el directorio temporal del CI, no un escritorio real: {home} != {tmp}"
+        );
+        assert!(
+            std::path::Path::new(&data).starts_with(&tmp),
+            "XDG_DATA_HOME debe colgar del directorio temporal del CI: {data} no está bajo {tmp}"
+        );
+        // El BUS es la puerta real a Secret Service: debe ser el efímero de
+        // la sesión `dbus-run-session` (el workflow exporta su dirección
+        // abstract= en QUORB_SECRETS_SMOKE_DBUS_ADDR).
+        let expected = std::env::var("QUORB_SECRETS_SMOKE_DBUS_ADDR").expect(
+            "el workflow debe exportar QUORB_SECRETS_SMOKE_DBUS_ADDR; sin él el bus no está verificado",
+        );
+        let actual = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+            .expect("DBUS_SESSION_BUS_ADDRESS debe estar definido");
+        assert_eq!(
+            actual, expected,
+            "el bus D-Bus debe ser el efímero de la sesión del CI, no el del escritorio"
+        );
+    }
+
+    /// AISLAMIENTO VERIFICADO de los smokes de llavero (revisión del
+    /// mantenedor, 2026-11-05). Comprueba, antes de cualquier escritura,
+    /// que el proceso corre en el entorno desechable que arma el workflow:
+    ///
+    /// - `QUORB_SECRETS_SMOKE_ISOLATED=1` (contrato del paso del CI).
+    /// - `HOME` y `XDG_DATA_HOME` bajo `QUORB_SECRETS_SMOKE_TMPHOME`
+    ///   (el llavero se crea ahí, no en el HOME real).
+    /// - `DBUS_SESSION_BUS_ADDRESS` **es el de la sesión efímera**: el
+    ///   workflow exporta su dirección abstract= en QUORB_SECRETS_SMOKE_DBUS_ADDR
+    ///   y el smoke la compara — un escritorio con las variables exportadas
+    ///   pero su bus propio no pasa esta puerta (Secret Service se alcanza
+    ///   por el bus, no por el HOME).
+    ///
+    /// Cualquier desajuste hace fallar el smoke SIN tocar el llavero.
+    #[cfg(target_os = "linux")]
+    fn assert_smoke_isolation() {
+        assert!(
+            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            "smoke de llavero solo en entorno aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
+        );
+        let tmp = std::env::var("QUORB_SECRETS_SMOKE_TMPHOME").expect(
+            "el workflow debe exportar QUORB_SECRETS_SMOKE_TMPHOME; sin él el aislamiento no está verificado",
+        );
+        let home = std::env::var("HOME").expect("HOME debe estar definido en el entorno aislado");
+        let data = std::env::var("XDG_DATA_HOME")
+            .expect("XDG_DATA_HOME debe estar definido en el entorno aislado");
+        assert!(
+            std::path::Path::new(&home) == std::path::Path::new(&tmp),
+            "HOME debe ser el directorio temporal del CI, no un escritorio real: {home} != {tmp}"
+        );
+        assert!(
+            std::path::Path::new(&data).starts_with(&tmp),
+            "XDG_DATA_HOME debe colgar del directorio temporal del CI: {data} no está bajo {tmp}"
+        );
+        let expected = std::env::var("QUORB_SECRETS_SMOKE_DBUS_ADDR").expect(
+            "el workflow debe exportar QUORB_SECRETS_SMOKE_DBUS_ADDR; sin él el bus no está verificado",
+        );
+        let actual = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+            .expect("DBUS_SESSION_BUS_ADDRESS debe estar definido");
+        assert_eq!(
+            actual, expected,
+            "el bus D-Bus debe ser el efímero de la sesión del CI, no el del escritorio"
+        );
+    }
+
     /// Smoke manual de Secret Service real: verifica que el backend
     /// `linux-native` del crate `keyring` persiste y recupera el valor a
     /// través de Secret Service. Marcado `#[ignore]` para que no forme parte
@@ -272,15 +369,10 @@ mod tests {
     #[test]
     #[ignore = "requiere llavero aislado del CI"]
     fn linux_secret_service_round_trip() {
-        // Aislamiento igual que el smoke de migración (coherencia doc/código,
-        // revisión rust-reviewer): la única vía soportada es el keyring
-        // efímero del CI; sin QUORB_SECRETS_SMOKE_ISOLATED=1 no toca nada.
-        assert!(
-            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-            "smoke de llavero solo en entorno aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
-        );
+        // Aislamiento VERIFICADO, igual que el smoke de migración
+        // (helper compartido: variable, HOME/XDG_DATA_HOME temporales y bus
+        // D-Bus efímero; revisión del mantenedor, 2026-11-05).
+        assert_smoke_isolation();
         // Clave única por corrida y propia de la lista cerrada: `entry` rechaza
         // cualquier clave ajena, así que el smoke usa la misma vía que la app.
         struct CleanupGuard(String);
@@ -336,34 +428,10 @@ mod tests {
     #[test]
     #[ignore = "requiere llavero aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1)"]
     fn linux_legacy_migrate_once_then_legacy_is_gone() {
-        // AISLAMIENTO OBLIGATORIO: este smoke escribe en la clave real
-        // `nan_session`. Solo debe correr en el entorno aislado del CI
-        // (dbus-run-session + gnome-keyring efímero con HOME/XDG_DATA_HOME
-        // temporales).
-        assert!(
-            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-            "smoke de migración legacy solo en llavero aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
-        );
-        // El aislamiento se VERIFICA, no se declara (revisión del mantenedor,
-        // 2026-10-31): HOME y XDG_DATA_HOME deben apuntar al directorio
-        // desechable que exporta el workflow. Sin esta comprobación, la
-        // variable solo declara aislamiento.
-        let tmp = std::env::var("QUORB_SECRETS_SMOKE_TMPHOME").expect(
-            "el workflow debe exportar QUORB_SECRETS_SMOKE_TMPHOME; sin él el aislamiento no está verificado",
-        );
-        let home = std::env::var("HOME").expect("HOME debe estar definido en el entorno aislado");
-        let data = std::env::var("XDG_DATA_HOME")
-            .expect("XDG_DATA_HOME debe estar definido en el entorno aislado");
-        assert!(
-            std::path::Path::new(&home) == std::path::Path::new(&tmp),
-            "HOME debe ser el directorio temporal del CI, no un escritorio real: {home} != {tmp}"
-        );
-        assert!(
-            std::path::Path::new(&data).starts_with(&tmp),
-            "XDG_DATA_HOME debe colgar del directorio temporal del CI: {data} no está bajo {tmp}"
-        );
+        // Aislamiento VERIFICADO con el helper compartido (variable,
+        // HOME/XDG_DATA_HOME temporales y bus D-Bus efímero; revisión del
+        // mantenedor, 2026-11-05).
+        assert_smoke_isolation();
 
         // Clave BASE de la lista cerrada (nan_session, sin `@`): la migración
         // legacy solo aplica a claves sin sufijo de cuenta.
@@ -381,12 +449,15 @@ mod tests {
         // el destino actual **y** el legado deben devolver `NoEntry` antes de
         // crear ninguna limpieza. Si alguno tuviera un secreto real, el smoke
         // falla AQUÍ y no existe guard que pueda borrarlo.
+        // NoEntry ESTRICTO (revisión del mantenedor, 2026-11-05): un
+        // Ok(vacío) se trataría como «no existe» y el Drop borraría una
+        // entrada preexistente que el test no creó. Si hay entrada (aunque
+        // esté vacía), el smoke aborta sin haber creado ninguna limpieza.
         let current_entry = entry(&key).expect("entry del destino actual");
         match current_entry.get_password() {
             Err(keyring::Error::NoEntry) => {}
-            Ok(v) if v.trim().is_empty() => {}
             Ok(_) => {
-                panic!("el destino actual tiene un secreto real; smoke abortado sin tocar nada")
+                panic!("el destino actual ya tiene una entrada; smoke abortado sin tocar nada")
             }
             Err(err) => {
                 panic!("error de lectura del destino actual en llavero aislado: {err}")
@@ -395,9 +466,8 @@ mod tests {
         let legacy_entry = keyring::Entry::new(LEGACY_SERVICE, &key).expect("entry legado");
         match legacy_entry.get_password() {
             Err(keyring::Error::NoEntry) => {}
-            Ok(v) if v.trim().is_empty() => {}
             Ok(_) => {
-                panic!("el servicio legado tiene un secreto real; smoke abortado sin tocar nada")
+                panic!("el servicio legado ya tiene una entrada; smoke abortado sin tocar nada")
             }
             Err(err) => panic!("error de lectura del servicio legado en llavero aislado: {err}"),
         }
@@ -453,15 +523,17 @@ mod tests {
         guard.legacy_written.set(true);
         // get() con el destino actual vacío debe recuperarlo POR MIGRACIÓN:
         // lee el legado, lo reescribe en el actual y borra el original. El
-        // flag del destino se activa ANTES: si la migración falla a mitad,
-        // el Drop limpia lo que haya escrito.
-        guard.current_written.set(true);
+        // flag del destino se activa DESPUÉS de comprobar que la migración
+        // escribió (revisión del mantenedor, 2026-11-05): si get() falla
+        // antes de escribir, el Drop no borra una entrada que el test no
+        // creó. (El legado sí se activa antes: set_password lo creó.)
         assert_eq!(
             get(&key).as_deref(),
             Some(value),
             "get debe migrar el valor legado al destino actual"
         ); // gitleaks:allow
-           // Reescribir en el destino actual: comprobar sin volver a migrar.
+        guard.current_written.set(true);
+        // Reescribir en el destino actual: comprobar sin volver a migrar.
         let current =
             keyring::Entry::new(crate::channel::current().identifier, &key).expect("entry actual");
         assert_eq!(
