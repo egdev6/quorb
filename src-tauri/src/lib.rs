@@ -848,14 +848,18 @@ async fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), 
     // `unwrap_or_else(into_inner)`: si otro hanco pánicara con el lock tomado,
     // el mutex queda envenenado y con `unwrap` todos los `open_login` futuros
     // paniquearían en cascada. Con `into_inner` seguimos operando el set.
-    let mut inflight = state
-        .login_in_flight
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    if !inflight.insert(provider.clone()) {
-        return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
+    // El guard del single-flight vive en un bloque propio: el comando es
+    // async y `MutexGuard` no es `Send`, así que debe morir antes del await.
+    {
+        let mut inflight = state
+            .login_in_flight
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !inflight.insert(provider.clone()) {
+            return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
+        }
     }
-    drop(inflight); // no mantener el lock mientras el login corre
+    // Liberado el single-flight, el login corre fuera del executor.
     let cfg = state.config.lock().unwrap().clone();
     // #92: en WSL el login consulta la distro (y su home), así que son
     // procesos bloqueantes: fuera del executor, en un hilo propio.
