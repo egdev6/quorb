@@ -805,12 +805,12 @@ async fn check_provider(
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
 /// `async` lo saca del hilo principal: consulta el PATH fresco del registro.
 #[tauri::command(async)]
-async fn cli_status(state: State<'_, AppState>) -> BTreeMap<String, bool> {
+async fn cli_status(state: State<'_, AppState>) -> Result<BTreeMap<String, bool>, String> {
     let cfg = state.config.lock().unwrap().clone();
     // #92: la detección en WSL lanza procesos `wsl.exe` (enumeración + `command
     // -v`), así que va en un hilo bloqueante: en el hilo del executor
     // congelaría la UI (hasta 20 s de timeout por operación).
-    tauri::async_runtime::spawn_blocking(move || {
+    let map = tauri::async_runtime::spawn_blocking(move || {
         let adapter = wsl::RealWslAdapter::new();
         let distro = match cfg.session_env() {
             wsl::SessionEnv::Wsl { distro } => Some(distro),
@@ -823,7 +823,8 @@ async fn cli_status(state: State<'_, AppState>) -> BTreeMap<String, bool> {
         login::cli_status(&cfg, wsl)
     })
     .await
-    .unwrap_or_default()
+    .map_err(|e| e.to_string())?;
+    Ok(map)
 }
 
 /// ¿Existe el fichero de sesión de una cuenta? `home` se inyecta para poder
