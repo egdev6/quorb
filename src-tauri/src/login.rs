@@ -1407,22 +1407,31 @@ mod wsl_login_tests {
         assert!(err.contains("absoluta"), "{err}");
     }
 
+    /// Resultado de `open` en WSL en un test: en Windows se abre la
+    /// terminal de verdad (`Ok` o un error del lanzador distinto de CLI
+    /// ausente); en otros builds el lanzador devuelve el error de plataforma.
+    /// Lo que se comprueba aquí es que NUNCA es el error de «CLI no
+    /// instalada» (salvo cuando `Missing` lo pide).
+    fn assert_open_not_missing_cli_error(r: Result<(), String>) {
+        match r {
+            Ok(()) => {}
+            Err(e) => assert!(
+                !e.contains("no está instalado dentro"),
+                "no es un falso «no instalada»: {e}"
+            ),
+        }
+    }
+
     /// #92 (review 2026-11-05): una distro DETENIDA no da un «no instalada»
-    /// falso: el login explícito la activa (el propio `wsl -d`), así que el
-    /// error no debe ser el de CLI ausente. En este build (no Windows) el
-    /// lanzador falla con «no está disponible en esta plataforma», lo que
-    /// prueba que se llegó al lanzador y no al chequeo de la CLI.
+    /// falso: el login explícito la activa (el propio `wsl -d`). El sondeo
+    /// no la despierta: no hubo `command -v` dentro.
     #[test]
     fn open_in_wsl_activates_a_stopped_distro_instead_of_saying_missing() {
         let mock = MockWslAdapter::new();
         mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
         let cfg = AppConfig::default();
-        let err = open("codex", &cfg, Some(wsl_of(&mock))).unwrap_err();
-        assert!(
-            !err.contains("no está instalado dentro"),
-            "una distro parada no es una CLI ausente: {err}"
-        );
-        // El sondeo no la despierta: no hubo `command -v` dentro.
+        let r = open("codex", &cfg, Some(wsl_of(&mock)));
+        assert_open_not_missing_cli_error(r);
         assert!(
             mock.calls()
                 .iter()
@@ -1444,11 +1453,8 @@ mod wsl_login_tests {
             stderr: String::new(),
         });
         let cfg = AppConfig::default();
-        let err = open("codex", &cfg, Some(wsl_of(&mock))).unwrap_err();
-        assert!(
-            !err.contains("no está instalado dentro"),
-            "con la CLI presente no debe fallar la comprobación: {err}"
-        );
+        let r = open("codex", &cfg, Some(wsl_of(&mock)));
+        assert_open_not_missing_cli_error(r);
     }
 
     /// El mensaje de CLI ausente no lleva espacios dobles ni saltos Rare
@@ -1484,15 +1490,25 @@ mod wsl_login_tests {
         let (var, folder) = env.expect("variable de sesión");
         assert_eq!(var, "CLAUDE_CONFIG_DIR");
         assert_eq!(folder, dir);
-        // WSL: la misma carpeta (config_dir absoluto) → el login escribe
-        // donde la resolución de #91 lee.
+        // El MISMO config_dir (ruta del host con `\` o `C:\`) en modo WSL
+        // se rechaza: no es una carpeta que el guest pueda leer (diseño de
+        // #92/#91).
         let mock = MockWslAdapter::new();
         mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
         mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
         mock.set_home("Ubuntu-22.04", PathBuf::from("/home/user"));
+        cfg.accounts[0].config_dir = Some(r"C:\Users\yo\quorb".into());
+        let err = account_env("claude:w1", &cfg, Some(&wsl_of(&mock))).unwrap_err();
+        assert!(
+            err.contains("separadores de Windows") || err.contains("absoluta"),
+            "{err}"
+        );
+        // En WSL, un `config_dir` POSIX del guest se usa tal cual: el login
+        // escribe donde la resolución de #91 lee.
+        cfg.accounts[0].config_dir = Some("/mnt/c/Users/yo/quorb".into());
         let (_, env) = account_env("claude:w1", &cfg, Some(&wsl_of(&mock))).expect("wsl");
         let (_, folder) = env.expect("variable de sesión");
-        assert_eq!(folder, dir);
+        assert_eq!(folder, PathBuf::from("/mnt/c/Users/yo/quorb"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
