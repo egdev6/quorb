@@ -1250,7 +1250,7 @@ mod tests {
 mod wsl_login_tests {
     use super::*;
     use crate::cli_process::CommandOutput;
-    use crate::wsl::{distro, DistroState, MockWslAdapter, ShellStrategy, WslAdapter, WslCall};
+    use crate::wsl::{distro, DistroState, MockWslAdapter, ShellStrategy, WslCall};
 
     fn wsl_of(mock: &MockWslAdapter) -> WslLogin<'_> {
         WslLogin {
