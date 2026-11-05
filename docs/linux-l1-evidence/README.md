@@ -142,8 +142,9 @@ en `linux-ci.yml`). En la revisión 2026-10-31 el aislamiento pasó de
   smoke). Si alguno tuviera un secreto real, el smoke falla AQUÍ, sin haber
   creado ninguna limpieza (no puede borrar nada).
 - **Limpieza acotada**: `CleanupGuard` solo borra lo que el test escribió
-  (el legado y, tras la migración, el destino actual), activando flags justo
-  antes de cada escritura.
+  (el legado y, tras la migración, el destino actual). El flag del legado se
+  activa justo antes de su escritura; el del destino, tras comprobar que la
+  migración lo escribió.
 
 Sin `QUORB_SECRETS_SMOKE_ISOLATED=1` (o con las rutas fuera del directorio
 temporal), el smoke **falla antes de tocar nada**: no debe ejecutarse a mano en

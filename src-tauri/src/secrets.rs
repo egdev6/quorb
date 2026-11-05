@@ -269,7 +269,7 @@ mod tests {
     /// - `HOME` y `XDG_DATA_HOME` bajo `QUORB_SECRETS_SMOKE_TMPHOME`
     ///   (el llavero se crea ahí, no en el HOME real).
     /// - `DBUS_SESSION_BUS_ADDRESS` **es el del bus efímero**: el workflow
-    ///   exporta su `abstract=` dentro de la sesión `dbus-run-session` y el
+    ///   exporta la dirección de la sesión `dbus-run-session` y el
     ///   smoke compara — un escritorio con las variables exportadas pero su
     ///   bus propio no pasa esta puerta (Secret Service se alcanza por el
     ///   bus, no por el HOME).
@@ -305,53 +305,10 @@ mod tests {
         );
         let actual = std::env::var("DBUS_SESSION_BUS_ADDRESS")
             .expect("DBUS_SESSION_BUS_ADDRESS debe estar definido");
-        assert_eq!(
-            actual, expected,
-            "el bus D-Bus debe ser el efímero de la sesión del CI, no el del escritorio"
-        );
-    }
-
-    /// AISLAMIENTO VERIFICADO de los smokes de llavero (revisión del
-    /// mantenedor, 2026-11-05). Comprueba, antes de cualquier escritura,
-    /// que el proceso corre en el entorno desechable que arma el workflow:
-    ///
-    /// - `QUORB_SECRETS_SMOKE_ISOLATED=1` (contrato del paso del CI).
-    /// - `HOME` y `XDG_DATA_HOME` bajo `QUORB_SECRETS_SMOKE_TMPHOME`
-    ///   (el llavero se crea ahí, no en el HOME real).
-    /// - `DBUS_SESSION_BUS_ADDRESS` **es el de la sesión efímera**: el
-    ///   workflow exporta su dirección abstract= en QUORB_SECRETS_SMOKE_DBUS_ADDR
-    ///   y el smoke la compara — un escritorio con las variables exportadas
-    ///   pero su bus propio no pasa esta puerta (Secret Service se alcanza
-    ///   por el bus, no por el HOME).
-    ///
-    /// Cualquier desajuste hace fallar el smoke SIN tocar el llavero.
-    #[cfg(target_os = "linux")]
-    fn assert_smoke_isolation() {
         assert!(
-            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-            "smoke de llavero solo en entorno aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
+            !actual.is_empty(),
+            "DBUS_SESSION_BUS_ADDRESS no debe estar vacío"
         );
-        let tmp = std::env::var("QUORB_SECRETS_SMOKE_TMPHOME").expect(
-            "el workflow debe exportar QUORB_SECRETS_SMOKE_TMPHOME; sin él el aislamiento no está verificado",
-        );
-        let home = std::env::var("HOME").expect("HOME debe estar definido en el entorno aislado");
-        let data = std::env::var("XDG_DATA_HOME")
-            .expect("XDG_DATA_HOME debe estar definido en el entorno aislado");
-        assert!(
-            std::path::Path::new(&home) == std::path::Path::new(&tmp),
-            "HOME debe ser el directorio temporal del CI, no un escritorio real: {home} != {tmp}"
-        );
-        assert!(
-            std::path::Path::new(&data).starts_with(&tmp),
-            "XDG_DATA_HOME debe colgar del directorio temporal del CI: {data} no está bajo {tmp}"
-        );
-        let expected = std::env::var("QUORB_SECRETS_SMOKE_DBUS_ADDR").expect(
-            "el workflow debe exportar QUORB_SECRETS_SMOKE_DBUS_ADDR; sin él el bus no está verificado",
-        );
-        let actual = std::env::var("DBUS_SESSION_BUS_ADDRESS")
-            .expect("DBUS_SESSION_BUS_ADDRESS debe estar definido");
         assert_eq!(
             actual, expected,
             "el bus D-Bus debe ser el efímero de la sesión del CI, no el del escritorio"
@@ -473,9 +430,11 @@ mod tests {
         }
 
         // Limpieza acotada: solo borra lo que ESCRIBE el test (el legado y,
-        // tras la migración, el destino actual). Los flags se activan justo
-        // antes de cada escritura, así el Drop nunca toca una entrada que el
-        // test no haya creado.
+        // tras la migración, el destino actual). El flag del legado se
+        // activa justo antes de su set_password; el del destino, DESPUÉS de
+        // comprobar que la migración lo escribió — así el Drop nunca toca
+        // una entrada que el test no haya creado (revisión del mantenedor,
+        // 2026-11-05).
         struct CleanupGuard {
             key: String,
             current_written: std::cell::Cell<bool>,
