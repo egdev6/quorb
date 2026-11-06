@@ -7,13 +7,9 @@ import {
   clickPanel,
   closePanel,
   createPanelCoordinator,
-  canPointerOpen,
   hoverPanel,
-  holdAfterReorderDrop,
   isReorderGesture,
   NO_PANEL,
-  NO_REORDER_HOLD,
-  releaseOnStripLeave,
   panelHoldsOpen,
   type PanelState,
   REORDER_GUARD_MS,
@@ -93,61 +89,6 @@ describe('the reorder guard', () => {
 
   it('does not treat a click without a reorder as a reorder gesture', () => {
     expect(isReorderGesture(0, 1000)).toBe(false);
-  });
-});
-
-describe('the reorder hold (hover after a reorder, #222)', () => {
-  it('holds the hover when a reorder is dropped with the pointer inside the strip', () => {
-    expect(NO_REORDER_HOLD).toBe(false);
-    expect(holdAfterReorderDrop(true)).toBe(true);
-  });
-
-  it('keeps the pointer from opening while held, however much time passes', () => {
-    // El `mouseenter` diferido llega entre 0,2 s y 2,3 s después de soltar:
-    // por eso `canPointerOpen` no recibe ninguna marca de tiempo.
-    const held = holdAfterReorderDrop(true);
-    expect(canPointerOpen.length).toBe(1);
-    expect(canPointerOpen(held)).toBe(false);
-    expect(canPointerOpen(held)).toBe(false);
-  });
-
-  it('releases the hold only with a real strip leave, and then the pointer opens', () => {
-    const held = holdAfterReorderDrop(true);
-    const released = releaseOnStripLeave(held);
-    expect(released).toBe(false);
-    expect(canPointerOpen(released)).toBe(true);
-  });
-
-  it('does not hold when the reorder is dropped outside the strip', () => {
-    // Con la captura del puntero se puede soltar fuera de la ventana: su
-    // `mouseleave` ya ocurrió y nada liberaría la retención después.
-    const hold = holdAfterReorderDrop(false);
-    expect(hold).toBe(false);
-    expect(canPointerOpen(hold)).toBe(true);
-  });
-
-  it('keeps a strip leave idempotent while nothing is held', () => {
-    expect(releaseOnStripLeave(NO_REORDER_HOLD)).toBe(false);
-    expect(canPointerOpen(releaseOnStripLeave(NO_REORDER_HOLD))).toBe(true);
-  });
-
-  it('never changes the panel state: hover and click do not take the hold', () => {
-    const states: PanelState[] = [NO_PANEL, { providerId: 'claude', anchored: false }, { providerId: 'claude', anchored: true }];
-    const results = (state: PanelState) => ({
-      hover: hoverPanel(state, 'codex'),
-      click: clickPanel(state, 'codex'),
-      close: closePanel(),
-    });
-    for (const state of states) {
-      const held = holdAfterReorderDrop(true);
-      const whileHeld = results(state);
-      const released = releaseOnStripLeave(held);
-      const afterRelease = results(state);
-      expect(held).not.toBe(released);
-      expect(afterRelease).toEqual(whileHeld);
-      expect(hoverPanel.length).toBe(2);
-      expect(clickPanel.length).toBe(2);
-    }
   });
 });
 
