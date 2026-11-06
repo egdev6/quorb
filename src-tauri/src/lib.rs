@@ -1048,13 +1048,25 @@ fn choose_locale(app: AppHandle, state: State<'_, AppState>, locale: String) -> 
     }
     let mut next = state.config.lock().unwrap().clone();
     next.choose_locale(&locale)?;
+    // No pasa por `save_config`: en el primer arranque todavía no existe ninguna
+    // superficie que relabelar, ni atajos ni cuentas que invalidar, y el único
+    // cambio es idioma + bandera. `start_main_ui` construye todo después desde esta
+    // config ya guardada. `sanitized()` mantiene el mismo invariante que el resto.
+    let next = next.sanitized();
     config::save(&state.config_path, &next)?;
     *state.config.lock().unwrap() = next;
     // `destroy` no dispara CloseRequested: no cuenta como cierre sin elegir (D6).
     if let Some(w) = app.get_webview_window(LOCALE_PICKER) {
         w.destroy().map_err(|e| e.to_string())?;
     }
-    start_main_ui(&app).map_err(|e| e.to_string())
+    // La elección ya está guardada y el selector cerrado: sin UI principal el proceso
+    // quedaría vivo sin superficie (D6). Se termina en ese caso.
+    if let Err(e) = start_main_ui(&app) {
+        eprintln!("No pude levantar la UI principal tras elegir idioma: {e}");
+        app.exit(1);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 /// Crea la superficie principal: tira, detalle, overlay, bandeja y atajos.
