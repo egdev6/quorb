@@ -7,14 +7,50 @@
 //! Decisiones del paso 0: `ADR-W2.md`. Contrato firmado: `W2-WSLADAPTER.md`.
 
 pub use crate::cli_process::{CommandOutput, RunError};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 mod errors;
 mod mock;
 mod process;
 mod real;
+mod session;
 pub use mock::{MockWslAdapter, WslCall};
 pub use real::{build_wslenv_entry, RealWslAdapter, SESSION_ENV_ALLOWLIST};
+pub use session::{SessionEnv, SessionError, SessionResolver};
+
+/// Caché del home del default user de una distro (#91).
+///
+/// `resolve_home` lanza dos procesos `wsl.exe` y `session_stamp` se
+/// consulta cada 15 s (`SESSION_CHECK_MS`): sin caché, cada consulta paga
+/// dos procesos y puede mantener la VM de WSL siempre activa. El home de
+/// una distro solo cambia si cambia su default user; la invalidación es
+/// automática al cambiar la distro configurada: `home_for` descarta el
+/// mapa en cuanto ve una distro distinta de la cacheada (revisión del
+/// mantenedor, 2026-11-02).
+#[derive(Default)]
+pub struct WslHomeCache(Mutex<(Option<String>, HashMap<String, PathBuf>)>);
+
+impl WslHomeCache {
+    /// Home cacheado para `distro`, o `None` si no está. Si la distro
+    /// activa cambió, el caché se limpia y `None` fuerza a resolver el
+    /// home nuevo.
+    pub fn home_for(&self, distro: &str) -> Option<PathBuf> {
+        let mut inner = self.0.lock().unwrap();
+        if inner.0.as_deref() != Some(distro) {
+            inner.0 = Some(distro.to_string());
+            inner.1.clear();
+            return None;
+        }
+        inner.1.get(distro).cloned()
+    }
+
+    /// Guarda el home resuelto de `distro`.
+    pub fn insert(&self, distro: &str, home: PathBuf) {
+        self.0.lock().unwrap().1.insert(distro.to_string(), home);
+    }
+}
 
 /// Error tipado de una operación WSL. Se asigna desde el parseo de tokens
 /// del output (F2) o desde fallos del lanzador (F13/timeout).
@@ -193,6 +229,38 @@ fn has_host_separator(path: &str) -> bool {
     path.contains('\\')
 }
 
+/// Ruta RELATIVA dentro del home del entorno, con separador POSIX (`/`).
+///
+/// NUNCA `Path::join` para rutas del guest: en Windows insertaría `\` en el
+/// INTERIOR, y esa ruta viaja literal al `cat` de la distro (Linux), donde
+/// `\` no separa nada — el guest buscaría otro fichero (revisión del
+/// mantenedor, 2026-11-04).
+pub fn guest_relative(parts: &[&str]) -> PathBuf {
+    PathBuf::from(parts.join("/"))
+}
+
+/// Problema de una ruta EXPLÍCITA para el guest (modo WSL): `Some(mensaje
+/// accionable)` si no es POSIX absoluta, `None` si es válida. ÚNICA fuente
+/// de la regla «absoluta del guest y sin `\`» — la usan `SessionResolver::resolve`
+/// (ruta de sesión pegada a mano en Ajustes), `account_session_path`
+/// (`config_dir` de cuentas) y `login` (carpeta de sesión de cuentas),
+/// para que los tres mensajes no diverjan (revisión del mantenedor,
+/// 2026-11-06).
+pub fn guest_path_problem(path: &str) -> Option<String> {
+    if path.contains('\\') {
+        return Some(format!(
+            "La ruta en modo WSL no puede llevar separadores de Windows (\\). \
+             Pega la ruta del guest (por ejemplo /home/usuario/...) en su lugar: {path}"
+        ));
+    }
+    if !path.starts_with('/') {
+        return Some(format!(
+            "La ruta en modo WSL debe ser absoluta del guest (empieza por '/'), se recibió: {path}"
+        ));
+    }
+    None
+}
+
 /// Compone `base` + `relative` con semántica POSIX (separador `/`).
 ///
 /// `Path::join` NO sirve aquí: en Windows usa `\` como separador, y la ruta
@@ -224,18 +292,11 @@ pub fn session_path(
         Some(p) => {
             // Semántica del GUEST, no del host: la ruta se consume con
             // `cat` dentro de la distro. Un path `C:\...` (absoluto para
-            // Windows) NO es válido como ruta de sesión WSL.
-            if !is_guest_absolute(p) {
-                return Err(WslError::InvalidArgument(format!(
-                    "credentials_path en modo WSL debe ser una ruta absoluta de la distro (empieza por '/'), se recibió: {p}"
-                )));
-            }
-            // La ruta del guest es POSIX: un `\` en ella no es un separador
-            // y apuntaría a otro fichero (o a ninguno).
-            if has_host_separator(p) {
-                return Err(WslError::InvalidArgument(format!(
-                    "credentials_path en modo WSL usa separadores POSIX ('/'), se recibió: {p}"
-                )));
+            // Windows) NO es válido como ruta de sesión WSL. La regla vive
+            // en `guest_path_problem` (una sola fuente; revisión del
+            // mantenedor, 2026-11-06).
+            if let Some(problem) = guest_path_problem(p) {
+                return Err(WslError::InvalidArgument(problem));
             }
             Ok(PathBuf::from(p))
         }
@@ -493,6 +554,43 @@ mod tests {
         assert_eq!(resolve_distro_name("Quorb-Pgone", &enumerated), None);
         assert_eq!(resolve_distro_name("   ", &enumerated), None);
         assert_eq!(resolve_distro_name("", &enumerated), None);
+    }
+
+    /// `guest_relative` compone con `/` en cualquier plataforma (el
+    /// `Path::join` de Windows introduciría `\` en el interior; revisión del
+    /// mantenedor, 2026-11-04).
+    #[test]
+    fn guest_relative_uses_posix_separators_on_every_platform() {
+        let p = guest_relative(&[".claude", ".credentials.json"]);
+        assert_eq!(p.to_string_lossy(), ".claude/.credentials.json");
+        assert!(!p.to_string_lossy().contains('\\'));
+        let nested = guest_relative(&[".quorb", ".gemini/oauth_creds.json"]);
+        assert_eq!(nested.to_string_lossy(), ".quorb/.gemini/oauth_creds.json");
+        assert!(!nested.to_string_lossy().contains('\\'));
+    }
+
+    /// El home se cachea por distro y se invalida SOLO al cambiar la distro
+    /// activa (revisión del mantenedor, 2026-11-02): `session_stamp` se
+    /// consulta cada 15 s y no debe lanzar `resolve_home` (dos procesos
+    /// wsl.exe) por cada tick.
+    #[test]
+    fn home_cache_resolves_once_and_invalidates_on_distro_change() {
+        let cache = WslHomeCache::default();
+        assert_eq!(cache.home_for("Ubuntu-22.04"), None);
+        cache.insert("Ubuntu-22.04", PathBuf::from("/home/u1"));
+        assert_eq!(
+            cache.home_for("Ubuntu-22.04").as_deref(),
+            Some(Path::new("/home/u1"))
+        );
+        // Cambio de distro configurada: se descarta lo cacheado.
+        assert_eq!(cache.home_for("Debian"), None);
+        cache.insert("Debian", PathBuf::from("/home/u2"));
+        assert_eq!(
+            cache.home_for("Debian").as_deref(),
+            Some(Path::new("/home/u2"))
+        );
+        // La distro anterior quedó invalidada al cambiar.
+        assert_eq!(cache.home_for("Ubuntu-22.04"), None);
     }
 
     /// La comparación contra la enumeración es trim + case-insensitive, y

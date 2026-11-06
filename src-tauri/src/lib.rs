@@ -42,6 +42,7 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 const SETTINGS: &str = "settings";
@@ -231,6 +232,11 @@ struct AppState {
     config_path: PathBuf,
     http: reqwest::Client,
     history: history::History,
+    /// Home del default user de cada distro WSL, resuelto una sola vez
+    /// (el proceso de sesión se consulta cada 15 s y `resolve_home` lanza
+    /// dos procesos wsl.exe). Se invalida solo al cambiar la distro
+    /// configurada (#91, revisión del mantenedor 2026-11-02).
+    wsl_homes: wsl::WslHomeCache,
     /// Single-flight para aperturas de login CLI en curso. Protege contra
     /// doble clic en «Iniciar sesión» (HealthStep/CliConnect) y contra reenvíos
     /// duplicados: mientras un `provider` esté en este set, una segunda llamada
@@ -506,10 +512,62 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
     Ok(())
 }
 
+/// Resolvedor de sesiones del entorno configurado (#91): `None` en host (el
+/// comportamiento de siempre, incluido el respaldo del Keychain de macOS), y
+/// en WSL el resolvedor de la distro elegida, con el home de su default user
+/// resuelto por el adaptador (`resolve_home`, F7).
+///
+/// `Err` cuando el adaptador no puede resolver el home (WSL sin instalar,
+/// distro ausente): el llamador decide cómo reflejarlo; nunca se cae a una
+/// cuenta de otro entorno.
+///
+/// `resolve_home` lanza dos procesos WSL y va en un hilo propio
+/// (`spawn_blocking`), igual que las lecturas del resolvedor: nada de esto
+/// bloquea el executor async (revisión PR #220). El home se resuelve UNA
+/// vez por distro (`homes`) y se reutiliza en los ticks de `session_stamp`
+/// (cada 15 s), para no mantener la VM de WSL activa (revisión del
+/// mantenedor, 2026-11-02).
+async fn session_resolver(
+    cfg: &AppConfig,
+    adapter: std::sync::Arc<wsl::RealWslAdapter>,
+    homes: &wsl::WslHomeCache,
+) -> Result<Option<wsl::SessionResolver>, String> {
+    match cfg.session_env() {
+        wsl::SessionEnv::Host => Ok(None),
+        wsl::SessionEnv::Wsl { distro } => {
+            let home = match homes.home_for(&distro) {
+                Some(h) => h,
+                None => {
+                    let a = adapter.clone();
+                    let d = distro.clone();
+                    let home = tokio::task::spawn_blocking(move || a.resolve_home(&d))
+                        .await
+                        .map_err(|e| format!("WSL: {e}"))?
+                        .map_err(|e| format!("WSL: {e:?}"))?;
+                    homes.insert(&distro, home.clone());
+                    home
+                }
+            };
+            Ok(Some(wsl::SessionResolver::for_wsl(adapter, distro, home)))
+        }
+    }
+}
+
 #[tauri::command]
 async fn fetch_usage(state: State<'_, AppState>) -> Result<Vec<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
-    let reports = providers::fetch_all(&cfg, &state.http).await;
+    let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
+    let reports =
+        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+            // Host: el comportamiento de siempre (sin resolvedor).
+            Ok(None) => providers::fetch_all(&cfg, &state.http, None).await,
+            // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
+            Ok(Some(resolver)) => providers::fetch_all(&cfg, &state.http, Some(&resolver)).await,
+            // El entorno configurado no se puede resolver: fallo explícito en el
+            // orbe, nunca una lectura silenciosa del otro entorno (#91).
+            Err(e) => vec![UsageReport::new("wsl", "WSL", model::Kind::Subscription)
+                .fail(model::Status::Error, e)],
+        };
     state
         .history
         .record(&reports, chrono::Utc::now().timestamp());
@@ -713,10 +771,22 @@ fn overlay_done(app: AppHandle) {
 }
 
 /// Huella de los ficheros de sesión de los CLIs (ver `providers::session_stamp`).
+///
+/// `Result` porque es un comando `async`: Tauri exige que los commands async
+/// con `State` devuelvan `Result` (el futuro vive más que el borrow).
 #[tauri::command]
-fn session_stamp(state: State<'_, AppState>) -> u64 {
+async fn session_stamp(state: State<'_, AppState>) -> Result<u64, String> {
     let cfg = state.config.lock().unwrap().clone();
-    providers::session_stamp(&cfg)
+    let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
+    Ok(
+        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+            // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
+            Ok(resolver) => providers::session_stamp(&cfg, resolver.as_ref()).await,
+            // El entorno no se puede resolver: sin sello (0), el widget espera al
+            // próximo refresco en vez de observar cuentas de otro entorno (#91).
+            Err(_) => 0,
+        },
+    )
 }
 
 /// Comprueba la conexión de una cuenta (principal o adicional) con la config guardada,
@@ -727,7 +797,9 @@ async fn check_provider(
     id: String,
 ) -> Result<Option<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
-    Ok(providers::fetch_one(&cfg, &id, &state.http).await)
+    let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
+    let resolver = session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await?;
+    Ok(providers::fetch_one(&cfg, &id, &state.http, resolver.as_ref()).await)
 }
 
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
@@ -1100,6 +1172,7 @@ pub fn run() {
                 http,
                 history,
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
+                wsl_homes: wsl::WslHomeCache::default(),
             });
             build_tray(app, locale)?;
             Ok(())
