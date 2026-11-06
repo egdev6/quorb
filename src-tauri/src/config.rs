@@ -1315,7 +1315,11 @@ mod tests {
         assert!(cfg.locale_selected);
         assert_eq!(locale_of(&cfg), "es");
         assert!(path.is_dir(), "load no debe reemplazar la ruta");
-        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0, "load escribió algo");
+        assert_eq!(
+            std::fs::read_dir(&path).unwrap().count(),
+            0,
+            "load escribió algo"
+        );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
