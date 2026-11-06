@@ -13,7 +13,6 @@ use crate::config::SubscriptionConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use serde_json::Value;
-use std::path::Path;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
@@ -25,11 +24,15 @@ const KEYCHAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Resultado de consultar el Keychain de macOS por la sesión de Claude Code.
 #[derive(Debug, PartialEq)]
 enum KeychainOutcome {
-    /// Sesión válida encontrada y parseada.
+    /// Sesión válida encontrada y parseada. Solo el Keychain de macOS la
+    /// produce (`keychain_sync`); fuera de macOS no se construye.
+    #[cfg(target_os = "macos")]
     Session(Credentials),
     /// No hay entrada, el usuario negó el acceso o el secreto no parsea.
     NoSession,
     /// La autorización no se completó dentro del presupuesto: estado accionable.
+    /// Igual que `Session`, solo la rama macOS la produce.
+    #[cfg(target_os = "macos")]
     TimedOut,
 }
 
@@ -244,7 +247,9 @@ pub async fn fetch(
                     );
                 }
                 match keychain_fallback().await {
+                    #[cfg(target_os = "macos")]
                     KeychainOutcome::Session(c) => c,
+                    #[cfg(target_os = "macos")]
                     KeychainOutcome::TimedOut => {
                         return report.fail(
                             Status::Warning,

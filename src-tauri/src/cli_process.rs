@@ -67,7 +67,7 @@ impl CommandRunner for ProcessRunner {
         cwd: &Path,
         timeout: Duration,
     ) -> Result<CommandOutput, RunError> {
-        let mut child = spawn_child(program, args, env, cwd)?;
+        let child = spawn_child(program, args, env, cwd)?;
         run_pipelined(child, timeout)
     }
 }

@@ -38,9 +38,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::detail_geometry::Bounds;
 use crate::widget_placement::{
-    position_matches, rooted_origin, size_matches, to_logical, to_physical, Geometry, Reason,
-    Transport, READS, SETTLE,
+    position_matches, size_matches, to_logical, Geometry, Reason, Transport, READS,
 };
+// Piezas del ciclo nativo X11: solo las usa `UiSurface`, que existe únicamente
+// en Linux. En Windows/macOS el transporte aplica la petición e informa sin
+// read-back, así que estos símbolos no se importan ahí.
+#[cfg(target_os = "linux")]
+use crate::widget_placement::{rooted_origin, to_physical, SETTLE};
 // El informe es el espejo de `set_widget_bounds`: viajan los mismos tipos,
 // así el frontend trata con un solo contrato.
 pub use crate::widget_placement::{Report, Status};
