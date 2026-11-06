@@ -15,6 +15,7 @@ una garantía de soporte en cada plataforma ni una aprobación de SignPath.
   `es.egdev.quorb` (en Windows, `%APPDATA%\es.egdev.quorb`), sin cifrado propio.
   La interfaz también guarda navegación, preferencias y avisos de actualización
   en el almacenamiento local de su WebView.
+- Si `config.json` existe pero no se puede leer, Quorb usa valores por defecto y no muestra el selector de idioma del primer arranque. El primer guardado desde Ajustes reemplaza ese archivo.
 - El historial se poda a 30 días al registrar lecturas, no al cerrar la app.
 - Las API keys, tokens y cookies guardados usan el almacén del sistema bajo el
   servicio `es.egdev.quorb`: Credential Manager en Windows, Keychain en macOS
@@ -94,6 +95,8 @@ en Credential Manager, Keychain o keyring y los archivos propios de `~/.quorb`
 Revisad también `es.egdev.ai-usage`. No borréis sesiones de otras apps: revocad
 su acceso desde sus herramientas o cuentas. El borrado local no elimina registros
 del proveedor, backups ni copias compartidas.
+
+En Linux, desinstalar Quorb no borra `~/.config/es.egdev.quorb/config.json`. Para volver a ver el selector de idioma del primer arranque, borrad ese archivo.
 
 ## Políticas de terceros y contacto
 

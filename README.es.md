@@ -206,6 +206,8 @@ Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `qu
   - KDE sobre Wayland: bandeja y siempre-encima soportados; el portal de atajos puede seguir denegando el registro.
   - Compositores tipo WLR (Hyprland, sway): siempre-encima muy estricto; sin bandeja si tu barra no soporta StatusNotifier.
 - Diagnóstico rápido: `echo $XDG_SESSION_TYPE` (tipo de sesión), `echo $XDG_CURRENT_DESKTOP` (escritorio actual), `quorb` en consola para ver el debug, además de Ajustes › Atajos para los errores de registro de atajos.
+- Primer arranque y configuración: si `config.json` existe pero no se puede leer, Quorb usa valores por defecto y no muestra el selector de idioma del primer arranque; el primer guardado desde Ajustes reemplaza ese archivo.
+- Desinstalar Quorb en Linux no borra `~/.config/es.egdev.quorb/config.json`. Para volver a ver el selector de idioma del primer arranque, borrad ese archivo.
 
 ## Contribuir
 
