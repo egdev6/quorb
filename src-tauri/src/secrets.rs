@@ -261,16 +261,75 @@ mod tests {
         assert!(get("api_key_cualquiera@openrouter:a1b2c3").is_none());
     }
 
-    /// Smoke manual de Secret Service real: solo corre en Linux con un
-    /// escritorio con D-Bus + llavero activo. Marcado `#[ignore]` para que
-    /// no forme parte del `cargo test` de CI. Ejecutar con
-    /// `cargo test -- --ignored --nocapture` en una sesión de escritorio.
-    /// Verifica que el backend `linux-native` del crate `keyring` persiste
-    /// y recupera el valor a través de Secret Service.
+    /// AISLAMIENTO VERIFICADO de los smokes de llavero (revisión del
+    /// mantenedor, 2026-11-05). Comprueba, antes de tocar nada, que el
+    /// proceso corre en el entorno desechable que arma el workflow:
+    ///
+    /// - `QUORB_SECRETS_SMOKE_ISOLATED=1` (contrato del paso del CI).
+    /// - `HOME` y `XDG_DATA_HOME` bajo `QUORB_SECRETS_SMOKE_TMPHOME`
+    ///   (el llavero se crea ahí, no en el HOME real).
+    /// - `DBUS_SESSION_BUS_ADDRESS` **es el del bus efímero**: el workflow
+    ///   exporta la dirección de la sesión `dbus-run-session` y el
+    ///   smoke compara — un escritorio con las variables exportadas pero su
+    ///   bus propio no pasa esta puerta (Secret Service se alcanza por el
+    ///   bus, no por el HOME).
+    ///
+    /// Cualquier desajuste hace fallar el smoke SIN tocar el llavero.
+    #[cfg(target_os = "linux")]
+    fn assert_smoke_isolation() {
+        assert!(
+            std::env::var("QUORB_SECRETS_SMOKE_ISOLATED")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            "smoke de llavero solo en entorno aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1); no lo ejecutes en un escritorio con datos reales"
+        );
+        let tmp = std::env::var("QUORB_SECRETS_SMOKE_TMPHOME").expect(
+            "el workflow debe exportar QUORB_SECRETS_SMOKE_TMPHOME; sin él el aislamiento no está verificado",
+        );
+        let home = std::env::var("HOME").expect("HOME debe estar definido en el entorno aislado");
+        let data = std::env::var("XDG_DATA_HOME")
+            .expect("XDG_DATA_HOME debe estar definido en el entorno aislado");
+        assert!(
+            std::path::Path::new(&home) == std::path::Path::new(&tmp),
+            "HOME debe ser el directorio temporal del CI, no un escritorio real: {home} != {tmp}"
+        );
+        assert!(
+            std::path::Path::new(&data).starts_with(&tmp),
+            "XDG_DATA_HOME debe colgar del directorio temporal del CI: {data} no está bajo {tmp}"
+        );
+        // El BUS es la puerta real a Secret Service: debe ser el efímero de
+        // la sesión `dbus-run-session` (el workflow exporta su dirección
+        // abstract= en QUORB_SECRETS_SMOKE_DBUS_ADDR).
+        let expected = std::env::var("QUORB_SECRETS_SMOKE_DBUS_ADDR").expect(
+            "el workflow debe exportar QUORB_SECRETS_SMOKE_DBUS_ADDR; sin él el bus no está verificado",
+        );
+        let actual = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+            .expect("DBUS_SESSION_BUS_ADDRESS debe estar definido");
+        assert!(
+            !actual.is_empty(),
+            "DBUS_SESSION_BUS_ADDRESS no debe estar vacío"
+        );
+        assert_eq!(
+            actual, expected,
+            "el bus D-Bus debe ser el efímero de la sesión del CI, no el del escritorio"
+        );
+    }
+
+    /// Smoke manual de Secret Service real: verifica que el backend
+    /// `linux-native` del crate `keyring` persiste y recupera el valor a
+    /// través de Secret Service. Marcado `#[ignore]` para que no forme parte
+    /// del `cargo test` de CI. NO se ejecuta a mano en un escritorio: corre
+    /// en el entorno AISLADO del CI (`dbus-run-session` + `gnome-keyring`
+    /// efímero, paso "Secret Service smoke" de linux-ci.yml), que es la única
+    /// vía soportada para los smokes de llavero.
     #[cfg(target_os = "linux")]
     #[test]
-    #[ignore = "requiere escritorio Linux con D-Bus + Secret Service"]
+    #[ignore = "requiere llavero aislado del CI"]
     fn linux_secret_service_round_trip() {
+        // Aislamiento VERIFICADO, igual que el smoke de migración
+        // (helper compartido: variable, HOME/XDG_DATA_HOME temporales y bus
+        // D-Bus efímero; revisión del mantenedor, 2026-11-05).
+        assert_smoke_isolation();
         // Clave única por corrida y propia de la lista cerrada: `entry` rechaza
         // cualquier clave ajena, así que el smoke usa la misma vía que la app.
         struct CleanupGuard(String);
@@ -309,5 +368,142 @@ mod tests {
         ); // gitleaks:allow
         set(&key, "").expect("borrado con set vacío");
         assert!(get(&key).is_none(), "la clave debería quedar eliminada");
+    }
+
+    /// Smoke manual de MIGRACIÓN del servicio legado, también `#[ignore]`:
+    /// pobla el espacio legado (`LEGACY_SERVICE` = `es.egdev.ai-usage`) con
+    /// una clave, y verifica que `get()` la recupera POR LA VÍA DE MIGRACIÓN
+    /// — se lee una vez, se reescribe en el destino actual y desaparece del
+    /// legado (criterio AC2 del owner, issue #106). El valor no se loguea en
+    /// el camino feliz (solo aparece en un assert_eq! si algo falla, y es una
+    /// constante de prueba no secreta). SOLO corre en el entorno aislado del
+    /// CI (mismo paso de
+    /// linux-ci.yml que el round trip); exige QUORB_SECRETS_SMOKE_ISOLATED=1
+    /// y falla antes de tocar nada si no está definida — nunca en un
+    /// escritorio con llavero real.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requiere llavero aislado del CI (QUORB_SECRETS_SMOKE_ISOLATED=1)"]
+    fn linux_legacy_migrate_once_then_legacy_is_gone() {
+        // Aislamiento VERIFICADO con el helper compartido (variable,
+        // HOME/XDG_DATA_HOME temporales y bus D-Bus efímero; revisión del
+        // mantenedor, 2026-11-05).
+        assert_smoke_isolation();
+
+        // Clave BASE de la lista cerrada (nan_session, sin `@`): la migración
+        // legacy solo aplica a claves sin sufijo de cuenta.
+        let key = NAN_SESSION.to_string();
+        assert!(
+            !key.contains('@'),
+            "la clave de migración debe ser base, sin sufijo de cuenta"
+        );
+        assert!(
+            ALL.contains(&key.as_str()),
+            "la clave debe ser de la lista cerrada (entry la acepta)"
+        );
+
+        // PRECONDICIÓN ANTES DEL GUARD (revisión del mantenedor, 2026-10-31):
+        // el destino actual **y** el legado deben devolver `NoEntry` antes de
+        // crear ninguna limpieza. Si alguno tuviera un secreto real, el smoke
+        // falla AQUÍ y no existe guard que pueda borrarlo.
+        // NoEntry ESTRICTO (revisión del mantenedor, 2026-11-05): un
+        // Ok(vacío) se trataría como «no existe» y el Drop borraría una
+        // entrada preexistente que el test no creó. Si hay entrada (aunque
+        // esté vacía), el smoke aborta sin haber creado ninguna limpieza.
+        let current_entry = entry(&key).expect("entry del destino actual");
+        match current_entry.get_password() {
+            Err(keyring::Error::NoEntry) => {}
+            Ok(_) => {
+                panic!("el destino actual ya tiene una entrada; smoke abortado sin tocar nada")
+            }
+            Err(err) => {
+                panic!("error de lectura del destino actual en llavero aislado: {err}")
+            }
+        }
+        let legacy_entry = keyring::Entry::new(LEGACY_SERVICE, &key).expect("entry legado");
+        match legacy_entry.get_password() {
+            Err(keyring::Error::NoEntry) => {}
+            Ok(_) => {
+                panic!("el servicio legado ya tiene una entrada; smoke abortado sin tocar nada")
+            }
+            Err(err) => panic!("error de lectura del servicio legado en llavero aislado: {err}"),
+        }
+
+        // Limpieza acotada: solo borra lo que ESCRIBE el test (el legado y,
+        // tras la migración, el destino actual). El flag del legado se
+        // activa justo antes de su set_password; el del destino, DESPUÉS de
+        // comprobar que la migración lo escribió — así el Drop nunca toca
+        // una entrada que el test no haya creado (revisión del mantenedor,
+        // 2026-11-05).
+        struct CleanupGuard {
+            key: String,
+            current_written: std::cell::Cell<bool>,
+            legacy_written: std::cell::Cell<bool>,
+        }
+        impl Drop for CleanupGuard {
+            fn drop(&mut self) {
+                // Defensa en profundidad: sin la variable de aislamiento no
+                // se borra nada (aunque la precondición ya garantiza que no
+                // había secretos reales).
+                if std::env::var("QUORB_SECRETS_SMOKE_ISOLATED").as_deref() != Ok("1") {
+                    return;
+                }
+                if self.current_written.get() {
+                    if let Ok(e) =
+                        keyring::Entry::new(crate::channel::current().identifier, &self.key)
+                    {
+                        let _ = e.delete_credential();
+                    }
+                }
+                if self.legacy_written.get() {
+                    if let Ok(e) = keyring::Entry::new(LEGACY_SERVICE, &self.key) {
+                        let _ = e.delete_credential();
+                    }
+                }
+            }
+        }
+        let guard = CleanupGuard {
+            key: key.clone(),
+            current_written: std::cell::Cell::new(false),
+            legacy_written: std::cell::Cell::new(false),
+        };
+
+        // Poblar el legado DIRECTAMENTE (sin pasar por set/get, que migrarían
+        // o escribirían en el destino actual): el escenario es un secreto que
+        // quedó en el servicio anterior cuando se cambió el identificador.
+        let value = "valor-de-prueba-del-smoke-de-migracion"; // gitleaks:allow
+        assert!(
+            crate::channel::current().migrate_legacy,
+            "el perfil estable debe tener la migración activa"
+        );
+        legacy_entry
+            .set_password(value)
+            .expect("set en el servicio legado"); // gitleaks:allow
+        guard.legacy_written.set(true);
+        // get() con el destino actual vacío debe recuperarlo POR MIGRACIÓN:
+        // lee el legado, lo reescribe en el actual y borra el original. El
+        // flag del destino se activa DESPUÉS de comprobar que la migración
+        // escribió (revisión del mantenedor, 2026-11-05): si get() falla
+        // antes de escribir, el Drop no borra una entrada que el test no
+        // creó. (El legado sí se activa antes: set_password lo creó.)
+        assert_eq!(
+            get(&key).as_deref(),
+            Some(value),
+            "get debe migrar el valor legado al destino actual"
+        ); // gitleaks:allow
+        guard.current_written.set(true);
+        // Reescribir en el destino actual: comprobar sin volver a migrar.
+        let current =
+            keyring::Entry::new(crate::channel::current().identifier, &key).expect("entry actual");
+        assert_eq!(
+            current.get_password().ok().as_deref(),
+            Some(value),
+            "el valor debe quedar en el destino actual"
+        ); // gitleaks:allow
+           // Y desaparecer de futuras lecturas directas al legado.
+        assert!(
+            matches!(legacy_entry.get_password(), Err(keyring::Error::NoEntry)),
+            "el legado debe desaparecer tras la migración"
+        );
     }
 }
