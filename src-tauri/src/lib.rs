@@ -45,6 +45,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
+/// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
+const LOCALE_PICKER: &str = "locale";
 const SETTINGS: &str = "settings";
 /// Escala de la ventana de Ajustes (1.0 = 100 %).
 const SETTINGS_ZOOM: f64 = 0.85;
@@ -1010,6 +1012,51 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
+/// El selector de primer arranque solo existe en Linux y solo antes de elegir (S3).
+fn locale_picker_needed(linux: bool, cfg: &AppConfig) -> bool {
+    linux && !cfg.locale_selected
+}
+
+/// Destino de una segunda instancia: el selector abierto tiene prioridad (S14).
+fn second_instance_target(picker_open: bool) -> &'static str {
+    if picker_open {
+        LOCALE_PICKER
+    } else {
+        WIDGET
+    }
+}
+
+/// Pantalla de primer arranque (S8, P1): ventana aparte, con decoraciones y sin
+/// transparencia ni «siempre encima».
+fn open_locale_picker(app: &AppHandle) -> tauri::Result<()> {
+    WebviewWindowBuilder::new(app, LOCALE_PICKER, WebviewUrl::App("index.html".into()))
+        .title("Quorb")
+        .inner_size(420.0, 240.0)
+        .min_inner_size(420.0, 240.0)
+        .center()
+        .focused(true)
+        .build()?;
+    Ok(())
+}
+
+/// Elección del selector de primer arranque (S2): guarda idioma y bandera con el
+/// mismo `config::save`, cierra el selector y levanta la UI principal.
+#[tauri::command]
+fn choose_locale(app: AppHandle, state: State<'_, AppState>, locale: String) -> Result<(), String> {
+    if app.get_webview_window(LOCALE_PICKER).is_none() {
+        return Err("el selector de idioma no está abierto".into());
+    }
+    let mut next = state.config.lock().unwrap().clone();
+    next.choose_locale(&locale)?;
+    config::save(&state.config_path, &next)?;
+    *state.config.lock().unwrap() = next;
+    // `destroy` no dispara CloseRequested: no cuenta como cierre sin elegir (D6).
+    if let Some(w) = app.get_webview_window(LOCALE_PICKER) {
+        w.destroy().map_err(|e| e.to_string())?;
+    }
+    start_main_ui(&app).map_err(|e| e.to_string())
+}
+
 /// Crea la superficie principal: tira, detalle, overlay, bandeja y atajos.
 /// Lee la configuración del estado. `setup` la llama en el arranque normal; el
 /// selector de primer arranque (#235) la llamará tras la elección de idioma.
@@ -1126,9 +1173,11 @@ pub fn run() {
         std::process::exit(code);
     }
     let builder = tauri::Builder::default()
-        // Debe ir el primero: si ya está abierta, muestra el widget existente.
+        // Debe ir el primero: si ya está abierta, muestra el selector de idioma
+        // (si está abierto) o el widget existente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window(WIDGET) {
+            let target = second_instance_target(app.get_webview_window(LOCALE_PICKER).is_some());
+            if let Some(w) = app.get_webview_window(target) {
                 let _ = w.show();
                 let _ = w.set_focus();
             }
@@ -1186,7 +1235,16 @@ pub fn run() {
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
                 wsl_homes: wsl::WslHomeCache::default(),
             });
-            start_main_ui(app.handle())?;
+            // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
+            let picker = locale_picker_needed(
+                cfg!(target_os = "linux"),
+                &app.state::<AppState>().config.lock().unwrap(),
+            );
+            if picker {
+                open_locale_picker(app.handle())?;
+            } else {
+                start_main_ui(app.handle())?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1210,6 +1268,11 @@ pub fn run() {
                     hide_detail(window.app_handle());
                     let _ = window.app_handle().emit_to(WIDGET, "widget-hidden", ());
                 }
+            } else if window.label() == LOCALE_PICKER {
+                // Cerrar sin elegir termina el proceso; no se escribe configuración (D6).
+                if let WindowEvent::CloseRequested { .. } = event {
+                    window.app_handle().exit(0);
+                }
             } else if window.label() == DETAIL {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -1222,6 +1285,7 @@ pub fn run() {
             updater_mode,
             get_config,
             save_config,
+            choose_locale,
             patch_config,
             secret_status,
             set_secret,
@@ -1293,6 +1357,27 @@ mod tests {
             .find(|w| w["label"] == WIDGET)
             .expect("ventana widget declarada");
         assert_eq!(widget["create"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn locale_picker_is_linux_only_and_only_before_a_choice() {
+        // S3: el selector no aparece en Windows/macOS ni tras una elección previa.
+        let fresh = AppConfig::default();
+        let chosen = AppConfig {
+            locale_selected: true,
+            ..AppConfig::default()
+        };
+        assert!(locale_picker_needed(true, &fresh));
+        assert!(!locale_picker_needed(true, &chosen));
+        assert!(!locale_picker_needed(false, &fresh));
+        assert!(!locale_picker_needed(false, &chosen));
+    }
+
+    #[test]
+    fn second_instance_focuses_open_picker_before_the_widget() {
+        // S14: con el selector abierto, relanzar Quorb le da el foco a él.
+        assert_eq!(second_instance_target(true), LOCALE_PICKER);
+        assert_eq!(second_instance_target(false), WIDGET);
     }
 
     #[test]

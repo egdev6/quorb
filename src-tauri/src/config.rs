@@ -766,6 +766,20 @@ impl AppConfig {
     }
 }
 
+impl AppConfig {
+    /// Registra la elección del selector de primer arranque (#235): idioma soportado
+    /// y bandera `localeSelected`. Un idioma no soportado no cambia nada.
+    pub fn choose_locale(&mut self, locale: &str) -> Result<(), String> {
+        let normalized = locale.trim().to_ascii_lowercase();
+        if !LOCALES.contains(&normalized.as_str()) {
+            return Err(format!("idioma no soportado: {locale}"));
+        }
+        self.locale = normalized;
+        self.locale_selected = true;
+        Ok(())
+    }
+}
+
 /// Archivo presente pero ilegible (I/O o JSON inválido): valores por defecto sin
 /// selector (D2). No es un primer arranque; el próximo guardado lo reemplaza.
 fn unreadable_config() -> AppConfig {
@@ -1323,6 +1337,26 @@ mod tests {
         assert!(reloaded.locale_selected);
         assert_eq!(reloaded.refresh_minutes, 12);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn first_run_choice_sets_locale_and_flag_and_nothing_else() {
+        // S2: la elección del selector cambia solo idioma y bandera.
+        let mut cfg = AppConfig {
+            refresh_minutes: 9,
+            ..AppConfig::default()
+        };
+        cfg.choose_locale("EN").unwrap();
+        assert_eq!(cfg.locale, "en");
+        assert!(cfg.locale_selected);
+        assert_eq!(cfg.refresh_minutes, 9);
+    }
+
+    #[test]
+    fn first_run_choice_rejects_unsupported_locale_without_changes() {
+        let mut cfg = AppConfig::default();
+        assert!(cfg.choose_locale("fr").is_err());
+        assert_eq!(cfg, AppConfig::default());
     }
 
     #[test]
