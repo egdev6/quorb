@@ -25,6 +25,12 @@ where
     })
 }
 
+/// Valor del campo `localeSelected` cuando el archivo existe pero no lo trae
+/// (configuración previa a #235). `Default` usa `false`: primer arranque real.
+fn locale_selected_when_present() -> bool {
+    true
+}
+
 /// Acepta `#rgb` o `#rrggbb` (con o sin `#`) y lo devuelve como `#rrggbb` en minúsculas.
 fn normalize_hex(s: &str) -> Option<String> {
     let h = s.trim().trim_start_matches('#');
@@ -63,6 +69,10 @@ pub struct AppConfig {
     /// Idioma de la interfaz: es | en (por defecto `es`).
     #[serde(deserialize_with = "lenient_locale")]
     pub locale: String,
+    /// El usuario ya eligió idioma en el selector de primer arranque (#235).
+    /// Un archivo legible sin este campo es una instalación existente → `true`.
+    #[serde(default = "locale_selected_when_present")]
+    pub locale_selected: bool,
     /// Cada cuántos minutos se refrescan los datos (mínimo 1).
     pub refresh_minutes: u32,
     /// Opacidad del widget (0.3 – 1.0).
@@ -302,6 +312,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             locale: LOCALE_DEFAULT.into(),
+            locale_selected: false,
             refresh_minutes: 5,
             opacity: 0.94,
             compact: false,
@@ -755,12 +766,26 @@ impl AppConfig {
     }
 }
 
+/// Archivo presente pero ilegible (I/O o JSON inválido): valores por defecto sin
+/// selector (D2). No es un primer arranque; el próximo guardado lo reemplaza.
+fn unreadable_config() -> AppConfig {
+    AppConfig {
+        locale_selected: true,
+        ..AppConfig::default()
+    }
+}
+
+/// Ausente → primer arranque (`locale_selected == false`). Legible → lo que dice el
+/// archivo. Ilegible → `unreadable_config`. Nunca escribe en disco.
 pub fn load(path: &Path) -> AppConfig {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<AppConfig>(&s).ok())
-        .unwrap_or_default()
-        .sanitized()
+    let cfg = match std::fs::read_to_string(path) {
+        Ok(text) => {
+            serde_json::from_str::<AppConfig>(&text).unwrap_or_else(|_| unreadable_config())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AppConfig::default(),
+        Err(_) => unreadable_config(),
+    };
+    cfg.sanitized()
 }
 
 pub fn save(path: &Path, cfg: &AppConfig) -> Result<(), String> {
@@ -1208,6 +1233,95 @@ mod tests {
         let back: AppConfig = serde_json::from_value(expected.clone()).unwrap();
         save(&path, &back.sanitized()).unwrap();
         assert_eq!(serde_json::to_value(load(&path)).unwrap(), expected);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    fn write_raw(path: &std::path::Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn locale_selected_defaults_to_false() {
+        assert!(!AppConfig::default().locale_selected);
+    }
+
+    #[test]
+    fn missing_file_is_first_run_with_es_and_no_choice_made() {
+        // S1 (ausente): primer arranque real → el selector debe aparecer.
+        let path = temp_config_path("first-run-missing");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let cfg = load(&path);
+        assert_eq!(locale_of(&cfg), "es");
+        assert!(!cfg.locale_selected);
+    }
+
+    #[test]
+    fn readable_legacy_file_without_locale_selected_counts_as_chosen() {
+        // S1 (legible sin campo): instalación existente → sin selector, conserva idioma.
+        let path = temp_config_path("legacy-no-flag");
+        write_raw(&path, r#"{"refreshMinutes": 7}"#);
+        let cfg = load(&path);
+        assert!(cfg.locale_selected);
+        assert_eq!(locale_of(&cfg), "es");
+        assert_eq!(cfg.refresh_minutes, 7);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn readable_legacy_file_with_en_keeps_en_and_counts_as_chosen() {
+        let path = temp_config_path("legacy-en");
+        write_raw(&path, r#"{"locale": "en", "compact": true}"#);
+        let cfg = load(&path);
+        assert!(cfg.locale_selected);
+        assert_eq!(locale_of(&cfg), "en");
+        assert!(cfg.compact);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn unreadable_file_uses_es_without_selector() {
+        // S1/D2 (ilegible): sin selector, fallback es; no se trata como primer arranque.
+        let path = temp_config_path("unreadable");
+        write_raw(&path, "{ esto no es json");
+        let cfg = load(&path);
+        assert!(cfg.locale_selected);
+        assert_eq!(locale_of(&cfg), "es");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn loading_never_writes_config_before_a_choice() {
+        // S2: ningún load escribe disco; el selector vuelve si no se eligió nada.
+        let missing = temp_config_path("no-write-missing");
+        let _ = std::fs::remove_dir_all(missing.parent().unwrap());
+        let _ = load(&missing);
+        assert!(!missing.exists(), "load creó config.json sin elección");
+
+        let legacy = temp_config_path("no-write-legacy");
+        let raw = r#"{"refreshMinutes": 7}"#;
+        write_raw(&legacy, raw);
+        let _ = load(&legacy);
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), raw);
+        let _ = std::fs::remove_dir_all(legacy.parent().unwrap());
+    }
+
+    #[test]
+    fn choosing_a_locale_persists_flag_and_keeps_other_data() {
+        // S2: elegir guarda locale + localeSelected:true por config::save y recarga igual.
+        let path = temp_config_path("choose-en");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let mut cfg = load(&path);
+        assert!(!cfg.locale_selected);
+        cfg.refresh_minutes = 12;
+        cfg.locale = "en".into();
+        cfg.locale_selected = true;
+        save(&path, &cfg.sanitized()).unwrap();
+
+        let reloaded = load(&path);
+        assert_eq!(locale_of(&reloaded), "en");
+        assert!(reloaded.locale_selected);
+        assert_eq!(reloaded.refresh_minutes, 12);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
