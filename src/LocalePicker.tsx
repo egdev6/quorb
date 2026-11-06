@@ -2,7 +2,7 @@
 // textos traducibles: solo nombres nativos, sin foco ni selección previa (P4) y
 // sin detectar el idioma del sistema. Elegir llama a `choose_locale`, que guarda
 // idioma + `localeSelected` y levanta la UI principal.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LogicalSize } from '@tauri-apps/api/dpi';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { api } from './lib/api';
@@ -13,19 +13,44 @@ export const PICKER_OPTIONS: ReadonlyArray<{ locale: Locale; label: string }> = 
   { locale: 'en', label: 'English' },
 ];
 
-const WIDTH = 420;
-const MIN_HEIGHT = 240;
+export const MIN_WIDTH = 420;
+export const MIN_HEIGHT = 240;
+
+const atLeast = (min: number, measured: number) => (Number.isFinite(measured) ? Math.max(min, Math.ceil(measured)) : min);
+
+// P1: tamaño de la ventana = contenido medido (redondeado hacia arriba), con mínimo 420×240 en ambos ejes.
+export const fitToContent = (measuredWidth: number, measuredHeight: number) => ({
+  width: atLeast(MIN_WIDTH, measuredWidth),
+  height: atLeast(MIN_HEIGHT, measuredHeight),
+});
 
 export function LocalePicker() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const contentRef = useRef<HTMLElement>(null);
 
-  // P1: alto ajustado al contenido (con escala de texto alta), mínimo 420×240.
+  // P1: ajustar ambos ejes al nodo de contenido; se re-mide al montar, al cargar fuentes y en cada cambio de tamaño.
   useEffect(() => {
-    const height = Math.max(MIN_HEIGHT, Math.ceil(document.documentElement.scrollHeight));
-    void getCurrentWindow()
-      .setSize(new LogicalSize(WIDTH, height))
-      .catch(() => {});
+    const content = contentRef.current;
+    if (!content) return;
+    const fit = () => {
+      const rect = content.getBoundingClientRect();
+      const { width, height } = fitToContent(rect.width, rect.height);
+      getCurrentWindow()
+        .setSize(new LogicalSize(width, height))
+        .catch((e) => console.error('LocalePicker: no se pudo ajustar el tamaño de la ventana', e));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(content);
+    let active = true;
+    void document.fonts.ready.then(() => {
+      if (active) fit();
+    });
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
   }, []);
 
   const choose = async (locale: Locale) => {
@@ -41,7 +66,7 @@ export function LocalePicker() {
   };
 
   return (
-    <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, minHeight: MIN_HEIGHT, padding: 24 }}>
+    <main ref={contentRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, width: 'max-content', margin: '0 auto', minHeight: MIN_HEIGHT, padding: 24 }}>
       <h1 style={{ margin: 0, fontSize: 22 }}>Quorb</h1>
       <div style={{ display: 'flex', gap: 12 }}>
         {PICKER_OPTIONS.map((option) => (
