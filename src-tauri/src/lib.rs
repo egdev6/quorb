@@ -1010,10 +1010,11 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-/// Crea la tira (`widget`) desde su entrada de `tauri.conf.json` (`create: false`).
-/// `setup` la llama en el arranque normal; el selector de primer arranque (#235)
-/// la llamará tras la elección de idioma.
-fn start_main_ui(app: &tauri::App, cfg: &AppConfig) -> tauri::Result<()> {
+/// Crea la superficie principal: tira, detalle, overlay, bandeja y atajos.
+/// Lee la configuración del estado. `setup` la llama en el arranque normal; el
+/// selector de primer arranque (#235) la llamará tras la elección de idioma.
+fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
+    let cfg = app.state::<AppState>().config.lock().unwrap().clone();
     let window_config = app
         .config()
         .app
@@ -1024,17 +1025,66 @@ fn start_main_ui(app: &tauri::App, cfg: &AppConfig) -> tauri::Result<()> {
     let widget = WebviewWindowBuilder::from_config(app, window_config)?.build()?;
     // El frontend coloca la tira en su borde y la muestra (evita un parpadeo).
     let _ = widget.set_always_on_top(cfg.always_on_top);
+
+    // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
+    let locale = i18n::locale_from_config(&cfg.locale);
+    let detail_builder =
+        WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
+            .title(i18n::detail_title(locale, channel::current().name))
+            .inner_size(330.0, 260.0)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .always_on_top(cfg.always_on_top)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .visible(false);
+    #[cfg(target_os = "windows")]
+    let detail_builder = detail_builder.no_redirection_bitmap(true);
+    detail_builder.build()?;
+
+    // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
+    let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
+        .title(i18n::overlay_title(locale, channel::current().name))
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .focused(false)
+        .focusable(false)
+        .visible(false)
+        .build()?;
+    // Sin `set_ignore_cursor_events` aquí: la ventana aún está oculta
+    // y no tiene GdkWindow → tao 0.37.1 panicea (`window.window()
+    // .unwrap()` en `CursorIgnoreEvents`, bug tao#1204). Se aplica en
+    // `play_effect()` después de `show()`.
+
     // En macOS y Linux una ventana queda clavada en su escritorio/Space a menos
-    // que se marque «visible en todos los escritorios» (ver `setup`).
+    // que se marque «visible en todos los escritorios» (en macOS
+    // NSWindow.canJoinAllSpaces, en Linux X11/XWayland _NET_WM_STATE_STICKY vía
+    // gtk_window_stick): sin esto la tira no sigue al usuario entre
+    // escritorios/Spaces ni sobre apps fullscreen, y el detalle/overlay quedarían
+    // en un escritorio distinto al de la tira. En Windows siempre-encima ya cubre el caso.
+    // Va tras crear DETAIL y OVERLAY: si corre antes, no los encuentra y quedan clavados.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if let Err(e) = widget.set_visible_on_all_workspaces(true) {
-        eprintln!("No pude marcar «{WIDGET}» visible en todos los escritorios: {e}");
+    for label in [WIDGET, DETAIL, OVERLAY] {
+        if let Some(w) = app.get_webview_window(label) {
+            if let Err(e) = w.set_visible_on_all_workspaces(true) {
+                eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
+            }
+        }
     }
+
+    apply_shortcuts(app, &cfg.shortcuts);
+    build_tray(app, locale)?;
     Ok(())
 }
 
-fn build_tray(app: &tauri::App, locale: i18n::Locale) -> tauri::Result<()> {
-    let menu = tray_menu(app.handle(), i18n::tray_labels(locale))?;
+fn build_tray(app: &AppHandle, locale: i18n::Locale) -> tauri::Result<()> {
+    let menu = tray_menu(app, i18n::tray_labels(locale))?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(channel::current().name)
@@ -1125,68 +1175,9 @@ pub fn run() {
                 .user_agent(concat!("quorb/", env!("CARGO_PKG_VERSION")))
                 .build()?;
 
-            start_main_ui(app, &cfg)?;
-            // En macOS y Linux una ventana queda clavada en su escritorio/Space a
-            // menos que se marque «visible en todos los escritorios» (en macOS
-            // NSWindow.canJoinAllSpaces, en Linux X11/XWayland _NET_WM_STATE_STICKY
-            // vía gtk_window_stick): sin esto la tira no sigue al usuario entre
-            // escritorios/Spaces ni sobre apps fullscreen, y el detalle/overlay
-            // quedarían en un escritorio distinto al de la tira.
-            // En Windows siempre-encima ya cubre el caso.
             let history = history::History::load(data_dir.join("history.json"));
-
-            // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
-            let locale = i18n::locale_from_config(&cfg.locale);
-            let detail_builder =
-                WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
-                    .title(i18n::detail_title(locale, channel::current().name))
-                    .inner_size(330.0, 260.0)
-                    .decorations(false)
-                    .transparent(true)
-                    .shadow(false)
-                    .always_on_top(cfg.always_on_top)
-                    .skip_taskbar(true)
-                    .resizable(false)
-                    .focused(false)
-                    .visible(false);
-            #[cfg(target_os = "windows")]
-            let detail_builder = detail_builder.no_redirection_bitmap(true);
-            detail_builder.build()?;
-
-            // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
-            let _overlay =
-                WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
-                    .title(i18n::overlay_title(locale, channel::current().name))
-                    .decorations(false)
-                    .transparent(true)
-                    .shadow(false)
-                    .always_on_top(true)
-                    .skip_taskbar(true)
-                    .resizable(false)
-                    .focused(false)
-                    .focusable(false)
-                    .visible(false)
-                    .build()?;
-            // Sin `set_ignore_cursor_events` aquí: la ventana aún está oculta
-            // y no tiene GdkWindow → tao 0.37.1 panicea (`window.window()
-            // .unwrap()` en `CursorIgnoreEvents`, bug tao#1204). Se aplica en
-            // `play_effect()` después de `show()`.
-
-            // Se aplica tras construir DETAIL y OVERLAY: si corre antes, esos dos
-            // get_webview_window devuelven None y quedan clavados a su escritorio.
-            // La tira ya lo recibió en `start_main_ui`.
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
-            for label in [DETAIL, OVERLAY] {
-                if let Some(w) = app.get_webview_window(label) {
-                    if let Err(e) = w.set_visible_on_all_workspaces(true) {
-                        eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
-                    }
-                }
-            }
-
             app.manage(Shortcuts::default());
             app.manage(codex_setup::CodexSetupState::default());
-            apply_shortcuts(app.handle(), &cfg.shortcuts);
             app.manage(AppState {
                 config: Mutex::new(cfg),
                 config_path,
@@ -1195,7 +1186,7 @@ pub fn run() {
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
                 wsl_homes: wsl::WslHomeCache::default(),
             });
-            build_tray(app, locale)?;
+            start_main_ui(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
