@@ -1010,6 +1010,29 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
+/// Crea la tira (`widget`) desde su entrada de `tauri.conf.json` (`create: false`).
+/// `setup` la llama en el arranque normal; el selector de primer arranque (#235)
+/// la llamará tras la elección de idioma.
+fn start_main_ui(app: &tauri::App, cfg: &AppConfig) -> tauri::Result<()> {
+    let window_config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == WIDGET)
+        .ok_or(tauri::Error::WindowNotFound)?;
+    let widget = WebviewWindowBuilder::from_config(app, window_config)?.build()?;
+    // El frontend coloca la tira en su borde y la muestra (evita un parpadeo).
+    let _ = widget.set_always_on_top(cfg.always_on_top);
+    // En macOS y Linux una ventana queda clavada en su escritorio/Space a menos
+    // que se marque «visible en todos los escritorios» (ver `setup`).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if let Err(e) = widget.set_visible_on_all_workspaces(true) {
+        eprintln!("No pude marcar «{WIDGET}» visible en todos los escritorios: {e}");
+    }
+    Ok(())
+}
+
 fn build_tray(app: &tauri::App, locale: i18n::Locale) -> tauri::Result<()> {
     let menu = tray_menu(app.handle(), i18n::tray_labels(locale))?;
 
@@ -1102,10 +1125,7 @@ pub fn run() {
                 .user_agent(concat!("quorb/", env!("CARGO_PKG_VERSION")))
                 .build()?;
 
-            // El frontend coloca la tira en su borde y la muestra (evita un parpadeo).
-            if let Some(w) = app.get_webview_window(WIDGET) {
-                let _ = w.set_always_on_top(cfg.always_on_top);
-            }
+            start_main_ui(app, &cfg)?;
             // En macOS y Linux una ventana queda clavada en su escritorio/Space a
             // menos que se marque «visible en todos los escritorios» (en macOS
             // NSWindow.canJoinAllSpaces, en Linux X11/XWayland _NET_WM_STATE_STICKY
@@ -1154,8 +1174,9 @@ pub fn run() {
 
             // Se aplica tras construir DETAIL y OVERLAY: si corre antes, esos dos
             // get_webview_window devuelven None y quedan clavados a su escritorio.
+            // La tira ya lo recibió en `start_main_ui`.
             #[cfg(any(target_os = "macos", target_os = "linux"))]
-            for label in [WIDGET, DETAIL, OVERLAY] {
+            for label in [DETAIL, OVERLAY] {
                 if let Some(w) = app.get_webview_window(label) {
                     if let Err(e) = w.set_visible_on_all_workspaces(true) {
                         eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
@@ -1267,6 +1288,21 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::config::Account;
+
+    #[test]
+    fn widget_window_is_created_by_start_main_ui_not_by_tauri() {
+        // S4 (#235): Tauri no crea la tira al arrancar; la crea `start_main_ui`,
+        // para que el selector de primer arranque pueda ir antes.
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let widget = conf["app"]["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["label"] == WIDGET)
+            .expect("ventana widget declarada");
+        assert_eq!(widget["create"], serde_json::json!(false));
+    }
 
     #[test]
     fn locale_relabel_is_planned_only_when_the_locale_changes() {
