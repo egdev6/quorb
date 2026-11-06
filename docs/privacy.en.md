@@ -15,6 +15,7 @@ a support guarantee for every platform or SignPath approval.
   (on Windows, `%APPDATA%\es.egdev.quorb`), without Quorb-specific encryption.
   The interface also saves navigation, preferences and update notices
   in its WebView's local storage.
+- If `config.json` exists but cannot be read, Quorb uses default values and does not show the first-run language selector. The first save from Settings replaces that file.
 - History is pruned to 30 days when recording readings, not when closing the app.
 - Saved API keys, tokens and cookies use the system store under service
   `es.egdev.quorb`: Credential Manager on Windows, Keychain on macOS,
@@ -91,6 +92,8 @@ keyring entries, and Quorb-owned files in `~/.quorb` (`%USERPROFILE%\.quorb` on
 Windows), including additional-account sessions. Also check `es.egdev.ai-usage`.
 Do not delete other apps' sessions: revoke access through their tools or accounts.
 Local deletion does not remove provider records, backups or shared copies.
+
+On Linux, uninstalling Quorb does not delete `~/.config/es.egdev.quorb/config.json`. To see the first-run language selector again, delete that file.
 
 ## Third-party policies and support
 
