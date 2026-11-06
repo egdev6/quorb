@@ -95,6 +95,11 @@ pub fn pidfile_base() -> PathBuf {
 /// El nombre del subdirectorio lo decide `mktemp -d` en la distro, así que
 /// el host lo descubre con un glob dentro del base. `$1` entra como
 /// parámetro posicional: nada se interpola en el script.
+///
+/// El código de producción lee PID y token en una sola llamada
+/// (`SCRIPT_READ_IDENTITY`); este script queda como fixture de los tests de
+/// argv.
+#[cfg(test)]
 pub const SCRIPT_READ_PID: &str = "cat \"$1\"/*/pid";
 
 /// Script constante para leer PID **y token de instancia** en la misma

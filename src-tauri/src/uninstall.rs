@@ -1,6 +1,8 @@
 //! Explicit NSIS delete-data helper, dispatched before Tauri/plugins start.
 //! No config/session contents are loaded and no credential values are read.
+#[cfg(any(windows, test))]
 use crate::channel::Profile;
+#[cfg(any(windows, test))]
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -9,24 +11,33 @@ use std::{
 #[derive(Debug, PartialEq)]
 enum Failure {
     Arguments,
+    #[cfg(any(windows, test))]
     Paths,
+    #[cfg(any(windows, test))]
     Credentials,
+    #[cfg(any(windows, test))]
     Files,
 }
 impl Failure {
     fn exit_code(&self) -> i32 {
         match self {
             Self::Arguments => 2,
+            #[cfg(any(windows, test))]
             Self::Paths => 3,
+            #[cfg(any(windows, test))]
             Self::Credentials => 4,
+            #[cfg(any(windows, test))]
             Self::Files => 5,
         }
     }
 }
 
+// Only the Windows NSIS helper deletes data; tests exercise it everywhere.
+#[cfg(any(windows, test))]
 struct Plan {
     roots: [PathBuf; 3],
 }
+#[cfg(any(windows, test))]
 impl Plan {
     fn new(profile: &Profile, home: &Path, roaming: &Path, local: &Path) -> Result<Self, Failure> {
         if !matches!(
@@ -81,6 +92,7 @@ impl Plan {
     }
 }
 
+#[cfg(any(windows, test))]
 fn is_link(meta: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
@@ -93,6 +105,7 @@ fn is_link(meta: &fs::Metadata) -> bool {
     }
 }
 
+#[cfg(any(windows, test))]
 fn purge(plan: &Plan, credentials: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failure> {
     plan.preflight()?;
     // If vault access/deletion fails, preserve files and stop the uninstaller.
@@ -107,6 +120,7 @@ fn purge(plan: &Plan, credentials: impl FnOnce() -> Result<(), Failure>) -> Resu
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn owned_target(target: &str, identifier: &str) -> bool {
     let Some(key) = target.strip_suffix(&format!(".{identifier}")) else {
         return false;

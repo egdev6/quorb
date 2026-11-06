@@ -1627,6 +1627,7 @@ mod tests {
 
     /// Node real del proyecto (por `QUORB_TEST_NODE_EXECUTABLE` o PATH); nunca se
     /// lee su versión ni se ejecutan probes de npm/Codex.
+    #[cfg(unix)]
     fn test_node_executable() -> Option<PathBuf> {
         if let Some(explicit) = std::env::var_os("QUORB_TEST_NODE_EXECUTABLE") {
             let explicit = PathBuf::from(explicit);
