@@ -98,14 +98,59 @@ Lo que demuestra (criterio 2 de #106):
 - Se **borra** (`set(&key, "")` → `get` devuelve `None`).
 - Usa la misma vía `entry()`/`scoped()` que la app, con una clave de la allowlist — no escribe en disco ni en texto plano.
 
-**Pendiente del criterio 2 (revisión del owner, 2026-10-23)**: la **migración
-del servicio legacy** (`migrate_legacy()` en `secrets.rs`: copia un secreto de
-`LEGACY_SERVICE` al servicio actual y borra el antiguo) **no se ejercita en la
-evidencia**. Requiere un Secret Service real con una clave legacy presente; los
-tests existentes cubren el invariante «no leak / no degradar a texto plano»,
-pero no el flujo de migración en sí. Se registra como pendiente: validarlo en
-el mismo step del smoke (escribir en `LEGACY_SERVICE`, llamar `get` con la
-clave, comprobar que migró y que el legacy se borró) o en una máquina real.
+**Migración del servicio legacy — ejercitada (criterio 2, revisión del owner 2026-10-28)**:
+la migración (`migrate_legacy()` en `secrets.rs`: copia un secreto de
+`LEGACY_SERVICE` al servicio actual y borra el antiguo) queda validada por el
+smoke `linux_legacy_migrate_once_then_legacy_is_gone`. La PR #203 se re-ejecutó
+sobre el head corregido (revisión 2026-10-31): run [`42128707783`](https://github.com/sosan/quorb/actions/runs/42128707783) (SHA `98061b8`) — el
+anterior [`40651008234`](https://github.com/sosan/quorb/actions/runs/40651008234)
+(SHA `0c75fab`) corresponde al código previo, sin el guard reordenado, y NO
+acredita el head actual.
+Qué verifica:
+- Escribe **directamente** en `LEGACY_SERVICE` (`es.egdev.ai-usage`) una clave
+  base de la allowlist (`nan_session`, sin `@` — las claves con `@` no migran
+  por diseño de `get()`), sin pasar por `set`/`get`.
+- `get()` con el destino actual vacío la recupera **por la vía de migración**
+  (se lee una vez).
+- El valor queda reescrito en el **destino actual** (`es.egdev.quorb`),
+  comprobado leyendo el entry actual sin volver a migrar.
+- El legado desaparece de lecturas directas posteriores (**`NoEntry`**).
+
+**Ejecución segura (aislamiento obligatorio)**: el smoke escribe en la clave
+real `nan_session` del llavero, así que **solo se ejecuta en el entorno
+aislado del CI** — `dbus-run-session` + `gnome-keyring` efímero con
+`QUORB_SECRETS_SMOKE_ISOLATED=1` (var definida únicamente dentro de esa sesión
+en `linux-ci.yml`). En la revisión 2026-10-31 el aislamiento pasó de
+*declarado* a *verificado*:
+
+- El workflow crea `HOME` y `XDG_DATA_HOME` **temporales** bajo
+  `QUORB_SECRETS_SMOKE_TMPHOME`; el keyring del runner vive en ese directorio
+  desechable, no en el HOME real de la VM.
+- **El bus D-Bus también está verificado** (revisión del mantenedor,
+  2026-11-05): Secret Service se alcanza por `DBUS_SESSION_BUS_ADDRESS`, no
+  por el HOME, así que el workflow exporta la dirección de la sesión
+  efímera en `QUORB_SECRETS_SMOKE_DBUS_ADDR` y el smoke la compara con la
+  que el proceso realmente usa. Un escritorio con las variables exportadas
+  pero su bus propio no pasa esta puerta.
+- Ambos smokes (round trip y migración) aplican la **misma regla** vía el
+  helper compartido `assert_smoke_isolation()`.
+- El smoke **comprueba** que `HOME` == `QUORB_SECRETS_SMOKE_TMPHOME` y que
+  `XDG_DATA_HOME` cuelga de él antes de tocar nada; sin esa comprobación, la
+  variable solo *declara* aislamiento.
+- **Precondición antes del guard**: el destino actual **y** el legado deben
+  devolver `NoEntry` ESTRICTO (una entrada existente aunque vacía aborta el
+  smoke). Si alguno tuviera un secreto real, el smoke falla AQUÍ, sin haber
+  creado ninguna limpieza (no puede borrar nada).
+- **Limpieza acotada**: `CleanupGuard` solo borra lo que el test escribió
+  (el legado y, tras la migración, el destino actual). El flag del legado se
+  activa justo antes de su escritura; el del destino, tras comprobar que la
+  migración lo escribió.
+
+Sin `QUORB_SECRETS_SMOKE_ISOLATED=1` (o con las rutas fuera del directorio
+temporal), el smoke **falla antes de tocar nada**: no debe ejecutarse a mano en
+un escritorio con llavero real. Los smokes de llavero (round trip y migración)
+se ejecutan únicamente vía el paso "Secret Service smoke" de `linux-ci.yml`,
+no como ejecución manual en escritorio.
 
 Dependencias añadidas al runner: `libsecret-1-dev`, `gnome-keyring`, `dbus`, `dbus-x11`, `xvfb`.
 
