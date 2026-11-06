@@ -1305,6 +1305,21 @@ mod tests {
     }
 
     #[test]
+    fn read_error_other_than_missing_uses_es_without_selector_or_writes() {
+        // S1/D2 (I/O ilegible, no NotFound): la ruta es un directorio, así que la
+        // lectura falla con otro error. Sin selector y sin tocar la ruta.
+        let path = temp_config_path("unreadable-io");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        std::fs::create_dir_all(&path).unwrap();
+        let cfg = load(&path);
+        assert!(cfg.locale_selected);
+        assert_eq!(locale_of(&cfg), "es");
+        assert!(path.is_dir(), "load no debe reemplazar la ruta");
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0, "load escribió algo");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
     fn loading_never_writes_config_before_a_choice() {
         // S2: ningún load escribe disco; el selector vuelve si no se eligió nada.
         let missing = temp_config_path("no-write-missing");
