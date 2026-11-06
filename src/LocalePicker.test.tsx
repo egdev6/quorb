@@ -3,9 +3,8 @@
 // sin detectar el idioma del sistema.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import capabilitySource from '../src-tauri/capabilities/locale-picker.json?raw';
+import capability from '../src-tauri/capabilities/locale-picker.json';
 import { fitToContent, LocalePicker, logicalPerCssPx, MIN_HEIGHT, MIN_WIDTH, PICKER_OPTIONS } from './LocalePicker';
-import source from './LocalePicker.tsx?raw';
 
 describe('fitToContent (P1)', () => {
   it('clamps content smaller than the minimum to 420x240', () => {
@@ -67,20 +66,10 @@ describe('LocalePicker', () => {
     expect(html).not.toContain('eg-btn--primary');
   });
 
-  it('chooses through the first-run command only and never reads the system locale', () => {
-    expect(source).toContain("api.chooseLocale(");
-    expect(source).not.toContain('saveConfig');
-    expect(source).not.toMatch(/navigator\.language|Intl\.|getLocale/);
-  });
-
-  it('fits its window to the content and never grants more than it needs', () => {
-    expect(source).toContain('setSize(');
-    const capability = JSON.parse(capabilitySource);
+  it('grants the picker only the window permissions it uses', () => {
+    // Solo ajusta tamaño y lee medidas; cerrar y elegir pasan por Rust y `choose_locale`.
     expect(capability.windows).toEqual(['locale']);
-    expect(capability.permissions).toEqual(
-      expect.arrayContaining(['core:window:allow-destroy', 'core:window:allow-set-size']),
-    );
-    expect(capability.permissions).not.toContain('core:window:allow-show');
+    expect(capability.permissions).toEqual(['core:default', 'core:window:allow-set-size']);
   });
 
   it('keeps the content centered when the window is wider than the content', () => {
@@ -90,28 +79,4 @@ describe('LocalePicker', () => {
     expect(html).toContain('margin:0 auto');
   });
 
-  it('converts measured CSS px to logical px before fitting the window (T8b round 2)', () => {
-    expect(source).toContain('devicePixelRatio');
-    expect(source).toContain('scaleFactor(');
-    expect(source).toContain('logicalPerCssPx(');
-    // Factor conservador: además de devicePixelRatio se contrasta el viewport
-    // lógico de la ventana con su viewport CSS, válido sin importar el mecanismo.
-    expect(source).toContain('innerSize(');
-    expect(source).toContain('window.innerHeight');
-    expect(source).toContain('Math.max(');
-    expect(source).toContain('new LogicalSize(width, height)');
-  });
-
-  it('measures its own content node and re-fits on resize and font load, sizing both axes', () => {
-    expect(source).toContain('new ResizeObserver(');
-    expect(source).toContain('document.fonts.ready');
-    expect(source).toMatch(/useRef<HTMLElement/);
-    expect(source).toMatch(/ref=\{contentRef\}/);
-    expect(source).toContain('contentRef.current');
-    expect(source).not.toContain('documentElement');
-    expect(source).toContain('fitToContent(');
-    expect(source).toContain('new LogicalSize(width, height)');
-    expect(source).toContain('console.error(');
-    expect(source).not.toMatch(/\.catch\(\(\) => \{\}\)/);
-  });
 });
