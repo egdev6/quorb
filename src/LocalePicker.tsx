@@ -24,6 +24,11 @@ export const fitToContent = (measuredWidth: number, measuredHeight: number) => (
   height: atLeast(MIN_HEIGHT, measuredHeight),
 });
 
+// T8b round 2: con el zoom de texto de GNOME, WebKitGTK escala como zoom de página: las medidas de
+// getBoundingClientRect() son CSS px, pero setSize(LogicalSize) usa logical px. Factor = logical px por CSS px.
+export const logicalPerCssPx = (devicePixelRatio: number, scaleFactor: number): number =>
+  Number.isFinite(devicePixelRatio) && Number.isFinite(scaleFactor) && scaleFactor > 0 ? devicePixelRatio / scaleFactor : 1;
+
 export function LocalePicker() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,19 +38,30 @@ export function LocalePicker() {
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
-    const fit = () => {
+    const fit = async () => {
       const rect = content.getBoundingClientRect();
-      const { width, height } = fitToContent(rect.width, rect.height);
-      getCurrentWindow()
-        .setSize(new LogicalSize(width, height))
-        .catch((e) => console.error('LocalePicker: no se pudo ajustar el tamaño de la ventana', e));
+      try {
+        const win = getCurrentWindow();
+        const scale = await win.scaleFactor();
+        // Factor conservador: el zoom según la spec (devicePixelRatio / scaleFactor)
+        // y el mapeo real del viewport (alto lógico de la ventana / alto CSS de la
+        // página). Con escala de texto alta el zoom no debe dejar la ventana corta.
+        const kZoom = logicalPerCssPx(window.devicePixelRatio, scale);
+        const logical = (await win.innerSize()).toLogical(scale);
+        const kViewport = logical.height / window.innerHeight;
+        const k = Math.max(kZoom, Number.isFinite(kViewport) && kViewport > 0 ? kViewport : 0);
+        const { width, height } = fitToContent(rect.width * k, rect.height * k);
+        await win.setSize(new LogicalSize(width, height));
+      } catch (e) {
+        console.error('LocalePicker: no se pudo ajustar el tamaño de la ventana', e);
+      }
     };
-    fit();
-    const observer = new ResizeObserver(fit);
+    void fit();
+    const observer = new ResizeObserver(() => void fit());
     observer.observe(content);
     let active = true;
     void document.fonts.ready.then(() => {
-      if (active) fit();
+      if (active) void fit();
     });
     return () => {
       active = false;

@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import capabilitySource from '../src-tauri/capabilities/locale-picker.json?raw';
-import { fitToContent, LocalePicker, MIN_HEIGHT, MIN_WIDTH, PICKER_OPTIONS } from './LocalePicker';
+import { fitToContent, LocalePicker, logicalPerCssPx, MIN_HEIGHT, MIN_WIDTH, PICKER_OPTIONS } from './LocalePicker';
 import source from './LocalePicker.tsx?raw';
 
 describe('fitToContent (P1)', () => {
@@ -27,6 +27,25 @@ describe('fitToContent (P1)', () => {
   it('falls back to the minimum for non-finite measurements', () => {
     expect(fitToContent(Number.NaN, Number.NaN)).toEqual({ width: 420, height: 240 });
     expect(fitToContent(Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY)).toEqual({ width: 420, height: 240 });
+  });
+});
+
+describe('logicalPerCssPx (T8b round 2)', () => {
+  it('is identity when devicePixelRatio equals scaleFactor', () => {
+    expect(logicalPerCssPx(1, 1)).toBe(1);
+    expect(logicalPerCssPx(2, 2)).toBe(1);
+  });
+
+  it('returns the zoom factor when the page is zoomed (text scaling)', () => {
+    expect(logicalPerCssPx(2.5, 1)).toBe(2.5);
+    expect(logicalPerCssPx(2, 2.5)).toBeCloseTo(0.8, 10);
+  });
+
+  it('falls back to 1 for non-finite or non-positive scale factors', () => {
+    expect(logicalPerCssPx(2, 0)).toBe(1);
+    expect(logicalPerCssPx(2, Number.NaN)).toBe(1);
+    expect(logicalPerCssPx(2, Number.POSITIVE_INFINITY)).toBe(1);
+    expect(logicalPerCssPx(Number.NaN, 1)).toBe(1);
   });
 });
 
@@ -69,6 +88,18 @@ describe('LocalePicker', () => {
     // quedaría pegada a la izquierda cuando la ventana está en su mínimo de ancho.
     const html = renderToStaticMarkup(<LocalePicker />);
     expect(html).toContain('margin:0 auto');
+  });
+
+  it('converts measured CSS px to logical px before fitting the window (T8b round 2)', () => {
+    expect(source).toContain('devicePixelRatio');
+    expect(source).toContain('scaleFactor(');
+    expect(source).toContain('logicalPerCssPx(');
+    // Factor conservador: además de devicePixelRatio se contrasta el viewport
+    // lógico de la ventana con su viewport CSS, válido sin importar el mecanismo.
+    expect(source).toContain('innerSize(');
+    expect(source).toContain('window.innerHeight');
+    expect(source).toContain('Math.max(');
+    expect(source).toContain('new LogicalSize(width, height)');
   });
 
   it('measures its own content node and re-fits on resize and font load, sizing both axes', () => {
