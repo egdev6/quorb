@@ -42,7 +42,9 @@ pub async fn fetch(
     let creds: Value = match resolver {
         Some(r) => {
             let default = r.default_path(
-                crate::wsl::guest_relative(&[".gemini", "oauth_creds.json"]).as_path(),
+                super::provider_session_relative("gemini")
+                    .expect("proveedor CLI")
+                    .as_path(),
             );
             let path = match r.resolve(cfg.credentials_path.as_deref(), &default) {
                 Ok(p) => p,

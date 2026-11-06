@@ -239,6 +239,28 @@ pub fn guest_relative(parts: &[&str]) -> PathBuf {
     PathBuf::from(parts.join("/"))
 }
 
+/// Problema de una ruta EXPLÍCITA para el guest (modo WSL): `Some(mensaje
+/// accionable)` si no es POSIX absoluta, `None` si es válida. ÚNICA fuente
+/// de la regla «absoluta del guest y sin `\`» — la usan `SessionResolver::resolve`
+/// (ruta de sesión pegada a mano en Ajustes), `account_session_path`
+/// (`config_dir` de cuentas) y `login` (carpeta de sesión de cuentas),
+/// para que los tres mensajes no diverjan (revisión del mantenedor,
+/// 2026-11-06).
+pub fn guest_path_problem(path: &str) -> Option<String> {
+    if path.contains('\\') {
+        return Some(format!(
+            "La ruta en modo WSL no puede llevar separadores de Windows (\\). \
+             Pega la ruta del guest (por ejemplo /home/usuario/...) en su lugar: {path}"
+        ));
+    }
+    if !path.starts_with('/') {
+        return Some(format!(
+            "La ruta en modo WSL debe ser absoluta del guest (empieza por '/'), se recibió: {path}"
+        ));
+    }
+    None
+}
+
 /// Compone `base` + `relative` con semántica POSIX (separador `/`).
 ///
 /// `Path::join` NO sirve aquí: en Windows usa `\` como separador, y la ruta
@@ -270,18 +292,11 @@ pub fn session_path(
         Some(p) => {
             // Semántica del GUEST, no del host: la ruta se consume con
             // `cat` dentro de la distro. Un path `C:\...` (absoluto para
-            // Windows) NO es válido como ruta de sesión WSL.
-            if !is_guest_absolute(p) {
-                return Err(WslError::InvalidArgument(format!(
-                    "credentials_path en modo WSL debe ser una ruta absoluta de la distro (empieza por '/'), se recibió: {p}"
-                )));
-            }
-            // La ruta del guest es POSIX: un `\` en ella no es un separador
-            // y apuntaría a otro fichero (o a ninguno).
-            if has_host_separator(p) {
-                return Err(WslError::InvalidArgument(format!(
-                    "credentials_path en modo WSL usa separadores POSIX ('/'), se recibió: {p}"
-                )));
+            // Windows) NO es válido como ruta de sesión WSL. La regla vive
+            // en `guest_path_problem` (una sola fuente; revisión del
+            // mantenedor, 2026-11-06).
+            if let Some(problem) = guest_path_problem(p) {
+                return Err(WslError::InvalidArgument(problem));
             }
             Ok(PathBuf::from(p))
         }

@@ -248,6 +248,20 @@ pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
 }
 
 /// Consulta una cuenta adicional con la config de su proveedor adaptada a ella.
+/// Ruta RELATIVA de la sesión de cada proveedor CLI (una sola fuente para
+/// los cuatro `fetch` y `wsl_session_stamp`; revisión del mantenedor,
+/// 2026-11-06). `None` para proveedores sin login por CLI.
+pub(crate) fn provider_session_relative(provider: &str) -> Option<PathBuf> {
+    let parts: &[&str] = match provider {
+        "claude" => &[".claude", ".credentials.json"],
+        "codex" => &[".codex", "auth.json"],
+        "gemini" => &[".gemini", "oauth_creds.json"],
+        "grok" => &[".grok", "auth.json"],
+        _ => return None,
+    };
+    Some(crate::wsl::guest_relative(parts))
+}
+
 /// La ruta de sesión de una cuenta ADICIONAL en el entorno del resolvedor
 /// (#91, revisión del mantenedor 2026-11-04).
 ///
@@ -281,15 +295,11 @@ fn account_session_path(
     match &a.config_dir {
         Some(d) => {
             let d = d.trim();
-            if d.contains('\\') {
+            // Regla única de «POSIX absoluta del guest» (wsl::guest_path_problem;
+            // revisión del mantenedor, 2026-11-06).
+            if let Some(problem) = crate::wsl::guest_path_problem(d) {
                 return Err(format!(
-                    "La carpeta de la cuenta {} tiene separadores de Windows (\\), no válida en modo WSL: {d}",
-                    a.id
-                ));
-            }
-            if !d.starts_with('/') {
-                return Err(format!(
-                    "La carpeta de la cuenta {} debe ser una ruta absoluta del guest en modo WSL (empieza por '/'): {d}",
+                    "La carpeta de la cuenta {} no es válida en modo WSL: {problem}",
                     a.id
                 ));
             }
@@ -298,9 +308,19 @@ fn account_session_path(
             Ok(Some(format!("{}/{}", d.trim_end_matches('/'), name)))
         }
         None => {
-            // La carpeta por defecto (`~/.quorb`) se compone bajo el home
-            // del entorno con POSIX (r.default_path usa join_guest_path).
-            let rel = crate::wsl::guest_relative(&[".quorb", name]);
+            // La MISMA ruta por defecto que el host (revisión del
+            // mantenedor, 2026-11-06): `home_dir` del canal +
+            // `accounts/<provider>-<suffix>` + fichero, con separador POSIX
+            // del guest. Así dos cuentas del mismo proveedor NO comparten
+            // fichero (el aislamiento que declara `wsl/session.rs`) y los
+            // canales con otro `home_dir` no divergen.
+            let account_dir = format!("{}-{}", a.provider, a.suffix());
+            let rel = crate::wsl::guest_relative(&[
+                crate::channel::current().home_dir,
+                "accounts",
+                account_dir.as_str(),
+                name,
+            ]);
             Ok(Some(
                 r.default_path(rel.as_path()).to_string_lossy().into_owned(),
             ))
@@ -539,24 +559,27 @@ fn host_session_stamp(cfg: &AppConfig) -> u64 {
 /// distro cambia el contenido y por tanto el sello, aunque el host no tenga
 /// mtime accesible (revisión PR #220).
 async fn wsl_session_stamp(cfg: &AppConfig, r: &SessionResolver) -> u64 {
-    let main = |c: &SubscriptionConfig, rel: &str| {
+    // La ruta relativa sale de la MISMA fuente que los fetch
+    // (`provider_session_relative`; revisión del mantenedor, 2026-11-06).
+    let main = |c: &SubscriptionConfig, provider: &str| {
+        let relative = provider_session_relative(provider).expect("proveedor CLI");
         r.resolve(
             c.credentials_path.as_deref(),
-            &r.default_path(Path::new(rel)),
+            &r.default_path(relative.as_path()),
         )
         .ok()
     };
     let mut paths: Vec<PathBuf> = Vec::new();
-    if let Some(p) = main(&cfg.claude, ".claude/.credentials.json") {
+    if let Some(p) = main(&cfg.claude, "claude") {
         paths.push(p);
     }
-    if let Some(p) = main(&cfg.codex, ".codex/auth.json") {
+    if let Some(p) = main(&cfg.codex, "codex") {
         paths.push(p);
     }
-    if let Some(p) = main(&cfg.gemini, ".gemini/oauth_creds.json") {
+    if let Some(p) = main(&cfg.gemini, "gemini") {
         paths.push(p);
     }
-    if let Some(p) = main(&cfg.grok, ".grok/auth.json") {
+    if let Some(p) = main(&cfg.grok, "grok") {
         paths.push(p);
     }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
@@ -656,7 +679,7 @@ mod tests {
         let mock = Arc::new(MockWslAdapter::new());
         mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
         mock.set_home("Ubuntu-22.04", PathBuf::from("/home/user"));
-        let extra = PathBuf::from("/home/user/.quorb/.credentials.json");
+        let extra = PathBuf::from("/home/user/.quorb/accounts/claude-w1/.credentials.json");
         mock.set_file(
             "Ubuntu-22.04",
             extra.clone(),
@@ -733,11 +756,11 @@ mod tests {
                 .expect("config_dir absoluto del guest"),
             Some("/mnt/c/Users/yo/quorb/.credentials.json".to_string())
         );
-        // Sin config_dir: la carpeta por defecto compuesta bajo el home del
-        // entorno, POSIX.
+        // Sin config_dir: la MISMA ruta por defecto que el host (home_dir
+        // del canal + accounts/<provider>-<suffix>), POSIX.
         assert_eq!(
             account_session_path(&mk(None), Some(&resolver)).expect("defecto"),
-            Some("/home/user/.quorb/.credentials.json".to_string())
+            Some("/home/user/.quorb/accounts/claude-w1/.credentials.json".to_string())
         );
         // Separadores del host: rechazo explícito.
         let err = account_session_path(&mk(Some(r"C:\Users\yo\quorb".into())), Some(&resolver))
@@ -777,7 +800,7 @@ mod tests {
     /// `~/.quorb/<fichero>` — igual que en host. El aislamiento real de la
     /// UI viene del `config_dir` que crea Ajustes (subcarpeta por cuenta).
     #[test]
-    fn default_extra_account_path_is_shared_without_config_dir() {
+    fn default_extra_accounts_are_isolated_without_config_dir() {
         let mock = Arc::new(MockWslAdapter::new());
         let resolver = crate::wsl::SessionResolver::for_wsl(
             mock.clone(),
@@ -796,11 +819,9 @@ mod tests {
         let p2 = account_session_path(&mk("claude:w2"), Some(&resolver))
             .expect("p2")
             .expect("some");
-        assert_eq!(p1, "/home/user/.quorb/.credentials.json");
-        assert_eq!(
-            p1, p2,
-            "sin config_dir comparten la carpeta por defecto (como el host);              el aislamiento real lo da el config_dir de Ajustes"
-        );
+        assert_eq!(p1, "/home/user/.quorb/accounts/claude-w1/.credentials.json");
+        assert_eq!(p2, "/home/user/.quorb/accounts/claude-w2/.credentials.json");
+        assert_ne!(p1, p2, "cada cuenta lee su propio fichero");
     }
 
     /// Carpeta temporal propia de cada prueba, sin tocar el HOME real.

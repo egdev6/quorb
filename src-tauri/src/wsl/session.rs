@@ -17,7 +17,7 @@
 //! - No se copian tokens: WSL lee el fichero en su casa, Windows lo lee del
 //!   disco; ninguno importa el valor a otro lado.
 
-use super::{join_guest_path, WslAdapter, WslError};
+use super::{guest_path_problem, join_guest_path, WslAdapter, WslError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -58,27 +58,6 @@ impl std::fmt::Display for SessionError {
             SessionError::Wsl(e) => write!(f, "WSL: {e:?}"),
         }
     }
-}
-
-/// Problema de una ruta explícita para el GUEST (modo WSL), o `None` si es
-/// POSIX aceptable (revisión del mantenedor, 2026-11-04).
-///
-/// Un separador `\` (ruta UNC `\\wsl.localhost\…` o `C:\…`) o una ruta
-/// relativa viajan literal al `cat` del guest y fallan como «no existe»,
-/// ocultando un error de configuración detrás de «Sin sesión».
-fn guest_path_problem(path: &str) -> Option<String> {
-    if path.contains('\\') {
-        return Some(format!(
-            "La ruta de sesión en modo WSL no puede llevar separadores de Windows (\\). \
-             Pega la ruta del guest (por ejemplo /home/usuario/...) en lugar de la ruta UNC: {path}"
-        ));
-    }
-    if !path.starts_with('/') {
-        return Some(format!(
-            "La ruta de sesión en modo WSL debe ser absoluta del guest (empieza por '/'), se recibió: {path}"
-        ));
-    }
-    None
 }
 
 /// Un resolvedor de sesiones: el entorno y cómo leer dentro de él.
