@@ -182,6 +182,11 @@ export const es = {
     // Los nombres de proveedor son marcas y no se traducen (salvo el que lleva una
     // conjunción española: `codexName`). Los paneles por proveedor van en `panels`.
     providers: {
+      sessionEnv: 'Sesión de los CLIs',
+      sessionEnvHint: 'Host usa las credenciales de Windows; WSL, las de la distro.',
+      sessionHost: 'Windows',
+      wslDistro: 'Distro WSL',
+      wslDistroHint: 'Distro donde viven los CLIs y sus sesiones (p. ej. Ubuntu-22.04).',
       refreshEvery: 'Consultar cada',
       refreshUnit: 'min',
       subscriptions: 'Suscripciones',

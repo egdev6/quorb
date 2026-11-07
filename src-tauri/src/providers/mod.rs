@@ -248,18 +248,27 @@ pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
 }
 
 /// Consulta una cuenta adicional con la config de su proveedor adaptada a ella.
+/// Proveedor con sesión CLI, para `session_relative` (una sola fuente,
+/// sin `expect` en runtime; revisión del mantenedor, 2026-11-06).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CliSessionKind {
+    Claude,
+    Codex,
+    Gemini,
+    Grok,
+}
+
 /// Ruta RELATIVA de la sesión de cada proveedor CLI (una sola fuente para
-/// los cuatro `fetch` y `wsl_session_stamp`; revisión del mantenedor,
-/// 2026-11-06). `None` para proveedores sin login por CLI.
-pub(crate) fn provider_session_relative(provider: &str) -> Option<PathBuf> {
-    let parts: &[&str] = match provider {
-        "claude" => &[".claude", ".credentials.json"],
-        "codex" => &[".codex", "auth.json"],
-        "gemini" => &[".gemini", "oauth_creds.json"],
-        "grok" => &[".grok", "auth.json"],
-        _ => return None,
+/// los cuatro `fetch` y `wsl_session_stamp`). Match exhaustivo sobre el
+/// enum: no hay `expect` posible.
+pub(crate) fn session_relative(kind: CliSessionKind) -> PathBuf {
+    let parts: &[&str] = match kind {
+        CliSessionKind::Claude => &[".claude", ".credentials.json"],
+        CliSessionKind::Codex => &[".codex", "auth.json"],
+        CliSessionKind::Gemini => &[".gemini", "oauth_creds.json"],
+        CliSessionKind::Grok => &[".grok", "auth.json"],
     };
-    Some(crate::wsl::guest_relative(parts))
+    crate::wsl::guest_relative(parts)
 }
 
 /// La ruta de sesión de una cuenta ADICIONAL en el entorno del resolvedor
@@ -560,9 +569,9 @@ fn host_session_stamp(cfg: &AppConfig) -> u64 {
 /// mtime accesible (revisión PR #220).
 async fn wsl_session_stamp(cfg: &AppConfig, r: &SessionResolver) -> u64 {
     // La ruta relativa sale de la MISMA fuente que los fetch
-    // (`provider_session_relative`; revisión del mantenedor, 2026-11-06).
-    let main = |c: &SubscriptionConfig, provider: &str| {
-        let relative = provider_session_relative(provider).expect("proveedor CLI");
+    // (`session_relative` sobre el enum; revisión del mantenedor, 2026-11-06).
+    let main = |c: &SubscriptionConfig, kind: CliSessionKind| {
+        let relative = session_relative(kind);
         r.resolve(
             c.credentials_path.as_deref(),
             &r.default_path(relative.as_path()),
@@ -570,16 +579,16 @@ async fn wsl_session_stamp(cfg: &AppConfig, r: &SessionResolver) -> u64 {
         .ok()
     };
     let mut paths: Vec<PathBuf> = Vec::new();
-    if let Some(p) = main(&cfg.claude, "claude") {
+    if let Some(p) = main(&cfg.claude, CliSessionKind::Claude) {
         paths.push(p);
     }
-    if let Some(p) = main(&cfg.codex, "codex") {
+    if let Some(p) = main(&cfg.codex, CliSessionKind::Codex) {
         paths.push(p);
     }
-    if let Some(p) = main(&cfg.gemini, "gemini") {
+    if let Some(p) = main(&cfg.gemini, CliSessionKind::Gemini) {
         paths.push(p);
     }
-    if let Some(p) = main(&cfg.grok, "grok") {
+    if let Some(p) = main(&cfg.grok, CliSessionKind::Grok) {
         paths.push(p);
     }
     for a in cfg.accounts.iter().filter(|a| a.enabled) {
@@ -590,9 +599,13 @@ async fn wsl_session_stamp(cfg: &AppConfig, r: &SessionResolver) -> u64 {
             paths.push(PathBuf::from(path));
         }
     }
+    // Lecturas en PARALELO (issue #243): el sello corre cada 15 s y no debe
+    // pagar un `wsl.exe cat` por proveedor en serie. La suma es conmutativa
+    // (wrapping_add), así que el orden de resultados no altera la huella.
+    let results = futures::future::join_all(paths.iter().map(|p| r.read_async(p))).await;
     let mut acc = 0u64;
-    for p in paths {
-        if let Ok(contents) = r.read_async(&p).await {
+    for result in results {
+        if let Ok(contents) = result {
             acc = acc.wrapping_add(content_hash(contents.as_bytes()));
         }
     }
@@ -625,7 +638,7 @@ pub(crate) fn net_error(e: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wsl::{distro, DistroState, MockWslAdapter};
+    use crate::wsl::{distro, DistroState, MockWslAdapter, ShellStrategy};
     use std::sync::Arc;
 
     /// #91 (revisión PR #220): el sello en WSL observa los ficheros DENTRO de
@@ -731,6 +744,69 @@ mod tests {
     /// reactor, que el tokio de CI no expone; la decisión de ruta está
     /// aislada aquí y su consumidor en el sello se prueba con el `WslCall`
     /// exacto.)
+
+    /// Regresión directa del `WslCall` desde `fetch_account` (issue #243,
+    /// revisión del mantenedor): el invitado debe recibir la ruta POSIX
+    /// EXACTA de la cuenta adicional. La sesión de Claude con token vencido
+    /// responde NeedsLogin SIN tocar la red, así que el test es
+    /// determinista: `expiresAt` en el pasado.
+    #[test]
+    fn fetch_account_sends_the_exact_guest_path_for_extra_accounts() {
+        let mock = Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
+        mock.set_home("Ubuntu-22.04", PathBuf::from("/home/user"));
+        let extra = PathBuf::from("/home/user/.quorb/accounts/claude-w1/.credentials.json");
+        mock.set_file(
+            "Ubuntu-22.04",
+            extra.clone(),
+            r#"{"claudeAiOauth":{"accessToken":"vencido","expiresAt":1000}}"#.to_string(),
+        );
+        let r = crate::wsl::SessionResolver::for_wsl(
+            mock.clone(),
+            "Ubuntu-22.04".into(),
+            PathBuf::from("/home/user"),
+        );
+        let cfg = AppConfig {
+            accounts: vec![Account {
+                id: "claude:w1".into(),
+                provider: "claude".into(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        // El cliente se construye DENTRO del contexto del runtime (`enter`):
+        // el crate de tokio del harness no expone reactor fuera de él y
+        // `reqwest::Client::new` exige un Handle activo.
+        let _enter = rt.enter();
+        let http = reqwest::Client::new();
+        let report = rt
+            .block_on(tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                fetch_account(&cfg, &cfg.accounts[0], &http, Some(&r)),
+            ))
+            .expect("no debe colgar");
+        let status = &report.status;
+        assert!(
+            matches!(status, crate::model::Status::NeedsLogin),
+            "token vencido: {status:?} {:?}",
+            report.message
+        );
+        assert!(
+            mock.calls().iter().any(|c| matches!(
+                c,
+                crate::wsl::WslCall::ReadFile(d, p)
+                    if d == "Ubuntu-22.04" && p == &extra
+            )),
+            "el guest recibe la ruta POSIX exacta, llamadas: {:?}",
+            mock.calls()
+        );
+    }
     /// La composición POSIX de la cuenta adicional: absoluta del guest se
     /// usa tal cual; separadores del host o rutas relativas se rechazan con
     /// mensaje accionable (revisión del mantenedor, 2026-11-04).
