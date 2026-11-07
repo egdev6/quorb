@@ -1609,6 +1609,37 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
   );
 }
 
+/** Tono del aviso de resultado por estado: verde para aceptación, amarillo
+ *  para requisitos o incertidumbre y rojo para fallos del envío; neutros
+ *  cuando aún no hay intento ni envío automático. */
+const EMAIL_STATUS_TONE: Record<EmailStatus, '' | 'warning' | 'success' | 'danger'> = {
+  idle: '',
+  disabled: '',
+  accepted: 'success',
+  consentRequired: 'warning',
+  configurationMissing: 'warning',
+  keyMissing: 'warning',
+  keyringError: 'danger',
+  authenticationError: 'danger',
+  senderRejected: 'danger',
+  requestRejected: 'danger',
+  rateLimited: 'danger',
+  serviceError: 'danger',
+  acceptanceUnknown: 'warning',
+};
+
+/** Resultado visible de la última acción de email, con el patrón
+ *  «eg-notice» del resto de Ajustes. Extraída para poder renderizarla en
+ *  pruebas sin montar la ventana completa. */
+export function EmailStatusLine({ locale, status }: { locale: Locale; status: EmailStatus }) {
+  const tone = EMAIL_STATUS_TONE[status];
+  return (
+    <p className={tone ? `eg-notice eg-notice--sm eg-notice--${tone}` : 'eg-notice eg-notice--sm'} role="status">
+      {t(locale, `settings.alerts.email.status.${status}`)}
+    </p>
+  );
+}
+
 function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }: {
   locale: Locale; alerts: AlertsConfig; onAlerts: (patch: Partial<AlertsConfig>) => void;
   onPersist: (alerts: AlertsConfig) => Promise<void>; secrets: SecretStatus; onSecrets: () => void;
@@ -1654,7 +1685,7 @@ function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }
       <button type="button" className="eg-btn eg-btn--ghost" disabled={busy || !emailReady(email) || !secrets.resend_api_key} onClick={() => void test()}>
         {t(locale, busy ? 'settings.alerts.email.testing' : 'settings.alerts.email.test')}
       </button>
-      <p role="status">{t(locale, `settings.alerts.email.status.${status}`)}</p>
+      <EmailStatusLine locale={locale} status={status} />
     </Section>
   );
 }

@@ -507,8 +507,14 @@ async fn send_email_alert(
     state: State<'_, AppState>,
     event: Option<email::EmailEvent>,
 ) -> Result<email::EmailStatus, String> {
-    let cfg = state.config.lock().unwrap().alerts.clone();
-    let result = email::send(&cfg, event).await;
+    let (cfg, locale) = {
+        let config = state.config.lock().unwrap();
+        (
+            config.alerts.clone(),
+            crate::i18n::locale_from_config(&config.locale),
+        )
+    };
+    let result = email::send(&cfg, locale, event).await;
     *state.email_status.lock().unwrap() = result;
     let _ = app.emit("email-status", result);
     Ok(result)

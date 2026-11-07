@@ -7,6 +7,7 @@ import { api, type WidgetPatch } from './lib/api';
 import { mergeReports, peakMeter, sessionsLost, trayTooltip } from './lib/format';
 import { derivePalette } from './lib/palette';
 import { detectAlerts, effectFor, nativeAlertsEnabled, notificationText, type AlertMemory } from './lib/alerts';
+import { dispatchEmailAlerts } from './lib/email';
 import { applyOrder, dropIndex, moveTo, officialUsageUrl } from './lib/order';
 import { contains, isEdge, isVertical, nearestEdge, panelHeightLimit, stripRect, type Edge, type Rect } from './lib/dock';
 import { ORB_SIZE, type AppConfig, type UsageReport } from './lib/types';
@@ -286,6 +287,9 @@ export function Widget() {
       const g = geoRef.current ? Promise.resolve(geoRef.current) : resolveGeo(configRef.current?.dockMonitor ?? null);
       g.then((geo) => geo && api.playEffect(effect, moment, geo.screen)).catch(() => {});
     }
+    // La memoria local ya se actualizó: un fallo remoto no se reintenta ni
+    // altera efectos/notificaciones. No pasa por retryWithBackoff del sondeo.
+    void dispatchEmailAlerts(res.events, a, api.sendEmailAlert);
   }, []);
 
   // ───── datos ─────

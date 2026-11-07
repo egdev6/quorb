@@ -55,8 +55,9 @@ El remitente lo introduce el usuario: el remitente de pruebas de Resend sirve
 para el email de su propia cuenta; para otros destinatarios necesita un dominio
 verificado y un remitente autorizado. Quorb no proporciona un remitente fijo.
 
-El payload incluye únicamente el sobre (remitente/destinatario), asunto fijo y
-texto de proveedor, medidor, ventana, porcentaje y tipo de evento. No incluye
+El payload incluye únicamente el sobre (remitente/destinatario), asunto y
+texto de proveedor, medidor, ventana, porcentaje y tipo de evento según el
+idioma configurado (es/en; el inglés conserva los literales originales). No incluye
 nombres/identificadores de cuentas, etiquetas configurables, informes completos,
 prompts, código ni sesiones. Resend procesa también las direcciones personales.
 La prueba no incluye datos de consumo. El último estado vive solo en memoria;
@@ -71,6 +72,36 @@ aceptación incierta y nunca provoca un reintento automático.
 Referencia de protocolo: [Send Email](https://resend.com/docs/api-reference/emails/send-email)
 y [Errors](https://resend.com/docs/api-reference/errors). Solo se consultó la
 documentación: no se hicieron envíos reales.
+
+## Identidad, memoria y avisos automáticos
+
+El widget pasa a email exactamente los eventos emitidos por `detectAlerts`,
+después de actualizar su memoria existente y lanzar los avisos locales. La
+identidad sigue siendo proveedor (incluida su cuenta local), medidor,
+`windowKey(resetsAt)` y tipo (umbral o reinicio). No se añade otro deduplicador,
+registro persistente, cola ni memoria para email.
+
+Un umbral ya recordado no se reenvía al repetir el sondeo, traducir una etiqueta,
+fallar Resend o activar email más tarde. Una ventana nueva puede emitir otro
+aviso. Los reinicios conservan la detección de transición existente entre el
+informe anterior y el nuevo; no se crea un registro remoto de reinicios. Se
+conserva la limpieza de memoria y la compatibilidad de claves antiguas del
+aviso local. No se promete deduplicación remota tras borrar/perder esa memoria,
+ni entrega exactamente una vez.
+
+La cuenta se usa solo para identidad local: al enviar se proyecta el proveedor
+base, sin sufijo de cuenta, nombre personal ni etiqueta configurable. El medidor
+exportado usa solo el ID real del informe si cumple `[a-z0-9_]{1,64}`; si falta
+o no cumple ese formato, se representa como `usage`. Nunca se exporta el
+fallback local a la etiqueta, aunque parezca un ID válido (por ejemplo,
+`alice_private`). La etiqueta sigue formando parte de la identidad, memoria
+y texto locales de los medidores legacy sin ID; esos comportamientos no cambian.
+
+Los fallos remotos no bloquean notificaciones ni efectos y no pasan por el
+mecanismo de reintentos de lectura de consumo. Cada evento emitido causa como
+máximo una llamada al envío, con ambos interruptores, consentimiento y
+configuración válidos. El backend vuelve a comprobar los permisos de envío y
+la presencia de la clave al atender la solicitud.
 
 ## Verificación de credenciales
 
