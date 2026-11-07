@@ -673,10 +673,9 @@ const SHELL_WRAP: &str = "\"$@\"; exec \"${SHELL:-/bin/sh}\"";
 /// literal): si el CLI necesita variables, deben definirse fuera del comando.
 /// Comillas sin cerrar devuelven `Err` y el login se aborta
 /// (fail-closed): el texto del usuario nunca se interpola como código.
-/// Solo lo consumen `spawn_terminal` de Linux (la terminal recibe el login
-/// como argv) y los tests: en Windows el comando va dentro de `cmd /K` y en
-/// macOS dentro del script de Terminal.
-#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
+/// Lo consumen la terminal de Linux, el argv de WSL (#92) y los tests: en
+/// Windows (host) el login va dentro de `cmd /K` y en macOS dentro del
+/// script de Terminal.
 fn split_login_command(command: &str) -> Result<(String, Vec<String>), String> {
     let mut tokens: Vec<String> = Vec::new();
     let mut current = String::new();
