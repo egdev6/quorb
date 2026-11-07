@@ -1340,6 +1340,28 @@ mod wsl_login_tests {
             "/K wsl.exe -d \"Ubuntu 24.04\" -- bash -lc \"exec \\\"$@\\\"\" quorb \"codex login\""
         );
         assert!(!raw.contains("Ubuntu 24.04\n"));
+        // AC6: no-ASCII y metacaracteres quedan DENTRO de las comillas de
+        // `cmd` (el guest los recibe como argumento, no los interpreta el
+        // host).
+        let odd = wsl_login_raw_command("Distro Ñandú", "codex login --label \"ñ&|;$HOME\"");
+        assert!(odd.contains("-d \"Distro Ñandú\""));
+        assert!(odd.contains("quorb \"codex login"));
+        assert!(odd.contains("Ñandú"));
+    }
+
+    /// AC7: el comando del usuario se ejecuta DENTRO de la distro y no
+    /// recibe un `wsl` adicional; la semántica se documenta aquí (el
+    /// ejecutable `wsl.exe` solo aparece UNA vez, como lanzador del host).
+    #[test]
+    fn custom_login_command_gets_no_double_wsl_and_keeps_its_argv() {
+        let raw = wsl_login_raw_command("Ubuntu-22.04", "codex login --device-auth");
+        assert_eq!(raw.matches("wsl.exe").count(), 1, "un solo wsl.exe: {raw}");
+        // El comando va como argumento del script `exec "$@"`, sin reparseo.
+        assert!(raw.contains("\"exec \\\"$@\\\"\" quorb \"codex login --device-auth\""));
+        assert!(
+            !raw.contains(" -- codex login"),
+            "no se concatena en el shell"
+        );
     }
 
     /// `cli_status` consulta la distro cuando el entorno es WSL; en host
