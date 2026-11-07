@@ -16,7 +16,6 @@ use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Mutex;
 
 const API: &str = "https://cloudcode-pa.googleapis.com/v1internal";

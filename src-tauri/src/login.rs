@@ -254,9 +254,11 @@ type SessionEnv = Option<(&'static str, std::path::PathBuf)>;
 
 /// Antepone al PATH la carpeta donde se encontró el CLI (si no estaba en el PATH),
 /// incluyendo el PATH fresco del registro para que la terminal nueva lo vea.
-/// Solo la consumen las ramas Windows/Linux: en macOS el PATH viaja dentro del
-/// texto del script de Terminal, no por herencia del entorno.
-#[cfg(any(test, not(target_os = "macos")))]
+/// Solo la consume la rama Windows (`spawn_terminal`: inyecta el PATH en la
+/// consola nueva): en macOS el PATH viaja dentro del texto del script de
+/// Terminal y en Linux la rama usa `path_with_dirs` con los directorios
+/// explícitos.
+#[cfg(windows)]
 fn path_with(extra: Option<PathBuf>) -> Option<std::ffi::OsString> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
@@ -266,7 +268,7 @@ fn path_with(extra: Option<PathBuf>) -> Option<std::ffi::OsString> {
 }
 
 /// Antepone `extra` a `current` (el PATH actual) sin tocar el entorno real.
-#[cfg(any(test, not(target_os = "macos")))]
+#[cfg(any(test, windows))]
 fn path_with_current(
     extra: Option<PathBuf>,
     current: Option<std::ffi::OsString>,
@@ -396,6 +398,10 @@ const SHELL_WRAP: &str = "\"$@\"; exec \"${SHELL:-/bin/sh}\"";
 /// literal): si el CLI necesita variables, deben definirse fuera del comando.
 /// Comillas sin cerrar devuelven `Err` y el login se aborta
 /// (fail-closed): el texto del usuario nunca se interpola como código.
+/// Solo lo consumen `spawn_terminal` de Linux (la terminal recibe el login
+/// como argv) y los tests: en Windows el comando va dentro de `cmd /K` y en
+/// macOS dentro del script de Terminal.
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
 fn split_login_command(command: &str) -> Result<(String, Vec<String>), String> {
     let mut tokens: Vec<String> = Vec::new();
     let mut current = String::new();

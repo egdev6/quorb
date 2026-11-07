@@ -204,6 +204,8 @@ A native Linux port is under development (tracking issues #105–#108 of the ODD
   - KDE on Wayland: tray and always-on-top supported; the global-shortcut portal may still deny the registration.
   - WLR-based compositors (Hyprland, sway): very strict always-on-top; no tray if your bar has no StatusNotifier support.
 - Quick diagnostics: `echo $XDG_SESSION_TYPE` (session type), `echo $XDG_CURRENT_DESKTOP` (current desktop), `$ quorb` debug from the terminal, plus Settings › Atajos for the shortcut registration errors.
+- First run and config: if `config.json` exists but cannot be read, Quorb uses default values and does not show the first-run language selector; the first save from Settings replaces that file.
+- Uninstalling Quorb on Linux does not delete `~/.config/es.egdev.quorb/config.json`. To see the first-run language selector again, delete that file.
 
 ## Contributing
 

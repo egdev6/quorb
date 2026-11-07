@@ -45,6 +45,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
+/// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
+const LOCALE_PICKER: &str = "locale";
 const SETTINGS: &str = "settings";
 /// Escala de la ventana de Ajustes (1.0 = 100 %).
 const SETTINGS_ZOOM: f64 = 0.85;
@@ -1010,8 +1012,138 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-fn build_tray(app: &tauri::App, locale: i18n::Locale) -> tauri::Result<()> {
-    let menu = tray_menu(app.handle(), i18n::tray_labels(locale))?;
+/// El selector de primer arranque solo existe en Linux y solo antes de elegir (S3).
+fn locale_picker_needed(linux: bool, cfg: &AppConfig) -> bool {
+    linux && !cfg.locale_selected
+}
+
+/// Destino de una segunda instancia: el selector abierto tiene prioridad (S14).
+fn second_instance_target(picker_open: bool) -> &'static str {
+    if picker_open {
+        LOCALE_PICKER
+    } else {
+        WIDGET
+    }
+}
+
+/// Pantalla de primer arranque (S8, P1): ventana aparte, con decoraciones y sin
+/// transparencia ni «siempre encima».
+fn open_locale_picker(app: &AppHandle) -> tauri::Result<()> {
+    WebviewWindowBuilder::new(app, LOCALE_PICKER, WebviewUrl::App("index.html".into()))
+        .title("Quorb")
+        .inner_size(420.0, 240.0)
+        .min_inner_size(420.0, 240.0)
+        .center()
+        .focused(true)
+        .build()?;
+    Ok(())
+}
+
+/// Elección del selector de primer arranque (S2): guarda idioma y bandera con el
+/// mismo `config::save`, cierra el selector y levanta la UI principal.
+#[tauri::command]
+fn choose_locale(app: AppHandle, state: State<'_, AppState>, locale: String) -> Result<(), String> {
+    if app.get_webview_window(LOCALE_PICKER).is_none() {
+        return Err("el selector de idioma no está abierto".into());
+    }
+    let mut next = state.config.lock().unwrap().clone();
+    next.choose_locale(&locale)?;
+    // No pasa por `save_config`: en el primer arranque todavía no existe ninguna
+    // superficie que relabelar, ni atajos ni cuentas que invalidar, y el único
+    // cambio es idioma + bandera. `start_main_ui` construye todo después desde esta
+    // config ya guardada. `sanitized()` mantiene el mismo invariante que el resto.
+    let next = next.sanitized();
+    config::save(&state.config_path, &next)?;
+    *state.config.lock().unwrap() = next;
+    // `destroy` no dispara CloseRequested: no cuenta como cierre sin elegir (D6).
+    if let Some(w) = app.get_webview_window(LOCALE_PICKER) {
+        w.destroy().map_err(|e| e.to_string())?;
+    }
+    // La elección ya está guardada y el selector cerrado: sin UI principal el proceso
+    // quedaría vivo sin superficie (D6). Se termina en ese caso.
+    if let Err(e) = start_main_ui(&app) {
+        eprintln!("No pude levantar la UI principal tras elegir idioma: {e}");
+        app.exit(1);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// Crea la superficie principal: tira, detalle, overlay, bandeja y atajos.
+/// Lee la configuración del estado. `setup` la llama en el arranque normal; el
+/// selector de primer arranque (#235) la llamará tras la elección de idioma.
+fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
+    let cfg = app.state::<AppState>().config.lock().unwrap().clone();
+    let window_config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == WIDGET)
+        .ok_or(tauri::Error::WindowNotFound)?;
+    let widget = WebviewWindowBuilder::from_config(app, window_config)?.build()?;
+    // El frontend coloca la tira en su borde y la muestra (evita un parpadeo).
+    let _ = widget.set_always_on_top(cfg.always_on_top);
+
+    // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
+    let locale = i18n::locale_from_config(&cfg.locale);
+    let detail_builder =
+        WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
+            .title(i18n::detail_title(locale, channel::current().name))
+            .inner_size(330.0, 260.0)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .always_on_top(cfg.always_on_top)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .visible(false);
+    #[cfg(target_os = "windows")]
+    let detail_builder = detail_builder.no_redirection_bitmap(true);
+    detail_builder.build()?;
+
+    // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
+    let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
+        .title(i18n::overlay_title(locale, channel::current().name))
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .focused(false)
+        .focusable(false)
+        .visible(false)
+        .build()?;
+    // Sin `set_ignore_cursor_events` aquí: la ventana aún está oculta
+    // y no tiene GdkWindow → tao 0.37.1 panicea (`window.window()
+    // .unwrap()` en `CursorIgnoreEvents`, bug tao#1204). Se aplica en
+    // `play_effect()` después de `show()`.
+
+    // En macOS y Linux una ventana queda clavada en su escritorio/Space a menos
+    // que se marque «visible en todos los escritorios» (en macOS
+    // NSWindow.canJoinAllSpaces, en Linux X11/XWayland _NET_WM_STATE_STICKY vía
+    // gtk_window_stick): sin esto la tira no sigue al usuario entre
+    // escritorios/Spaces ni sobre apps fullscreen, y el detalle/overlay quedarían
+    // en un escritorio distinto al de la tira. En Windows siempre-encima ya cubre el caso.
+    // Va tras crear DETAIL y OVERLAY: si corre antes, no los encuentra y quedan clavados.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    for label in [WIDGET, DETAIL, OVERLAY] {
+        if let Some(w) = app.get_webview_window(label) {
+            if let Err(e) = w.set_visible_on_all_workspaces(true) {
+                eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
+            }
+        }
+    }
+
+    apply_shortcuts(app, &cfg.shortcuts);
+    build_tray(app, locale)?;
+    Ok(())
+}
+
+fn build_tray(app: &AppHandle, locale: i18n::Locale) -> tauri::Result<()> {
+    let menu = tray_menu(app, i18n::tray_labels(locale))?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(channel::current().name)
@@ -1053,9 +1185,11 @@ pub fn run() {
         std::process::exit(code);
     }
     let builder = tauri::Builder::default()
-        // Debe ir el primero: si ya está abierta, muestra el widget existente.
+        // Debe ir el primero: si ya está abierta, muestra el selector de idioma
+        // (si está abierto) o el widget existente.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window(WIDGET) {
+            let target = second_instance_target(app.get_webview_window(LOCALE_PICKER).is_some());
+            if let Some(w) = app.get_webview_window(target) {
                 let _ = w.show();
                 let _ = w.set_focus();
             }
@@ -1102,70 +1236,9 @@ pub fn run() {
                 .user_agent(concat!("quorb/", env!("CARGO_PKG_VERSION")))
                 .build()?;
 
-            // El frontend coloca la tira en su borde y la muestra (evita un parpadeo).
-            if let Some(w) = app.get_webview_window(WIDGET) {
-                let _ = w.set_always_on_top(cfg.always_on_top);
-            }
-            // En macOS y Linux una ventana queda clavada en su escritorio/Space a
-            // menos que se marque «visible en todos los escritorios» (en macOS
-            // NSWindow.canJoinAllSpaces, en Linux X11/XWayland _NET_WM_STATE_STICKY
-            // vía gtk_window_stick): sin esto la tira no sigue al usuario entre
-            // escritorios/Spaces ni sobre apps fullscreen, y el detalle/overlay
-            // quedarían en un escritorio distinto al de la tira.
-            // En Windows siempre-encima ya cubre el caso.
             let history = history::History::load(data_dir.join("history.json"));
-
-            // El detalle tiene su propia superficie: abrirlo nunca redimensiona la tira.
-            let locale = i18n::locale_from_config(&cfg.locale);
-            let detail_builder =
-                WebviewWindowBuilder::new(app, DETAIL, WebviewUrl::App("index.html".into()))
-                    .title(i18n::detail_title(locale, channel::current().name))
-                    .inner_size(330.0, 260.0)
-                    .decorations(false)
-                    .transparent(true)
-                    .shadow(false)
-                    .always_on_top(cfg.always_on_top)
-                    .skip_taskbar(true)
-                    .resizable(false)
-                    .focused(false)
-                    .visible(false);
-            #[cfg(target_os = "windows")]
-            let detail_builder = detail_builder.no_redirection_bitmap(true);
-            detail_builder.build()?;
-
-            // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
-            let _overlay =
-                WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))
-                    .title(i18n::overlay_title(locale, channel::current().name))
-                    .decorations(false)
-                    .transparent(true)
-                    .shadow(false)
-                    .always_on_top(true)
-                    .skip_taskbar(true)
-                    .resizable(false)
-                    .focused(false)
-                    .focusable(false)
-                    .visible(false)
-                    .build()?;
-            // Sin `set_ignore_cursor_events` aquí: la ventana aún está oculta
-            // y no tiene GdkWindow → tao 0.37.1 panicea (`window.window()
-            // .unwrap()` en `CursorIgnoreEvents`, bug tao#1204). Se aplica en
-            // `play_effect()` después de `show()`.
-
-            // Se aplica tras construir DETAIL y OVERLAY: si corre antes, esos dos
-            // get_webview_window devuelven None y quedan clavados a su escritorio.
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
-            for label in [WIDGET, DETAIL, OVERLAY] {
-                if let Some(w) = app.get_webview_window(label) {
-                    if let Err(e) = w.set_visible_on_all_workspaces(true) {
-                        eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
-                    }
-                }
-            }
-
             app.manage(Shortcuts::default());
             app.manage(codex_setup::CodexSetupState::default());
-            apply_shortcuts(app.handle(), &cfg.shortcuts);
             app.manage(AppState {
                 config: Mutex::new(cfg),
                 config_path,
@@ -1174,7 +1247,16 @@ pub fn run() {
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
                 wsl_homes: wsl::WslHomeCache::default(),
             });
-            build_tray(app, locale)?;
+            // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
+            let picker = locale_picker_needed(
+                cfg!(target_os = "linux"),
+                &app.state::<AppState>().config.lock().unwrap(),
+            );
+            if picker {
+                open_locale_picker(app.handle())?;
+            } else {
+                start_main_ui(app.handle())?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1198,6 +1280,11 @@ pub fn run() {
                     hide_detail(window.app_handle());
                     let _ = window.app_handle().emit_to(WIDGET, "widget-hidden", ());
                 }
+            } else if window.label() == LOCALE_PICKER {
+                // Cerrar sin elegir termina el proceso; no se escribe configuración (D6).
+                if let WindowEvent::CloseRequested { .. } = event {
+                    window.app_handle().exit(0);
+                }
             } else if window.label() == DETAIL {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -1210,6 +1297,7 @@ pub fn run() {
             updater_mode,
             get_config,
             save_config,
+            choose_locale,
             patch_config,
             secret_status,
             set_secret,
@@ -1267,6 +1355,42 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::config::Account;
+
+    #[test]
+    fn widget_window_is_created_by_start_main_ui_not_by_tauri() {
+        // S4 (#235): Tauri no crea la tira al arrancar; la crea `start_main_ui`,
+        // para que el selector de primer arranque pueda ir antes.
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let widget = conf["app"]["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["label"] == WIDGET)
+            .expect("ventana widget declarada");
+        assert_eq!(widget["create"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn locale_picker_is_linux_only_and_only_before_a_choice() {
+        // S3: el selector no aparece en Windows/macOS ni tras una elección previa.
+        let fresh = AppConfig::default();
+        let chosen = AppConfig {
+            locale_selected: true,
+            ..AppConfig::default()
+        };
+        assert!(locale_picker_needed(true, &fresh));
+        assert!(!locale_picker_needed(true, &chosen));
+        assert!(!locale_picker_needed(false, &fresh));
+        assert!(!locale_picker_needed(false, &chosen));
+    }
+
+    #[test]
+    fn second_instance_focuses_open_picker_before_the_widget() {
+        // S14: con el selector abierto, relanzar Quorb le da el foco a él.
+        assert_eq!(second_instance_target(true), LOCALE_PICKER);
+        assert_eq!(second_instance_target(false), WIDGET);
+    }
 
     #[test]
     fn locale_relabel_is_planned_only_when_the_locale_changes() {

@@ -13,7 +13,6 @@ use crate::config::SubscriptionConfig;
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use serde_json::Value;
-use std::path::Path;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
@@ -25,11 +24,15 @@ const KEYCHAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Resultado de consultar el Keychain de macOS por la sesión de Claude Code.
 #[derive(Debug, PartialEq)]
 enum KeychainOutcome {
-    /// Sesión válida encontrada y parseada.
+    /// Sesión válida encontrada y parseada. Solo el Keychain de macOS la
+    /// produce (`keychain_sync`); fuera de macOS no se construye.
+    #[cfg(target_os = "macos")]
     Session(Credentials),
     /// No hay entrada, el usuario negó el acceso o el secreto no parsea.
     NoSession,
     /// La autorización no se completó dentro del presupuesto: estado accionable.
+    /// Igual que `Session`, solo la rama macOS la produce.
+    #[cfg(target_os = "macos")]
     TimedOut,
 }
 
@@ -105,7 +108,7 @@ fn keychain_sync(timeout: std::time::Duration) -> KeychainOutcome {
 /// Resultado diferenciado de la espera acotada: terminar bien, terminar mal
 /// o agotar el presupuesto. Distintos a propósito — `keychain_sync` reporta
 /// `NoSession` y `TimedOut` de forma distinta (revisión #112).
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 enum WaitOutcome {
     /// Terminó con éxito dentro del presupuesto.
     Success(BoundedOutput),
@@ -119,7 +122,7 @@ enum WaitOutcome {
 /// terminó bien dentro del presupuesto; en timeout mata el árbol y devuelve
 /// `TimedOut`; en salida fallida, `Failed`. Puro respecto del Keychain para
 /// poder probarlo con procesos reales (`sleep`, `true`, `false`).
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn wait_bounded(mut child: std::process::Child, timeout: std::time::Duration) -> WaitOutcome {
     use std::io::Read;
     let mut pipe = match child.stdout.take() {
@@ -153,7 +156,7 @@ fn wait_bounded(mut child: std::process::Child, timeout: std::time::Duration) ->
 }
 
 /// Salida capturada de un proceso que terminó con éxito dentro del presupuesto.
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 struct BoundedOutput {
     stdout: String,
 }
@@ -240,7 +243,9 @@ pub async fn fetch(
                     );
                 }
                 match keychain_fallback().await {
+                    #[cfg(target_os = "macos")]
                     KeychainOutcome::Session(c) => c,
+                    #[cfg(target_os = "macos")]
                     KeychainOutcome::TimedOut => {
                         return report.fail(
                             Status::Warning,

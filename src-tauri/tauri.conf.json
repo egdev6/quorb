@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "widget",
+        "create": false,
         "title": "Quorb",
         "url": "index.html",
         "width": 320,

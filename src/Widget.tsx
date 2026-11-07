@@ -18,19 +18,15 @@ import { needsRefresh } from './lib/widget-refresh';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
 import { placementOutcome, readPlacementWithRetries, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 import {
-  canPointerOpen,
   clickPanel,
   closePanel,
-  holdAfterReorderDrop,
   hoverPanel,
   isReorderGesture,
   NO_PANEL,
-  NO_REORDER_HOLD,
   panelHoldsOpen,
   type PanelState,
-  releaseOnStripLeave,
-  type ReorderHold,
 } from './lib/anchor-panel';
+import { pointerInsideViewport } from './lib/pointer-viewport';
 import { createFocusTracker, FOCUS_EVENT, type OwnWindow } from './lib/anchor-focus';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
@@ -252,7 +248,9 @@ export function Widget() {
   const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const lastReorderAt = useRef(0);
   // Tras reordenar, el hover no abre hasta que el puntero salga de la tira (#222).
-  const reorderHold = useRef<ReorderHold>(NO_REORDER_HOLD);
+  // Solo la libera el `mouseleave` de la tira: el `mouseenter` puede llegar
+  // segundos después de soltar. Solo frena la vía del puntero; foco y clic no la consultan.
+  const reorderHold = useRef<boolean>(false);
   const openPeakRef = useRef<() => void>(() => {});
   const dragWork = useRef<Promise<void>>(Promise.resolve());
   const dragMounted = useRef(true);
@@ -786,7 +784,7 @@ export function Widget() {
         cancelTimers();
         detailInsideRef.current = false;
         insideRef.current = false;
-        reorderHold.current = NO_REORDER_HOLD;
+        reorderHold.current = false;
         setInside(false);
         setPanel(closePanel());
       }));
@@ -1216,8 +1214,8 @@ export function Widget() {
         lastReorderAt.current = Date.now();
         // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
         // la captura, `insideRef` queda desactualizado: se usan las coordenadas.
-        const inside = e.clientX >= 0 && e.clientY >= 0 && e.clientX < window.innerWidth && e.clientY < window.innerHeight;
-        reorderHold.current = holdAfterReorderDrop(inside);
+        const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
+        reorderHold.current = inside;
       }
       if (od?.moved && reorder) {
         const next = reorder.order;
@@ -1253,7 +1251,7 @@ export function Widget() {
       }}
       onMouseLeave={() => {
         insideRef.current = false;
-        reorderHold.current = releaseOnStripLeave(reorderHold.current);
+        reorderHold.current = false;
         setInside(false);
         scheduleClose();
       }}
@@ -1317,7 +1315,7 @@ export function Widget() {
               dragging={reorder?.id === r.id}
               onHover={(el) => openFor(r.id, el)}
               onPointerEnter={(el) => {
-                if (canPointerOpen(reorderHold.current)) openFor(r.id, el);
+                if (!reorderHold.current) openFor(r.id, el);
               }}
               onClick={(el) => anchorOn(r.id, el)}
               pointer={orbHandlers(r.id)}
