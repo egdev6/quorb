@@ -39,6 +39,8 @@ const enabledOnly = (...ids: string[]) => {
   const on = (id: string) => ({ enabled: ids.includes(id), username: 'egdev6' });
   return {
     refreshMinutes: 5,
+    sessionEnv: 'host',
+    wslDistro: '',
     claude: on('claude'),
     codex: on('codex'),
     gemini: on('gemini'),
@@ -63,12 +65,13 @@ const cfg = enabledOnly('claude', 'copilot');
 
 const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true) =>
   renderToStaticMarkup(
-    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} />,
+    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} />,
   );
 
 const descriptions: [es: string, en: string][] = [
   ['Pro / Max · sesión de 5 h, semanal y por modelo', 'Pro / Max · 5 h session, weekly and per-model'],
   ['Plus / Pro · sesión y semanal de Codex', 'Plus / Pro · Codex session and weekly'],
+  ['Sesión de los CLIs', 'CLI session host'],
   ['Cuota diaria por modelo', 'Daily quota per model'],
   ['Uso del plan en el ciclo y on-demand', 'Plan usage in the cycle and on-demand'],
   ['SuperGrok · uso semanal de créditos del CLI', 'SuperGrok · weekly CLI credit usage'],

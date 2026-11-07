@@ -170,6 +170,11 @@ export const en = {
       },
     },
     providers: {
+      sessionEnv: 'CLI session host',
+      sessionEnvHint: 'Host uses the Windows credentials; WSL uses the distro ones.',
+      sessionHost: 'Windows',
+      wslDistro: 'WSL distro',
+      wslDistroHint: 'Distro where the CLIs and their sessions live (e.g. Ubuntu-22.04).',
       refreshEvery: 'Check every',
       refreshUnit: 'min',
       subscriptions: 'Subscriptions',

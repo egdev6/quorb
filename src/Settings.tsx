@@ -1290,7 +1290,7 @@ function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect
 
 /** Tarjeta de la página «Proveedores»: intervalo de consulta y las dos listas
  *  (suscripciones y APIs). Extraída para poder renderizarla en pruebas de i18n. */
-export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes }: {
+export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro }: {
   locale: Locale;
   cfg: AppConfig;
   secrets: SecretStatus;
@@ -1298,6 +1298,8 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
   drawerOpen: boolean;
   onSelectTab: (id: ProviderTab) => void;
   onRefreshMinutes: (minutes: number) => void;
+  onSessionEnv: (env: 'host' | 'wsl') => void;
+  onWslDistro: (distro: string) => void;
 }) {
   const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
     <ProviderCard
@@ -1321,6 +1323,21 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
           <input type="number" min={1} max={120} value={cfg.refreshMinutes} onChange={(e) => onRefreshMinutes(Number(e.target.value) || 1)} />
           {t(locale, 'settings.providers.refreshUnit')}
         </label>
+        <label className="q-section__aside">
+          {t(locale, 'settings.providers.sessionEnv')}
+          <select value={cfg.sessionEnv} onChange={(e) => onSessionEnv(e.target.value as 'host' | 'wsl')}>
+            <option value="host">{t(locale, 'settings.providers.sessionHost')}</option>
+            <option value="wsl">WSL</option>
+          </select>
+          <small className="eg-field__hint">{t(locale, 'settings.providers.sessionEnvHint')}</small>
+        </label>
+        {cfg.sessionEnv === 'wsl' && (
+          <label className="q-section__aside">
+            {t(locale, 'settings.providers.wslDistro')}
+            <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
+            <small className="eg-field__hint">{t(locale, 'settings.providers.wslDistroHint')}</small>
+          </label>
+        )}
       </div>
       <div className="eg-module-card__body">
       <p className="eg-eyebrow">{t(locale, 'settings.providers.subscriptions')}</p>
@@ -2580,6 +2597,8 @@ export function Settings() {
                 drawerOpen={drawerOpen}
                 onSelectTab={selectTab}
                 onRefreshMinutes={(minutes) => set('refreshMinutes', minutes)}
+                onSessionEnv={(env) => set('sessionEnv', env)}
+                onWslDistro={(distro) => set('wslDistro', distro)}
               />
               <div className="q-drawer-scrim" data-open={drawerOpen || undefined} onClick={closeDrawer} aria-hidden="true" />
               <aside

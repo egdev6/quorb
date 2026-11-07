@@ -185,11 +185,7 @@ pub async fn fetch(
     // (`wsl cat`) en vez del disco del host. Sin resolvedor, el
     // comportamiento de siempre (disco local).
     let default_path = match resolver {
-        Some(r) => r.default_path(
-            super::provider_session_relative("claude")
-                .expect("proveedor CLI")
-                .as_path(),
-        ),
+        Some(r) => r.default_path(super::session_relative(super::CliSessionKind::Claude).as_path()),
         None => home().join(".claude").join(".credentials.json"),
     };
     let creds = match resolver {
