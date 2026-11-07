@@ -18,6 +18,25 @@ No cambia `secrets::get()` ni la lectura o migración de los proveedores existen
 reinicio. La validación y resolución de ese almacenamiento pertenece a #106, no
 a esta integración.
 
+## Configurar y probar en Ajustes → Alertas
+
+1. Lee las advertencias de disponibilidad, privacidad y límites del correo.
+2. Introduce remitente y destinatario y guarda tu API key mediante el campo
+   oculto de Resend. No se puede recuperar el valor guardado desde la interfaz.
+3. Marca el consentimiento explícito. Guardar por sí solo no habilita email.
+4. Si quieres, pulsa **Enviar prueba**: guarda la configuración del formulario
+   y hace una única solicitud de prueba sin datos de consumo. No activa email
+   y funciona aunque Alertas global esté desactivado. Si guardar falla, no envía.
+5. Para avisos automáticos, activa tanto email como Alertas global y guarda.
+   Desactivar la notificación nativa no desactiva el email.
+
+El resultado sanitizado más reciente se muestra en Ajustes, también cuando
+proviene de un aviso automático. Revocar consentimiento desmarca la activación
+en el formulario; el backend exige consentimiento en cualquier envío.
+Los cambios de configuración se aplican al guardarlos. Desactivar email conserva
+la clave; **Quitar** elimina la clave del almacén e impide nuevas solicitudes.
+Una solicitud que ya empezó no puede retirarse de Resend.
+
 ## Frontera de envío
 
 El envío usa `POST https://api.resend.com/emails` exclusivamente desde Rust,

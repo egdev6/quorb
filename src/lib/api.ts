@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AlertMoment, AppConfig, Effect, Sample, ScopedSecretKey, SecretStatus, UsageReport } from './types';
+import type { AlertMoment, AppConfig, Effect, EmailEvent, EmailStatus, Sample, ScopedSecretKey, SecretStatus, UsageReport } from './types';
 // Tipos del contrato de la instalación asistida de Codex. Solo tipos: evita un ciclo de ejecución.
 import type { CodexInstallResult, CodexSetupStatus } from './codex-install';
 import type { SurfaceClip } from './surface-clip';
@@ -45,6 +45,8 @@ export const api = {
   /** Igual que `patchConfig` pero conserva el fallo nativo para un error recuperable. */
   patchLiveConfig: patchConfigOutcome,
   secretStatus: () => invoke<SecretStatus>('secret_status'),
+  emailStatus: () => invoke<EmailStatus>('email_status'),
+  sendEmailAlert: (event: EmailEvent | null) => invoke<EmailStatus>('send_email_alert', { event }),
   setSecret: (key: ScopedSecretKey, value: string) => invoke<void>('set_secret', { key, value }),
   fetchUsage: () => invoke<UsageReport[]>('fetch_usage'),
   openLogin: (provider: string) => invoke<void>('open_login', { provider }),

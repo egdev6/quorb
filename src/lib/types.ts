@@ -108,6 +108,27 @@ export interface AlertsConfig {
   resetMedia: string | null;
   mediaSize: MediaSize;
   mediaSound: boolean;
+  /** Ausente en snapshots antiguos; backend siempre devuelve los defaults. */
+  email?: EmailAlertsConfig;
+}
+
+export interface EmailAlertsConfig {
+  enabled: boolean;
+  consent: boolean;
+  sender: string;
+  recipient: string;
+}
+
+export type EmailStatus = 'idle' | 'accepted' | 'disabled' | 'consentRequired'
+  | 'configurationMissing' | 'keyMissing' | 'keyringError' | 'authenticationError'
+  | 'senderRejected' | 'requestRejected' | 'rateLimited' | 'serviceError' | 'acceptanceUnknown';
+
+export interface EmailEvent {
+  provider: string;
+  meter: string;
+  window: string;
+  percent: number;
+  kind: AlertMoment;
 }
 
 /** Atajos globales en formato «Ctrl+Alt+U»; vacío = sin atajo */
@@ -217,7 +238,8 @@ export type SecretKey =
   | 'nine_router_session'
   | 'nine_router_bound_url'
   | 'zai_api_key'
-  | 'opencode_go_api_key';
+  | 'opencode_go_api_key'
+  | 'resend_api_key';
 /** Secreto de la cuenta principal o de una adicional (`<secreto>@<id de cuenta>`) */
 export type ScopedSecretKey = SecretKey | `${SecretKey}@${string}`;
 export type SecretStatus = Partial<Record<ScopedSecretKey, boolean>>;
