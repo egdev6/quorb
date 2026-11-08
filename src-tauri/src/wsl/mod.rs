@@ -124,6 +124,37 @@ pub trait WslAdapter: Send + Sync {
         env: &[(&str, &str)],
     ) -> Result<CommandOutput, WslError>;
 
+    /// ¿Existe `program` en el PATH de la distro? (#92)
+    ///
+    /// `command -v` es un BUILTIN de la shell: no se puede `exec` como
+    /// programa (`exec command -v …` sale con 127 en WSL real — hallazgo
+    /// del lab W3, 2026-10-30) y `run_command` toma un PROGRAMA en
+    /// `args[0]`. La sonda es el script constante `SCRIPT_COMMAND_V`
+    /// ejecutado por la shell del entorno (bash o sh, según la estrategia)
+    /// con el nombre del programa como DATO posicional (F14, doble
+    /// frontera): el host nunca interpola el nombre en un script.
+    ///
+    /// `false` significa «la CLI no está en la distro» (código 0 con salida
+    /// vacía), no un fallo de WSL: los errores del subsistema se propagan.
+    fn program_available(
+        &self,
+        distro: &str,
+        shell: ShellStrategy,
+        program: &str,
+    ) -> Result<bool, WslError> {
+        let shell_bin = match shell {
+            ShellStrategy::BashLogin => "bash",
+            ShellStrategy::ShPosix => "sh",
+        };
+        let out = self.run_command(
+            distro,
+            shell,
+            &[shell_bin, "-c", SCRIPT_COMMAND_V, "quorb", program],
+            &[],
+        )?;
+        Ok(out.code == 0 && !out.stdout.trim().is_empty())
+    }
+
     /// Diagnóstico de los 4 estados (F6) con sondas separadas.
     /// `target` es la distro elegida (si hay): permite producir
     /// `WslState::DistroUnavailable` (decisión paso 0 #3) y el detalle F2.

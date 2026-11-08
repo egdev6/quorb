@@ -95,13 +95,7 @@ pub(crate) fn cli_status(
                     let ok = match &shell {
                         Some(shell) => w
                             .adapter
-                            .run_command(
-                                w.distro,
-                                *shell,
-                                &[crate::wsl::SCRIPT_COMMAND_V, &program_of(c)],
-                                &[],
-                            )
-                            .map(|o| o.code == 0 && !o.stdout.trim().is_empty())
+                            .program_available(w.distro, *shell, &program_of(c))
                             .unwrap_or(false),
                         // Distro detenida: no se sondea (no se despierta).
                         None => false,
@@ -160,12 +154,13 @@ fn cli_check(wsl: &WslLogin<'_>, program: &str) -> Result<CliCheck, String> {
                 .adapter
                 .shell_strategy(wsl.distro)
                 .map_err(|e| format!("WSL: {e:?}"))?;
-            // `command -v "$1"` (script constante, F14): la CLI como argumento.
-            let out = wsl
+            // `command -v "$1"` (script constante, F14) con la CLI como dato:
+            // `command` es un builtin, no se puede `exec` como programa.
+            let available = wsl
                 .adapter
-                .run_command(wsl.distro, shell, &[wsl::SCRIPT_COMMAND_V, program], &[])
+                .program_available(wsl.distro, shell, program)
                 .map_err(|e| format!("WSL: {e:?}"))?;
-            Ok(if out.code == 0 && !out.stdout.trim().is_empty() {
+            Ok(if available {
                 CliCheck::Ready
             } else {
                 CliCheck::Missing
@@ -288,6 +283,12 @@ fn prepare_wsl_login(
 /// La carpeta de sesión de una cuenta adicional se aplica con el ejecutable
 /// `env` DENTRO del guest (`env VAR=/ruta programa args…`), sin depender de
 /// WSLENV: así el CLI escribe donde la resolución de #91 lee.
+///
+/// El lanzador usa `-e`/`--exec`, NO `--`: sin `-e`, `wsl.exe` ejecuta el
+/// resto de la línea con la shell por defecto de la distro, que procesa las
+/// comillas y deja `exec "$@"` en `exec` sin argumentos (`exec: : not
+/// found` — hallazgo de la evidencia real en WSL, 2026-11-08). Con `-e` los
+/// tokens llegan al guest tal cual y el `exec "$@"` ve `$@` completo.
 fn wsl_login_argv(
     distro: &str,
     login_command: &str,
@@ -301,7 +302,7 @@ fn wsl_login_argv(
         "wsl.exe".into(),
         "-d".into(),
         distro.into(),
-        "--".into(),
+        "-e".into(),
         "bash".into(),
         "-lc".into(),
         "exec \"$@\"".into(),
@@ -1354,7 +1355,7 @@ mod wsl_login_tests {
                 "wsl.exe",
                 "-d",
                 "Ubuntu 24.04",
-                "--",
+                "-e",
                 "bash",
                 "-lc",
                 "exec \"$@\"",
@@ -1687,7 +1688,7 @@ mod wsl_evidence {
         );
         // El marker del shim está DENTRO de la distro.
         let check = std::process::Command::new("wsl.exe")
-            .args(["-d", &d, "--", "test", "-f", "/tmp/quorb-evidence-login"])
+            .args(["-d", &d, "-e", "test", "-f", "/tmp/quorb-evidence-login"])
             .output()
             .expect("wsl.exe");
         assert!(
