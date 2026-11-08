@@ -31,6 +31,7 @@ fn other_desktops_keep_the_current_behavior() {
     // ajustes. Es la fila que protege a Ubuntu (S1).
     let none = FitProfile {
         wayland_size_hints: false,
+        x11_float_hint: false,
     };
     for env in [
         Env {
@@ -58,6 +59,7 @@ fn other_desktops_keep_the_current_behavior() {
 fn the_size_hints_are_requested_in_logical_pixels() {
     let hyprland = FitProfile {
         wayland_size_hints: true,
+        x11_float_hint: false,
     };
     // Escala ×1: el tamaño de la tira que se midió en Hyprland.
     assert_eq!(hint_size(hyprland, (61, 181), 1.0), Some((61, 181)));
@@ -70,6 +72,41 @@ fn the_size_hints_are_requested_in_logical_pixels() {
 fn the_default_profile_asks_for_no_hints() {
     let none = FitProfile {
         wayland_size_hints: false,
+        x11_float_hint: false,
     };
     assert_eq!(hint_size(none, (61, 181), 1.0), None);
+}
+
+#[test]
+fn hyprland_asks_for_the_float_hint_on_xwayland() {
+    // La misma detección de Hyprland que la bandera de Wayland nativo.
+    for env in [
+        Env {
+            xdg_current_desktop: Some("Hyprland".to_string()),
+            ..Env::default()
+        },
+        Env {
+            desktop_session: Some("hyprland".to_string()),
+            ..Env::default()
+        },
+    ] {
+        assert!(fit_profile_from_env(&env).x11_float_hint, "{env:?}");
+    }
+}
+
+#[test]
+fn other_desktops_do_not_ask_for_the_float_hint() {
+    let none = FitProfile {
+        wayland_size_hints: false,
+        x11_float_hint: false,
+    };
+    for env in [
+        Env {
+            xdg_current_desktop: Some("ubuntu:GNOME".to_string()),
+            ..Env::default()
+        },
+        Env::default(),
+    ] {
+        assert_eq!(fit_profile_from_env(&env), none, "{env:?}");
+    }
 }

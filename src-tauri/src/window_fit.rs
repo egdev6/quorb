@@ -18,12 +18,17 @@ pub struct FitProfile {
     /// ruta sin ciclo (Wayland nativo): sin ellas el compositor conserva el
     /// tamaño con el que mapeó la ventana.
     pub wayland_size_hints: bool,
+    /// Declarar el tipo de ventana GTK (`Utility`) antes del primer `show`
+    /// bajo X11/XWayland: los compositores que colo la ventana en mosaico la
+    /// flotan y respetan las pistas del ciclo X11.
+    pub x11_float_hint: bool,
 }
 
 impl FitProfile {
     /// Sin ajustes: el comportamiento de siempre (GNOME/Mutter y el resto).
     pub const NONE: FitProfile = FitProfile {
         wayland_size_hints: false,
+        x11_float_hint: false,
     };
 }
 
@@ -40,6 +45,7 @@ pub fn fit_profile_from_env(env: &Env) -> FitProfile {
     if is_hyprland_signal(&env_n) {
         FitProfile {
             wayland_size_hints: true,
+            x11_float_hint: true,
         }
     } else {
         FitProfile::NONE

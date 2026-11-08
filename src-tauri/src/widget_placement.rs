@@ -816,9 +816,11 @@ fn display_kind() -> DisplayKind {
 }
 
 /// El transporte de la superficie nativa, derivado del display real (caché
-/// de `display_kind`, hilo de UI): X11/XWayland o native Wayland.
+/// de `display_kind`, hilo de UI): X11/XWayland o native Wayland. `pub(crate)`
+/// para que `start_main_ui` evalúe el transporte en el sitio de la llamada
+/// del type hint (#250); corre en el hilo principal de `setup`.
 #[cfg(target_os = "linux")]
-fn transport() -> Transport {
+pub(crate) fn transport() -> Transport {
     match display_kind() {
         DisplayKind::X11 => Transport::X11,
         DisplayKind::Wayland | DisplayKind::Unknown => Transport::Other,

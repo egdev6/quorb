@@ -1143,6 +1143,30 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
         }
     }
 
+    // XWayland (#250): los compositores que colocan la tira en mosaico
+    // (Hyprland, medido: floating=false y SizeRefused) la flotan y respetan
+    // las pistas del ciclo X11 si la ventana declara su tipo antes del primer
+    // `show`. Sólo con transporte X11: en Wayland nativo no hay tipo de
+    // ventana (medido: sin efecto) y el perfil del resto no pide nada.
+    #[cfg(target_os = "linux")]
+    if window_fit::fit_profile().x11_float_hint {
+        for label in [WIDGET, DETAIL] {
+            if let Some(w) = app.get_webview_window(label) {
+                let ui_window = w.clone();
+                let _ = w.run_on_main_thread(move || {
+                    if crate::widget_placement::transport()
+                        == crate::widget_placement::Transport::X11
+                    {
+                        use gtk::prelude::*;
+                        if let Ok(gtk_window) = ui_window.gtk_window() {
+                            gtk_window.set_type_hint(gtk::gdk::WindowTypeHint::Utility);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     apply_shortcuts(app, &cfg.shortcuts);
     build_tray(app, locale)?;
     Ok(())
