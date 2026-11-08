@@ -185,7 +185,7 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 | Arch rolling GNOME (Wayland) | pendiente contribuidor | – | – | – | – | – | – |
 | Arch rolling KDE Plasma (Wayland) | pendiente contribuidor | – | – | – | – | – | – |
 | CachyOS KDE Plasma | pendiente contribuidor | – | – | – | – | – | – |
-| CachyOS / Omarchy Hyprland | pendiente contribuidor (Rafael) | – | – | – | – | – | – |
+| CachyOS / Omarchy Hyprland | medido (contribuidor, #250) | medido (Wayland nativo y XWayland) | sí con #250 (61×181 ajustada a la tira; sin el fix, caja de 1270×1026 en nativo y mosaico en XWayland) | pendiente | pendiente | pendiente | pendiente |
 
 > Nota: la matriz cubre solo lo **medido o asignado**. Las celdas sin evidencia
 > no se marcan como soportadas; la política de soporte (§5) es el único
@@ -209,6 +209,14 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
   expórtalo antes (`export GDK_BACKEND=x11`). Un comando separado con `&`
   (por ejemplo `GDK_BACKEND=x11 &` en su propia línea) aplica la variable solo
   a la subshell y la app no la hereda.
+- **Hyprland (medido, #250)**: en Wayland nativo el compositor conserva el
+  tamaño con el que mapea la ventana (caja decorada de 1270×1026 cuando se
+  pide 61×181) porque la ruta sin ciclo no manda la petición de tamaño ni las
+  pistas `min == max`; en XWayland la coloca en mosaico y el layout fija el
+  tamaño (`SizeRefused`). El fix (#250) manda las pistas en la ruta sin
+  ciclo y declara el tipo de ventana `Utility` antes del primer `show`, en
+  ambos casos solo para el perfil Hyprland: el resto de escritorios conserva
+  el comportamiento de siempre.
 
 ## 7. Riesgos priorizados (L0a→L0d)
 

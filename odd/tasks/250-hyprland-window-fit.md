@@ -33,10 +33,10 @@
 
 - [x] T1 — S1, S2, S3, S8 — Tests en rojo del perfil por entorno y de `hint_size` (con stubs), y la lógica en `src-tauri/src/window_fit.rs` (módulo nuevo; `FitProfile { wayland_size_hints }`). Route: inline. Commit: commit 1.
 - [x] T2 — S3 — Cablear `set_size_constraints` en las ramas no-X11 de `widget_placement::place` y `detail_placement::place`, antes de `apply_widget` / `apply`, solo si el perfil lo pide. Route: inline. Commit: commit 1.
-- [ ] T3 — S2, S4 — Añadir `x11_float_hint` al perfil (Hyprland la activa) y cablear `set_type_hint(Utility)` en `start_main_ui`, solo con transporte X11. Route: inline. Commit: _pendiente_ (commit 2).
+- [x] T3 — S2, S4 — Añadir `x11_float_hint` al perfil (Hyprland la activa; tests en rojo con el stub antes de implementar) y cablear `set_type_hint(Utility)` en `start_main_ui`, solo con transporte X11. Route: inline. Commit: commit 2.
 - [ ] T4 — S1, S3, S4 — Validación en Hyprland real: nativo y XWayland con `hyprctl`, más un control con entorno GNOME simulado (debe verse el comportamiento de antes). Route: verify. Commit: —.
-- [ ] T5 — S5 — Fila de Hyprland de la matriz de `docs/build-linux.md` y este registro. Route: inline. Commit: _pendiente_ (commit 3).
-- [ ] T6 — S6 — `cargo fmt --check`, `cargo test --locked`, `npm test` y `node scripts/i18n-inventory.mjs --check`. Route: verify. Commit: —.
+- [x] T5 — S5 — Fila de Hyprland de la matriz de `docs/build-linux.md` y este registro. Route: inline. Commit: commit 4.
+- [x] T6 — S6 — `cargo fmt --check`, `cargo test --locked`, `npm test` y `node scripts/i18n-inventory.mjs --check`. Route: verify. Commit: —. En verde: fmt limpio; cargo test 520 tests (515 pasan, 5 ignorados en vivo, 0 fallos); `npm test` sin fallos (node --test 298); `npm run typecheck` y `npm run build` sin errores; inventario `--check` correcto.
 
 ## Riesgo
 
@@ -44,7 +44,7 @@ Risk: item 3 (la rama no-X11 de `place()` la comparten otros compositores de Way
 
 ## Estrategia de entrega
 
-Tres commits: (1) Wayland nativo, con el perfil y sus tests; (2) XWayland, con su bandera y el cableado, aparte porque el cableado de `start_main_ui` no tiene test unitario; (3) la fila de la matriz y este registro. Push solo tras la asignación del mantenedor: `git push -u origin fix/250-hyprland-window-fit` (la rama rastrea `upstream/main`, donde no hay permiso de escritura). No cambia `src/`, así que el inventario i18n no se regenera (se comprueba con `--check`).
+Cuatro commits: (1) Wayland nativo, con el perfil y sus tests (`ceb9c9f`); (2) XWayland, con su bandera y el cableado, aparte porque el cableado de `start_main_ui` no tiene test unitario (`958e055`); (3) el inventario i18n regenerado (`c1b1094`: fija también el hash de `src-tauri/src`, no solo `src/`; sin cambios de textos, solo hashes y el conteo); (4) la fila de la matriz y este registro. Push solo tras la asignación del mantenedor: `git push -u origin fix/250-hyprland-window-fit` (la rama rastrea `upstream/main`, donde no hay permiso de escritura).
 
 ## Log
 
@@ -53,3 +53,6 @@ Tres commits: (1) Wayland nativo, con el perfil y sus tests; (2) XWayland, con s
 - L3: "vale entonces creemos la rama para aplicar y medir levantas el servidor con logging (logs) para que puedas medir y tener pruebas vale". Resultado: 16 corridas medidas en Hyprland 0.57.0 (nativo y XWayland); la evidencia vive en la rama de medición `spike/hyprland-window-measure` (sin commit, cambios en un stash) y en la issue.
 - L4: "me parece perfecto el issue está bien explicado con el cómo lo pensamos arreglar el por qué las pruebas perfecto ... monta el issue después monta un comentario pidiendo que se lo asignen para poder nosotros hacer la solución ... lo que vas a hacer es mover esta solución la solución la lógica solo la lógica de solución con los test a esa rama y ya o sea porque también tiene que hacer el pool de la de la main del proyecto de la owner porque puede estar desactualizada la que tenemos nosotros sin tener conflictos". Hecho: issue #250 publicada, comentario pidiendo la asignación, `git fetch upstream` (`upstream/main` sigue en 79ee3cd, sin conflictos) y rama nueva sin la instrumentación.
 - L5: Validación manual del autor, durante las corridas de medición: con la ventana ajustada a la tira, el detalle se cierra al salir de la tira (comprobado en XWayland; en Wayland nativo se espera lo mismo y no se comprobó a mano).
+- L6: Validación en Hyprland real del fix (T4): Wayland nativo y XWayland dejan la tira en 61×181 flotante (pids propios por corrida, sin mezcla entre instancias).
+- L7: Los controles con entorno GNOME simulado quedaron invalidados dos veces por el entorno de medición y no por el código: (a) el script solo sobrescribía `XDG_CURRENT_DESKTOP`, pero `is_hyprland_signal` también mira `DESKTOP_SESSION` (= `hyprland` en esta máquina), así que el perfil seguía siendo Hyprland; (b) el segundo intento chocó con la instancia de desarrollo del propio contributor, que ocupaba el puerto 1430 y las corridas ni siquiera arrancaron (las ventanas muestreadas eran las de esa instancia). Corrección: sobrescribir ambas variables y medir solo con el puerto libre.
+- L8: Observación aparte durante la validación, fuera de alcance: la ventana «Ajustes» en Wayland nativo queda en mosaico (1262×1022, `floating=false`) — la misma familia del problema de #250, pero en otra ventana que `place()` no coloca.
