@@ -524,6 +524,20 @@ pub async fn place(
             let mut surface = UiSurface::new(window.clone(), placement.scale, generation).await;
             return Ok(drive(&mut surface, &placement, || superseded(generation)).await);
         }
+        // Wayland nativo (#250): los compositores que no respetan el tamaño de
+        // la ventana reciben aquí las pistas que el ciclo X11 sí manda, antes
+        // de aplicar la petición. El perfil decide: sin su bandera no se toca
+        // la ventana (GNOME y el resto conservan el comportamiento de siempre).
+        if let Some((w, h)) = crate::window_fit::hint_size(
+            crate::window_fit::fit_profile(),
+            (bounds.w as i32, bounds.h as i32),
+            placement.scale,
+        ) {
+            let _ = on_ui(window, move |gtk_window| {
+                set_size_constraints(gtk_window, w, h);
+            })
+            .await;
+        }
     }
     // Sin read-back en esta plataforma: la solicitud se aplica como antes, y
     // la llamada nativa sigue en el hilo de UI.

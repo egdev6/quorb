@@ -320,6 +320,23 @@ pub async fn place(
             let mut surface = UiSurface::new(window.clone(), generation);
             return Ok(drive(&mut surface, bounds, || superseded(generation)).await);
         }
+        // Wayland nativo (#250): las pistas de tamaño antes de aplicar la
+        // petición, sólo si el perfil del compositor las pide. La escala sale
+        // de la propia ventana, como en `UiSurface::request_size`; la
+        // conversión a píxeles lógicos es la de `hint_size`.
+        let profile = crate::window_fit::fit_profile();
+        if profile.wayland_size_hints {
+            let (w, h) = (bounds.w as i32, bounds.h as i32);
+            let _ = crate::widget_placement::on_ui(window, move |gtk_window| {
+                use gtk::prelude::*;
+                let scale = gtk_window.scale_factor() as f64;
+                let Some((lw, lh)) = crate::window_fit::hint_size(profile, (w, h), scale) else {
+                    return;
+                };
+                crate::widget_placement::set_size_constraints(gtk_window, lw, lh);
+            })
+            .await;
+        }
     }
     // Sin read-back del compositor en esta plataforma la petición se aplica
     // como antes, y la llamada nativa sigue en el hilo de UI.

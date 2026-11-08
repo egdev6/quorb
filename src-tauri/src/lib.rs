@@ -22,6 +22,12 @@ mod widget_placement;
 #[cfg(test)]
 mod widget_placement_test;
 mod window_clip;
+// Las decisiones puras del perfil por compositor (#250) se compilan en todos los
+// sistemas, pero solo Linux las consume: sin avisos de código muerto en el resto.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod window_fit;
+#[cfg(test)]
+mod window_fit_test;
 #[cfg(target_os = "windows")]
 mod windows_backdrop;
 mod wm_compat;

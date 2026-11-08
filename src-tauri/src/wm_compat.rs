@@ -200,7 +200,7 @@ pub fn detect_wm_info_from_env(env: &Env, tray: TrayDiagnostics) -> WindowManage
 /// Normaliza strings vacíos como "ausente" en TODOS los campos, igual que
 /// `Env::from_process`: si el caller construye el `Env` a mano y le pasa
 /// `Some("")` (los tests lo hacen), un string vacío no debe contar como señal.
-fn normalize_env(env: &Env) -> Env {
+pub(crate) fn normalize_env(env: &Env) -> Env {
     let non_empty = |opt: &Option<String>| opt.clone().filter(|s| !s.is_empty());
     Env {
         wayland_display: non_empty(&env.wayland_display),
@@ -213,8 +213,9 @@ fn normalize_env(env: &Env) -> Env {
 
 /// Señal Hyprland (`DESKTOP_SESSION=hyprland` o token `Hyprland` en
 /// `XDG_CURRENT_DESKTOP`). Extraída de `detect_wm_info_from_env` para que el
-/// fallback del backend efectivo la reutilice sin duplicar los matches.
-fn is_hyprland_signal(env_n: &Env) -> bool {
+/// fallback del backend efectivo y el perfil de ajuste de ventana (#250) la
+/// reutilicen sin duplicar los matches.
+pub(crate) fn is_hyprland_signal(env_n: &Env) -> bool {
     env_n
         .desktop_session
         .as_deref()
