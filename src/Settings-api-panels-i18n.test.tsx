@@ -120,7 +120,7 @@ describe('API provider panels (SSR, i18n)', () => {
     const html = openrouter('en');
     expectAll(
       html,
-      ['Pay-as-you-go · Official API', 'Show in the widget', 'Month and today spend, key limit (if any) and account balance.', 'aria-label="How to connect the account"', 'Create it at', 'openrouter.ai › Keys'],
+      ['Pay-as-you-go · Official API', 'Show in the widget', 'This month&#x27;s and today&#x27;s spend, key limit (if any) and account balance.', 'aria-label="How to connect the account"', 'Create it at', 'openrouter.ai › Keys'],
       'en openrouter',
     );
     expectNone(html, ['Pago por uso', 'Mostrar en el widget', 'Cómo conectar la cuenta', 'Créala en', 'Gasto del mes'], 'en openrouter');
@@ -278,7 +278,7 @@ describe('API provider panels (SSR, i18n)', () => {
   it('renders the Spanish literals of the Anthropic API and OpenAI API panels copied verbatim', () => {
     expectAll(
       adminApi('es', 'anthropic_api'),
-      ['Pago por uso · Admin key', 'Anthropic API', 'Mostrar gasto del mes', '<b>Admin key</b>', 'Admin API key (sk-ant-admin…)', 'Las APIs de coste no admiten OAuth: hace falta una', '(solo lectura de la organización).', 'Presupuesto mensual (opcional)', 'USD al mes'],
+      ['Pago por uso · Admin key', 'Anthropic API', 'Mostrar gasto del mes', '<b>Admin key</b>', 'Admin API key (sk-ant-admin…)', 'Las APIs de coste no admiten OAuth: hace falta una', '(solo lectura de la organización).', 'Admin key</a> (solo lectura de la organización).', 'Presupuesto mensual (opcional)', 'USD al mes'],
       'es anthropic',
     );
     expectAll(adminApi('es', 'openai_api'), ['OpenAI API', 'class="eg-field__label">Admin key<', 'Créala en', 'Organization › Admin keys'], 'es openai');
@@ -286,7 +286,7 @@ describe('API provider panels (SSR, i18n)', () => {
 
   it('renders the Anthropic API and OpenAI API panels in English and drops the Spanish literals', () => {
     const anthropic = adminApi('en', 'anthropic_api');
-    expectAll(anthropic, ['Pay-as-you-go · Admin key', 'Show month spend', 'Cost APIs do not support OAuth: you need an', '(organization read-only).', 'Monthly budget (optional)', 'USD per month'], 'en anthropic');
+    expectAll(anthropic, ['Pay-as-you-go · Admin key', 'Show month spend', 'Cost APIs do not support OAuth: you need an', '(organization read-only).', 'Admin key</a> (organization read-only).', 'Monthly budget (optional)', 'USD per month'], 'en anthropic');
     expectNone(anthropic, ['Pago por uso', 'Mostrar gasto del mes', 'Presupuesto mensual', 'hace falta una'], 'en anthropic');
     const openai = adminApi('en', 'openai_api');
     expectAll(openai, ['Pay-as-you-go · Admin key', 'Create it at', 'Organization › Admin keys'], 'en openai');

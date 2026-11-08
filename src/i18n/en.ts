@@ -359,7 +359,7 @@ export const en = {
         detailsPinnedAfter: ' from the official npm registry. The latest version is not installed.',
         detailsFolderBefore: 'Target folder: ',
         detailsFolderAfter: ', inside the Quorb folder. The global npm and the environment variables are not touched.',
-        detailsScripts: 'Package lifecycle scripts are ignored and the real version is validated before considering it good.',
+        detailsScripts: 'Package lifecycle scripts are ignored and the real version is validated before accepting it.',
         detailsNode: 'Before installing, Quorb only checks that Node.js and npm exist (without running them); the minimum version is validated on confirming the installation. Node is not installed and no administrator permissions are requested.',
       },
       panels: {
@@ -436,7 +436,7 @@ export const en = {
         createApiKeyIn: 'Create it at',
         openrouter: {
           kicker: 'Pay-as-you-go · Official API',
-          note: 'Month and today spend, key limit (if any) and account balance.',
+          note: 'This month\'s and today\'s spend, key limit (if any) and account balance.',
         },
         nan: {
           kicker: 'Subscription · account or API key',
@@ -472,9 +472,9 @@ export const en = {
           periodAll: 'All',
           subprovidersToggle: 'Show each sub-provider as its own account',
           minSpendLabel: 'Minimum spend per sub-provider (USD)',
-          minSpendHint: 'A sub-orb is not shown until its period spend exceeds this figure. 0 = any that spends.',
+          minSpendHint: 'A sub-orb is not shown until its period spend exceeds this figure. 0 = show any with spend.',
           budgetLabel: 'Budget (USD)',
-          budgetHint: 'Optional: paints the period spend bar against the cap you set.',
+          budgetHint: 'Optional: shows the period spend bar against your cap.',
           advancedSummary: 'Advanced · server address',
           baseUrlHint: 'Where 9Router listens (http://localhost:20128 by default).',
           hiddenTitle: 'Hidden 9Router sub-orbs',

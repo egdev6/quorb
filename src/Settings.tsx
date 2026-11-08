@@ -2310,7 +2310,7 @@ export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSe
             hint={
               tab === 'anthropic_api' ? (
                 <>
-                  {t(locale, 'settings.providers.panels.adminApi.anthropicHintBefore')} <Link href={LINKS.anthropicAdmin}>Admin key</Link>
+                  {t(locale, 'settings.providers.panels.adminApi.anthropicHintBefore')} <Link href={LINKS.anthropicAdmin}>Admin key</Link>{' '}
                   {t(locale, 'settings.providers.panels.adminApi.anthropicHintAfter')}
                 </>
               ) : (
