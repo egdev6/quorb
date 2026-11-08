@@ -1618,3 +1618,109 @@ mod wsl_login_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// EVIDENCIA REAL en Windows + WSL (issue #92, AC9).
+///
+/// Estos tests NO corren en el CI normal: llevan `#[ignore]` y solo se
+/// ejecutan en el lab `wsl-login-evidence.yml` (runner Windows con WSL2),
+/// donde la distro y sus shims son reales. Simulan nada: hablan con
+/// `wsl.exe` de verdad.
+#[cfg(windows)]
+#[cfg(test)]
+mod wsl_evidence {
+    use super::*;
+    use crate::wsl::{RealWslAdapter, SessionResolver, WslAdapter};
+
+    fn distro() -> String {
+        std::env::var("QUORB_WSL_EVIDENCE_DISTRO").expect(
+            "el workflow debe exportar QUORB_WSL_EVIDENCE_DISTRO (distro real de la evidencia)",
+        )
+    }
+
+    /// GAP1 — Una CLI presente SOLO dentro de la distro se reconoce sin
+    /// requerir la misma CLI en Windows (AC1).
+    #[test]
+    #[ignore = "requiere WSL real (evidencia #92)"]
+    fn gap1_detects_a_cli_that_only_exists_inside_the_distro() {
+        let adapter = RealWslAdapter::new();
+        let d = distro();
+        let wsl = WslLogin {
+            adapter: &adapter,
+            distro: &d,
+        };
+        // Los shims se plantan SOLO en el guest (el PATH de Windows no los
+        // tiene): la detección debe encontrarlos dentro de la distro.
+        for cli in ["codex", "claude"] {
+            assert!(
+                matches!(cli_check(&wsl, cli), Ok(CliCheck::Ready)),
+                "«{cli}» debe estar Ready dentro de la distro"
+            );
+        }
+        // Y el PATH de Windows no los tiene: la detección no viene de ahí.
+        let out = std::process::Command::new("where.exe")
+            .arg("codex")
+            .output()
+            .expect("where.exe");
+        assert!(
+            !out.status.success(),
+            "codex no debe estar en el PATH de Windows (si lo está, el shim no era exclusivo del guest)"
+        );
+    }
+
+    /// GAP2 — El comando de login se ejecuta DENTRO de la distro y escribe
+    /// allí (AC2/AC3): el shim deja un marker en el guest.
+    #[test]
+    #[ignore = "requiere WSL real (evidencia #92)"]
+    fn gap2_login_command_runs_inside_the_distro() {
+        let d = distro();
+        // Mismo argv que compone la app (script constante + comando como dato).
+        let argv = wsl_login_argv(&d, "codex", &None).expect("argv del login");
+        let out = std::process::Command::new("wsl.exe")
+            .args(argv.iter().skip(1))
+            .output()
+            .expect("wsl.exe");
+        assert!(
+            out.status.success(),
+            "el login debe ejecutarse en la distro: {:?} {:?}",
+            out.stdout,
+            out.stderr
+        );
+        // El marker del shim está DENTRO de la distro.
+        let check = std::process::Command::new("wsl.exe")
+            .args(["-d", &d, "--", "test", "-f", "/tmp/quorb-evidence-login"])
+            .output()
+            .expect("wsl.exe");
+        assert!(
+            check.status.success(),
+            "el shim debe haber escrito dentro de la distro"
+        );
+    }
+
+    /// GAP3 — La lectura de sesión usa la ruta EXACTA que la resolución
+    /// espera (AC3): `<home>/.quorb/accounts/claude-w1/.credentials.json`.
+    #[test]
+    #[ignore = "requiere WSL real (evidencia #92)"]
+    fn gap3_session_read_uses_the_resolved_path_inside_the_distro() {
+        let adapter: std::sync::Arc<dyn WslAdapter> =
+            std::sync::Arc::new(RealWslAdapter::new());
+        let d = distro();
+        let home = adapter.resolve_home(&d).expect("home de la distro");
+        let r = SessionResolver::for_wsl(adapter, d.clone(), home);
+        let path = r.default_path(&crate::wsl::guest_relative(&[
+            ".quorb",
+            "accounts",
+            "claude-w1",
+            ".credentials.json",
+        ]));
+        // `read` (no `read_async`) a propósito: este test no tiene runtime
+        // de tokio, y la evidencia es la ruta resuelta DENTRO de la distro —
+        // `read` y `read_async` comparten el mismo `adapter.read_file`.
+        let contents = r
+            .read(&path)
+            .expect("la sesión plantada dentro de la distro debe leerse");
+        assert!(
+            contents.contains("v-evidencia-92"),
+            "contenido inesperado: {contents}"
+        );
+    }
+}
