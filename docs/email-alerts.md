@@ -51,9 +51,21 @@ Ambos interruptores (Alertas y email) y el consentimiento son necesarios para
 avisos automáticos; la notificación nativa es independiente. La prueba explícita
 requiere consentimiento y configuración válida, pero no los interruptores.
 
-El remitente lo introduce el usuario: el remitente de pruebas de Resend sirve
-para el email de su propia cuenta; para otros destinatarios necesita un dominio
-verificado y un remitente autorizado. Quorb no proporciona un remitente fijo.
+El remitente lo introduce el usuario. Si no dispone de dominio propio, puede
+usar `onboarding@resend.dev` exclusivamente para pruebas hacia el correo asociado
+a su cuenta de Resend. Para otros destinatarios necesita un dominio verificado
+y un remitente autorizado de ese dominio. Quorb muestra esa ayuda, pero no
+rellena el campo ni proporciona un remitente fijo. Se admiten direcciones simples,
+sin nombres visibles ni listas.
+
+La ayuda de **Enviar prueba** recuerda que guarda los cambios, envía una prueba
+sin datos de consumo, requiere consentimiento y clave guardada y no activa los
+avisos automáticos. Sigue funcionando con Alertas global desactivado.
+
+El aviso sobre volver a introducir la clave después de reiniciar solo se muestra
+en Linux, con lenguaje orientado al usuario. Los detalles de keyutils, la ausencia
+de fallback a texto plano y el seguimiento en #106 se conservan en esta
+documentación, no en la ayuda del formulario.
 
 El payload incluye únicamente el sobre (remitente/destinatario), asunto y
 texto de proveedor, medidor, ventana, porcentaje y tipo de evento según el
@@ -136,19 +148,23 @@ gate backend (envío deshabilitado rechazado antes de leer llavero o red, sin
 ninguna petición) y la reutilización de la clave disponible al re-habilitar
 (exactamente dos peticiones HTTP: activado y re-habilitado).
 
-Prerrequisito pendiente: el procedimiento propuesto más abajo todavía no se ha
-ejecutado ni validado. No hay aislamiento de configuración/llavero demostrado
-en una ejecución de la app. `npm run app:dev` usa la config y el llavero reales del usuario y
-podría causar envíos reales: no se propone como paso de verificación. Las
-casillas que requieren la app arrancada quedan pendientes de un procedimiento
-de aislamiento aprobado antes de marcarse. Todas las casillas están sin marcar;
-se completan con capturas solo cuando exista evidencia real.
-
-Preparación (pendiente de ejecutar y acreditar las puertas de aislamiento):
-
-- [ ] Arrancar la app en macOS con estado separado (config y llavero aislados);
-      sin credencial previa, la sección email de Ajustes → Alertas aparece
-      desactivada, sin consentimiento y con campos vacíos.
+Estado de la evidencia: el owner aceptó como **método** de validación (S23–S24)
+la combinación de comprobación manual más las pruebas automatizadas con HTTP
+simulado ya existentes; no exige VM, simulación integrada en la app ni tests de
+Ajustes montado. Eso no aprueba por sí las capturas concretas aportadas: la
+evidencia manual macOS (capturas y confirmaciones humanas) se obtuvo en el
+Mac local del usuario, **no en una VM**, según su confirmación expresa. No se
+ha acreditado separación de configuración o llavero dentro de ese Mac. La
+evidencia está inventariada con sus límites en
+[`email-alerts-validation.md`](email-alerts-validation.md), que distingue lo
+observado en imágenes, lo confirmado por el usuario y lo no acreditado, y
+sigue sujeta a la disposición del owner. Las
+capturas muestran los textos de ayuda previos a T7, por lo que no validan
+visualmente la ayuda actual; eso no invalida la evidencia de estados y feedback.
+El procedimiento aislado del final de este documento es una propuesta histórica
+opcional, no un requisito para reconocer esa evidencia. `npm run app:dev` usa la
+config y el llavero reales del usuario y podría causar envíos reales: no se
+propone como paso de verificación y no se repiten envíos para documentar.
 
 Ajustes (S12–S16, S21–S22):
 
@@ -156,7 +172,9 @@ Ajustes (S12–S16, S21–S22):
       la configuración se guarda y el email sigue desactivado.
 - [ ] Advertencias visibles: disponibilidad (Quorb abierto y equipo despierto),
       privacidad (qué datos salen hacia Resend), límite de aceptación
-      («Solicitud aceptada», no entrega) y limitación Linux keyutils.
+      («Solicitud aceptada», no entrega) y aviso de Linux mostrado solo en
+      Linux (sin jerga técnica; los detalles técnicos quedan en esta
+      documentación).
 - [ ] Consentimiento: sin marcarlo, el botón de prueba no permite enviar;
       al marcarlo y completar configuración/clave, comprobar su disponibilidad.
       Los mensajes y estados visibles deben seguir el idioma de la app.
@@ -166,14 +184,13 @@ Ajustes (S12–S16, S21–S22):
 - [ ] Desactivar email y guardar: el estado se muestra y la clave sigue
       indicada como guardada al reactivar, sin reintroducirla. No pulsar
       «Enviar prueba» contra Resend para verificar este punto.
-- [ ] Feedback de aceptación/error: comprobar el cableado y aspecto visual
-      con respuestas simuladas, solo cuando exista un procedimiento de
-      simulación integrado y aislado. Actualmente pendiente: los tests HTTP
-      de Rust y el renderizado estático no inyectan respuestas en la app.
-      Debe verse «Solicitud aceptada por Resend» en verde y errores
-      sanitizados en rojo/amarillo, sin direcciones, clave ni detalles del
-      servidor. La prueba con Alertas global desactivado queda cubierta
-      automáticamente; no ejecutar un envío real para marcar esta casilla.
+- [ ] Feedback de aceptación/error: la evidencia visual ya aportada muestra
+      «Solicitud aceptada por Resend» en verde y el rechazo 403 en rojo,
+      sanitizados (capturas previas a T7, inventariadas en
+      [`email-alerts-validation.md`](email-alerts-validation.md)). El
+      comportamiento sanitizado queda además cubierto por los tests HTTP
+      existentes. No se exige un procedimiento nuevo de simulación integrada
+      para reconocer esa evidencia; no repetir envíos reales para documentar.
 
 Avisos automáticos (S2, S3, S11, S18):
 
@@ -200,7 +217,16 @@ Windows (S24, verificación del owner si no hay acceso):
       owner, como acordó en la respuesta del owner (S24); ninguna prueba
       automatizada sustituye esta comprobación del llavero real.
 
-## Procedimiento macOS aislado propuesto (todavía no ejecutado)
+## Propuesta histórica opcional: procedimiento macOS aislado (no ejecutado)
+
+Esta propuesta del agente se redactó antes de disponer de evidencia manual y
+**nunca se ejecutó**. No describe el entorno del usuario: él confirmó que
+trabaja y realizó la comprobación en su Mac local, **no en una VM**. No es un requisito del owner ni de esta PR: el owner aceptó el
+método manual + HTTP simulado según S23–S24 (ver
+[`email-alerts-validation.md`](email-alerts-validation.md)); la evidencia
+manual actual y sus huecos siguen sujetos a la disposición del owner. Se
+conserva por su
+detalle técnico para quien quiera aislar una comprobación futura.
 
 **No arrancar la app en el usuario habitual.** Cambiar `HOME`, el identificador
 aparente del formulario o el llavero por defecto del usuario habitual no prueba
@@ -296,11 +322,16 @@ Los tests locales indicados arriba acreditan aceptación/fallo sanitizado y las
 reglas de interruptores; no prueban que el botón y feedback estén cableados en
 la app abierta. SSR acredita el marcado, no esa interacción.
 
-Por tanto, quedan **pendientes** la captura verde/roja con respuestas simuladas
-integradas y la ejecución de este procedimiento. Para esa captura hace falta
-acordar una vía de simulación acotada antes de implementarla; no se incorpora
-infraestructura ni dependencias por esta guía. Una VM desconectada, una clave
-falsa o un fallo de transporte no acreditan aceptación simulada.
+Por tanto, esta propuesta queda como alternativa histórica opcional: el owner
+no exige una captura con simulación integrada ni la ejecución del procedimiento
+como parte del método de validación aceptado (S23–S24). Las capturas
+`6.png`/`7.png` y `recepcion.png`, previas a T7, están inventariadas en
+[`email-alerts-validation.md`](email-alerts-validation.md) y siguen sujetas a
+la disposición del owner. Los tests HTTP
+locales indicados arriba siguen siendo la vía acreditada de comprobar
+aceptación/fallo sanitizado, sin infraestructura nueva montada. Una VM
+desconectada, una clave falsa o un fallo de transporte no acreditarían
+aceptación simulada.
 
 Registrar por paso: candidato/hash del artefacto, macOS, aislamiento, acción,
 resultado esperado/observado, captura sanitizada y PASS/FAIL/PENDING. Sin acceso

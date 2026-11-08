@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { emailDefaults, emailReady, patchEmail, sendEmailTest } from './lib/email';
+import { osFromUA } from './lib/os-detect';
 import type { EmailStatus } from './lib/types';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -1680,7 +1681,9 @@ function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }
         <input type="email" autoComplete="off" value={email.recipient} onChange={(e) => update({ recipient: e.target.value.trim() })} />
       </Field>
       <SecretInput locale={locale} id="resend_api_key" label={t(locale, 'settings.alerts.email.key')} configured={!!secrets.resend_api_key} onSaved={onSecrets} />
-      <p className="q-note">{t(locale, 'settings.alerts.email.linux')}</p>
+      {typeof navigator !== 'undefined' && osFromUA(navigator.userAgent) === 'linux' && (
+        <p className="q-note">{t(locale, 'settings.alerts.email.linux')}</p>
+      )}
       <p className="q-note">{t(locale, 'settings.alerts.email.testHint')}</p>
       <button type="button" className="eg-btn eg-btn--ghost" disabled={busy || !emailReady(email) || !secrets.resend_api_key} onClick={() => void test()}>
         {t(locale, busy ? 'settings.alerts.email.testing' : 'settings.alerts.email.test')}
