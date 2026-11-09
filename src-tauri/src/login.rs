@@ -365,7 +365,9 @@ fn wsl_login_argv(
         // `$1` = carpeta a asegurar; detrás `env VAR=/ruta <programa>`.
         // La ruta viaja como DATO posicional (F14): sin quoting de shell.
         argv[6] = WSL_LOGIN_WRAP_MKDIR.into();
-        argv.push(dir.to_string_lossy().into());
+        // `PathBuf: Into<OsString>` directamente (no vía `to_string_lossy`,
+        // que devuelve `Cow<str>` y no implementa `Into<OsString>`).
+        argv.push(dir.clone().into());
         argv.push("env".into());
         argv.push(format!("{var}={}", dir.to_string_lossy()).into());
     }
@@ -1497,8 +1499,8 @@ mod wsl_login_tests {
             "un solo lanzador wsl.exe"
         );
         assert_eq!(
-            double.last().map(|t| t.to_string_lossy().as_ref()),
-            Some("login")
+            double.last().map(|t| t.to_string_lossy()),
+            Some("login".into())
         );
     }
 
