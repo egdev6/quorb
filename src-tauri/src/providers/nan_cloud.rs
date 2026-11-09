@@ -220,14 +220,10 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
         .filter_map(|m| {
             let model = m.get("model").and_then(Value::as_str)?;
             let used = m.get("tokensUsed").and_then(Value::as_f64)?;
-            // Denominator: the allowance the account actually got (`fullCap`); the period
-            // `cap` is only a fallback (it is prorated on the first period of a plan).
-            let period_cap = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0);
-            let allowance = m
-                .get("fullCap")
-                .and_then(Value::as_f64)
-                .filter(|c| *c > 0.0);
-            let limit = allowance.or(period_cap)?;
+            // Denominator: `cap` is the allowance the account got for the current period,
+            // the same number the dashboard shows as "Allowance per billing period". A
+            // prorated first period arrives prorated, so it needs no special case.
+            let limit = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0)?;
             if used <= 0.0 {
                 return None;
             }
@@ -313,9 +309,11 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_account_allowance_over_the_period_cap() {
+    fn uses_the_account_allowance_from_the_payload() {
+        // Real payload of an account: `cap` is the allowance of the plan (1.000M) and
+        // `tokensUsed` the consumption of that same period.
         let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "deepseek-v4-flash", "tokensUsed": 917_800_000u64, "cap": 3_000_000_000u64, "fullCap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+            {"model": "deepseek-v4-flash", "tokensUsed": 917_800_000u64, "cap": 1_000_000_000u64, "remaining": 82_200_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
         ]});
         let m = parse_quota(&v);
         assert_eq!(m.len(), 1);
@@ -325,23 +323,27 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_the_period_cap_without_an_account_allowance() {
+    fn keeps_the_cap_as_denominator_when_the_payload_carries_extra_tokens() {
+        // `extraTokens`/`extraUsable` travel in the real payload. Their meaning is still
+        // undefined, so the denominator stays `cap`: it never understates the consumption.
         let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "mimo-v2.6-flash", "tokensUsed": 250_000_000u64, "cap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+            {"model": "deepseek-v4-flash", "tokensUsed": 950_000_000u64, "cap": 1_000_000_000u64, "remaining": 50_000_000u64, "periodEnd": "2026-11-01T00:00:00Z", "extraTokens": 0u64, "extraUsable": true}
         ]});
         let m = parse_quota(&v);
         assert_eq!(m[0].limit, Some(1e9));
-        assert!((m[0].percent.unwrap() - 25.0).abs() < 0.01);
+        assert!((m[0].percent.unwrap() - 95.0).abs() < 0.01);
     }
 
     #[test]
-    fn prorated_first_period_keeps_the_plan_allowance() {
+    fn prorated_first_period_uses_the_prorated_allowance() {
+        // On the first period the account only has a fraction of the plan, so the payload
+        // prorates `cap`: that prorated value is the allowance of the period.
         let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "glm5.3", "tokensUsed": 100_000_000u64, "cap": 333_333_333u64, "fullCap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+            {"model": "glm5.3", "tokensUsed": 100_000_000u64, "cap": 333_333_333u64, "periodEnd": "2026-11-01T00:00:00Z"}
         ]});
         let m = parse_quota(&v);
-        assert_eq!(m[0].limit, Some(1e9));
-        assert!((m[0].percent.unwrap() - 10.0).abs() < 0.01);
+        assert_eq!(m[0].limit, Some(333_333_333.0));
+        assert!((m[0].percent.unwrap() - 30.0).abs() < 0.01);
     }
 
     #[test]
@@ -354,9 +356,9 @@ mod tests {
 
     #[test]
     fn each_account_gets_its_own_allowance() {
-        let payload = |full: u64| {
+        let payload = |cap: u64| {
             json!({"periodStart": "2026-10-01", "models": [
-                {"model": "deepseek-v4-flash", "tokensUsed": 100_000_000u64, "cap": 3_000_000_000u64, "fullCap": full, "periodEnd": "2026-11-01T00:00:00Z"}
+                {"model": "deepseek-v4-flash", "tokensUsed": 100_000_000u64, "cap": cap, "periodEnd": "2026-11-01T00:00:00Z"}
             ]})
         };
         let a = parse_quota(&payload(1_000_000_000));

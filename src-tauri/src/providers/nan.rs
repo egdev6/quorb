@@ -148,11 +148,11 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     quotas.extend(quotas_from_models(&models_json));
 
     // Cuota por cuenta del panel de NaN, con la MISMA API key (`GET /api/usage/quota` de
-    // `cloud-api.nan.builders`): `nan_cloud::parse_quota` toma `fullCap` (la asignación del
-    // plan) y solo cae a `cap` (el contador del periodo en curso) si `fullCap` no viene; el
-    // consumo y las fechas salen del mismo payload, así que cuota, uso y periodo son del
-    // mismo periodo. Si esta llamada falla queda `None`, `nan_meters` cae a la cuota
-    // publicada y el informe lo avisa como tal.
+    // `cloud-api.nan.builders`): `nan_cloud::parse_quota` toma `cap`, que es la asignación de
+    // la cuenta para el periodo en curso (el mismo número que el panel muestra como
+    // "Allowance per billing period"); el consumo y las fechas salen del mismo payload, así
+    // que cuota, uso y periodo son del mismo periodo. Si esta llamada falla queda `None`,
+    // `nan_meters` cae a la cuota publicada y el informe lo avisa como tal.
     let account_quota = super::nan_cloud::fetch_account_quota(http, &key).await.ok();
 
     // 2. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn account_quota_wins_over_the_published_table() {
         let payload = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "deepseek-v4-flash", "tokensUsed": 200_000_000u64, "cap": 3_000_000_000u64, "fullCap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+            {"model": "deepseek-v4-flash", "tokensUsed": 200_000_000u64, "cap": 1_000_000_000u64, "remaining": 800_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
         ]});
         let (meters, source) = nan_meters(
             Some(&payload),
