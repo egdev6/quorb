@@ -807,7 +807,7 @@ async fn check_provider(
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
 /// `async` lo saca del hilo principal: consulta el PATH fresco del registro.
 #[tauri::command(async)]
-async fn cli_status(state: State<'_, AppState>) -> Result<BTreeMap<String, bool>, String> {
+async fn cli_status(state: State<'_, AppState>) -> Result<BTreeMap<String, String>, String> {
     let cfg = state.config.lock().unwrap().clone();
     // #92: la detección en WSL lanza procesos `wsl.exe` (enumeración + `command
     // -v`), así que va en un hilo bloqueante: en el hilo del executor
@@ -823,6 +823,9 @@ async fn cli_status(state: State<'_, AppState>) -> Result<BTreeMap<String, bool>
             distro: d,
         });
         login::cli_status(&cfg, wsl)
+            .into_iter()
+            .map(|(p, s)| (p, s.as_str().to_string()))
+            .collect::<BTreeMap<_, _>>()
     })
     .await
     .map_err(|e| e.to_string())?;

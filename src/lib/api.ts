@@ -58,8 +58,13 @@ export const api = {
    * `account_session` del backend.
    */
   accountSessionFileExists: (id: string) => invoke<boolean>('account_session', { id }),
-  /** CLIs de login instalados: `{ claude, codex, gemini }` */
-  cliStatus: () => invoke<Record<string, boolean>>('cli_status'),
+  /**
+   * CLIs de login por proveedor: `{ claude, codex, gemini }`. Cada valor es
+   * `ready | missing | stopped | error` (#92): solo `missing` significa
+   * «instalar la CLI»; `stopped` (distro detenida) y `error` (WSL roto) no
+   * se arreglan instalando nada.
+   */
+  cliStatus: () => invoke<Record<string, string>>('cli_status'),
   /**
    * Estado pasivo de la instalación asistida de Codex CLI. Solo lee: nunca
    * ejecuta procesos, red ni escrituras. Comando `codex_setup_status`.

@@ -66,7 +66,7 @@ const common = (locale: Locale) => ({
   healthFor: healthFor(locale),
 });
 
-const subscription = (locale: Locale, p: 'claude' | 'codex' | 'gemini' | 'grok', cli: Record<string, boolean> = {}) =>
+const subscription = (locale: Locale, p: 'claude' | 'codex' | 'gemini' | 'grok', cli: Record<string, string> = {}) =>
   renderToStaticMarkup(<SubscriptionPanel {...common(locale)} p={p} cli={cli} codexInstall={codexInstall} onCodexRecheck={noop} />);
 const cursor = (locale: Locale) => renderToStaticMarkup(<CursorPanel {...common(locale)} />);
 const antigravity = (locale: Locale) => renderToStaticMarkup(<AntigravityPanel {...common(locale)} />);

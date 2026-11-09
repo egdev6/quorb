@@ -63,10 +63,39 @@ pub(crate) fn open(id: &str, cfg: &AppConfig, wsl: Option<WslLogin<'_>>) -> Resu
 /// shell para las cuatro CLIs (no 12 invocaciones de `wsl.exe` por
 /// refresco); una distro detenida no se despierta (se informa «no
 /// disponible»). En host sigue siendo la detección de Windows de siempre.
+/// Estado de una CLI de login para la UI (#92, revisión PR).
+///
+/// Contrato ampliado a 4 estados: el booleano no distinguía «no instalada»
+/// de «distro detenida» o «WSL roto», y la UI no debe proponer instalar la
+/// CLI cuando el problema es la distro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CliStatus {
+    /// Instalada y localizable (host o distro Running).
+    Ready,
+    /// La distro corre y no tiene esa CLI.
+    Missing,
+    /// La distro está detenida/transición: el login explícito puede
+    /// activarla; el sondeo no la despierta.
+    Stopped,
+    /// WSL no disponible, distro inexistente o fallo del subsistema.
+    Error,
+}
+
+impl CliStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            CliStatus::Ready => "ready",
+            CliStatus::Missing => "missing",
+            CliStatus::Stopped => "stopped",
+            CliStatus::Error => "error",
+        }
+    }
+}
+
 pub(crate) fn cli_status(
     cfg: &AppConfig,
     wsl: Option<WslLogin<'_>>,
-) -> std::collections::BTreeMap<String, bool> {
+) -> std::collections::BTreeMap<String, CliStatus> {
     let providers = [
         ("claude", &cfg.claude.login_command),
         ("codex", &cfg.codex.login_command),
@@ -76,40 +105,54 @@ pub(crate) fn cli_status(
     match &wsl {
         Some(w) => {
             let distros = w.adapter.list_distributions().ok();
-            let running = distros
-                .as_ref()
-                .and_then(|ds| {
-                    ds.iter()
-                        .find(|d| crate::wsl::distro_name_matches(w.distro, &d.name))
-                })
-                .is_some_and(|d| matches!(d.state, crate::wsl::DistroState::Running));
-            let shell = if running {
-                w.adapter.shell_strategy(w.distro).ok()
-            } else {
-                None
+            let situation = match distros.as_ref().and_then(|ds| {
+                ds.iter()
+                    .find(|d| crate::wsl::distro_name_matches(w.distro, &d.name))
+            }) {
+                // Distro ausente o WSL roto: no es un problema de la CLI.
+                None => Some(CliStatus::Error),
+                Some(d) if !matches!(d.state, crate::wsl::DistroState::Running) => {
+                    Some(CliStatus::Stopped)
+                }
+                Some(_) => None,
             };
+            if let Some(situation) = situation {
+                return providers
+                    .into_iter()
+                    .map(|(p, _)| (p.to_string(), situation))
+                    .collect();
+            }
+            let shell = w.adapter.shell_strategy(w.distro).ok();
             providers
                 .into_iter()
                 .map(|(p, c)| {
-                    let ok = match &shell {
-                        Some(shell) => w
-                            .adapter
-                            .program_available(w.distro, *shell, &program_of(c))
-                            .unwrap_or(false),
-                        // Distro detenida: no se sondea (no se despierta).
-                        None => false,
+                    let status = match &shell {
+                        Some(shell) => {
+                            match w
+                                .adapter
+                                .program_available(w.distro, *shell, &program_of(c))
+                            {
+                                Ok(true) => CliStatus::Ready,
+                                Ok(false) => CliStatus::Missing,
+                                // Falla el subsistema a media sonda.
+                                Err(_) => CliStatus::Error,
+                            }
+                        }
+                        None => CliStatus::Error,
                     };
-                    (p.to_string(), ok)
+                    (p.to_string(), status)
                 })
                 .collect()
         }
         None => providers
             .into_iter()
             .map(|(p, c)| {
-                (
-                    p.to_string(),
-                    !matches!(find_program(&program_of(c)), Found::Missing),
-                )
+                let status = if matches!(find_program(&program_of(c)), Found::Missing) {
+                    CliStatus::Missing
+                } else {
+                    CliStatus::Ready
+                };
+                (p.to_string(), status)
             })
             .collect(),
     }
@@ -274,20 +317,31 @@ fn prepare_wsl_login(
 ///
 /// El comando configurado se **tokeniza** con `split_login_command` y cada
 /// token viaja como argumento POSICIONAL del script constante
-/// `exec "$@"` (`$0=quorb`, `$1=programa`, `$2..=args`): el guest lo ejecuta
-/// con su argv exacto y el host no lo reparsea. Nunca se pasa el comando
-/// entero como un único elemento — `exec` lo trataría como el nombre de un
-/// binario con espacios.
+/// (`$0=quorb`, `$1..=programa y args`; con cuenta adicional `$1=carpeta`,
+/// `$2=programa`…): el guest lo ejecuta con su argv exacto y el host no lo
+/// reparsea. Nunca se pasa el comando entero como un único elemento — se
+/// trataría como el nombre de un binario con espacios.
 ///
-/// La carpeta de sesión de una cuenta adicional se aplica con el ejecutable
-/// `env` DENTRO del guest (`env VAR=/ruta programa args…`), sin depender de
-/// WSLENV: así el CLI escribe donde la resolución de #91 lee.
+/// La carpeta de sesión de una cuenta adicional se asegura (`mkdir -p`) y se
+/// aplica con el ejecutable `env` DENTRO del guest
+/// (`env VAR=/ruta programa args…`), sin depender de WSLENV: así el CLI
+/// escribe donde la resolución de #91 lee.
 ///
 /// El lanzador usa `-e`/`--exec`, NO `--`: sin `-e`, `wsl.exe` ejecuta el
 /// resto de la línea con la shell por defecto de la distro, que procesa las
 /// comillas y deja `exec "$@"` en `exec` sin argumentos (`exec: : not
 /// found` — hallazgo de la evidencia real en WSL, 2026-11-08). Con `-e` los
-/// tokens llegan al guest tal cual y el `exec "$@"` ve `$@` completo.
+/// tokens llegan al guest tal cual y el `"$@"` ve `$@` completo.
+///
+/// Al terminar el login NO se cierra la consola: se ejecuta el shell del
+/// usuario (`${SHELL:-/bin/sh}`), igual que `SHELL_WRAP` en host — si el
+/// CLI falla, el error queda visible en la ventana (revisión PR #92). Con
+/// carpeta de sesión de cuenta adicional, `$1` es la ruta y se asegura con
+/// `mkdir -p --` ANTES del login: Codex falla si `CODEX_HOME` no existe.
+const WSL_LOGIN_WRAP: &str = "\"$@\"; exec \"${SHELL:-/bin/sh}\"";
+const WSL_LOGIN_WRAP_MKDIR: &str =
+    "mkdir -p -- \"$1\" && shift && \"$@\"; exec \"${SHELL:-/bin/sh}\"";
+
 fn wsl_login_argv(
     distro: &str,
     login_command: &str,
@@ -304,11 +358,14 @@ fn wsl_login_argv(
         "-e".into(),
         "bash".into(),
         "-lc".into(),
-        "exec \"$@\"".into(),
+        WSL_LOGIN_WRAP.into(),
         "quorb".into(),
     ];
     if let Some((var, dir)) = env {
-        // `VAR=/ruta` como un argv POSIX (sin shell, sin quoting).
+        // `$1` = carpeta a asegurar; detrás `env VAR=/ruta <programa>`.
+        // La ruta viaja como DATO posicional (F14): sin quoting de shell.
+        argv[6] = WSL_LOGIN_WRAP_MKDIR.into();
+        argv.push(dir.to_string_lossy().into());
         argv.push("env".into());
         argv.push(format!("{var}={}", dir.to_string_lossy()).into());
     }
@@ -1354,7 +1411,9 @@ mod wsl_login_tests {
                 "-e",
                 "bash",
                 "-lc",
-                "exec \"$@\"",
+                // El login corre con `"$@"` y después se abre el shell: la
+                // consola no se cierra si el CLI falla (revisión PR #92).
+                "\"$@\"; exec \"${SHELL:-/bin/sh}\"",
                 "quorb",
                 "codex",
                 "login",
@@ -1386,12 +1445,28 @@ mod wsl_login_tests {
             &env,
         )
         .expect("argv");
+        // La carpeta se asegura ANTES del login (`mkdir -p -- "$1"`): Codex
+        // falla si CODEX_HOME no existe (revisión PR #92).
+        assert!(
+            argv.iter().any(|t| t
+                .to_string_lossy()
+                .starts_with("mkdir -p -- \"$1\" && shift")),
+            "el script asegura la carpeta de sesión: {:?}",
+            argv.iter().nth(6)
+        );
+        // `$1` = carpeta, como dato posicional justo tras el script.
+        let folder = argv
+            .iter()
+            .position(|t| t.to_string_lossy() == "/home/user/.quorb/accounts/claude-w1")
+            .expect("carpeta como dato posicional");
+        assert_eq!(argv[folder - 1], "quorb", "carpeta es $1");
         assert!(argv.iter().any(
             |t| t.to_string_lossy() == "CLAUDE_CONFIG_DIR=/home/user/.quorb/accounts/claude-w1"
         ));
         let pos = argv.iter().position(|t| t == "env").expect("env presente");
         let prog = argv.iter().position(|t| t == "claude").expect("programa");
         assert!(pos < prog, "env precede al programa");
+        assert!(folder < pos, "carpeta ($1) precede a env");
     }
 
     /// AC7: el comando del usuario se ejecuta DENTRO de la distro y no
@@ -1407,9 +1482,24 @@ mod wsl_login_tests {
             "un solo wsl.exe"
         );
         // Si el usuario escribiera un comando que YA empieza por wsl, seguiría
-        // siendo un dato del guest (no se le antepone otro wsl.exe).
+        // siendo un DATO del guest (no se le antepone otro wsl.exe): el token
+        // `wsl` vive después de `quorb` (posiciones 2+), nunca como lanzador.
         let double = wsl_login_argv("Ubuntu-22.04", "wsl codex login", &None).expect("argv");
-        assert!(double.last().is_some());
+        let quorb = double.iter().position(|t| t == "quorb").expect("argv0");
+        let guest_wsl = double
+            .iter()
+            .position(|t| t == "wsl")
+            .expect("el token del comando viaja al guest");
+        assert!(guest_wsl > quorb, "«wsl» del comando no es el lanzador");
+        assert_eq!(
+            double.iter().filter(|t| *t == "wsl.exe").count(),
+            1,
+            "un solo lanzador wsl.exe"
+        );
+        assert_eq!(
+            double.last().map(|t| t.to_string_lossy().as_ref()),
+            Some("login")
+        );
     }
 
     /// `cli_status` consulta la distro cuando el entorno es WSL; en host
@@ -1428,13 +1518,81 @@ mod wsl_login_tests {
         cfg.claude.login_command = "claude".into();
         cfg.codex.login_command = "codex login".into();
         let wsl_status = cli_status(&cfg, Some(wsl_of(&mock)));
-        assert!(wsl_status["claude"]);
+        assert_eq!(wsl_status["claude"], CliStatus::Ready);
         // El mock responde 0 a TODO `command -v`; codex/gemini/grok también
         // aparecen detectados (el stub responde igual).
         assert!(wsl_status.len() == 4);
         // Sin entorno WSL: detección de Windows (no rompe la ruta host).
         let host_status = cli_status(&cfg, None);
         assert!(host_status.len() == 4);
+        assert!(host_status.values().all(|s| *s == CliStatus::Ready));
+    }
+
+    /// El contrato distingue «distro detenida» (Stopped) de «CLI ausente»
+    /// (Missing): con la distro Stopped la UI NO debe proponer instalar la
+    /// CLI, y el sondeo NO la despierta (sin `run_command` ni sondeo de
+    /// shell). Escenario que el booleano anterior mostraba como «no
+    /// instalada» (revisión PR #92).
+    #[test]
+    fn cli_status_reports_stopped_without_waking_the_distro_or_probing() {
+        let mock = MockWslAdapter::new();
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        let cfg = AppConfig::default();
+        let status = cli_status(&cfg, Some(wsl_of(&mock)));
+        assert!(
+            status.values().all(|s| *s == CliStatus::Stopped),
+            "{status:?}"
+        );
+        assert!(status.len() == 4);
+        // No se ha ejecutado nada dentro de la distro: solo enumeración.
+        let calls = mock.calls();
+        assert!(
+            calls
+                .iter()
+                .all(|c| matches!(c, crate::wsl::WslCall::ListDistributions)),
+            "la distro detenida no se despierta: {calls:?}"
+        );
+    }
+
+    /// El contrato distingue WSL roto/distro inexistente (Error) de «CLI
+    /// ausente»: si la distro no está enumerada, no es un problema de
+    /// instalación de la CLI.
+    #[test]
+    fn cli_status_reports_error_for_an_unknown_distro() {
+        let mock = MockWslAdapter::new();
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let cfg = AppConfig::default();
+        let status = cli_status(
+            &cfg,
+            Some(WslLogin {
+                adapter: &mock,
+                distro: "Otra-Distro",
+            }),
+        );
+        assert!(
+            status.values().all(|s| *s == CliStatus::Error),
+            "{status:?}"
+        );
+    }
+
+    /// `wslDistro` vacío (sin configuración) cae a Host: `session_env()`
+    /// ya lo guarda en config.rs; aquí se verifica que `cli_status`/login
+    /// nunca ven una distro vacía (menor de la revisión PR #92).
+    #[test]
+    fn empty_wsl_distro_never_reaches_the_wsl_path() {
+        let mock = MockWslAdapter::new();
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let cfg = AppConfig::default();
+        // Sin distro configurada, session_env() es Host aunque el usuario
+        // haya elegido el modo WSL: la detección usa Windows, no wsl.exe.
+        assert!(matches!(cfg.session_env(), wsl::SessionEnv::Host));
+        let host_status = cli_status(&cfg, None);
+        assert!(host_status.len() == 4);
+        let calls = mock.calls();
+        assert!(
+            calls.is_empty(),
+            "wsl.exe no se toca con distro vacía: {calls:?}"
+        );
     }
 
     /// #92: si la CLI no está dentro de la distro, el login falla con un
@@ -1444,7 +1602,6 @@ mod wsl_login_tests {
     fn open_in_wsl_requires_the_cli_inside_the_distro() {
         let mock = MockWslAdapter::new();
         mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
-        mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
         mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
         mock.set_command_output(CommandOutput {
             code: 127,

@@ -1895,7 +1895,7 @@ export function SubscriptionPanel({
   onCodexRecheck,
 }: Pick<PanelProps, 'locale' | 'cfg' | 'set' | 'setVisibility' | 'healthFor'> & {
   p: 'claude' | 'codex' | 'gemini' | 'grok';
-  cli: Record<string, boolean>;
+  cli: Record<string, string>;
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
 }) {
@@ -1947,7 +1947,7 @@ export function SubscriptionPanel({
           id={p}
           provider={p}
           loginCommand={cfg[p].loginCommand}
-          cliMissing={cli[p] === false}
+          cliMissing={cli[p] === "missing"}
           persisted
           extra={false}
           health={healthFor(p, !cfg[p].enabled)}
@@ -2160,7 +2160,10 @@ export function Settings() {
   const [secrets, setSecrets] = useState<SecretStatus>({});
   // CLIs de login instalados (Claude Code, Codex, Gemini): se avisa antes de pulsar
   // «Iniciar sesión» y se detecta solo cuando se instala (cada 5 s o al volver a la ventana).
-  const [cli, setCli] = useState<Record<string, boolean>>({});
+  // Estado por proveedor: 'ready' | 'missing' | 'stopped' | 'error' (#92).
+  // Solo 'missing' propone instalar la CLI: una distro detenida (stopped) o
+  // un fallo de WSL (error) no se arreglan instalando nada.
+  const [cli, setCli] = useState<Record<string, string>>({});
   // Relectura puntual del CLI fuera del intervalo: la usa la instalación asistida
   // al terminar para habilitar el login sin depender de que la ventana siga abierta.
   const cliRecheck = useCallback(() => {
@@ -2627,7 +2630,7 @@ export function Settings() {
           onRemove={() => removeAccount(selAccount)}
           onSecrets={loadSecrets}
           health={healthFor(selAccount.id, !selAccount.enabled)}
-          cliMissing={cli[selAccount.provider] === false}
+          cliMissing={cli[selAccount.provider] === "missing"}
           loginCommand={
             selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini' || selAccount.provider === 'grok'
               ? cfg[selAccount.provider].loginCommand
