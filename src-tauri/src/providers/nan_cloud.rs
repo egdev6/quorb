@@ -114,7 +114,7 @@ pub struct CloudUsage {
 }
 
 pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, CloudError> {
-    let quota = get_json(http, Auth::Cookie(cookie), "/api/usage/quota").await?;
+    let quota = send_json(http, quota_request(http, Auth::Cookie(cookie))).await?;
     // Las métricas son un extra: si fallan, seguimos con las cuotas.
     let metrics = get_json(http, Auth::Cookie(cookie), "/api/metrics/usage")
         .await
@@ -135,19 +135,38 @@ pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, C
 
 /// Account quota of an API key: same payload as the dashboard (quota, usage and dates together).
 pub async fn fetch_account_quota(http: &reqwest::Client, key: &str) -> Result<Value, CloudError> {
-    get_json(http, Auth::Bearer(key), "/api/usage/quota").await
+    send_json(http, quota_request(http, Auth::Bearer(key))).await
+}
+
+/// The request that reads the quota of the account (the payload the dashboard shows).
+fn quota_request(http: &reqwest::Client, auth: Auth<'_>) -> reqwest::RequestBuilder {
+    request(http, auth, "/api/usage/quota")
+}
+
+/// Builds the request of a Cloud path with the given credentials.
+fn request(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> reqwest::RequestBuilder {
+    let req = http
+        .get(format!("{API}{path}"))
+        .header(reqwest::header::ACCEPT, "application/json");
+    match auth {
+        Auth::Cookie(cookie) => req.header(reqwest::header::COOKIE, cookie),
+        Auth::Bearer(key) => req.bearer_auth(key),
+    }
 }
 
 async fn get_json(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> Result<Value, CloudError> {
-    let mut req = http
-        .get(format!("{API}{path}"))
-        .header(reqwest::header::ACCEPT, "application/json");
-    req = match auth {
-        Auth::Cookie(cookie) => req.header(reqwest::header::COOKIE, cookie),
-        Auth::Bearer(key) => req.bearer_auth(key),
-    };
-    let res = req
-        .send()
+    send_json(http, request(http, auth, path)).await
+}
+
+/// Sends the request and parses the JSON body; the errors name the path of the request.
+async fn send_json(
+    http: &reqwest::Client,
+    req: reqwest::RequestBuilder,
+) -> Result<Value, CloudError> {
+    let req = req.build().map_err(|e| CloudError::Other(net_error(e)))?;
+    let path = req.url().path().to_string();
+    let res = http
+        .execute(req)
         .await
         .map_err(|e| CloudError::Other(net_error(e)))?;
     match res.status().as_u16() {
@@ -405,5 +424,49 @@ mod tests {
         assert!(!is_nan_host(
             &reqwest::Url::parse("http://cloud.nan.builders/x").unwrap()
         ));
+    }
+
+    #[test]
+    fn the_account_quota_request_carries_the_api_key_as_bearer() {
+        let http = reqwest::Client::new();
+        let req = quota_request(&http, Auth::Bearer("nan-key"))
+            .build()
+            .expect("the request builds without network");
+        assert_eq!(
+            req.url().as_str(),
+            "https://cloud-api.nan.builders/api/usage/quota"
+        );
+        assert_eq!(
+            req.headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("Bearer nan-key")
+        );
+        assert_eq!(
+            req.headers()
+                .get(reqwest::header::ACCEPT)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json")
+        );
+        assert!(req.headers().get(reqwest::header::COOKIE).is_none());
+    }
+
+    #[test]
+    fn the_session_quota_request_carries_the_cookie_and_no_authorization() {
+        let http = reqwest::Client::new();
+        let req = quota_request(&http, Auth::Cookie("session=abc"))
+            .build()
+            .expect("the request builds without network");
+        assert_eq!(
+            req.url().as_str(),
+            "https://cloud-api.nan.builders/api/usage/quota"
+        );
+        assert_eq!(
+            req.headers()
+                .get(reqwest::header::COOKIE)
+                .and_then(|v| v.to_str().ok()),
+            Some("session=abc")
+        );
+        assert!(req.headers().get(reqwest::header::AUTHORIZATION).is_none());
     }
 }
