@@ -147,7 +147,12 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         .collect();
     quotas.extend(quotas_from_models(&models_json));
 
-    // Account quota with the SAME API key: quota, usage and dates come from one payload.
+    // Cuota por cuenta del panel de NaN, con la MISMA API key (`GET /api/usage/quota` de
+    // `cloud-api.nan.builders`): `nan_cloud::parse_quota` toma `fullCap` (la asignación del
+    // plan) y solo cae a `cap` (el contador del periodo en curso) si `fullCap` no viene; el
+    // consumo y las fechas salen del mismo payload, así que cuota, uso y periodo son del
+    // mismo periodo. Si esta llamada falla queda `None`, `nan_meters` cae a la cuota
+    // publicada y el informe lo avisa como tal.
     let account_quota = super::nan_cloud::fetch_account_quota(http, &key).await.ok();
 
     // 2. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
