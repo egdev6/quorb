@@ -684,6 +684,149 @@ time.sleep(0.08)
         finally:
             MODULE.PER_CALL_TIMEOUT = previous
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux")
+    def test_cleanup_wait_is_bounded(self):
+        import time
+        class Process:
+            pid = 999999999
+            def wait(self, *args, **kwargs): return 0
+        start = time.monotonic()
+        def killpg(*args):
+            if time.monotonic() - start >= 2: raise ProcessLookupError
+        with mock.patch.object(MODULE.os, "killpg", side_effect=killpg):
+            MODULE._stop_parsers([Process()])
+        self.assertLess(time.monotonic() - start, 1)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux")
+    def test_failure_kills_child_of_completed_parser(self):
+        import signal
+        pid, third = self.root / "pid", self.root / "third"
+        child = (f"import os,signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                 f"open({str(pid)!r},'w').write(str(os.getpid()));time.sleep(15)")
+        exe = self.root / "scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os,subprocess,sys,time
+n=sys.argv[-1]
+if n.endswith('000000.js'):
+ subprocess.Popen([sys.executable,'-c',{child!r}])
+ while not os.path.exists({str(pid)!r}): time.sleep(.005)
+elif n.endswith('000001.js'):
+ while not os.path.exists({str(third)!r}): time.sleep(.005)
+ sys.exit(7)
+else:
+ open({str(third)!r},'w').close(); time.sleep(15)
+""")
+        exe.chmod(0o700)
+        try:
+            with self.assertRaises(MODULE.ParseGateError):
+                MODULE.check_parse(str(exe), self.entries(
+                    [f"{i:06d}.js" for i in range(3)]), self.root, budget_seconds=3)
+            self.assertTrue(third.exists(), "later failure was not reached")
+            stat = Path(f"/proc/{pid.read_text()}/stat")
+            self.assertFalse(stat.exists() and stat.read_text().rsplit(") ", 1)[1][0] not in "ZX")
+        finally:
+            if pid.exists():
+                try: os.kill(int(pid.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_success_kills_completed_parser_descendant(self):
+        import signal
+        pid = self.root / "success.pid"
+        child = ("import os,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                 f"open({str(pid)!r},'w').write(str(os.getpid())); time.sleep(15)")
+        exe = self.root / "success-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os,subprocess,sys,time
+subprocess.Popen([sys.executable,'-c',{child!r}])
+while not os.path.exists({str(pid)!r}): time.sleep(.005)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        output = io.StringIO()
+        errors = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                result = MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertEqual(result, [entries[0]["path"]])
+            stat = Path(f"/proc/{pid.read_text()}/stat")
+            self.assertFalse(stat.exists() and stat.read_text().rsplit(") ", 1)[1][0] not in "ZX")
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(errors.getvalue(), "")
+        finally:
+            if pid.exists():
+                try: os.kill(int(pid.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_cleanup_bounds_process_wait(self):
+        import time
+        class Process:
+            pid = 999999998
+            def wait(self, timeout=None):
+                if timeout is None:
+                    time.sleep(1.2)
+                    return 0
+                raise subprocess.TimeoutExpired("synthetic", timeout)
+        start = time.monotonic()
+        with mock.patch.object(MODULE.os, "killpg", side_effect=ProcessLookupError):
+            MODULE._stop_parsers([Process()])
+        self.assertLess(time.monotonic() - start, 1)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_cleanup_deadline_is_shared_across_parsers(self):
+        import time
+        waits = []
+
+        class Process:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                delay = 0.55 if timeout is None else min(0.55, timeout)
+                time.sleep(delay)
+                if timeout is not None and timeout < 0.55:
+                    raise subprocess.TimeoutExpired("synthetic", timeout)
+                return 0
+
+        start = time.monotonic()
+        with mock.patch.object(MODULE.os, "killpg", side_effect=ProcessLookupError):
+            complete = MODULE._stop_parsers([Process(999999997), Process(999999998)])
+        self.assertFalse(complete)
+        self.assertEqual(len(waits), 2)
+        self.assertLess(waits[1], waits[0])
+        self.assertLess(time.monotonic() - start, 1)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_incomplete_success_cleanup_fails_closed(self):
+        import time
+        exe = self.root / "success-with-unresolved-group"
+        exe.write_text(f"""#!{sys.executable}
+pass
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        original_killpg = os.killpg
+        start = time.monotonic()
+
+        def unresolved_group(group, sig):
+            if sig == 0 and time.monotonic() - start < 2:
+                return
+            return original_killpg(group, sig)
+
+        output = io.StringIO()
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with mock.patch.object(MODULE.os, "killpg", side_effect=unresolved_group):
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+        self.assertLess(time.monotonic() - start, 1)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
     def test_failure_waits_until_signalled_group_is_gone(self):
         import time

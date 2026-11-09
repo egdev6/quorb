@@ -26,6 +26,7 @@ MAX_SOURCE = 1024 * 1024
 MAX_ENTRIES = 10000
 PER_CALL_TIMEOUT = 10.0
 TERMINATE_GRACE = 0.1
+CLEANUP_TIMEOUT = 0.75
 PARSE_WORKERS = 2
 BASE_BUDGET = 120.0
 PER_FILE_BUDGET = 0.25
@@ -118,24 +119,17 @@ def _peek_parser(process):
 
 def _wait_parser(process, timeout, deadline, stopped):
     # Where waitid supports WNOWAIT, keep leaders unreaped until group cleanup
-    # so a reused PID cannot identify an unrelated group.
-    if _can_peek_unreaped():
-        while not stopped.is_set():
-            status = _peek_parser(process)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(process.args, timeout)
-            if status is not None:
-                return status
-            stopped.wait(min(0.01, remaining))
-        _fail()
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise subprocess.TimeoutExpired(process.args, timeout)
-    status = process.wait(timeout=remaining)
-    if time.monotonic() >= deadline:
-        raise subprocess.TimeoutExpired(process.args, timeout)
-    return status
+    # so a reused PID cannot identify an unrelated group. Polling also lets a
+    # cancelled worker exit without an unbounded wait on non-POSIX platforms.
+    while not stopped.is_set():
+        status = _peek_parser(process)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        if status is not None:
+            return status
+        stopped.wait(min(0.01, remaining))
+    _fail()
 
 
 def _signal_parser(process, *, terminate):
@@ -156,27 +150,37 @@ def _signal_parser(process, *, terminate):
             pass
 
 
-def _stop_parsers(processes):
+def _stop_parsers(processes, *, graceful=True, deadline=None):
+    """Stop groups and reap children within one shared deadline; report completeness."""
     if not processes:
-        return
-    for process in processes:
-        _signal_parser(process, terminate=True)
-    time.sleep(TERMINATE_GRACE)
-    # Always signal the group, even if its leader exited on SIGTERM: a child
-    # may have ignored it. WNOWAIT keeps the leader's ID reserved when available.
+        return True
+    if deadline is None:
+        deadline = time.monotonic() + CLEANUP_TIMEOUT
+    if graceful:
+        for process in processes:
+            _signal_parser(process, terminate=True)
+        delay = min(TERMINATE_GRACE, max(0.0, deadline - time.monotonic()))
+        if delay:
+            time.sleep(delay)
+    # Signal every group even if the deadline has elapsed or its leader exited.
     for process in processes:
         _signal_parser(process, terminate=False)
     for process in processes:
-        process.wait()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            return False
     if os.name == "posix":
-        # SIGKILL delivery is asynchronous; wait for group disappearance.
-        # PID 1 can also reap descendants adopted from its parsers. The outer
-        # container stage remains the hard limit if the kernel cannot finish.
+        # Reap adopted children without blocking, but never wait indefinitely
+        # for a zombie owned by another reaper or a process stuck in the kernel.
         groups = {process.pid for process in processes}
-        while groups:
+        while groups and time.monotonic() < deadline:
             for group in list(groups):
                 try:
-                    while os.waitpid(-group, os.WNOHANG)[0]:
+                    while time.monotonic() < deadline and os.waitpid(-group, os.WNOHANG)[0]:
                         pass
                 except ChildProcessError:
                     pass
@@ -185,7 +189,11 @@ def _stop_parsers(processes):
                 except ProcessLookupError:
                     groups.remove(group)
             if groups:
-                time.sleep(0.005)
+                delay = min(0.005, max(0.0, deadline - time.monotonic()))
+                if delay:
+                    time.sleep(delay)
+        return not groups
+    return True
 
 
 def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=None,
@@ -213,6 +221,7 @@ def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=None,
         lock = threading.Lock()
         stopped = threading.Event()
         active = {}
+        cleanup_deadline = None
 
         def check_peers():
             # A worker may not yet have observed an exited or timed-out peer.
@@ -223,6 +232,7 @@ def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=None,
                 _fail()
 
         def parse(path):
+            nonlocal cleanup_deadline
             try:
                 language = "typescript" if Path(path).suffix in (".ts", ".tsx") else "javascript"
                 command = [semgrep, "show", "dump-ast", language, path]
@@ -254,8 +264,13 @@ def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=None,
                     if stopped.is_set():
                         _fail()
                     if process is not None:
-                        process.wait()
+                        # Keep the leader unreaped until its entire group has
+                        # been signalled, including after a successful parse.
+                        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT
+                        if not _stop_parsers([process], graceful=False, deadline=cleanup_deadline):
+                            _fail()
                         del active[process]
+                        cleanup_deadline = None
             except Exception:
                 with lock:
                     stopped.set()
@@ -287,7 +302,8 @@ def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=None,
                 with lock:
                     stopped.set()
                     processes = list(active)
-                _stop_parsers(processes)
+                    deadline = cleanup_deadline
+                _stop_parsers(processes, deadline=deadline)
                 raise
         if budget - (clock() - start) <= 0:
             _fail()
