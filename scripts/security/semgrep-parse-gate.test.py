@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavior tests for the trusted parse gate. Pure unittest; no scanner, no network."""
+"""Behavior tests with inert synthetic scanners; no Semgrep binary or network."""
 import contextlib
 import hashlib
 import importlib.util
@@ -11,6 +11,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -435,6 +436,327 @@ class ParseGateTest(unittest.TestCase):
                 self.assertEqual(errors.getvalue(), "")
                 self.assertEqual(MODULE.verify_snapshot(entries, self.root),
                                  [entry["path"] for entry in entries])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_real_success_parses_all_files_in_separate_sessions(self):
+        exe = self.root / "successful-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, sys
+if os.getsid(0) != os.getpid(): sys.exit(4)
+open(os.path.join({str(self.root)!r}, os.path.basename(sys.argv[-1]) + '.done'), 'w').write('done')
+print('scanner output')
+print('scanner error', file=sys.stderr)
+""")
+        exe.chmod(0o700)
+        entries = self.entries([f"{i:06d}.js" for i in range(4)])
+        output = io.StringIO()
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            result = MODULE.check_parse(str(exe), entries, self.root)
+        self.assertEqual(result, [entry["path"] for entry in entries])
+        self.assertTrue(all((self.root / f"{i:06d}.js.done").read_text() == "done" for i in range(4)))
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_non_posix_fallback_stops_direct_process(self):
+        import signal
+        pidfile = self.root / "direct.pid"
+        exe = self.root / "direct-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, time
+open({str(pidfile)!r}, 'w').write(str(os.getpid()))
+time.sleep(15)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+
+        class NonPosix:
+            name = "nt"
+
+            def __getattr__(self, name):
+                if name == "killpg":
+                    raise AssertionError("non-POSIX fallback must not signal a process group")
+                return getattr(os, name)
+
+        try:
+            with mock.patch.object(MODULE, "os", NonPosix()):
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse(str(exe), entries, self.root, budget_seconds=0.8)
+            self.assertEqual(str(ctx.exception), FAILED)
+            self.assertTrue(pidfile.exists(), "parser did not start")
+            pid = int(pidfile.read_text())
+            proc = Path(f"/proc/{pid}/stat")
+            alive = proc.exists() and proc.read_text().rsplit(") ", 1)[1][0] not in "ZX"
+            self.assertFalse(alive, f"direct parser {pid} survived timeout")
+        finally:
+            if pidfile.exists():
+                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_failed_peer_leaves_no_parser_descendant(self):
+        import signal, time
+        pidfile = self.root / "child.pid"
+        exe = self.root / "scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, subprocess, sys, time
+p = {str(pidfile)!r}
+if sys.argv[-1].endswith("000000.js"):
+    end = time.monotonic() + 2
+    while not os.path.exists(p) and time.monotonic() < end: time.sleep(.01)
+    sys.exit(7)
+c = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(15)"])
+open(p, "w").write(str(c.pid))
+time.sleep(15)
+""")
+        exe.chmod(0o700)
+        entries = self.entries(["000000.js", "000001.js"])
+        try:
+            with self.assertRaises(MODULE.ParseGateError):
+                MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertTrue(pidfile.exists(), "second parser did not start")
+            pid = int(pidfile.read_text())
+            proc = Path(f"/proc/{pid}/stat")
+            alive = proc.exists() and proc.read_text().rsplit(") ", 1)[1][0] not in "ZX"
+            self.assertFalse(alive, f"orphan {pid}")
+        finally:
+            if pidfile.exists():
+                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    def test_no_new_parser_is_dispatched_after_peer_failure(self):
+        import time
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        first_started = threading.Event()
+        second_failed = threading.Event()
+        calls = []
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        def run(args, **kwargs):
+            path = args[-1]
+            calls.append(path)
+            if path == entries[0]["path"]:
+                first_started.set()
+                if not second_failed.wait(2):
+                    raise RuntimeError("peer did not start")
+                time.sleep(0.15)
+                return Result()
+            if path == entries[1]["path"]:
+                if not first_started.wait(2):
+                    raise RuntimeError("first did not start")
+                second_failed.set()
+                return Result(3)
+            return Result()
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=lambda: 0.0)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertEqual(set(calls), {entries[0]["path"], entries[1]["path"]})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                         [entry["path"] for entry in entries])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_exited_failure_is_not_hidden_by_delayed_worker(self):
+        import time
+        pidfile = self.root / "failed.pid"
+        third = self.root / "third-dispatched"
+        exe = self.root / "ordered-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, sys, time
+p = os.path.basename(sys.argv[-1])
+if p == '000000.js':
+    end = time.monotonic() + 2
+    while not os.path.exists({str(pidfile)!r}) and time.monotonic() < end: time.sleep(.01)
+    time.sleep(.1)
+elif p == '000001.js':
+    open({str(pidfile)!r}, 'w').write(str(os.getpid()))
+    sys.exit(7)
+else:
+    open({str(third)!r}, 'w').write('dispatched')
+""")
+        exe.chmod(0o700)
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        original_waitid = os.waitid
+        delayed = threading.Event()
+
+        def slow_peer_waitid(kind, pid, flags):
+            try:
+                failed_pid = int(pidfile.read_text())
+            except (OSError, ValueError):
+                failed_pid = None
+            if (threading.current_thread() is not threading.main_thread()
+                    and pid == failed_pid and not delayed.is_set()):
+                delayed.set()
+                time.sleep(0.4)
+            return original_waitid(kind, pid, flags)
+
+        with mock.patch.object(MODULE.os, "waitid", side_effect=slow_peer_waitid):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertTrue(delayed.is_set(), "failed parser monitor was not delayed")
+        self.assertFalse(third.exists(), "third parser started after its peer exited with failure")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                         [entry["path"] for entry in entries])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_timed_out_peer_blocks_new_process_even_if_monitor_is_delayed(self):
+        import signal, time
+        pidfile = self.root / "slow-peer.pid"
+        started = self.root / "late-dispatch"
+        exe = self.root / "timeout-order-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, sys, time
+if sys.argv[-1].endswith('000001.js'):
+    open({str(pidfile)!r}, 'w').write(str(os.getpid()))
+    time.sleep(15)
+else:
+    open({str(started)!r}, 'w').write('dispatched')
+""")
+        exe.chmod(0o700)
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        original_waitid = os.waitid
+        delayed = threading.Event()
+        previous = MODULE.PER_CALL_TIMEOUT
+        MODULE.PER_CALL_TIMEOUT = 0.2
+
+        def slow_path(value):
+            if str(value).endswith("000000.js"):
+                time.sleep(0.35)
+            return Path(value)
+
+        def slow_peer_waitid(kind, pid, flags):
+            try:
+                peer_pid = int(pidfile.read_text())
+            except (OSError, ValueError):
+                peer_pid = None
+            if pid == peer_pid and not delayed.is_set():
+                delayed.set()
+                time.sleep(0.6)
+            return original_waitid(kind, pid, flags)
+
+        try:
+            with mock.patch.object(MODULE, "Path", side_effect=slow_path):
+                with mock.patch.object(MODULE.os, "waitid", side_effect=slow_peer_waitid):
+                    with self.assertRaises(MODULE.ParseGateError) as ctx:
+                        MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertEqual(str(ctx.exception), FAILED)
+            self.assertTrue(delayed.is_set(), "peer monitor was not delayed")
+            self.assertFalse(started.exists(), "parser started after its peer timed out")
+            self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                             [entry["path"] for entry in entries])
+        finally:
+            MODULE.PER_CALL_TIMEOUT = previous
+            if pidfile.exists():
+                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_late_success_cannot_bypass_per_call_timeout(self):
+        import time
+        exe = self.root / "slow-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import time
+time.sleep(0.08)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        original_waitid = os.waitid
+        previous = MODULE.PER_CALL_TIMEOUT
+        MODULE.PER_CALL_TIMEOUT = 0.03
+
+        def delayed_waitid(*args):
+            time.sleep(0.15)
+            return original_waitid(*args)
+
+        try:
+            with mock.patch.object(MODULE.os, "waitid", side_effect=delayed_waitid):
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertEqual(str(ctx.exception), FAILED)
+            self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+        finally:
+            MODULE.PER_CALL_TIMEOUT = previous
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_failure_waits_until_signalled_group_is_gone(self):
+        import time
+        exe = self.root / "failed-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import sys
+sys.exit(7)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        original_killpg = os.killpg
+        first_probe = []
+
+        def delayed_disappearance(group, sig):
+            if sig == 0:
+                if not first_probe:
+                    first_probe.append(time.monotonic())
+                if time.monotonic() - first_probe[0] < 0.25:
+                    return
+            return original_killpg(group, sig)
+
+        with mock.patch.object(MODULE.os, "killpg", side_effect=delayed_disappearance):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertTrue(first_probe, "process group was not checked")
+        self.assertGreaterEqual(time.monotonic() - first_probe[0], 0.25)
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_timeouts_kill_term_resistant_descendant(self):
+        import signal
+        for mode in ("per-call", "total"):
+            with self.subTest(mode=mode):
+                pidfile = self.root / f"{mode}.pid"
+                ready = self.root / f"{mode}.ready"
+                exe = self.root / f"scanner-{mode}"
+                child = ("import os, signal, time; "
+                         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                         f"open({str(ready)!r}, 'w').write('ready'); time.sleep(15)")
+                exe.write_text(f"""#!{sys.executable}
+import subprocess, sys, time
+c = subprocess.Popen([sys.executable, '-c', {child!r}])
+open({str(pidfile)!r}, 'w').write(str(c.pid))
+time.sleep(15)
+""")
+                exe.chmod(0o700)
+                entries = [self.write("000000.js")]
+                previous = MODULE.PER_CALL_TIMEOUT
+                if mode == "per-call":
+                    MODULE.PER_CALL_TIMEOUT = 0.8
+                output = io.StringIO()
+                errors = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        with self.assertRaises(MODULE.ParseGateError) as ctx:
+                            MODULE.check_parse(str(exe), entries, self.root,
+                                               budget_seconds=0.8 if mode == "total" else 3)
+                    self.assertEqual(str(ctx.exception), FAILED)
+                    self.assertTrue(pidfile.exists(), "parser did not start its child")
+                    self.assertTrue(ready.exists(), "child did not install its SIGTERM handler")
+                    pid = int(pidfile.read_text())
+                    proc = Path(f"/proc/{pid}/stat")
+                    alive = proc.exists() and proc.read_text().rsplit(") ", 1)[1][0] not in "ZX"
+                    self.assertFalse(alive, f"orphan {pid} after {mode} timeout")
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(errors.getvalue(), "")
+                    self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+                finally:
+                    MODULE.PER_CALL_TIMEOUT = previous
+                    if pidfile.exists():
+                        try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                        except ProcessLookupError: pass
 
     def test_errors_never_leak_paths_or_secrets(self):
         secret = "sup3r-secret-token"

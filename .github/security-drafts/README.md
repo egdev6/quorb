@@ -54,7 +54,9 @@ Una creación Docker que termine tarde tras un timeout no tiene garantía absolu
   confiable: `min(300 s, 120 s + 0,25 s × número de archivos)`, incluidas las verificaciones de integridad.
   Cada invocación conserva su máximo de 10 s. El tope deja 300 s del límite de 600 s de la etapa
   para instalación, scan y demás trabajo; no los garantiza individualmente. Timeout, error o cobertura
-  incompleta bloquean; el target no puede configurar la fórmula ni excluir archivos.
+  incompleta bloquean; el target no puede configurar la fórmula ni excluir archivos. Ante un fallo
+  o timeout se envían SIGTERM y SIGKILL a los grupos POSIX y se espera a que desaparezcan; si el kernel
+  no completa la limpieza, el límite externo de la etapa bloquea. Fuera de POSIX se termina el proceso directo.
 - Cada workflow se pasa explícitamente a zizmor con `--strict-collection --no-config --no-ignores`.
   `--no-exit-codes` conserva los fallos operativos; comentarios de supresión no eliminan avisos.
 - Versiones, locks, fuentes y cinco archivos de control se comprueban; el resultado se liga al inventario.

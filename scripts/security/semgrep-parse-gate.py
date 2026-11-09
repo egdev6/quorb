@@ -13,18 +13,19 @@ import hashlib
 import math
 import os
 import re
+import signal
 import stat
 import subprocess
+import threading
 import time
 import unicodedata
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from itertools import islice
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 MAX_SOURCE = 1024 * 1024
 MAX_ENTRIES = 10000
 PER_CALL_TIMEOUT = 10.0
+TERMINATE_GRACE = 0.1
 PARSE_WORKERS = 2
 BASE_BUDGET = 120.0
 PER_FILE_BUDGET = 0.25
@@ -101,14 +102,99 @@ def verify_snapshot(entries, root=Path("/inputs"), *, workflow=False):
         _fail()
 
 
-def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=subprocess.run,
+def _can_peek_unreaped():
+    return os.name == "posix" and all(hasattr(os, name) for name in
+                                      ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT", "CLD_EXITED"))
+
+
+def _peek_parser(process):
+    if _can_peek_unreaped():
+        status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if status is None:
+            return None
+        return 0 if status.si_code == os.CLD_EXITED and status.si_status == 0 else 1
+    return process.poll()
+
+
+def _wait_parser(process, timeout, deadline, stopped):
+    # Where waitid supports WNOWAIT, keep leaders unreaped until group cleanup
+    # so a reused PID cannot identify an unrelated group.
+    if _can_peek_unreaped():
+        while not stopped.is_set():
+            status = _peek_parser(process)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            if status is not None:
+                return status
+            stopped.wait(min(0.01, remaining))
+        _fail()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise subprocess.TimeoutExpired(process.args, timeout)
+    status = process.wait(timeout=remaining)
+    if time.monotonic() >= deadline:
+        raise subprocess.TimeoutExpired(process.args, timeout)
+    return status
+
+
+def _signal_parser(process, *, terminate):
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM if terminate else signal.SIGKILL)
+        elif terminate:
+            process.terminate()
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+    except OSError:
+        # If signalling the group fails, still attempt to stop its direct child.
+        try:
+            process.terminate() if terminate else process.kill()
+        except OSError:
+            pass
+
+
+def _stop_parsers(processes):
+    if not processes:
+        return
+    for process in processes:
+        _signal_parser(process, terminate=True)
+    time.sleep(TERMINATE_GRACE)
+    # Always signal the group, even if its leader exited on SIGTERM: a child
+    # may have ignored it. WNOWAIT keeps the leader's ID reserved when available.
+    for process in processes:
+        _signal_parser(process, terminate=False)
+    for process in processes:
+        process.wait()
+    if os.name == "posix":
+        # SIGKILL delivery is asynchronous; wait for group disappearance.
+        # PID 1 can also reap descendants adopted from its parsers. The outer
+        # container stage remains the hard limit if the kernel cannot finish.
+        groups = {process.pid for process in processes}
+        while groups:
+            for group in list(groups):
+                try:
+                    while os.waitpid(-group, os.WNOHANG)[0]:
+                        pass
+                except ChildProcessError:
+                    pass
+                try:
+                    os.killpg(group, 0)
+                except ProcessLookupError:
+                    groups.remove(group)
+            if groups:
+                time.sleep(0.005)
+
+
+def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=None,
                 clock=time.monotonic, budget_seconds=None):
     """Return validated paths in inventory order once every analyzer succeeds.
 
     Both snapshot checks count against the scaled, capped monotonic budget. The
-    optional injected budget can only lower the trusted limit. Two workers run
-    at most two calls at once; every call retains its own timeout and failures
-    are joined and propagated before any result is returned.
+    injected runner is for tests; production tracks a separate process group per
+    call. A failure stops dispatch and terminates and joins in-flight parsers.
     """
     try:
         if not isinstance(semgrep, str) or not semgrep:
@@ -124,29 +210,85 @@ def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=subprocess.run
         budget = min(MAX_BUDGET, BASE_BUDGET + PER_FILE_BUDGET * len(validated))
         if budget_seconds is not None:
             budget = min(budget, budget_seconds)
+        lock = threading.Lock()
+        stopped = threading.Event()
+        active = {}
+
+        def check_peers():
+            # A worker may not yet have observed an exited or timed-out peer.
+            # Check both before dispatching or starting another parser.
+            if runner is None and any(time.monotonic() >= deadline or
+                                      _peek_parser(process) not in (None, 0)
+                                      for process, deadline in active.items()):
+                _fail()
 
         def parse(path):
-            remaining = budget - (clock() - start)
-            if remaining <= 0:
-                _fail()
-            language = "typescript" if Path(path).suffix in (".ts", ".tsx") else "javascript"
-            command = [semgrep, "show", "dump-ast", language, path]
-            result = runner(command, shell=False, check=False,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            timeout=min(PER_CALL_TIMEOUT, remaining))
-            if getattr(result, "returncode", None) != 0:
-                _fail()
+            try:
+                language = "typescript" if Path(path).suffix in (".ts", ".tsx") else "javascript"
+                command = [semgrep, "show", "dump-ast", language, path]
+                with lock:
+                    if stopped.is_set():
+                        _fail()
+                    check_peers()
+                    remaining = budget - (clock() - start)
+                    if remaining <= 0:
+                        _fail()
+                    timeout = min(PER_CALL_TIMEOUT, remaining)
+                    process = None
+                    if runner is None:
+                        process = subprocess.Popen(command, shell=False,
+                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                                   start_new_session=(os.name == "posix"))
+                        deadline = time.monotonic() + timeout
+                        active[process] = deadline
+                if process is None:
+                    result = runner(command, shell=False, check=False,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    timeout=timeout)
+                    code = getattr(result, "returncode", None)
+                else:
+                    code = _wait_parser(process, timeout, deadline, stopped)
+                if code != 0:
+                    _fail()
+                with lock:
+                    if stopped.is_set():
+                        _fail()
+                    if process is not None:
+                        process.wait()
+                        del active[process]
+            except Exception:
+                with lock:
+                    stopped.set()
+                raise
 
-        # Bound pending work as well as active calls; on failure the context
-        # joins the other in-flight call instead of leaving a scanner behind.
         with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as pool:
             paths = iter(validated)
-            pending = deque(pool.submit(parse, path) for path in islice(paths, PARSE_WORKERS))
-            for path in paths:
-                pending.popleft().result()
-                pending.append(pool.submit(parse, path))
-            for future in pending:
-                future.result()
+            pending = set()
+
+            def fill():
+                while len(pending) < PARSE_WORKERS:
+                    with lock:
+                        if stopped.is_set():
+                            _fail()
+                        check_peers()
+                        path = next(paths, None)
+                        if path is None:
+                            return
+                        pending.add(pool.submit(parse, path))
+
+            try:
+                fill()
+                while pending:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        future.result()
+                    fill()
+            except BaseException:
+                with lock:
+                    stopped.set()
+                    processes = list(active)
+                _stop_parsers(processes)
+                raise
         if budget - (clock() - start) <= 0:
             _fail()
         verify_snapshot(entries, root)
