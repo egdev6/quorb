@@ -39,7 +39,6 @@ pub(crate) fn open(id: &str, cfg: &AppConfig, wsl: Option<WslLogin<'_>>) -> Resu
     }
     match wsl.as_ref() {
         Some(w) => {
-            let program = program_of(command);
             let argv = prepare_wsl_login(w, &provider, command, &env)?;
             spawn_wsl_terminal(&argv)
         }
@@ -1339,9 +1338,6 @@ mod wsl_login_tests {
         assert!(err.contains("no está instalada"), "{err}");
     }
 
-    /// F14: el login del guest se pasa como argumento, con distro y comando
-    /// entre comillas (espacios y no-ASCII).
-    #[test]
     /// F14: el login se TOKENIZA (no viaja como un único elemento) y cada
     /// token queda como argumento posicional del script `exec "$@"`; la
     /// carpeta de la cuenta viaja con `env` dentro del guest (sin WSLENV).
