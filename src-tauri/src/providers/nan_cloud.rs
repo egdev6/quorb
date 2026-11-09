@@ -88,9 +88,15 @@ pub async fn login_complete(link: &str) -> Result<String, String> {
     Ok(cookie_header(&jar))
 }
 
+/// Credentials accepted by the Cloud API: the dashboard session (cookie) or an API key (bearer).
+enum Auth<'a> {
+    Cookie(&'a str),
+    Bearer(&'a str),
+}
+
 /// Comprueba la sesión y devuelve el nombre de usuario.
 pub async fn whoami(http: &reqwest::Client, cookie: &str) -> Result<String, CloudError> {
-    let v = get_json(http, cookie, "/api/auth/me").await?;
+    let v = get_json(http, Auth::Cookie(cookie), "/api/auth/me").await?;
     Ok(v.pointer("/handle")
         .or_else(|| v.pointer("/username"))
         .or_else(|| v.pointer("/user/handle"))
@@ -108,9 +114,11 @@ pub struct CloudUsage {
 }
 
 pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, CloudError> {
-    let quota = get_json(http, cookie, "/api/usage/quota").await?;
+    let quota = get_json(http, Auth::Cookie(cookie), "/api/usage/quota").await?;
     // Las métricas son un extra: si fallan, seguimos con las cuotas.
-    let metrics = get_json(http, cookie, "/api/metrics/usage").await.ok();
+    let metrics = get_json(http, Auth::Cookie(cookie), "/api/metrics/usage")
+        .await
+        .ok();
     Ok(CloudUsage {
         meters: parse_quota(&quota),
         daily: metrics.as_ref().map(parse_daily).unwrap_or_default(),
@@ -125,11 +133,20 @@ pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, C
     })
 }
 
-async fn get_json(http: &reqwest::Client, cookie: &str, path: &str) -> Result<Value, CloudError> {
-    let res = http
+/// Account quota of an API key: same payload as the dashboard (quota, usage and dates together).
+pub async fn fetch_account_quota(http: &reqwest::Client, key: &str) -> Result<Value, CloudError> {
+    get_json(http, Auth::Bearer(key), "/api/usage/quota").await
+}
+
+async fn get_json(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> Result<Value, CloudError> {
+    let mut req = http
         .get(format!("{API}{path}"))
-        .header(reqwest::header::COOKIE, cookie)
-        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT, "application/json");
+    req = match auth {
+        Auth::Cookie(cookie) => req.header(reqwest::header::COOKIE, cookie),
+        Auth::Bearer(key) => req.bearer_auth(key),
+    };
+    let res = req
         .send()
         .await
         .map_err(|e| CloudError::Other(net_error(e)))?;
@@ -184,7 +201,14 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
         .filter_map(|m| {
             let model = m.get("model").and_then(Value::as_str)?;
             let used = m.get("tokensUsed").and_then(Value::as_f64)?;
-            let cap = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0)?;
+            // Denominator: the allowance the account actually got (`fullCap`); the period
+            // `cap` is only a fallback (it is prorated on the first period of a plan).
+            let period_cap = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0);
+            let allowance = m
+                .get("fullCap")
+                .and_then(Value::as_f64)
+                .filter(|c| *c > 0.0);
+            let limit = allowance.or(period_cap)?;
             if used <= 0.0 {
                 return None;
             }
@@ -202,9 +226,9 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
             Some(Meter {
                 id: format!("model:{model}"),
                 label: model.to_string(),
-                percent: Some(used / cap * 100.0),
+                percent: Some(used / limit * 100.0),
                 used: Some(used),
-                limit: Some(cap),
+                limit: Some(limit),
                 unit: Some("tokens".into()),
                 resets_at: end.map(|e| e.to_rfc3339()),
                 window_seconds: match (start, end) {
@@ -267,6 +291,59 @@ mod tests {
         assert_eq!(m[0].resets_at.as_deref(), Some("2026-11-01T00:00:00+00:00"));
         assert_eq!(m[0].window_seconds, Some(31 * 86400));
         assert_eq!(m[1].label, "mimo-v2.6-flash");
+    }
+
+    #[test]
+    fn uses_the_account_allowance_over_the_period_cap() {
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 917_800_000u64, "cap": 3_000_000_000u64, "fullCap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].limit, Some(1e9));
+        assert_eq!(m[0].used, Some(917_800_000.0));
+        assert!((m[0].percent.unwrap() - 91.78).abs() < 0.01);
+    }
+
+    #[test]
+    fn falls_back_to_the_period_cap_without_an_account_allowance() {
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "mimo-v2.6-flash", "tokensUsed": 250_000_000u64, "cap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m[0].limit, Some(1e9));
+        assert!((m[0].percent.unwrap() - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn prorated_first_period_keeps_the_plan_allowance() {
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "glm5.3", "tokensUsed": 100_000_000u64, "cap": 333_333_333u64, "fullCap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m[0].limit, Some(1e9));
+        assert!((m[0].percent.unwrap() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn without_quota_fields_there_is_no_meter() {
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 123_456u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        assert!(parse_quota(&v).is_empty());
+    }
+
+    #[test]
+    fn each_account_gets_its_own_allowance() {
+        let payload = |full: u64| {
+            json!({"periodStart": "2026-10-01", "models": [
+                {"model": "deepseek-v4-flash", "tokensUsed": 100_000_000u64, "cap": 3_000_000_000u64, "fullCap": full, "periodEnd": "2026-11-01T00:00:00Z"}
+            ]})
+        };
+        let a = parse_quota(&payload(1_000_000_000));
+        let b = parse_quota(&payload(500_000_000));
+        assert_eq!(a[0].limit, Some(1e9));
+        assert_eq!(b[0].limit, Some(5e8));
     }
 
     #[test]

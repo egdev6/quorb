@@ -28,6 +28,17 @@ pub(crate) struct Quota {
     pub billing_period: bool,
 }
 
+/// Where the quota of every meter comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuotaSource {
+    /// Real allowance of the account (the one NaN Cloud reports).
+    Account,
+    /// Published quotas (docs table or `/v1/models`): a fallback, not the account allowance.
+    Published,
+    /// No quota at all: there is no metered model.
+    None,
+}
+
 /// Cuotas publicadas en nan.builders/docs/models. Si `/v1/models` trae otras, mandan esas.
 pub(crate) fn known_quotas() -> BTreeMap<&'static str, Quota> {
     let m = |t: f64| Quota {
@@ -136,6 +147,9 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         .collect();
     quotas.extend(quotas_from_models(&models_json));
 
+    // Account quota with the SAME API key: quota, usage and dates come from one payload.
+    let account_quota = super::nan_cloud::fetch_account_quota(http, &key).await.ok();
+
     // 2. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
     let now = Utc::now();
     let period_start = billing_period_start(now, cfg.billing_day);
@@ -147,17 +161,20 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
             // Para el mes natural solo contamos días del mes; para glm5.3, desde el inicio del periodo.
             let month = summarize(&pages, Some(month_start(now)));
             let period = summarize(&pages, Some(period_start));
-            report.meters = quota_meters(&month, &period, &quotas, now, cfg.billing_day);
+            let (meters, source) = nan_meters(
+                account_quota.as_ref(),
+                &month,
+                &period,
+                &quotas,
+                now,
+                cfg.billing_day,
+            );
+            report.meters = meters;
             let total = month.total();
-            report.message = Some(format!(
-                "{} tokens este mes · {}",
-                compact(total),
-                if report.meters.is_empty() {
-                    "sin cuotas con contador"
-                } else {
-                    "cuotas por modelo"
-                }
-            ));
+            report.message = Some(usage_message(total, report.meters.len(), source));
+            if source == QuotaSource::Published {
+                report.status = Status::Warning;
+            }
         }
         Err(e) => {
             report.status = Status::Warning;
@@ -503,6 +520,44 @@ pub(crate) fn quota_meters(
     out
 }
 
+/// Meters of the account: the account quota wins; published quotas are only the fallback.
+pub(crate) fn nan_meters(
+    account_quota: Option<&Value>,
+    month: &UsageSummary,
+    period: &UsageSummary,
+    published: &BTreeMap<String, Quota>,
+    now: DateTime<Utc>,
+    billing_day: u32,
+) -> (Vec<Meter>, QuotaSource) {
+    // The account quota carries quota, usage and period dates in the same payload.
+    if let Some(v) = account_quota {
+        let meters = super::nan_cloud::parse_quota(v);
+        if !meters.is_empty() {
+            return (meters, QuotaSource::Account);
+        }
+    }
+    let meters = quota_meters(month, period, published, now, billing_day);
+    if meters.is_empty() {
+        (Vec::new(), QuotaSource::None)
+    } else {
+        (meters, QuotaSource::Published)
+    }
+}
+
+/// Month summary; the published quota is flagged as a fallback, not as the account one.
+fn usage_message(total: f64, meters: usize, source: QuotaSource) -> String {
+    let detail = if meters > 0 {
+        "cuotas por modelo"
+    } else {
+        "sin cuotas con contador"
+    };
+    let mut parts = vec![format!("{} tokens este mes", compact(total)), detail.into()];
+    if source == QuotaSource::Published {
+        parts.push("cuota publicada (no es la asignación de tu cuenta)".into());
+    }
+    parts.join(" · ")
+}
+
 fn compact(n: f64) -> String {
     match n {
         n if n >= 1e9 => format!("{:.1}B", n / 1e9),
@@ -522,9 +577,9 @@ fn plan_name(plan: &str) -> &'static str {
 
 fn plan_quota(plan: &str) -> &'static str {
     match plan {
-        "premium" => "Plan: 3B tokens/periodo de GLM 5.3 · 400M por ventana de 4 h.",
+        "premium" => "Plan: 3B tokens/periodo de GLM 5.3 (cuota publicada).",
         "community" => "Plan de comunidad (prioridad de cola).",
-        _ => "Plan: cluster sin contador · 3B tokens/mes en DeepSeek V4-Flash.",
+        _ => "Plan: cluster sin contador · 3B tokens/mes en DeepSeek V4-Flash (cuota publicada).",
     }
 }
 
@@ -611,6 +666,13 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 10, 6, 12, 0, 0).unwrap()
     }
 
+    fn published_quotas() -> BTreeMap<String, Quota> {
+        known_quotas()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect()
+    }
+
     #[test]
     fn parses_daily_rows_with_model() {
         let page = json!({
@@ -642,6 +704,44 @@ mod tests {
             meters[0].resets_at.as_deref(),
             Some("2026-11-01T00:00:00+00:00")
         );
+    }
+
+    #[test]
+    fn account_quota_wins_over_the_published_table() {
+        let payload = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 200_000_000u64, "cap": 3_000_000_000u64, "fullCap": 1_000_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let (meters, source) = nan_meters(
+            Some(&payload),
+            &UsageSummary::default(),
+            &UsageSummary::default(),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(source, QuotaSource::Account);
+        assert_eq!(meters.len(), 1);
+        assert_eq!(meters[0].limit, Some(1e9));
+    }
+
+    #[test]
+    fn published_quota_is_used_and_signalled_as_a_fallback() {
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let (meters, source) = nan_meters(
+            None,
+            &month,
+            &UsageSummary::default(),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(source, QuotaSource::Published);
+        assert_eq!(meters[0].limit, Some(3e9));
+        let msg = usage_message(600_000_000.0, meters.len(), source);
+        assert!(msg.contains("cuota publicada"), "{msg}");
     }
 
     #[test]
