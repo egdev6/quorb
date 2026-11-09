@@ -1,0 +1,56 @@
+# 252-nan-tier-quota
+
+> Issue: https://github.com/egdev6/quorb/issues/252 — `type:bug` + `status:approved`, asignada a `DonatoSilva`.
+> Rama: `fix/252-nan-tier-quota` (desde `upstream/main` 79ee3cd). Fork: `DonatoSilva/quorb`.
+> Alcance aprobado por el mantenedor en su comentario del 2026-11-09T08:18:29Z en la propia issue.
+
+## Specs
+
+- S1: "917,4 M / 3 B tokens · 31 %" y "496,6 M / 2 B tokens · 25 %" en Quorb, contra "917.8M / 1.00B this period" y "496.6M / 500.0M this period / your tier" en el panel de nan.builders: "91,8 %" y "99,3 %" reales. El consumo coincide y el tope no.
+- S2: "He comprobado que la ruta de API key usa cuotas de la tabla o de `/v1/models` para calcular los medidores (`src-tauri/src/providers/nan.rs:133-150,459-491`). La ruta de sesión consulta Cloud, pero utiliza `cap` y no lee `fullCap` (`src-tauri/src/providers/nan_cloud.rs:110-132,172-207`). Esto también afecta a las proyecciones de ritmo."
+- S3: "Apruebo corregir la cuota por cuenta y te asigno la issue. Propongo validar `fullCap` y `cap` junto con el consumo y las fechas del mismo periodo, señalando cualquier fallback y cubriendo con tests el primer periodo prorrateado, datos ausentes y cuentas distintas."
+- S4: "La ventana móvil de 4 h queda fuera de este arreglo, como mejora independiente del roadmap."
+- S5: "La cuota publicada puede quedar como último recurso, pero no como denominador por defecto; y cuando se use, el medidor debería decirlo en vez de presentarla como la cuota de la cuenta."
+- S6: "Para aclarar la diferencia entre `glm5.3-flash` y `glm-5.3-flash`, ¿puedes confirmar si también tienes una sesión de NaN activa y compartir un ejemplo censurado de los IDs y campos de cuota y periodo que recibes? Sin claves, cookies ni datos personales." (evidencia pendiente, S4 del pedido del owner)
+- S7: "`npm test`, `npm run typecheck` y `cd src-tauri; cargo test`" (CONTRIBUTING) en verde, y el inventario i18n coherente con el árbol de HEAD.
+
+## Mecanismo (verificado en el código)
+
+- Dos rutas en `providers/nan.rs::fetch`: A) sesión de NaN Cloud (`nan_cloud::fetch`, cookie) y B) API key (`/v1/models` + `/v1/usage`, Bearer). La ruta A devuelve temprano si hay `secrets::NAN_SESSION`.
+- El denominador era la cuota *publicada*: `known_quotas()` (`nan.rs:32-50`) y, si `/v1/models` expone un campo con "quota", ese (`nan.rs:137`, `quotas_from_models`). Ninguna de las dos es la asignación de la cuenta.
+- La ruta A leía solo `cap` (`nan_cloud.rs:187`); `fullCap` no aparecía en el código real. La ruta B dividía con `used / q.tokens` (`nan.rs:489`).
+- El payload de `GET https://cloud-api.nan.builders/api/usage/quota` trae por modelo `model`, `tokensUsed`, `cap`, `fullCap`, `periodEnd` y, para la ventana móvil, `windowHours`/`fullWindowTokens`/`windowTokensUsed` (fuera de alcance por S4).
+- Referencia de la misma API con la misma credencial: el paquete `gentle-pi` divide por `fullCap ?? cap` (`lib/shell-usage.ts:360-366`) y su proveedor de NaN es solo API key (`lib/nan-provider.ts:198-200`), con `Authorization: Bearer` contra el mismo endpoint (`extensions/gentle-shell.ts:1994-2000`).
+- `windowHours` decide el inicio del periodo del medidor (con ventana → `periodEnd` − 1 mes; sin ventana → `periodStart`, `nan_cloud.rs:198`): se conservó byte a byte porque no pertenece al arreglo (S4).
+- La tabla local no sigue los ids que devuelve el proveedor: usa `glm5.3-flash` y el payload trae `glm-5.3-flash`.
+
+## Tasks
+
+- [x] T1 — S1, S2, S3 — Tests en rojo de los cuatro casos que muerden el bug (asignación por cuenta sobre `cap`, primer periodo prorateado, cuentas distintas, la cuota por cuenta gana a la publicada) y de las tres guardas (sin `fullCap` cae a `cap`, sin campos de cuota no hay medidor, el fallback se señala). Route: inline. Commit: `b05bca0`.
+- [x] T2 — S2, S3 — `nan_cloud.rs`: `limit = fullCap ?? cap` en `parse_quota`, `Auth { Cookie, Bearer }` y `fetch_account_quota` para leer la cuota por cuenta con la API key. Route: inline. Commit: `b05bca0`.
+- [x] T3 — S3, S5 — `nan.rs`: `QuotaSource { Account, Published, None }`, `nan_meters` (la cuota por cuenta gana; la publicada queda de fallback) y `usage_message` (señala el fallback); la ruta B pide la cuota por cuenta con la misma key para que cuota, consumo y fechas vengan del mismo payload; `plan_quota` etiqueta la cifra como cuota publicada y ya no promete la ventana de 4 h. Route: inline. Commit: `b05bca0`.
+- [x] T4 — S7 — `cargo test` (516 ✓), `npm test` (298 ✓), `npm run typecheck` ✓, `cargo fmt --all -- --check` ✓ y `node scripts/i18n-inventory.mjs --check` ✓. Route: verify. Commit: `662252f` (inventario i18n regenerado contra el árbol de `b05bca0`).
+- [x] T5 — S4, S6 — Confirmar con el mantenedor el ejemplo censurado de IDs y campos de cuota/periodo y si hay sesión de NaN activa; la ventana de 4 h se deja como mejora del roadmap. Route: inline. Commit: este registro (pendiente de responder en la issue).
+- [ ] T6 — S7 — Push al fork y PR a `egdev6/quorb` con `Closes #252` más el comentario de aviso en la issue. Route: inline. Commit: pendiente de autorización del usuario (los dos commits quedan locales en `fix/252-nan-tier-quota`).
+
+## Riesgo
+
+Risk: none (el cambio pedido es exactamente el denominador del medidor de NaN: no cambia la struct `Meter`, ni la configuración, ni el comportamiento de otros proveedores, ni el contrato de `/v1/models`; los tests nuevos cubren el denominador por cuenta, el primer periodo prorateado, los datos ausentes, las cuentas distintas y el fallback señalado).
+
+Premisa por confirmar (S6): que `fullCap` es la asignación del plan de la cuenta. Está respaldada por la implementación de referencia (`gentle-pi`, mismo endpoint y misma credencial) y por los números del panel del proveedor, pero el owner pidió el payload censurado de la cuenta antes de mergear; si `fullCap` no fuera la asignación, el cambio es una línea (`nan_cloud.rs`, elección del denominador).
+
+## Estrategia de entrega
+
+Tres commits: (1) el fix con sus tests (`b05bca0`), (2) el inventario i18n regenerado (`662252f`; el script lee de un commit, así que va después del código), (3) este registro de la entrega. Push y PR quedan pendientes de autorización: `git push -u origin fix/252-nan-tier-quota` (la rama rastrea `upstream/main`, donde no hay permiso de escritura) y PR a `egdev6/quorb` con `Closes #252`.
+
+## Log
+
+- L1: "vale quiero que explores algo tengo un book en el cual es con el proveedor de enan n porque yo tengo una suscripción en la que me dan dixic y me dan otra cuenta otra otra IA pero no me dan los 3 3 millones de usos sino me dan solo un millón Pero los cálculos, las barras y todo lo que me muestra QR me está asumiendo como si yo tuviera la cuenta de 70. No sé si es que sus topes están quemados. Si me entender, asumen que para todos es la misma capacidad, la cual es un error. Y quisiera que exploraras primero el código. Y me comentes el por qué. O es un error de ellos. De pronto."
+- L2: "vale con esto sabemos que la tabla la tabla hardcode no era necesaria. Entonces, esto es una mejora tanto de cómo se dice, de performance como de escalabilidad del código de este proyecto QR. Si quieres esto analice si lo que digo es correcto, si la tabla deja de ser necesaria al implementarlo del full cap. Si es así, esto monta el issue explicándole cómo lo encontré, los ejemplos, la comparación con Gentle Shells y pide asignación. Que me la asignen a mí."
+- L3: "tiene logica que ese cambio no entee entre nuestro issue siendo eso...realiza el upstream/main de la rama y los ajustes segun la orientacion de owner"
+- L4: Diagnóstico (parent): el panel y el código coinciden con la cuota publicada (3 B / 2 B) y no con la asignación del plan (1.000 M / 500 M). La tabla no es solo una cifra: `known_quotas()` también marca `billing_period`, que define la ventana de cada medidor; eliminarla exige que esa semántica venga del payload (`periodStart`/`periodEnd`). "Performance" queda como ganancia secundaria (menos peticiones si el endpoint de Cloud pasa a ser la fuente primaria) y no como titular: el titular es la exactitud de lo que el panel afirma.
+- L5: El owner aprueba y acota el arreglo (S2-S4): corregir la cuota por cuenta, con `fullCap`/`cap` validados junto al consumo y las fechas del mismo periodo, el fallback señalado y cuatro casos de test; la ventana móvil de 4 h queda como mejora independiente del roadmap. También pide evidencia de la cuenta (S6).
+- L6: Implementación en dos rutas, con una sola fuente de verdad por ruta: la sesión lee el payload de Cloud con cookie y la API key pide ese mismo payload con `Bearer`, de modo que cuota, consumo y fechas del medidor vienen siempre del mismo payload (S3). La referencia `gentle-pi` hace exactamente esto con la misma API y la misma credencial.
+- L7: RED verificado en el padre (el subagente que escribió el diff murió por ENOSPC del tmpfs antes de reportar): con el comportamiento viejo fallan 4 tests —`left: Some(3000000000.0), right: Some(1000000000.0)`, `left: None, right: Account`, `left: Some(333333333.0), right: Some(1000000000.0)`—, y las 3 guardas siguen verdes. GREEN: `cargo test providers::nan` 20/20.
+- L8: Decisión de estilo: el texto del fallback se arma con `parts.join(" · ")` como la ruta de sesión, para que el literal que entra al inventario i18n sea "cuota publicada (no es la asignación de tu cuenta)" y no " · cuota publicada (...)".
+- L9: Entrega (parcial, 2026-11-09): rama `fix/252-nan-tier-quota` desde `upstream/main` 79ee3cd, dos commits locales (`b05bca0` fix + tests, `662252f` inventario i18n) y este registro. Comprobaciones en verde: `cargo test` 516 tests, `npm test` 298 tests, `npm run typecheck`, `cargo fmt --all -- --check`, `node scripts/i18n-inventory.mjs --check`. Sin push ni PR: el usuario pidió commits locales. Sin verificación manual en GUI porque el cambio es de parseo de un payload y de denominador; la comprobación end-to-end necesita la cuenta real (S6).
