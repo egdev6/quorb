@@ -17,11 +17,18 @@ import stat
 import subprocess
 import time
 import unicodedata
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from itertools import islice
 from pathlib import Path
 
 MAX_SOURCE = 1024 * 1024
 MAX_ENTRIES = 10000
 PER_CALL_TIMEOUT = 10.0
+PARSE_WORKERS = 2
+BASE_BUDGET = 120.0
+PER_FILE_BUDGET = 0.25
+MAX_BUDGET = 300.0
 NAME_RE = re.compile(r"^[0-9]{6}\.(?:js|jsx|mjs|cjs|ts|tsx)$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -95,25 +102,30 @@ def verify_snapshot(entries, root=Path("/inputs"), *, workflow=False):
 
 
 def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=subprocess.run,
-                clock=time.monotonic, budget_seconds=120.0):
-    """Return validated paths once the matching analyzer parses every target.
+                clock=time.monotonic, budget_seconds=None):
+    """Return validated paths in inventory order once every analyzer succeeds.
 
-    `verify_snapshot` runs before and after the calls, so bytes mutated during a
-    call are detected. Remaining budget is recomputed per call from the monotonic
-    start; any failure or budget exhaustion (including after the final call)
-    fails closed.
+    Both snapshot checks count against the scaled, capped monotonic budget. The
+    optional injected budget can only lower the trusted limit. Two workers run
+    at most two calls at once; every call retains its own timeout and failures
+    are joined and propagated before any result is returned.
     """
     try:
         if not isinstance(semgrep, str) or not semgrep:
             _fail()
-        if isinstance(budget_seconds, bool) or not isinstance(budget_seconds, (int, float)):
-            _fail()
-        budget = float(budget_seconds)
-        if not math.isfinite(budget) or budget <= 0:
-            _fail()
+        if budget_seconds is not None:
+            if isinstance(budget_seconds, bool) or not isinstance(budget_seconds, (int, float)):
+                _fail()
+            budget_seconds = float(budget_seconds)
+            if not math.isfinite(budget_seconds) or budget_seconds <= 0:
+                _fail()
         start = clock()
         validated = verify_snapshot(entries, root)
-        for path in validated:
+        budget = min(MAX_BUDGET, BASE_BUDGET + PER_FILE_BUDGET * len(validated))
+        if budget_seconds is not None:
+            budget = min(budget, budget_seconds)
+
+        def parse(path):
             remaining = budget - (clock() - start)
             if remaining <= 0:
                 _fail()
@@ -124,6 +136,17 @@ def check_parse(semgrep, entries, root=Path("/inputs"), *, runner=subprocess.run
                             timeout=min(PER_CALL_TIMEOUT, remaining))
             if getattr(result, "returncode", None) != 0:
                 _fail()
+
+        # Bound pending work as well as active calls; on failure the context
+        # joins the other in-flight call instead of leaving a scanner behind.
+        with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as pool:
+            paths = iter(validated)
+            pending = deque(pool.submit(parse, path) for path in islice(paths, PARSE_WORKERS))
+            for path in paths:
+                pending.popleft().result()
+                pending.append(pool.submit(parse, path))
+            for future in pending:
+                future.result()
         if budget - (clock() - start) <= 0:
             _fail()
         verify_snapshot(entries, root)

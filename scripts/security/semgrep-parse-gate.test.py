@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Behavior tests for the trusted parse gate. Pure unittest; no scanner, no network."""
+import contextlib
 import hashlib
 import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -38,6 +41,38 @@ class Clock:
         value = self.values[min(self.index, len(self.values) - 1)]
         self.index += 1
         return value
+
+
+class ManualClock:
+    """Thread-safe elapsed time advanced by simulated subprocesses."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.value = 0.0
+
+    def __call__(self):
+        with self.lock:
+            return self.value
+
+    def advance(self, value):
+        with self.lock:
+            self.value += value
+
+
+class SnapshotClock:
+    """Simulate time spent validating the snapshot before the first call."""
+
+    def __init__(self, elapsed):
+        self.elapsed = elapsed
+        self.lock = threading.Lock()
+        self.first = True
+
+    def __call__(self):
+        with self.lock:
+            if self.first:
+                self.first = False
+                return 0.0
+            return self.elapsed
 
 
 def fake(calls=None, *, outcome=0, raises=None, mutate=None):
@@ -90,9 +125,12 @@ class ParseGateTest(unittest.TestCase):
                                     runner=fake(calls), clock=lambda: 0.0)
         self.assertEqual(result, [entry["path"] for entry in entries])
         self.assertEqual(len(calls), len(EXTENSIONS))
-        for index, (args, kwargs) in enumerate(calls):
-            language = "typescript" if EXTENSIONS[index] in (".ts", ".tsx") else "javascript"
-            self.assertEqual(args, ["semgrep", "show", "dump-ast", language, entries[index]["path"]])
+        by_path = {args[-1]: (args, kwargs) for args, kwargs in calls}
+        self.assertEqual(set(by_path), {entry["path"] for entry in entries})
+        for entry, extension in zip(entries, EXTENSIONS):
+            args, kwargs = by_path[entry["path"]]
+            language = "typescript" if extension in (".ts", ".tsx") else "javascript"
+            self.assertEqual(args, ["semgrep", "show", "dump-ast", language, entry["path"]])
             self.assertIs(kwargs["shell"], False)
             self.assertIs(kwargs["check"], False)
             self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
@@ -180,7 +218,8 @@ class ParseGateTest(unittest.TestCase):
         calls = []
         with self.assertRaises(MODULE.ParseGateError):
             MODULE.check_parse("semgrep", [entry], self.root,
-                               runner=fake(calls), clock=Clock([0.0, 120.0]))
+                               runner=fake(calls), clock=Clock([0.0, 120.0]),
+                               budget_seconds=120.0)
         self.assertEqual(calls, [])
 
     def test_budget_exhausted_after_last_call(self):
@@ -188,7 +227,8 @@ class ParseGateTest(unittest.TestCase):
         calls = []
         with self.assertRaises(MODULE.ParseGateError):
             MODULE.check_parse("semgrep", [entry], self.root,
-                               runner=fake(calls), clock=Clock([0.0, 0.0, 120.0]))
+                               runner=fake(calls), clock=Clock([0.0, 0.0, 120.0]),
+                               budget_seconds=120.0)
         self.assertEqual(len(calls), 1)
 
     def test_budget_exhausted_after_final_hash_check(self):
@@ -196,16 +236,205 @@ class ParseGateTest(unittest.TestCase):
         calls = []
         with self.assertRaises(MODULE.ParseGateError):
             MODULE.check_parse("semgrep", [entry], self.root,
-                               runner=fake(calls), clock=Clock([0.0, 0.0, 0.0, 120.0]))
+                               runner=fake(calls), clock=Clock([0.0, 0.0, 0.0, 120.0]),
+                               budget_seconds=120.0)
         self.assertEqual(len(calls), 1)
 
     def test_invalid_budget_rejected(self):
         entry = self.write("000000.js")
-        for budget in [0, -1, 0.0, float("inf")]:
+        for budget in [0, -1, 0.0, float("inf"), float("nan"), True]:
             with self.subTest(budget=budget):
                 with self.assertRaises(MODULE.ParseGateError):
                     MODULE.check_parse("semgrep", [entry], self.root, runner=fake(),
                                        clock=lambda: 0.0, budget_seconds=budget)
+
+    def test_400_files_at_point_four_seconds_are_all_parsed_with_two_workers(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(400)])
+        clock = ManualClock()
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        calls = []
+        active = 0
+        peak = 0
+
+        def run(args, **kwargs):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                calls.append((args[-1], kwargs["timeout"]))
+            if barrier.wait(timeout=2) == 0:
+                clock.advance(0.4)
+            barrier.wait(timeout=2)
+            with lock:
+                active -= 1
+            return Result()
+
+        result = MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=clock)
+        self.assertEqual(result, [entry["path"] for entry in entries])
+        self.assertEqual({path for path, _ in calls}, set(result))
+        self.assertEqual(len(calls), 400)
+        self.assertEqual(peak, 2)
+        self.assertEqual(active, 0)
+        self.assertAlmostEqual(clock(), 80.0)
+        self.assertTrue(all(0 < timeout <= 10.0 for _, timeout in calls))
+
+    def test_scaled_budget_boundary_and_cap(self):
+        entries = self.entries([f"{i:06d}.ts" for i in range(800)])
+        for count, budget in [(1, 120.25), (4, 121.0), (400, 220.0), (800, 300.0)]:
+            for elapsed, succeeds in [(budget - 0.1, True), (budget, False)]:
+                with self.subTest(count=count, elapsed=elapsed):
+                    clock = SnapshotClock(elapsed)
+                    calls = []
+
+                    def run(args, **kwargs):
+                        calls.append((args[-1], kwargs["timeout"]))
+                        return Result()
+
+                    if succeeds:
+                        result = MODULE.check_parse("semgrep", entries[:count], self.root,
+                                                    runner=run, clock=clock)
+                        self.assertEqual(result, [entry["path"] for entry in entries[:count]])
+                        self.assertEqual({path for path, _ in calls}, set(result))
+                        self.assertEqual(len(calls), count)
+                        self.assertTrue(all(0 < timeout <= 0.100001 for _, timeout in calls))
+                    else:
+                        with self.assertRaises(MODULE.ParseGateError) as ctx:
+                            MODULE.check_parse("semgrep", entries[:count], self.root,
+                                               runner=run, clock=clock)
+                        self.assertEqual(str(ctx.exception), FAILED)
+                        self.assertEqual(calls, [])
+
+    def test_scaled_total_exhaustion_during_calls_fails_closed(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(40)])
+        clock = ManualClock()
+        calls = []
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        def run(args, **kwargs):
+            timeout = kwargs["timeout"]
+            calls.append(args[-1])
+            clock.advance(min(6.0, timeout))
+            if timeout < 6.0:
+                raise subprocess.TimeoutExpired("sensitive-path", timeout)
+            return Result()
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=clock)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertGreaterEqual(clock(), 130.0)  # 120 + 40 * 0.25
+        self.assertLess(len(calls), len(entries))
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                         [entry["path"] for entry in entries])
+
+    def test_injected_budget_can_only_lower_the_trusted_budget(self):
+        entries = [self.write("000000.js")]
+        for override, elapsed in [(900.0, 120.25), (1.0, 1.0)]:
+            with self.subTest(override=override):
+                clock = SnapshotClock(elapsed)
+                calls = []
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse("semgrep", entries, self.root, runner=fake(calls),
+                                       clock=clock, budget_seconds=override)
+                self.assertEqual(str(ctx.exception), FAILED)
+                self.assertEqual(calls, [])
+
+    def test_per_call_timeout_fails_closed_and_discards_details(self):
+        entry = self.write("000000.js")
+        calls = []
+        clock = ManualClock()
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        def run(args, **kwargs):
+            duration = 10.1
+            timeout = kwargs["timeout"]
+            calls.append(timeout)
+            clock.advance(min(duration, timeout))
+            if duration > timeout:
+                raise subprocess.TimeoutExpired("sensitive-path", timeout)
+            return Result()
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse("semgrep", [entry], self.root, runner=run, clock=clock)
+        self.assertEqual(calls, [10.0])
+        self.assertEqual(clock(), 10.0)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot([entry], self.root), [entry["path"]])
+
+    def test_parallel_completion_preserves_inventory_order(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(4)])
+        first_started = threading.Event()
+        second_finished = threading.Event()
+        completed = []
+
+        def run(args, **kwargs):
+            path = args[-1]
+            if path == entries[0]["path"]:
+                first_started.set()
+                if not second_finished.wait(2):
+                    raise RuntimeError("second worker did not start")
+            elif path == entries[1]["path"]:
+                if not first_started.wait(2):
+                    raise RuntimeError("first worker did not start")
+                completed.append(path)
+                second_finished.set()
+                return Result()
+            completed.append(path)
+            return Result()
+
+        result = MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=lambda: 0.0)
+        self.assertEqual(result, [entry["path"] for entry in entries])
+        self.assertEqual(completed[0], entries[1]["path"])
+        self.assertEqual(set(completed), set(result))
+        self.assertEqual(len(completed), len(entries))
+
+    def test_parallel_worker_failure_is_sanitized_and_joined(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        for failure in ("nonzero", "exception"):
+            with self.subTest(failure=failure):
+                first_started = threading.Event()
+                second_started = threading.Event()
+                completed = []
+                output = io.StringIO()
+                errors = io.StringIO()
+
+                def run(args, **kwargs):
+                    path = args[-1]
+                    if path == entries[0]["path"]:
+                        first_started.set()
+                        if not second_started.wait(2):
+                            raise RuntimeError("second worker did not start")
+                    elif path == entries[1]["path"]:
+                        if not first_started.wait(2):
+                            raise RuntimeError("first worker did not start")
+                        second_started.set()
+                        completed.append(path)
+                        if failure == "nonzero":
+                            return Result(3)
+                        raise OSError("secret scanner output")
+                    completed.append(path)
+                    return Result()
+
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    with self.assertRaises(MODULE.ParseGateError) as ctx:
+                        MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=lambda: 0.0)
+                self.assertEqual(str(ctx.exception), FAILED)
+                self.assertIsNone(ctx.exception.__cause__)
+                self.assertTrue({entries[0]["path"], entries[1]["path"]}.issubset(completed))
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(errors.getvalue(), "")
+                self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                                 [entry["path"] for entry in entries])
 
     def test_errors_never_leak_paths_or_secrets(self):
         secret = "sup3r-secret-token"

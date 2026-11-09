@@ -50,6 +50,11 @@ Una creación Docker que termine tarde tras un timeout no tiene garantía absolu
   `.mts/.cts` se exportan con sufijo `.ts`, sin modificar bytes, hashes ni identidad original.
   No se usa `--scan-unknown-extensions`; el precheck y el scan comparten selección de analizador.
 - Los nombres planos evitan configuración e ignores del target; `.min.js` y `.d.ts` también se analizan.
+- El precheck usa dos workers para las dos CPU del contenedor y un presupuesto definido por código
+  confiable: `min(300 s, 120 s + 0,25 s × número de archivos)`, incluidas las verificaciones de integridad.
+  Cada invocación conserva su máximo de 10 s. El tope deja 300 s del límite de 600 s de la etapa
+  para instalación, scan y demás trabajo; no los garantiza individualmente. Timeout, error o cobertura
+  incompleta bloquean; el target no puede configurar la fórmula ni excluir archivos.
 - Cada workflow se pasa explícitamente a zizmor con `--strict-collection --no-config --no-ignores`.
   `--no-exit-codes` conserva los fallos operativos; comentarios de supresión no eliminan avisos.
 - Versiones, locks, fuentes y cinco archivos de control se comprueban; el resultado se liga al inventario.
