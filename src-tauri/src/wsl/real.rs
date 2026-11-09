@@ -335,6 +335,38 @@ impl WslAdapter for RealWslAdapter {
         })
     }
 
+    /// Sonda de programa de la distro (#92): `command -v "$1"` con el
+    /// nombre como dato posicional (F14).
+    ///
+    /// NO usa `run_command`: `run_scoped` (con pidfile) convierte CUALQUIER
+    /// exit ≠ 0 en `Err`, y `command -v` de un programa ausente sale con
+    /// 1/127 — el estado «no instalado» debe ser `Ok(false)`, no un fallo
+    /// de WSL (revisión 2026-11-08; el mock, que devuelve `Ok` con el exit
+    /// code dentro, nunca lo habría visto). Sigue el patrón de sonda de
+    /// `shell_strategy` (`control_raw`: el exit code ES la respuesta) y sin
+    /// pidfile: 1 invocación de `wsl.exe` por CLI, nada de crear/limpiar
+    /// directorios en el guest por sonda.
+    ///
+    /// Solo los errores reales del subsistema se propagan (classify): una
+    /// distro que desapareció entre la enumeración y la sonda NO se
+    /// confunde con «CLI ausente».
+    fn program_available(
+        &self,
+        distro: &str,
+        shell: ShellStrategy,
+        program: &str,
+    ) -> Result<bool, WslError> {
+        let argv = shell_args(Some(distro), shell, SCRIPT_COMMAND_V, &[program]);
+        let cwd = Self::cwd();
+        let output = self
+            .runner(&self.env, &cwd)
+            .control_raw(&argv, Some(distro))?;
+        if let Some(wsl_error) = classify(&output, Some(distro)) {
+            return Err(wsl_error);
+        }
+        Ok(output.code == 0 && !output.stdout.trim().is_empty())
+    }
+
     /// Ejecuta un comando con el script constante y los datos como
     /// parámetros posicionales (F14, doble frontera).
     fn run_command(
@@ -644,6 +676,83 @@ mod tests {
         assert!(
             matches!(err, WslError::DistroNotFound(ref d) if d == "Ghost-22.04"),
             "debe ser DistroNotFound, no ShPosix: {err:?}"
+        );
+    }
+
+    /// Sonda de programa: «no instalado» es `Ok(false)`, NO un error.
+    ///
+    /// `command -v` de un programa ausente sale con exit 1 (bash) o 127
+    /// (sh) y salida vacía. Con `run_command`/`run_scoped` eso se
+    /// convertía en `Err(UnparsableOutput)`, dejando inalcanzable el
+    /// estado `Missing` de la detección (#92, revisión 2026-11-08).
+    #[test]
+    fn program_available_absent_is_false_not_error() {
+        for code in [1, 127] {
+            let runner = FakeRunner::default();
+            runner.respond(
+                "command -v \"$1\"",
+                CommandOutput {
+                    code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+            );
+            let adapter = adapter(runner.clone());
+            assert!(
+                !adapter
+                    .program_available("Ubuntu-22.04", ShellStrategy::ShPosix, "codex")
+                    .expect("CLI ausente no es error"),
+                "exit {code} debe ser Ok(false)"
+            );
+            // Una sola invocación y SIN pidfile (mktemp/mkdir): la sonda no
+            // paga el ciclo de vida del run_scoped.
+            let calls = runner.calls();
+            assert_eq!(calls.len(), 1, "una invocación por sonda");
+            let joined = calls[0].join(" ");
+            assert!(joined.contains("command -v \"$1\""), "{joined}");
+            assert!(!joined.contains("mktemp"), "sin pidfile: {joined}");
+        }
+    }
+
+    /// Sonda de programa: la CLI presente devuelve `Ok(true)` (exit 0 con
+    /// la ruta impresa por `command -v`).
+    #[test]
+    fn program_available_present_is_true() {
+        let runner = FakeRunner::default();
+        runner.respond("command -v \"$1\"", ok("/usr/local/bin/codex\n"));
+        let adapter = adapter(runner);
+        assert!(
+            adapter
+                .program_available("Ubuntu-22.04", ShellStrategy::BashLogin, "codex")
+                .expect("sonda"),
+            "command -v con salida y exit 0 es presente"
+        );
+    }
+
+    /// La sonda NO disfraza un fallo del subsistema de «CLI ausente»: si la
+    /// distro desapareció, se propaga `DistroNotFound`.
+    #[test]
+    fn program_available_propagates_wsl_distro_loss() {
+        let runner = FakeRunner::default();
+        runner.respond(
+            "command -v \"$1\"",
+            CommandOutput {
+                code: -1,
+                stdout: String::new(),
+                stderr: concat!(
+                    "The system cannot find the file specified.",
+                    "Error code: Wsl/Service/WSL_E_DISTRO_NOT_FOUND"
+                )
+                .to_string(),
+            },
+        );
+        let adapter = adapter(runner);
+        let err = adapter
+            .program_available("Ghost-22.04", ShellStrategy::BashLogin, "codex")
+            .expect_err("debe fallar");
+        assert!(
+            matches!(err, WslError::DistroNotFound(ref d) if d == "Ghost-22.04"),
+            "debe ser DistroNotFound: {err:?}"
         );
     }
 

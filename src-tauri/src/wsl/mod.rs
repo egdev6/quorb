@@ -134,8 +134,17 @@ pub trait WslAdapter: Send + Sync {
     /// con el nombre del programa como DATO posicional (F14, doble
     /// frontera): el host nunca interpola el nombre en un script.
     ///
-    /// `false` significa «la CLI no está en la distro» (código 0 con salida
-    /// vacía), no un fallo de WSL: los errores del subsistema se propagan.
+    /// `false` significa «la CLI no está en la distro»: `command -v` de un
+    /// programa ausente sale con exit ≠ 0 y salida vacía — eso NO es un
+    /// fallo de WSL, y los errores del subsistema (classify) sí se
+    /// propagan.
+    ///
+    /// El default va por `run_command` (suficiente para el mock). Sobre el
+    /// adaptador REAL hay que implementarla sobre una PRIMITIVA DE SONDA
+    /// (exit code como parte de la respuesta): `run_scoped`, que usa
+    /// `run_command`, convierte cualquier exit ≠ 0 en `Err` y haría
+    /// inalcanzable el `Ok(false)`. `RealWslAdapter` la sobrescribe con
+    /// `control_raw` (revisión 2026-11-08).
     fn program_available(
         &self,
         distro: &str,

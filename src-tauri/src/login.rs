@@ -1702,8 +1702,7 @@ mod wsl_evidence {
     #[test]
     #[ignore = "requiere WSL real (evidencia #92)"]
     fn gap3_session_read_uses_the_resolved_path_inside_the_distro() {
-        let adapter: std::sync::Arc<dyn WslAdapter> =
-            std::sync::Arc::new(RealWslAdapter::new());
+        let adapter: std::sync::Arc<dyn WslAdapter> = std::sync::Arc::new(RealWslAdapter::new());
         let d = distro();
         let home = adapter.resolve_home(&d).expect("home de la distro");
         let r = SessionResolver::for_wsl(adapter, d.clone(), home);
