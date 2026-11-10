@@ -109,3 +109,201 @@ Los tests deterministas usan resultados sintéticos: ausencia, valor vacío,
 lectura válida y fallo del backend. No requieren claves reales ni envían correo.
 Los smokes de llavero reales mantienen sus restricciones de aislamiento; no son
 prueba de persistencia validada en todos los sistemas operativos.
+
+## Checklist de comprobación manual (PR #245)
+
+Combinación de evidencia acordada con el owner (fuente D, S23–S24): comprobación
+manual más pruebas automatizadas. Tres niveles distintos, con límites explícitos:
+
+| Nivel | Qué acredita | Cómo |
+| --- | --- | --- |
+| Automatizado: HTTP local | Las seis reglas de interruptores (S23) y el protocolo de envío. Servidor sintético en `127.0.0.1` de `email.rs` y el coordinador real de guardado en `email.test.ts`; sin Resend ni correo real. | `cargo test --lib email::tests`, `npx vitest run src/lib/email.test.ts src/lib/email-dispatch.test.ts` |
+| Manual: UI montada | Solo lo visual y el cableado (layout, advertencias, feedback, estados en pantalla). | Checklist de esta sección con capturas en la PR |
+| Manual: llavero del SO | Que la clave sobrevive en el almacén real de cada plataforma. | Ningún test automatizado la cubre; comprobación manual por Sistema Operativo |
+
+La lógica de interruptores vive en funciones puras y gates con tests directos;
+no repite esa verificación manual. Cobertura de regresión nueva de T6, descrita
+con sus límites: un test de `email.test.ts` pinnea el coordinador real de
+guardado — `patchEmail` → `runMixedSave` → `api.saveConfig` con el puente
+Tauri mockeado — y comprueba que guardar con email deshabilitado conserva
+consentimiento y direcciones y que el puente emite exactamente un
+`save_config`, nunca `set_secret` ni un borrado de clave. No añadió
+comportamiento nuevo (sin RED de producto aplicable: era una brecha de
+cobertura); acredita la orquestación, no la persistencia del llavero del SO
+ni la UI montada. El test de Rust
+`email::tests::backend_gates_disabled_email_and_reuses_available_key` cubre el
+gate backend (envío deshabilitado rechazado antes de leer llavero o red, sin
+ninguna petición) y la reutilización de la clave disponible al re-habilitar
+(exactamente dos peticiones HTTP: activado y re-habilitado).
+
+Prerrequisito pendiente: el procedimiento propuesto más abajo todavía no se ha
+ejecutado ni validado. No hay aislamiento de configuración/llavero demostrado
+en una ejecución de la app. `npm run app:dev` usa la config y el llavero reales del usuario y
+podría causar envíos reales: no se propone como paso de verificación. Las
+casillas que requieren la app arrancada quedan pendientes de un procedimiento
+de aislamiento aprobado antes de marcarse. Todas las casillas están sin marcar;
+se completan con capturas solo cuando exista evidencia real.
+
+Preparación (pendiente de ejecutar y acreditar las puertas de aislamiento):
+
+- [ ] Arrancar la app en macOS con estado separado (config y llavero aislados);
+      sin credencial previa, la sección email de Ajustes → Alertas aparece
+      desactivada, sin consentimiento y con campos vacíos.
+
+Ajustes (S12–S16, S21–S22):
+
+- [ ] Guardar configuración válida sin marcar el interruptor de email:
+      la configuración se guarda y el email sigue desactivado.
+- [ ] Advertencias visibles: disponibilidad (Quorb abierto y equipo despierto),
+      privacidad (qué datos salen hacia Resend), límite de aceptación
+      («Solicitud aceptada», no entrega) y limitación Linux keyutils.
+- [ ] Consentimiento: sin marcarlo, el botón de prueba no permite enviar;
+      al marcarlo y completar configuración/clave, comprobar su disponibilidad.
+      Los mensajes y estados visibles deben seguir el idioma de la app.
+- [ ] Clave: con campo vacío o clave en blanco, la prueba no puede enviarse
+      (botón deshabilitado o `KeyMissing` sanitizado). Guardar la clave no
+      la muestra de nuevo; **Quitar** la elimina y bloquea envíos.
+- [ ] Desactivar email y guardar: el estado se muestra y la clave sigue
+      indicada como guardada al reactivar, sin reintroducirla. No pulsar
+      «Enviar prueba» contra Resend para verificar este punto.
+- [ ] Feedback de aceptación/error: comprobar el cableado y aspecto visual
+      con respuestas simuladas, solo cuando exista un procedimiento de
+      simulación integrado y aislado. Actualmente pendiente: los tests HTTP
+      de Rust y el renderizado estático no inyectan respuestas en la app.
+      Debe verse «Solicitud aceptada por Resend» en verde y errores
+      sanitizados en rojo/amarillo, sin direcciones, clave ni detalles del
+      servidor. La prueba con Alertas global desactivado queda cubierta
+      automáticamente; no ejecutar un envío real para marcar esta casilla.
+
+Avisos automáticos (S2, S3, S11, S18):
+
+Estas reglas se comprueban con eventos y HTTP simulados, no esperando correos
+reales en una bandeja de entrada. Su resultado automatizado no marca casillas
+manuales ni acredita el cableado de la aplicación montada:
+
+- Ambos interruptores activos: un intento con el payload mínimo traducido,
+  conservando el aviso local.
+- Repetir el sondeo sin ventana nueva: ningún intento adicional.
+- Notificación nativa desactivada: email independiente del aviso local.
+- Email desactivado: ningún envío automático; aviso local independiente.
+- Alertas global desactivado: ni envíos automáticos ni avisos locales.
+  Para volver a emitir deben habilitarse Alertas global y email y producirse
+  un evento nuevo según la memoria existente.
+
+Windows (S24, verificación del owner si no hay acceso):
+
+- [ ] Comprobar en Windows el guardado, presencia tras desactivar/reactivar
+      y eliminación de una clave sintética aislada, sin enviar correos,
+      con el almacén del sistema correspondiente
+      (el backend `keyring` cambia por sistema operativo).
+- [ ] Sin acceso a Windows en esta PR: dejar la casilla para verificación del
+      owner, como acordó en la respuesta del owner (S24); ninguna prueba
+      automatizada sustituye esta comprobación del llavero real.
+
+## Procedimiento macOS aislado propuesto (todavía no ejecutado)
+
+**No arrancar la app en el usuario habitual.** Cambiar `HOME`, el identificador
+aparente del formulario o el llavero por defecto del usuario habitual no prueba
+el aislamiento. El servicio de credenciales es `es.egdev.quorb` y la cuenta de
+Resend es `resend_api_key`; no hay un override de aislamiento en la app.
+La configuración se resuelve con Tauri `app_config_dir()`. Además, al arrancar
+el widget consulta proveedores; no basta mantener email desactivado.
+
+Este procedimiento permite comprobar visuales, guardado y presencia/eliminación
+de una clave sintética, **no** aceptación simulada en la app. Es una propuesta
+para ejecución por el owner: preparar una VM, instalar herramientas o cambiar
+red/usuarios del host no forma parte de esta sesión ni está autorizado aquí.
+Si no hay una VM macOS desechable ya preparada con los requisitos existentes,
+parar y acordar su provisión; no sustituirla por `HOME` temporal.
+
+### 1. Puertas previas al primer arranque
+
+1. Usar una VM macOS desechable con usuario local nuevo, sin Apple ID/iCloud,
+   migración, restauración, cuentas de proveedores ni llaveros importados.
+   No usar una copia del perfil personal. Registrar versión de macOS y nombre
+   de la instantánea inicial, sin datos personales.
+2. Desactivar en el hipervisor carpetas compartidas, montaje de discos del host,
+   portapapeles, arrastrar/soltar y sincronización de cuentas. Transferir solo un
+   artefacto de Quorb del candidato comprobado, nunca `.git`, configuraciones,
+   `.env`, sesiones, cachés de proveedores ni llaveros. Registrar SHA del commit
+   y `shasum -a 256 <artefacto>` en origen y destino. No reutilizar un binario
+   antiguo como prueba del candidato ni instalar dependencias para prepararlo.
+3. Desconectar **todos** los adaptadores virtuales antes de arrancar Quorb:
+   sin NAT, puente, host-only ni segundo adaptador. Registrar captura de la
+   configuración del hipervisor. Loopback puede seguir disponible. Un proxy,
+   DNS falso o el firewall de conexiones entrantes de macOS no equivalen a
+   denegar todo el egreso. No conectar de nuevo mientras Quorb esté abierto.
+4. Dentro del guest, antes de abrir el artefacto, registrar únicamente identidad
+   y rutas (nunca valores de credenciales):
+
+   ```sh
+   id -un
+   dscl . -read "/Users/$(id -un)" NFSHomeDirectory
+   security default-keychain -d user
+   security list-keychains -d user
+   /sbin/route -n get default
+   /sbin/route -n get -inet6 default
+   ```
+
+   Las rutas de llavero deben pertenecer al usuario nuevo del guest, sin llaveros
+   personales/importados. La ausencia de rutas por defecto IPv4/IPv6 es evidencia
+   auxiliar, no sustituye la desconexión comprobada en el hipervisor. Si hay
+   conectividad o no se puede acreditar la separación, **no arrancar**.
+5. Confirmar con Finder que el perfil nuevo no contiene estado previo de Quorb
+   (`~/Library/Application Support/es.egdev.quorb` como ubicación esperada;
+   confirmar la ruta efectiva al guardar), `.quorb`, sesiones de proveedores ni
+   enlaces hacia datos externos. No leer el contenido de llaveros/configuración
+   personales para compararlos. Conservar captura del estado inicial y revisión
+   de estas puertas por quien ejecuta; ninguna casilla queda aprobada por leerlas.
+
+### 2. Comprobación manual sin solicitudes de email
+
+Solo tras pasar las cinco puertas, abrir el artefacto en el guest sin red.
+No usar `npm run app:dev` en el host. Un artefacto ausente o no trazable bloquea
+este paso; compilar o provisionar otro entorno requiere acordarlo por separado.
+
+1. Abrir Ajustes → Alertas. Capturar estado inicial y advertencias en es/en.
+   Mantener Alertas global y email desactivados; desactivar también todos los
+   proveedores y guardar. La desconexión del guest protege el intervalo inicial
+   en que los proveedores por defecto todavía están habilitados.
+2. Introducir exclusivamente `sender@example.test`, `recipient@example.test` y
+   una clave sintética de prueba (no una API key válida). Guardar sin habilitar
+   email. Comprobar campo oculto y presencia indicada; no extraer el valor del
+   llavero ni incluirlo en capturas/logs. El consentimiento no debe activarse
+   por guardar. No pulsar **Enviar prueba**, incluso con una clave sintética.
+3. Marcar consentimiento, guardar; activar/desactivar email y guardar manteniendo
+   Alertas global desactivado. Capturar que desactivar no elimina la presencia
+   de clave; reactivar sin reintroducirla. No inferir durabilidad del SO de la
+   mera presencia en el formulario.
+4. Cerrar Quorb completamente, volver a abrir en el mismo guest desconectado y
+   comprobar presencia de la clave y configuración guardada. Capturar la ruta
+   efectiva de config dentro del guest, sin publicar su contenido. Esto aporta
+   evidencia de persistencia entre procesos en esa versión de macOS, no después
+   de un reinicio del SO ni en otras plataformas.
+5. Pulsar **Quitar**, comprobar ausencia indicada, cerrar/reabrir y confirmar
+   ausencia y prueba bloqueada. Capturar el resultado, sin consultar el valor
+   almacenado mediante `security find-generic-password -w`.
+6. Cerrar Quorb. Conservar solo evidencias sanitizadas y la instantánea de prueba;
+   no modificar ni borrar llaveros/usuarios del host. Eliminar VM/instantáneas
+   es una acción destructiva separada, no un paso automático de esta guía.
+
+### 3. HTTP simulado y límites pendientes
+
+El endpoint de producción está fijado a `https://api.resend.com/emails` y no hay
+inyección de respuestas en el comando de la app. No cambiar CSP, `secrets::get()`,
+DNS, certificados de confianza ni TLS para hacer pasar una simulación por Resend.
+Los tests locales indicados arriba acreditan aceptación/fallo sanitizado y las
+reglas de interruptores; no prueban que el botón y feedback estén cableados en
+la app abierta. SSR acredita el marcado, no esa interacción.
+
+Por tanto, quedan **pendientes** la captura verde/roja con respuestas simuladas
+integradas y la ejecución de este procedimiento. Para esa captura hace falta
+acordar una vía de simulación acotada antes de implementarla; no se incorpora
+infraestructura ni dependencias por esta guía. Una VM desconectada, una clave
+falsa o un fallo de transporte no acreditan aceptación simulada.
+
+Registrar por paso: candidato/hash del artefacto, macOS, aislamiento, acción,
+resultado esperado/observado, captura sanitizada y PASS/FAIL/PENDING. Sin acceso
+a Windows, su guardado/desactivación/reactivación/eliminación en Credential
+Manager queda expresamente **pendiente del owner** (S24). Ningún resultado macOS
+lo sustituye. #245 permanece abierta hasta completar la evidencia requerida.

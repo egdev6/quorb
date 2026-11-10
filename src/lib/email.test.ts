@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { emailDefaults, emailReady, patchEmail, sendEmailTest } from './email';
+import { runMixedSave } from './settings-save';
+import type { AppConfig } from './types';
 import { api } from './api';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue('accepted') }));
@@ -47,5 +49,40 @@ describe('email Settings actions', () => {
     expect(invoke).toHaveBeenLastCalledWith('send_email_alert', { event: null });
     await api.emailStatus();
     expect(invoke).toHaveBeenLastCalledWith('email_status');
+  });
+
+  // Regresión T6 (#245): pin del coordinador real de guardado de Ajustes,
+  // `runMixedSave` + `api.saveConfig` con el puente Tauri mockeado, no un
+  // doble de la persistencia. Guardar con email deshabilitado conserva
+  // consentimiento y direcciones y emite solo `save_config`: nunca `set_secret`
+  // de nuevo ni ningún borrado de clave. Esto acredita la orquestación, no la
+  // persistencia del llavero del SO (manual por plataforma, S24) ni la UI
+  // montada ni lo visual.
+  it('saving email disabled through the real save coordinator keeps consent and addresses and never touches secrets', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const mockInvoke = vi.mocked(invoke);
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementationOnce(
+      async (_command: string, args?: unknown) => (args as { config: AppConfig }).config,
+    );
+    const snapshot = {
+      alerts: { email: patchEmail({ ...email, enabled: true }, { enabled: false }) },
+    } as unknown as AppConfig;
+    const applyAutostart = vi.fn(async () => {
+      throw new Error('autostart no debe aplicarse');
+    });
+    const result = await runMixedSave(
+      { configDirty: true, configSnapshot: snapshot, autostartDirty: false, autostartDesired: false },
+      { saveConfig: api.saveConfig, applyAutostart },
+    );
+    expect(result.config).toEqual({ status: 'saved', saved: snapshot });
+    expect(result.autostart.status).toEqual('skipped');
+    expect(snapshot.alerts.email).toEqual({
+      enabled: false,
+      consent: true,
+      sender: 'sender@example.test',
+      recipient: 'recipient@example.test',
+    });
+    expect(mockInvoke.mock.calls).toEqual([['save_config', { config: snapshot }]]);
   });
 });

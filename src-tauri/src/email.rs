@@ -568,6 +568,77 @@ mod tests {
         assert_eq!(*requests.lock().unwrap(), vec![format!("{header}test")]);
     }
 
+    /// S23 (#245): pin del backend, no del guardado de Ajustes. Con email
+    /// deshabilitado, el gate del propio backend rechaza el envío automático
+    /// antes de leer llavero o red; al re-habilitar se reutiliza la clave
+    /// disponible sin exigir `set_secret` de nuevo (solo un set vacío explícito
+    /// la borra en `secrets.rs`). La conservación a través del flujo real de
+    /// guardado (patchEmail → runMixedSave → api.saveConfig) se cubre en
+    /// `src/lib/email.test.ts`; la persistencia del llavero del SO es manual
+    /// por plataforma (S24) y queda fuera de este test.
+    #[test]
+    fn backend_gates_disabled_email_and_reuses_available_key() {
+        let (url, requests, handle) = server(200, Duration::ZERO);
+        let store = Arc::new(Mutex::new(Some("synthetic-key".to_string())));
+        let mut cfg = config();
+        let reader = || Ok(store.lock().unwrap().clone());
+        assert_eq!(
+            run(send_with(
+                &cfg,
+                Locale::En,
+                Some(event()),
+                reader,
+                &url,
+                Duration::from_secs(5)
+            )),
+            EmailStatus::Accepted
+        );
+        assert_eq!(requests.lock().unwrap().len(), 1);
+        assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
+
+        // Guardado de config con email desactivado: el round-trip de serde no
+        // altera el almacén ni pierde el interruptor.
+        cfg.email.enabled = false;
+        let saved: crate::config::AlertsConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(!saved.email.enabled);
+        assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
+
+        // Desactivado, el gate del backend rechaza antes de leer la clave:
+        // ni petición HTTP ni acceso al almacén.
+        assert_eq!(
+            run(send_with(
+                &saved,
+                Locale::En,
+                Some(event()),
+                reader,
+                &url,
+                Duration::from_secs(5)
+            )),
+            EmailStatus::Disabled
+        );
+        assert_eq!(requests.lock().unwrap().len(), 1);
+        assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
+
+        // Re-habilitar reutiliza la clave disponible: segunda y última petición.
+        let mut reenabled = saved;
+        reenabled.email.enabled = true;
+        assert_eq!(
+            run(send_with(
+                &reenabled,
+                Locale::En,
+                Some(event()),
+                reader,
+                &url,
+                Duration::from_secs(5)
+            )),
+            EmailStatus::Accepted
+        );
+        handle.join().unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
+    }
+
     /// A loaded test runner may not poll the first request within 350 ms.
     #[test]
     fn late_first_request_is_still_served() {
