@@ -687,3 +687,8 @@ La cabecera distingue las correcciones ya publicadas en #262 de este seguimiento
 > pues vamos con el commit y lo siguiente
 
 Se levanta la restricción de no commitear de L56 para esta corrección ya comprobada. Continuación: commit de mensajes, regresiones y reconciliación ODD; generación y comprobación canónica del inventario i18n contra ese commit, en una unidad posterior; publicación mediante push normal a la misma rama de #262 y respuesta al owner. Los resultados de L56 son evidencia de las ejecuciones observadas, no nuevas pruebas ni CI del nuevo head. T4 continúa parcial, #245 abierta y la comprobación real de guardado de clave en Windows pendiente. No se autoriza merge, release, llaveros ni envíos reales.
+
+
+**L58 — Commit de corrección e inventario canónico.** Corrección L56 materializada en `675646d` (`fix(email): remove misleading HTTP codes from localized errors`), con tests y reconciliación ODD. `node scripts/i18n-inventory.mjs`, su `--check` y `git diff --check` terminaron con salida 0 contra ese commit. El inventario generado cambia cuatro textos y el hash del árbol `src/`; el árbol Rust no cambia. Se cierra el pendiente de generación de L56, sin modificar el documento generado a mano.
+
+Límite de corte: esta continuación contiene 40 líneas de diff en la corrección y 10 en el inventario generado, más este registro documental. Se mantiene la estrategia ya publicada de #262 como PR final de consolidación de #254–#260, no se reabre una cadena por el total acumulado de la rama. Esta actualización no equivale a CI verde del nuevo head, aprobación del owner, merge ni cierre de T4/#245. Publicación y respuesta quedan por contrastar después del commit de evidencia.
