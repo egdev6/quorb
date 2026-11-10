@@ -33,6 +33,8 @@ export interface UsageReport {
   validity?: { at: string; kind: 'period' | 'key' } | null;
   /** Saldo de resets comunicado por Codex, no una proyección de reinicios automáticos. */
   availableResets?: number | null;
+  /** De dónde salió la cuota del informe: la de la cuenta o la publicada (fallback). */
+  quotaSource?: 'account' | 'published';
   meters: Meter[];
   spend: Spend | null;
   message: string | null;

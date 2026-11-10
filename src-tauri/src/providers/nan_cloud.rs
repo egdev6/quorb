@@ -120,7 +120,7 @@ pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, C
         .await
         .ok();
     Ok(CloudUsage {
-        meters: parse_quota(&quota),
+        meters: session_meters(&quota),
         daily: metrics.as_ref().map(parse_daily).unwrap_or_default(),
         last24h: metrics
             .as_ref()
@@ -204,6 +204,16 @@ pub(crate) fn cookie_header(jar: &BTreeMap<String, String>) -> String {
         .join("; ")
 }
 
+/// Los medidores de la sesión: los modelos con cuota y sin consumo todavía no se cuentan
+/// (la sesión enseña el consumo de los modelos en uso). La ruta de API key sí los enseña:
+/// una asignación sin consumo es una asignación, no la ausencia de cuota.
+fn session_meters(v: &Value) -> Vec<Meter> {
+    parse_quota(v)
+        .into_iter()
+        .filter(|m| m.used.unwrap_or(0.0) > 0.0)
+        .collect()
+}
+
 /// Un medidor por modelo con tokens usados (ordenados por %, el mayor primero).
 pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
     let period_start = v
@@ -220,13 +230,13 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
         .filter_map(|m| {
             let model = m.get("model").and_then(Value::as_str)?;
             let used = m.get("tokensUsed").and_then(Value::as_f64)?;
+            if used < 0.0 {
+                return None;
+            }
             // Denominator: `cap` is the allowance the account got for the current period,
             // the same number the dashboard shows as "Allowance per billing period". A
             // prorated first period arrives prorated, so it needs no special case.
             let limit = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0)?;
-            if used <= 0.0 {
-                return None;
-            }
             let end = m
                 .get("periodEnd")
                 .and_then(Value::as_str)
@@ -336,6 +346,19 @@ mod tests {
         assert_eq!(glm.limit, Some(5e8));
         assert_eq!(glm.used, Some(496_625_346.0));
         assert!((glm.percent.unwrap() - 99.325).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_session_path_skips_the_models_with_no_consumption() {
+        // The session shows the consumption of the models in use: a model with an
+        // allowance and no consumption yet does not appear there.
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "glm5.3", "tokensUsed": 0, "cap": 3000000000u64, "periodEnd": "2026-11-01T00:00:00Z"},
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let meters = session_meters(&v);
+        assert_eq!(meters.len(), 1);
+        assert_eq!(meters[0].id, "model:deepseek-v4-flash");
     }
 
     #[test]

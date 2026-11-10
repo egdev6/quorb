@@ -88,6 +88,11 @@ pub struct UsageReport {
     pub validity: Option<Validity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_resets: Option<u32>,
+    /// De dónde salió la cuota del informe: `account` (la asignación de la cuenta) o
+    /// `published` (la cuota publicada, un fallback). Viaja como dato del informe, no
+    /// en el id del medidor: el id no cambia cuando cambia la fuente.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_source: Option<&'static str>,
     pub meters: Vec<Meter>,
     pub spend: Option<Spend>,
     pub message: Option<String>,
@@ -108,6 +113,7 @@ impl UsageReport {
             plan: None,
             validity: None,
             available_resets: None,
+            quota_source: None,
             meters: vec![],
             spend: None,
             message: None,

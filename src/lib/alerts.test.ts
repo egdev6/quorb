@@ -43,6 +43,29 @@ describe('alerts', () => {
     expect(detectAlerts([rep(95)], [rep(3, '2026-10-06T20:00:00Z')], {}, { ...cfg, onReset: false }, NOW).events).toHaveLength(0);
   });
 
+  it('does not report a reset when the quota source changed', () => {
+    // Mismo id de medidor, mismo consumo y misma fecha de reinicio: solo cambia el
+    // denominador (la cuota de la cuenta da paso a la publicada), así que la bajada
+    // del porcentaje no es un reinicio de la cuota.
+    const meter = (pct: number, limit: number) => ({
+      id: 'model:deepseek-v4-flash',
+      label: 'deepseek-v4-flash',
+      percent: pct,
+      used: 955_581_032,
+      limit,
+      unit: 'tokens',
+      resetsAt: '2026-12-05T22:15:31Z',
+      windowSeconds: 2592000,
+    });
+    const prev: UsageReport = { ...rep(0), quotaSource: 'account', meters: [meter(95.558, 1_000_000_000)] };
+    const next: UsageReport = { ...rep(0), quotaSource: 'published', meters: [meter(31.853, 3_000_000_000)] };
+    const r = detectAlerts([prev], [next], {}, cfg, NOW);
+    expect(r.events.map((e) => e.kind)).toEqual([]);
+    // Un reinicio de verdad con la misma fuente sigue avisando.
+    const sameSource = detectAlerts([prev], [{ ...next, quotaSource: 'account' }], {}, cfg, NOW);
+    expect(sameSource.events.map((e) => e.kind)).toEqual(['reset']);
+  });
+
   it('ignores stale or failed reports', () => {
     expect(detectAlerts([], [rep(99, undefined, { stale: true })], {}, cfg, NOW).events).toHaveLength(0);
     expect(detectAlerts([], [rep(99, undefined, { status: 'error' })], {}, cfg, NOW).events).toHaveLength(0);

@@ -70,14 +70,26 @@ export function detectAlerts(
 
       // 2. Reinicio de un límite que estaba superado
       if (!cfg.onReset) continue;
-      const old = prevById.get(r.id)?.meters.find((x) => meterKey(x) === meterKey(m));
+      const prevReport = prevById.get(r.id);
+      const old = prevReport?.meters.find((x) => meterKey(x) === meterKey(m));
       if (!old || old.percent == null || old.percent < cfg.threshold) continue;
+      // Un cambio de la fuente de la cuota no es un reinicio: el porcentaje bajó porque
+      // cambió el denominador (la regla que se aplica), no porque la cuota se reiniciara.
+      if (quotaSourceChanged(prevReport, r)) continue;
       const newWindow = old.resetsAt != null && windowKey(old.resetsAt) !== windowKey(m.resetsAt);
       const dropped = old.percent - pct >= 30;
       if (pct < cfg.threshold && (newWindow || dropped)) events.push({ kind: 'reset', ...ev });
     }
   }
   return { events, memory: mem };
+}
+
+/**
+ * ¿Cambió la fuente de la cuota entre las dos lecturas? El frente no sabe de qué
+ * proveedor viene el informe: compara el dato de la fuente, no valores concretos.
+ */
+function quotaSourceChanged(prev: UsageReport | undefined, next: UsageReport): boolean {
+  return !!prev?.quotaSource && !!next.quotaSource && prev.quotaSource !== next.quotaSource;
 }
 
 /** El efecto de pantalla se lanza una vez por ciclo: si hay algún límite superado, ese manda. */

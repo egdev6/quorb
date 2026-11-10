@@ -84,6 +84,9 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
             Ok(u) => {
                 report.meters = u.meters;
                 report.daily = u.daily;
+                // La cuota de la sesión es la asignación de la cuenta: el dato viaja en el
+                // informe para que el frente no confunda un cambio de fuente con un reinicio.
+                report.quota_source = session_quota_source(&report.meters);
                 let mut parts = vec![];
                 if let Some(m) = u.month {
                     parts.push(format!("{} tokens este mes", compact(m)));
@@ -164,10 +167,12 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         // 2. La cuota de la cuenta manda: cuota, consumo y fechas salen del mismo payload, así
         // que no se lee `/v1/usage` (mide el consumo de esta key, de otro periodo) ni se usa
         // `billing_day` (el periodo es el del payload).
-        let (meters, _source, header) =
+        let (meters, source, header) =
             nan_meters(Some(meters), None, &quotas, now, cfg.billing_day);
         report.meters = meters;
         report.message = Some(header);
+        report.quota_source = quota_source_name(source);
+        report.status = status_for(source);
     } else {
         // 3. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
         let period_start = billing_period_start(now, cfg.billing_day);
@@ -181,9 +186,8 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
                     nan_meters(None, Some((&month, &period)), &quotas, now, cfg.billing_day);
                 report.meters = meters;
                 report.message = Some(header);
-                if source == QuotaSource::Published {
-                    report.status = Status::Warning;
-                }
+                report.quota_source = quota_source_name(source);
+                report.status = status_for(source);
             }
             Err(e) => {
                 report.status = Status::Warning;
@@ -546,7 +550,7 @@ pub(crate) fn nan_meters(
     // The account quota carries quota, usage and period dates in the same payload.
     if let Some(meters) = account_meters.filter(|m| !m.is_empty()) {
         let total: f64 = meters.iter().filter_map(|m| m.used).sum();
-        let header = usage_message(total, meters.len(), QuotaSource::Account);
+        let header = usage_message(total, QuotaSource::Account);
         return (meters, QuotaSource::Account, header);
     }
     let Some((month, period)) = usage else {
@@ -555,34 +559,62 @@ pub(crate) fn nan_meters(
     };
     let meters = quota_meters(month, period, published, now, billing_day);
     if meters.is_empty() {
-        let header = usage_message(month.total(), 0, QuotaSource::None);
+        let header = usage_message(month.total(), QuotaSource::None);
         (Vec::new(), QuotaSource::None, header)
     } else {
-        let header = usage_message(month.total(), meters.len(), QuotaSource::Published);
+        let header = usage_message(month.total(), QuotaSource::Published);
         (meters, QuotaSource::Published, header)
     }
 }
 
 /// Header of the report: it names the period the numbers come from. The published quota is
 /// flagged as a fallback, not as the account one.
-fn usage_message(total: f64, meters: usize, source: QuotaSource) -> String {
-    let detail = if meters > 0 {
-        "cuotas por modelo"
-    } else {
-        "sin cuotas con contador"
-    };
-    let mut parts = vec![
-        if source == QuotaSource::Account {
-            format!("{} tokens del periodo de la cuenta", compact(total))
-        } else {
-            format!("{} tokens este mes", compact(total))
-        },
-        detail.into(),
-    ];
-    if source == QuotaSource::Published {
-        parts.push("cuota publicada (no es la asignación de tu cuenta)".into());
+fn usage_message(total: f64, source: QuotaSource) -> String {
+    match source {
+        QuotaSource::Account => {
+            format!("{} tokens del periodo de la cuenta · cuotas por modelo", compact(total))
+        }
+        QuotaSource::Published => format!(
+            "{} tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta)",
+            compact(total)
+        ),
+        // Hay cuotas, pero el proveedor no devolvió consumo para ellas: el mensaje dice
+        // que no hay datos, no que no haya cuotas con contador.
+        QuotaSource::None => {
+            "No hay datos de consumo disponibles para los modelos con cuota.".into()
+        }
     }
-    parts.join(" · ")
+}
+
+/// La fuente de la cuota viaja como dato del informe (no en el id del medidor): el id no
+/// cambia cuando cambia la fuente, así que el frente necesita el dato para no confundir
+/// un cambio de regla con un reinicio de la cuota.
+fn quota_source_name(source: QuotaSource) -> Option<&'static str> {
+    match source {
+        QuotaSource::Account => Some("account"),
+        QuotaSource::Published => Some("published"),
+        QuotaSource::None => None,
+    }
+}
+
+/// La fuente de la cuota de la sesión: la asignación de la cuenta. Sin medidores no hay
+/// cuota que nombrar, así que el informe no la declara.
+fn session_quota_source(meters: &[Meter]) -> Option<&'static str> {
+    if meters.is_empty() {
+        None
+    } else {
+        quota_source_name(QuotaSource::Account)
+    }
+}
+
+/// Estado del informe según de dónde salió la cuota: la de la cuenta va en `ok`; una cuota
+/// publicada o ninguna cuota son avisos. Nunca `ok` sin medidores: así los datos anteriores
+/// quedan como desactualizados en vez de borrarse en silencio.
+fn status_for(source: QuotaSource) -> Status {
+    match source {
+        QuotaSource::Account => Status::Ok,
+        QuotaSource::Published | QuotaSource::None => Status::Warning,
+    }
 }
 
 fn compact(n: f64) -> String {
@@ -784,7 +816,7 @@ mod tests {
 
     #[test]
     fn the_account_header_describes_the_account_period() {
-        let msg = usage_message(1_452_206_378.0, 2, QuotaSource::Account);
+        let msg = usage_message(1_452_206_378.0, QuotaSource::Account);
         assert!(msg.contains("periodo de la cuenta"), "{msg}");
         assert!(!msg.contains("este mes"), "{msg}");
     }
@@ -860,6 +892,80 @@ mod tests {
         assert_eq!(glm.limit, Some(5e8));
         assert_eq!(glm.used, Some(496_625_346.0));
         assert!((glm.percent.unwrap() - 99.325).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_account_period_wins_even_when_the_consumption_is_zero() {
+        // Un payload cuyos modelos no tienen consumo sigue siendo un periodo de cuenta
+        // válido: se conserva el cero del periodo recibido y no se recupera consumo de
+        // otro periodo (la ruta de `/v1/usage`).
+        let mut payload = crate::providers::nan_cloud::real_account_payload();
+        if let Some(models) = payload["models"].as_array_mut() {
+            for model in models {
+                model["tokensUsed"] = json!(0);
+            }
+        }
+        let (meters, source, _header) = nan_meters(
+            Some(crate::providers::nan_cloud::parse_quota(&payload)),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(
+            source,
+            QuotaSource::Account,
+            "el periodo de la cuenta no se descarta por consumo cero"
+        );
+        assert_eq!(meters.len(), 2);
+        let deepseek = meters
+            .iter()
+            .find(|m| m.id == "model:deepseek-v4-flash")
+            .expect("el modelo con cuota y consumo cero conserva su medidor");
+        assert_eq!(deepseek.used, Some(0.0));
+        assert_eq!(deepseek.percent, Some(0.0));
+        assert_eq!(deepseek.limit, Some(1e9));
+    }
+
+    #[test]
+    fn the_report_says_when_there_is_no_consumption_data() {
+        // Hay cuotas, pero el proveedor no devolvió consumo para ellas: el mensaje dice
+        // que no hay datos, no que no haya cuotas con contador.
+        let msg = usage_message(0.0, QuotaSource::None);
+        assert!(msg.contains("datos de consumo disponibles"), "{msg}");
+        assert!(!msg.contains("sin cuotas con contador"), "{msg}");
+    }
+
+    #[test]
+    fn the_status_follows_the_quota_source() {
+        // La cuota de la cuenta va en `ok`; una cuota publicada o ninguna cuota son avisos
+        // (nunca `ok` sin medidores: así los datos anteriores no se borran en silencio).
+        assert_eq!(status_for(QuotaSource::Account), Status::Ok);
+        assert_eq!(status_for(QuotaSource::Published), Status::Warning);
+        assert_eq!(status_for(QuotaSource::None), Status::Warning);
+    }
+
+    #[test]
+    fn the_header_text_does_not_change_for_the_sources_with_data() {
+        // El texto de la cuenta y el de la cuota publicada se mantienen byte a byte.
+        assert_eq!(
+            usage_message(1_452_206_378.0, QuotaSource::Account),
+            "1.5B tokens del periodo de la cuenta · cuotas por modelo"
+        );
+        assert_eq!(
+            usage_message(1_452_206_378.0, QuotaSource::Published),
+            "1.5B tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta)"
+        );
+    }
+
+    #[test]
+    fn the_quota_source_travels_in_the_report() {
+        assert_eq!(quota_source_name(QuotaSource::Account), Some("account"));
+        assert_eq!(quota_source_name(QuotaSource::Published), Some("published"));
+        assert_eq!(quota_source_name(QuotaSource::None), None);
+        // La sesión también usa la cuota de la cuenta, pero sin medidores no hay cuota.
+        assert_eq!(session_quota_source(&[]), None);
+        assert_eq!(session_quota_source(&[Meter::default()]), Some("account"));
     }
 
     #[test]
