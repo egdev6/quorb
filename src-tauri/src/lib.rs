@@ -849,7 +849,32 @@ async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool,
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
     match cfg.session_env() {
         wsl::SessionEnv::Host => Ok(account_session_file_found(&cfg, &id, &providers::home())),
-        wsl::SessionEnv::Wsl { .. } => {
+        wsl::SessionEnv::Wsl { distro } => {
+            // El SONDEO no despierta una distro detenida (contrato W1 §2,
+            // revisión PR #92): igual que la detección, se consulta el
+            // estado con `list_distributions` (no lanza nada) y solo se lee
+            // dentro del guest cuando está Running. Una distro apagada es
+            // «no hay sesión visible», no una excusa para despertarla cada
+            // 3 s desde Ajustes.
+            let running = tauri::async_runtime::spawn_blocking({
+                let adapter = adapter.clone();
+                let distro = distro.clone();
+                move || {
+                    adapter
+                        .list_distributions()
+                        .ok()
+                        .and_then(|ds| {
+                            ds.into_iter()
+                                .find(|d| wsl::distro_name_matches(&distro, &d.name))
+                        })
+                        .is_some_and(|d| matches!(d.state, wsl::DistroState::Running))
+                }
+            })
+            .await
+            .map_err(|e| format!("WSL: {e}"))?;
+            if !running {
+                return Ok(false);
+            }
             let resolver = session_resolver(&cfg, adapter, &state.wsl_homes).await?;
             let Some(r) = resolver else {
                 // Sin distro resuelta (p. ej. no configurada): nada que

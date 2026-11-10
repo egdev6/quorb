@@ -364,7 +364,22 @@ impl WslAdapter for RealWslAdapter {
         if let Some(wsl_error) = classify(&output, Some(distro)) {
             return Err(wsl_error);
         }
-        Ok(output.code == 0 && !output.stdout.trim().is_empty())
+        // `command -v "$1"` sale con 0 y la ruta en stdout cuando existe; con
+        // 1 (bash) o 127 (sh) y stdout vacío cuando NO. Cualquier otra cosa
+        // (exit -1, señal, salida inesperada) es un fallo del subsistema o
+        // del script, NO «la CLI no está instalada»: reportarlo como error
+        // evita invitar a instalar algo que ya está o enmascarar WSL roto
+        // (revisión PR #92, punto 9).
+        if output.code == 0 && !output.stdout.trim().is_empty() {
+            return Ok(true);
+        }
+        if (output.code == 1 || output.code == 127) && output.stdout.trim().is_empty() {
+            return Ok(false);
+        }
+        Err(WslError::UnparsableOutput(format!(
+            "sonda command -v inesperada (exit {})",
+            output.code
+        )))
     }
 
     /// Ejecuta un comando con el script constante y los datos como
@@ -712,6 +727,30 @@ mod tests {
             assert!(joined.contains("command -v \"$1\""), "{joined}");
             assert!(!joined.contains("mktemp"), "sin pidfile: {joined}");
         }
+    }
+
+    /// Exit -1 (señal/crash del script o del subsistema) con salida vacía NO
+    /// es «CLI ausente»: es un fallo y debe propagarse como error para no
+    /// invitar a instalar algo que ya está (revisión PR #92, punto 9).
+    #[test]
+    fn program_available_treats_unexpected_exit_as_error_not_missing() {
+        let runner = FakeRunner::default();
+        runner.respond(
+            "command -v \"$1\"",
+            CommandOutput {
+                code: -1,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        );
+        let adapter = adapter(runner);
+        let err = adapter
+            .program_available("Ubuntu-22.04", ShellStrategy::ShPosix, "codex")
+            .expect_err("exit -1 debe ser Err");
+        assert!(
+            matches!(err, WslError::UnparsableOutput(ref m) if m.contains("exit -1")),
+            "{err:?}"
+        );
     }
 
     /// Sonda de programa: la CLI presente devuelve `Ok(true)` (exit 0 con

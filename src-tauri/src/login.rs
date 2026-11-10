@@ -413,6 +413,13 @@ fn spawn_wsl_terminal(argv: &[std::ffi::OsString]) -> Result<(), String> {
     cmd.current_dir(dirs::home_dir().unwrap_or_else(|| ".".into()))
         .args(argv.iter().skip(1))
         .creation_flags(CREATE_NEW_CONSOLE)
+        // Revisión PR #92: la terminal hereda el entorno del host y un
+        // `WSLENV` con, p. ej., `CODEX_HOME/p` desviaría `codex login`
+        // hacia la carpeta de Windows mientras Quorb lee la del guest. El
+        // entorno de la sesión se pasa DENTRO del guest vía `env VAR=…`
+        // (argv posicional, F14), así que WSLENV no aporta nada: se limpia
+        // para que ni el valor ni las reglas heredadas desvíen la sesión.
+        .env_remove("WSLENV")
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("No pude abrir la terminal: {e}"))
@@ -1662,9 +1669,13 @@ mod wsl_login_tests {
     fn empty_wsl_distro_never_reaches_the_wsl_path() {
         let mock = MockWslAdapter::new();
         mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
-        let cfg = AppConfig::default();
-        // Sin distro configurada, session_env() es Host aunque el usuario
-        // haya elegido el modo WSL: la detección usa Windows, no wsl.exe.
+        let mut cfg = AppConfig::default();
+        // El usuario eligió SESIÓN WSL pero dejó la distro vacía: en
+        // producción `session_env()` cae a Host (config.rs) y el login/detección
+        // no deben tocar wsl.exe. Este test cubre ESE caso (revisión PR #92,
+        // punto 5): antes solo usaba un cfg ya de host.
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "".into();
         assert!(matches!(cfg.session_env(), wsl::SessionEnv::Host));
         let host_status = cli_status(&cfg, None);
         assert!(host_status.len() == 4);
