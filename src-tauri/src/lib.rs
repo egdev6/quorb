@@ -884,6 +884,7 @@ async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool,
                             &r.default_path(crate::providers::session_relative(kind).as_path()),
                         )
                         .map(|p| Some(p.to_string_lossy().into_owned()))
+                        .map_err(|e| format!("WSL: {e:?}"))
                     }
                 };
                 match path? {
