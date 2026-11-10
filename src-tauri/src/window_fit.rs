@@ -14,8 +14,14 @@
 //! sin ciclo; el tipo de ventana, del X11). El **efecto** pasa por la costura
 //! [`FitSurface`]: la implementación real habla con GTK en el hilo de UI y los
 //! tests usan un doble que registra las llamadas, así que el cableado se
-//! puede afirmar (pistas en las dos ventanas, `Utility` antes del primer
-//! `show`, ninguna llamada nueva fuera de Hyprland).
+//! puede afirmar (pistas en las dos ventanas, ninguna llamada nueva fuera de
+//! Hyprland).
+//!
+//! El **tipo de ventana** no se declara aquí: se declara al **crear** cada
+//! ventana (`start_main_ui`), antes de su primer `show`, porque el compositor
+//! lo lee al mapear y después ya no lo cambia. El `show` tampoco pasa por
+//! aquí: va por la cola de Tao, como la ocultación y la geometría, para que un
+//! mostrar nuevo no adelante las operaciones pendientes (#250, S19).
 
 use crate::widget_placement::{to_logical, Transport};
 use crate::wm_compat::{is_hyprland_signal, normalize_env, Env};
@@ -102,8 +108,6 @@ pub trait FitSurface {
     fn set_size_constraints(&mut self, width: i32, height: i32);
     /// Declara el tipo de ventana `Utility`.
     fn set_type_hint_utility(&mut self);
-    /// Muestra la ventana con su contenido.
-    fn show(&mut self);
 }
 
 /// El factor de la conversión según la fuente.
@@ -142,17 +146,6 @@ pub fn apply_type_hint<S: FitSurface>(surface: &mut S, plan: &FitPlan) -> bool {
     }
     surface.set_type_hint_utility();
     true
-}
-
-/// Declara el tipo de la ventana y la muestra: el tipo va **antes** del
-/// `show` (#250), porque el compositor lee el tipo de ventana al mapear y
-/// después ya no lo cambia.
-///
-/// Las dos cosas van en la misma llamada: el compositor ve el tipo antes de
-/// mapear la ventana, sin depender del orden entre dos colas.
-pub fn show_with_utility_hint<S: FitSurface>(surface: &mut S, plan: &FitPlan) {
-    apply_type_hint(surface, plan);
-    surface.show();
 }
 
 /// El desenlace del ajuste de la ventana en la ruta sin ciclo.
@@ -222,12 +215,5 @@ where
 
     fn set_type_hint_utility(&mut self) {
         self.0.set_type_hint(gtk::gdk::WindowTypeHint::Utility);
-    }
-
-    fn show(&mut self) {
-        // Es lo que hace `tao` cuando Tauri muestra la ventana
-        // (`WindowRequest::Visible`), con la diferencia de que aquí el tipo de
-        // ventana ya está declarado.
-        self.0.show_all();
     }
 }

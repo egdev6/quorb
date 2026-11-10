@@ -28,6 +28,9 @@ mod window_clip;
 mod window_fit;
 #[cfg(test)]
 mod window_fit_test;
+// El tier en vivo del ajuste de ventana: hace falta GTK (sólo Linux).
+#[cfg(all(test, target_os = "linux"))]
+mod window_fit_gtk_test;
 #[cfg(target_os = "windows")]
 mod windows_backdrop;
 mod wm_compat;
@@ -60,6 +63,14 @@ const SETTINGS_ZOOM: f64 = 0.85;
 const SETTINGS_HEIGHT: f64 = 920.0;
 const OVERLAY: &str = "overlay";
 const DETAIL: &str = "detail";
+/// Las ventanas que declaran su tipo de ventana antes de su primer `show`
+/// (#250): la tira y el detalle.
+///
+/// El compositor lee el tipo de ventana al mapear, así que declararlo al
+/// **crear** la ventana lo deja antes de cualquier `show`, sin depender del
+/// orden entre dos colas (#250, S19).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const TYPE_HINT_WINDOWS: &[&str] = &[WIDGET, DETAIL];
 /// El canal por el que el frontend recibe el foco de nuestras ventanas
 /// (`src/lib/anchor-focus.ts`): el payload es `(etiqueta, tiene_foco)`.
 const FOCUS_EVENT: &str = "window-focus";
@@ -939,42 +950,14 @@ fn show_detail(app: AppHandle) -> Result<bool, String> {
 
 /// Muestra la ventana de detalle.
 ///
-/// En XWayland (#250) declara antes su tipo de ventana (`Utility`): los
-/// compositores que colocan la ventana en mosaico la flotan y respetan las
-/// pistas, pero sólo si el tipo está antes del `show` (el compositor lo lee al
-/// mapear). Tipo y `show` van en la misma tarea del hilo de UI: así el orden
-/// es el del compositor y no una carrera entre dos colas.
-#[cfg(target_os = "linux")]
-fn show_detail_window(detail: &tauri::WebviewWindow) -> tauri::Result<()> {
-    // Fuera del perfil de Hyprland no hay tipo que declarar: la ventana se
-    // muestra como siempre (S1).
-    if !window_fit::fit_profile().x11_float_hint {
-        detail.show()?;
-        return Ok(());
-    }
-    let ui = detail.clone();
-    let queued = detail
-        .run_on_main_thread(move || {
-            let plan = window_fit::fit_plan_now();
-            let Ok(gtk_window) = ui.gtk_window() else {
-                // Sin ventana GTK no hay tipo que declarar: se muestra igual.
-                let _ = ui.show();
-                return;
-            };
-            let mut surface = window_fit::GtkFitSurface(&gtk_window);
-            window_fit::show_with_utility_hint(&mut surface, &plan);
-        })
-        .is_ok();
-    if !queued {
-        // Sin hilo de UI no se puede declarar el tipo: se muestra igual.
-        detail.show()?;
-    }
-    Ok(())
-}
-
-/// Muestra la ventana de detalle (fuera de Linux no hay tipo de ventana que
-/// declarar: el ajuste es de Linux).
-#[cfg(not(target_os = "linux"))]
+/// El `show` va por la **cola de Tao**, como la ocultación y la geometría: un
+/// `show` directo (GTK en el hilo de UI) se ejecutaría sin esperar a las
+/// operaciones pendientes de la cola y la ventana podría quedar escondida o
+/// con la geometría vieja (#250, S19).
+///
+/// El tipo de ventana (`Utility` en XWayland) no se declara aquí: se declara
+/// al **crear** la ventana (`start_main_ui`), antes de cualquier `show`,
+/// porque el compositor lo lee al mapear.
 fn show_detail_window(detail: &tauri::WebviewWindow) -> tauri::Result<()> {
     detail.show()
 }
@@ -1188,23 +1171,25 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
     // XWayland (#250): los compositores que colocan la tira en mosaico
     // (Hyprland, medido: floating=false y SizeRefused) la flotan y respetan
     // las pistas del ciclo X11 si la ventana declara su tipo antes del primer
-    // `show`. La tira la muestra el frontend (y la bandeja la muestra y la
-    // esconde), así que su tipo se declara al crearla, aquí: antes de
-    // cualquier `show`. El detalle declara su tipo justo antes de mostrarse
-    // (`show_detail_window`).
+    // `show`. Ambas ventanas (la tira y el detalle) lo declaran aquí, al
+    // crearlas: el compositor lee el tipo al mapear, así que declararlo al
+    // crear deja el orden garantizado (el `show` va por la cola de Tao y no
+    // lo adelanta, S19).
     #[cfg(target_os = "linux")]
     if window_fit::fit_profile().x11_float_hint {
-        if let Some(w) = app.get_webview_window(WIDGET) {
-            let ui_window = w.clone();
-            let _ = w.run_on_main_thread(move || {
-                // El transporte se lee aquí: GDK sólo se puede tocar en el hilo
-                // de UI.
-                let plan = window_fit::fit_plan_now();
-                if let Ok(gtk_window) = ui_window.gtk_window() {
-                    let mut surface = window_fit::GtkFitSurface(&gtk_window);
-                    window_fit::apply_type_hint(&mut surface, &plan);
-                }
-            });
+        for label in TYPE_HINT_WINDOWS {
+            if let Some(w) = app.get_webview_window(label) {
+                let ui_window = w.clone();
+                let _ = w.run_on_main_thread(move || {
+                    // El transporte se lee aquí: GDK sólo se puede tocar en el
+                    // hilo de UI.
+                    let plan = window_fit::fit_plan_now();
+                    if let Ok(gtk_window) = ui_window.gtk_window() {
+                        let mut surface = window_fit::GtkFitSurface(&gtk_window);
+                        window_fit::apply_type_hint(&mut surface, &plan);
+                    }
+                });
+            }
         }
     }
 

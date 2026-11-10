@@ -8,8 +8,13 @@
 //!
 //! El efecto también se afirma aquí: las llamadas del ajuste pasan por la
 //! costura `FitSurface`, y el doble de los tests registra lo que se le pidió
-//! (pistas en las dos ventanas, `Utility` antes del primer `show`, ninguna
-//! llamada nueva fuera de Hyprland). El doble no decide nada: sólo anota.
+//! (pistas en las dos ventanas, ninguna llamada nueva fuera de Hyprland). El
+//! doble no decide nada: sólo anota.
+//!
+//! El efecto sobre GTK de verdad (la petición de tamaño que recibe la ventana
+//! y el tipo de ventana en el momento del map) se afirma en el tier en vivo
+//! (`window_fit_gtk_test.rs`), que construye una `gtk::Window` real y llama a
+//! las funciones de producción.
 
 use super::window_fit::*;
 use crate::widget_placement::Transport;
@@ -17,8 +22,8 @@ use crate::wm_compat::Env;
 
 /// El doble de la ventana nativa: anota las llamadas del ajuste, en orden.
 ///
-/// No decide nada: sólo registra lo que se le pidió (el tipo de ventana, las
-/// pistas y el `show`), para que el test vea el orden.
+/// No decide nada: sólo registra lo que se le pidió (el tipo de ventana y las
+/// pistas), para que el test vea lo que se pidió.
 pub(crate) struct FakeFitSurface {
     /// El factor de escala que informa la ventana.
     window_scale: f64,
@@ -52,10 +57,6 @@ impl FitSurface for FakeFitSurface {
 
     fn set_type_hint_utility(&mut self) {
         self.calls.push("type_hint utility".into());
-    }
-
-    fn show(&mut self) {
-        self.calls.push("show".into());
     }
 }
 
@@ -248,47 +249,17 @@ fn the_size_hints_use_the_scale_the_window_reports() {
     );
 }
 
+/// Las dos ventanas declaran su tipo al crearlas, antes de su primer `show`.
+///
+/// El compositor lee el tipo de ventana al mapear y después ya no lo cambia:
+/// declararlo al crear la ventana lo deja antes de cualquier `show`, sin
+/// depender del orden entre dos colas (el `show` va por la cola de Tao y no lo
+/// adelanta, #250, S19). La lista es la que `start_main_ui` recorre.
 #[test]
-fn the_utility_hint_is_requested_before_the_show() {
-    // El compositor lee el tipo de ventana al mapear: el tipo tiene que estar
-    // antes del primer `show`, o la ventana no flota.
-    let plan = fit_plan(hyprland_profile(), Transport::X11);
-    let mut surface = FakeFitSurface::new(1.0);
-    show_with_utility_hint(&mut surface, &plan);
+fn both_windows_declare_their_type_before_the_first_show() {
     assert_eq!(
-        surface.calls(),
-        vec!["type_hint utility", "show"],
-        "el tipo va antes del show"
-    );
-}
-
-#[test]
-fn the_show_happens_even_without_the_float_hint() {
-    // Sin el perfil de Hyprland no hay tipo que declarar, pero la ventana se
-    // muestra igual: el ajuste no puede impedir el `show`.
-    let plan = fit_plan(FitProfile::NONE, Transport::X11);
-    let mut surface = FakeFitSurface::new(1.0);
-    show_with_utility_hint(&mut surface, &plan);
-    assert_eq!(surface.calls(), vec!["show"], "sólo el show");
-}
-
-#[test]
-fn the_native_route_calls_the_fit_in_both_windows() {
-    // El cableado de la ruta sin ciclo: las dos ventanas tienen que llamar al
-    // ajuste. `place()` necesita una ventana real, así que el efecto se
-    // prueba por la costura; esta afirmación es la que ata esa costura al
-    // punto de llamada: sin ella, borrar la llamada dejaría la ventana sin
-    // ajustar y ningún test lo detectaría. Es lo que pidió el mantenedor en la
-    // revisión de #250 ("los tests de `window_fit_test.rs` seguirían pasando
-    // si se eliminaran esas llamadas").
-    let widget = include_str!("widget_placement.rs");
-    let detail = include_str!("detail_placement.rs");
-    assert!(
-        widget.contains("fit_widget(&mut surface"),
-        "la ruta sin ciclo de la tira tiene que llamar a `fit_widget`"
-    );
-    assert!(
-        detail.contains("fit_detail(&mut surface"),
-        "la ruta sin ciclo del detalle tiene que llamar a `fit_detail`"
+        crate::TYPE_HINT_WINDOWS,
+        [crate::WIDGET, crate::DETAIL],
+        "las dos ventanas declaran su tipo al crearlas"
     );
 }
