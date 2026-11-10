@@ -241,8 +241,9 @@ Windows y Linux (validación pendiente por un compañero, solicitada en la PR):
 ## Propuesta histórica opcional: procedimiento macOS aislado (no ejecutado)
 
 Esta propuesta del agente se redactó antes de disponer de evidencia manual y
-**nunca se ejecutó**. No describe el entorno del usuario: él confirmó que
-trabaja y realizó la comprobación en su Mac local, **no en una VM**. No es un requisito del owner ni de esta PR: el owner aceptó el
+**nunca se ejecutó**. Quien realizó la comprobación confirmó que fue en
+macOS, **sin VM**. La propuesta no describe esa comprobación ni es un
+requisito del owner o de esta PR: el owner aceptó el
 método manual + HTTP simulado según S23–S24 (ver
 [`email-alerts-validation.md`](email-alerts-validation.md)); la evidencia
 manual actual y sus huecos siguen sujetos a la disposición del owner. Se
