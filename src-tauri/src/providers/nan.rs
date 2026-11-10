@@ -602,14 +602,15 @@ fn plan_name(plan: &str) -> &'static str {
     }
 }
 
-/// Identidad del plan, sin cifras: la asignación de tokens depende de la cuenta (cada una
-/// recibe la suya) y la muestran los medidores. Un texto con una cifra fija prometería una
-/// cuota que no es la de la cuenta.
+/// Identidad del plan, sin cifras de cuota: la asignación de tokens depende de la cuenta
+/// (cada una recibe la suya) y la muestran los medidores. Un texto con una cifra fija
+/// prometería una cuota que no es la de la cuenta, pero el modelo del plan sí se nombra:
+/// sin eso el mensaje dejaría de decir de qué plan habla.
 fn plan_quota(plan: &str) -> &'static str {
     match plan {
-        "premium" => "Plan: GLM Premium.",
+        "premium" => "Plan: GLM 5.3.",
         "community" => "Plan de comunidad (prioridad de cola).",
-        _ => "Plan: cluster sin contador.",
+        _ => "Plan: cluster sin contador · DeepSeek V4-Flash.",
     }
 }
 
@@ -757,15 +758,28 @@ mod tests {
         assert_eq!(meters[0].limit, Some(1e9));
     }
 
+    /// ¿El texto afirma una cuota fija ("3B", "500M", "400M")? Un número pegado a B o M es
+    /// una cifra de tokens; pegado a otra cosa ("5.3", "V4") es parte del nombre del modelo.
+    fn has_quota_figure(text: &str) -> bool {
+        let b = text.as_bytes();
+        b.iter().enumerate().any(|(i, c)| {
+            c.is_ascii_digit()
+                && matches!(b.get(i + 1), Some(next) if *next == b'B' || *next == b'M')
+        })
+    }
+
     #[test]
     fn the_plan_text_does_not_assert_fixed_quotas() {
         for plan in ["premium", "community", "member"] {
             let text = plan_quota(plan);
             assert!(
-                !text.chars().any(|c| c.is_ascii_digit()),
-                "el plan {plan} afirma cifras fijas: {text}"
+                !has_quota_figure(&text) && !text.contains("tokens"),
+                "el plan {plan} afirma una cuota fija: {text}"
             );
         }
+        // Quitar la cifra no puede volver el mensaje genérico: el plan sigue nombrando su modelo.
+        assert!(plan_quota("premium").contains("GLM 5.3"));
+        assert!(plan_quota("member").contains("DeepSeek V4-Flash"));
     }
 
     #[test]
