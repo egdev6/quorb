@@ -299,7 +299,9 @@ pub fn display_backend_from_env(env: &Env) -> DisplayBackend {
 /// live GDK probe, when it resolves, MUST win over the env fallback. Pure
 /// helper, applied at the command level: rewrites `display_backend` and
 /// recomputes ONLY `surfaces.window_positioning`; every other surface stays
-/// untouched.
+/// untouched. Only `get_wm_info` on Linux (the sole platform with the runtime
+/// GDK backend probe) and the tests call it.
+#[cfg(any(test, target_os = "linux"))]
 pub fn with_display_backend(
     mut info: WindowManagerInfo,
     backend: DisplayBackend,

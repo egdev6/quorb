@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AlertMoment, AppConfig, Effect, EmailEvent, EmailStatus, Sample, ScopedSecretKey, SecretStatus, UsageReport } from './types';
+import type { AlertMoment, AppConfig, Effect, EmailEvent, EmailStatus, Locale, Sample, ScopedSecretKey, SecretStatus, UsageReport } from './types';
 // Tipos del contrato de la instalación asistida de Codex. Solo tipos: evita un ciclo de ejecución.
 import type { CodexInstallResult, CodexSetupStatus } from './codex-install';
 import type { SurfaceClip } from './surface-clip';
@@ -40,6 +40,8 @@ const patchConfigOutcome = (patch: WidgetPatch) => invoke<ConfigPatchOutcome>('p
 export const api = {
   getConfig: () => invoke<AppConfig>('get_config'),
   saveConfig: (config: AppConfig) => invoke<AppConfig>('save_config', { config }),
+  /** Primer arranque (#235): guarda el idioma elegido y levanta la UI principal. */
+  chooseLocale: (locale: Locale) => invoke<void>('choose_locale', { locale }),
   /** Merge atómico de los campos del widget: no toca cuentas ni secretos. */
   patchConfig: async (patch: WidgetPatch): Promise<AppConfig> => (await patchConfigOutcome(patch)).config,
   /** Igual que `patchConfig` pero conserva el fallo nativo para un error recuperable. */

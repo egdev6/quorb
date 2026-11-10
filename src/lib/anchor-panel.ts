@@ -136,31 +136,3 @@ export const REORDER_GUARD_MS = 400;
  */
 export const isReorderGesture = (lastReorderAt: number, now: number): boolean =>
   now - lastReorderAt < REORDER_GUARD_MS;
-
-/**
- * La retención del hover tras reordenar (#222): `true` mientras el puntero no
- * haya salido de la tira desde que se soltó el orbe.
- *
- * Una ventana de tiempo no puede acotar el `mouseenter` sintetizado tarde por
- * el navegador (medido entre 0,2 s y 2,3 s después de soltar): el orbe se
- * mueve bajo un puntero quieto y la entrada llega con el siguiente movimiento.
- * Por eso solo la libera el `mouseleave` real de `.dock`, nunca un
- * `mouseenter`; pasar a otro orbe tampoco la libera (para abrir otro orbe
- * queda el clic). Solo frena la vía del puntero: foco y clic no la consultan.
- */
-export type ReorderHold = boolean;
-
-/** Sin retención: el hover abre con normalidad. */
-export const NO_REORDER_HOLD: ReorderHold = false;
-
-/**
- * Al soltar un reordenado: retiene solo si el puntero sigue dentro de la
- * ventana. Fuera, el `mouseleave` ya ocurrió y nada la liberaría después.
- */
-export const holdAfterReorderDrop = (pointerInside: boolean): ReorderHold => pointerInside;
-
-/** El `mouseleave` real de la tira libera la retención (y es idempotente). */
-export const releaseOnStripLeave = (_hold: ReorderHold): ReorderHold => false;
-
-/** True si el hover del puntero puede abrir el panel; no depende del tiempo. */
-export const canPointerOpen = (hold: ReorderHold): boolean => !hold;

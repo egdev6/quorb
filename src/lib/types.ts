@@ -152,6 +152,8 @@ export type Locale = 'es' | 'en';
 export interface AppConfig {
   /** Idioma de la interfaz; `es` por defecto */
   locale: Locale;
+  /** El usuario ya eligió idioma en el selector de primer arranque (#235). */
+  localeSelected: boolean;
   refreshMinutes: number;
   opacity: number;
   compact: boolean;
