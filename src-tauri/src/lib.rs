@@ -860,9 +860,10 @@ async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool,
                 // Cuenta principal (id de proveedor) o adicional: la MISMA
                 // resolución del entorno (#91). Principal con
                 // `credentials_path` > ruta por defecto del guest.
-                let path = match cfg.accounts.iter().find(|a| a.id == id) {
-                    Some(a) => crate::providers::account_session_path_in(a, Some(&r)),
-                    None => {
+                let path: Result<Option<String>, String> =
+                    if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
+                        crate::providers::account_session_path_in(a, Some(&r))
+                    } else {
                         let kind = match id.as_str() {
                             "claude" => Some(crate::providers::CliSessionKind::Claude),
                             "codex" => Some(crate::providers::CliSessionKind::Codex),
@@ -885,8 +886,7 @@ async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool,
                         )
                         .map(|p| Some(p.to_string_lossy().into_owned()))
                         .map_err(|e| format!("WSL: {e:?}"))
-                    }
-                };
+                    };
                 match path? {
                     // Proveedor sin sesión CLI en este entorno.
                     None => Ok(false),

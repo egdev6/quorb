@@ -1598,10 +1598,14 @@ mod wsl_login_tests {
         // El mock responde 0 a TODO `command -v`; codex/gemini/grok también
         // aparecen detectados (el stub responde igual).
         assert!(wsl_status.len() == 4);
-        // Sin entorno WSL: detección de Windows (no rompe la ruta host).
+        // En host la detección depende de las CLIs que tenga instaladas el
+        // runner; no fijar su resultado. Solo comprobar que devuelve los
+        // cuatro proveedores y que la ruta host sigue operativa.
         let host_status = cli_status(&cfg, None);
-        assert!(host_status.len() == 4);
-        assert!(host_status.values().all(|s| *s == CliStatus::Ready));
+        assert_eq!(host_status.len(), 4);
+        assert!(host_status
+            .values()
+            .all(|s| matches!(s, CliStatus::Ready | CliStatus::Missing)));
     }
 
     /// El contrato distingue «distro detenida» (Stopped) de «CLI ausente»
