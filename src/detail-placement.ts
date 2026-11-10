@@ -8,7 +8,7 @@
 // reutilizan, nunca se duplican.
 
 import type { PhysicalBounds } from './lib/detail-panel';
-import { readPlacementWithRetries, type WidgetPlacementReport } from './lib/widget-placement';
+import { readPlacementWithRetries, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 
 /**
  * Informe de colocación nativa del detail: el backend viaja con la misma
@@ -32,22 +32,42 @@ export interface DetailPlacementDecision {
 }
 
 /**
+ * Motivos por los que el detalle reintenta la colocación dentro del presupuesto
+ * (#250/S17): `not_viewable` (el compositor todavía no mapeó la ventana) y
+ * `read_failed` (la llamada nativa no se pudo confirmar).
+ */
+export const DETAIL_RETRY_REASONS: readonly WidgetPlacementReason[] = ['not_viewable', 'read_failed'];
+
+/**
  * Decide el cache y el reintento a partir del informe nativo.
  *
  * - `applied` leyó la geometría concedida y también `limited` informa tal cual
  *   el read-back (aunque el gestor haya concedido otra: `size_refused`/
  *   `position_refused`): en ambos casos el cache es exactamente la geometría
  *   efectiva, no la solicitud (D2).
- * - Un informe cancelado (`superseded`), una lectura fallida o el no-X11
- *   (`unverified` sin geometría y sin motivo de ventana oculta) no dejan nada
- *   en el cache: no hay geometría fiable y no hay reintento — el flujo queda
- *   tal como el de #215 antes del read-back (S1).
+ * - Un informe cancelado (`superseded`) no deja nada en el cache: no hay
+ *   geometría fiable y no hay reintento — el flujo queda tal como el de #215
+ *   antes del read-back (S1).
+ * - `not_viewable` (la ventana todavía no era legible) y `read_failed` (la
+ *   llamada nativa no se pudo confirmar, así que la geometría ni siquiera se
+ *   aplicó) son informes blandos: no cachean nada y la colocación se vuelve a
+ *   pedir dentro del presupuesto (#250/S17).
  */
 export const decideDetailPlacement = (report: DetailPlacementReport): DetailPlacementDecision => {
   if (report.status === 'superseded') return { bounds: null, retry: false };
-  if (report.reason === 'not_viewable') return { bounds: null, retry: true };
+  if (report.reason === 'not_viewable' || report.reason === 'read_failed') return { bounds: null, retry: true };
   return { bounds: report.read_back && report.bounds ? report.bounds : null, retry: false };
 };
+
+/**
+ * True cuando la colocación nativa **falló**: la llamada no se pudo confirmar
+ * (`read_failed`), así que la geometría no llegó a aplicarse. El panel no
+ * puede mostrarse entonces con la geometría anterior ni con la de fábrica
+ * (#250/S17): la colocación se vuelve a pedir dentro del presupuesto y, si se
+ * agota, el panel sigue oculto.
+ */
+export const detailPlacementFailed = (report: DetailPlacementReport): boolean =>
+  report.reason === 'read_failed';
 
 /**
  * Aplica la decisión de un informe a la caché del panel: la geometría confirmada
@@ -70,11 +90,14 @@ export interface DetailRetryIo {
   attempts?: number;
   delayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  /** Motivos que se reintentan; por defecto, los del detalle (#250/S17). */
+  reasons?: readonly WidgetPlacementReason[];
 }
 
 /**
- * Vuelve a pedir la colocación en silencio después de `show()` cuando el
- * informe blando dijo que la ventana todavía no era legible (`not_viewable`).
+ * Vuelve a pedir la colocación en silencio cuando el informe blando dijo que
+ * la ventana todavía no era legible (`not_viewable`) o que la llamada nativa
+ * no se pudo confirmar (`read_failed`).
  *
  * El backend no puede leer una ventana oculta: ese informe no es un fallo real,
  * es el compositor tardando en mapear. Con el mismo presupuesto acotado que la
@@ -93,6 +116,7 @@ export const retryDetailPlacement = (
     },
     {
       shouldAbort: () => !io.isCurrent(),
+      retryReasons: io.reasons ?? DETAIL_RETRY_REASONS,
       ...(io.attempts === undefined ? {} : { attempts: io.attempts }),
       ...(io.delayMs === undefined ? {} : { delayMs: io.delayMs }),
       ...(io.sleep === undefined ? {} : { sleep: io.sleep }),

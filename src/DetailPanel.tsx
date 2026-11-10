@@ -12,7 +12,7 @@ import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
 import { samePlacement } from './lib/widget-placement';
-import { confirmDetailPlacement, retryDetailPlacement } from './detail-placement';
+import { confirmDetailPlacement, detailPlacementFailed, retryDetailPlacement } from './detail-placement';
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -139,8 +139,20 @@ export function DetailPanel() {
         // Only the confirmed (read-back) geometry reaches the cache; the requested
         // one never does (S3/D2).
         const cache = (confirmed: PhysicalBounds) => { lastAppliedRef.current = confirmed; lastAppliedReadBackRef.current = true; };
-        let retry = confirmDetailPlacement(await api.setDetailBounds(physical), cache);
+        const report = await api.setDetailBounds(physical);
         if (!current() || disposed) return;
+        let retry = confirmDetailPlacement(report, cache);
+        // #250/S17: the native call could not be confirmed (`read_failed`), so the
+        // geometry never reached the window. The panel must not appear with the
+        // previous geometry nor with the factory one: the placement is asked
+        // again within the bounded budget, and if the budget runs out the panel
+        // stays hidden with nothing cached as confirmed.
+        if (detailPlacementFailed(report)) {
+          const retried = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
+          if (!current() || disposed || !retried) return;
+          retry = confirmDetailPlacement(retried, cache);
+          if (detailPlacementFailed(retried)) return;
+        }
         await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
         if (!current() || disposed) return;
         positionedRef.current = true;
@@ -154,9 +166,9 @@ export function DetailPanel() {
         // (#215/#221). An exhausted budget stays soft: nothing is cached and the
         // opening already succeeded.
         if (retry) {
-          const report = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
-          if (!current() || disposed || !report) return;
-          confirmDetailPlacement(report, cache);
+          const confirmed = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
+          if (!current() || disposed || !confirmed) return;
+          confirmDetailPlacement(confirmed, cache);
         }
       }).catch(console.warn);
     };
