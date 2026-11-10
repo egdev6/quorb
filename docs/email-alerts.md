@@ -148,25 +148,26 @@ gate backend (envío deshabilitado rechazado antes de leer llavero o red, sin
 ninguna petición) y la reutilización de la clave disponible al re-habilitar
 (exactamente dos peticiones HTTP: activado y re-habilitado).
 
-Estado de la evidencia: el owner aceptó como **método** de validación (S23–S24)
-la combinación de comprobación manual más las pruebas automatizadas con HTTP
-simulado ya existentes; no exige VM, simulación integrada en la app ni tests de
-Ajustes montado. Eso no aprueba por sí las capturas concretas aportadas: la
-evidencia manual macOS (capturas y confirmaciones humanas) se obtuvo en el
-Mac local del usuario, **no en una VM**, según su confirmación expresa. No se
-ha acreditado separación de configuración o llavero dentro de ese Mac. La
-evidencia está inventariada con sus límites en
-[`email-alerts-validation.md`](email-alerts-validation.md), que distingue lo
-observado en imágenes, lo confirmado por el usuario y lo no acreditado, y
-sigue sujeta a la disposición del owner. Las
-capturas muestran los textos de ayuda previos a T7, por lo que no validan
-visualmente la ayuda actual; eso no invalida la evidencia de estados y feedback.
-El procedimiento aislado del final de este documento es una propuesta histórica
-opcional, no un requisito para reconocer esa evidencia. `npm run app:dev` usa la
-config y el llavero reales del usuario y podría causar envíos reales: no se
-propone como paso de verificación y no se repiten envíos para documentar.
+El owner aceptó como **método** de validación (S23–S24) la comprobación
+manual más las pruebas automatizadas con HTTP simulado existentes; no exige
+VM, simulación integrada en la app ni tests de Ajustes montado. Esto no aprueba
+por sí solo una ejecución concreta. La [guía de validación](email-alerts-validation.md)
+explica cómo distinguir lo observado, lo confirmado por quien realiza la
+comprobación y lo no acreditado. La checklist ejecutada, la procedencia, los
+resultados y las capturas se presentan **en la PR**, no mediante nombres de
+imágenes locales en esta guía. Windows y Linux siguen pendientes de validación
+por un compañero; se solicitará expresamente en la PR.
+El procedimiento aislado del final es una propuesta histórica opcional, no un
+requisito del owner. `npm run app:dev` puede usar configuración y llavero
+personales y causar envíos reales: no se propone como paso de verificación ni
+se repiten envíos para preparar la documentación. El desarrollo usa npm y
+`package-lock.json`.
 
 Ajustes (S12–S16, S21–S22):
+
+Estas casillas son una plantilla, no resultados de una ejecución. Se completan
+en la PR con observaciones, confirmaciones y límites; una imagen estática no
+acredita todas las transiciones. La validación de Windows y Linux sigue pendiente.
 
 - [ ] Guardar configuración válida sin marcar el interruptor de email:
       la configuración se guarda y el email sigue desactivado.
@@ -184,13 +185,11 @@ Ajustes (S12–S16, S21–S22):
 - [ ] Desactivar email y guardar: el estado se muestra y la clave sigue
       indicada como guardada al reactivar, sin reintroducirla. No pulsar
       «Enviar prueba» contra Resend para verificar este punto.
-- [ ] Feedback de aceptación/error: la evidencia visual ya aportada muestra
-      «Solicitud aceptada por Resend» en verde y el rechazo 403 en rojo,
-      sanitizados (capturas previas a T7, inventariadas en
-      [`email-alerts-validation.md`](email-alerts-validation.md)). El
-      comportamiento sanitizado queda además cubierto por los tests HTTP
-      existentes. No se exige un procedimiento nuevo de simulación integrada
-      para reconocer esa evidencia; no repetir envíos reales para documentar.
+- [ ] Feedback de aceptación/error: presentar en la PR las capturas disponibles
+      de «Solicitud aceptada por Resend» en verde y del rechazo sanitizado en
+      rojo, indicando su procedencia y alcance. Los tests HTTP cubren el
+      protocolo, no sustituyen la evidencia visual. No se exige simulación
+      integrada nueva ni repetir envíos reales para documentar.
 
 Avisos automáticos (S2, S3, S11, S18):
 
@@ -207,15 +206,19 @@ manuales ni acredita el cableado de la aplicación montada:
   Para volver a emitir deben habilitarse Alertas global y email y producirse
   un evento nuevo según la memoria existente.
 
-Windows (S24, verificación del owner si no hay acceso):
+Windows y Linux (validación pendiente por un compañero, solicitada en la PR):
 
 - [ ] Comprobar en Windows el guardado, presencia tras desactivar/reactivar
       y eliminación de una clave sintética aislada, sin enviar correos,
       con el almacén del sistema correspondiente
       (el backend `keyring` cambia por sistema operativo).
-- [ ] Sin acceso a Windows en esta PR: dejar la casilla para verificación del
-      owner, como acordó en la respuesta del owner (S24); ninguna prueba
-      automatizada sustituye esta comprobación del llavero real.
+- [ ] Linux: comprobar la interfaz y el almacén real de credenciales, indicando
+      backend efectivo, conservación/eliminación y comportamiento tras reinicio
+      si se comprueba. Mantener explícita la limitación de keyutils: su
+      resolución sigue en #106, no se amplía aquí el alcance de #245.
+- [ ] Solicitar en la PR validación de ambas plataformas por un compañero;
+      ninguna suite macOS ni prueba con almacén sintético la sustituye.
+      Windows conserva el acuerdo de verificación del owner (S24).
 
 ## Propuesta histórica opcional: procedimiento macOS aislado (no ejecutado)
 
@@ -324,17 +327,19 @@ la app abierta. SSR acredita el marcado, no esa interacción.
 
 Por tanto, esta propuesta queda como alternativa histórica opcional: el owner
 no exige una captura con simulación integrada ni la ejecución del procedimiento
-como parte del método de validación aceptado (S23–S24). Las capturas
-`6.png`/`7.png` y `recepcion.png`, previas a T7, están inventariadas en
-[`email-alerts-validation.md`](email-alerts-validation.md) y siguen sujetas a
-la disposición del owner. Los tests HTTP
-locales indicados arriba siguen siendo la vía acreditada de comprobar
+como parte del método de validación aceptado (S23–S24). Las capturas y sus
+resultados se presentan en la PR conforme a la
+[guía de validación](email-alerts-validation.md), con procedencia y límites
+explícitos; esta guía no depende de referencias a archivos locales.
+Los tests HTTP locales indicados arriba siguen siendo la vía acreditada de comprobar
 aceptación/fallo sanitizado, sin infraestructura nueva montada. Una VM
 desconectada, una clave falsa o un fallo de transporte no acreditarían
 aceptación simulada.
 
 Registrar por paso: candidato/hash del artefacto, macOS, aislamiento, acción,
 resultado esperado/observado, captura sanitizada y PASS/FAIL/PENDING. Sin acceso
-a Windows, su guardado/desactivación/reactivación/eliminación en Credential
-Manager queda expresamente **pendiente del owner** (S24). Ningún resultado macOS
-lo sustituye. #245 permanece abierta hasta completar la evidencia requerida.
+a Windows o Linux, la comprobación de sus almacenes e interfaz queda
+expresamente **pendiente de validación por un compañero**, que se solicitará
+en la PR; Windows mantiene el acuerdo con el owner (S24). Ningún resultado
+macOS sustituye estas comprobaciones. La limitación Linux de keyutils sigue
+perteneciendo a #106. #245 permanece abierta hasta completar la evidencia requerida.
