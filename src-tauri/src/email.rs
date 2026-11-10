@@ -643,7 +643,7 @@ mod tests {
     /// antes de leer llavero o red; al re-habilitar se reutiliza la clave
     /// disponible sin exigir `set_secret` de nuevo (solo un set vacío explícito
     /// la borra en `secrets.rs`). La conservación a través del flujo real de
-    /// guardado (patchEmail → runMixedSave → api.saveConfig) se cubre en
+    /// guardado (patchEmail → runMixedSave → enqueueCanonicalConfig → api.saveConfig) se cubre en
     /// `src/lib/email.test.ts`; la persistencia del llavero del SO es manual
     /// por plataforma (S24) y queda fuera de este test.
     #[test]
@@ -651,7 +651,12 @@ mod tests {
         let (url, requests, handle) = server(200, Duration::ZERO);
         let store = Arc::new(Mutex::new(Some("synthetic-key".to_string())));
         let mut cfg = config();
-        let reader = || Ok(store.lock().unwrap().clone());
+        let reads = std::cell::Cell::new(0);
+        let reader = || {
+            reads.set(reads.get() + 1);
+            Ok(store.lock().unwrap().clone())
+        };
+        let before = cfg.clone();
         assert_eq!(
             run(send_with(
                 &cfg,
@@ -663,6 +668,8 @@ mod tests {
             )),
             EmailStatus::Accepted
         );
+        assert_eq!(reads.get(), 1);
+        assert_eq!(cfg, before);
         assert_eq!(requests.lock().unwrap().len(), 1);
         assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
 
@@ -674,25 +681,35 @@ mod tests {
         assert!(!saved.email.enabled);
         assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
 
-        // Desactivado, el gate del backend rechaza antes de leer la clave:
-        // ni petición HTTP ni acceso al almacén.
-        assert_eq!(
-            run(send_with(
-                &saved,
-                Locale::En,
-                Some(event()),
-                reader,
-                &url,
-                Duration::from_secs(5)
-            )),
-            EmailStatus::Disabled
-        );
-        assert_eq!(requests.lock().unwrap().len(), 1);
-        assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
+        // Ambos interruptores rechazan antes de leer la clave:
+        // ni petición HTTP ni acceso al almacén en esta fase.
+        reads.set(0);
+        let mut global_disabled = cfg.clone();
+        global_disabled.email.enabled = true;
+        global_disabled.enabled = false;
+        for disabled in [&saved, &global_disabled] {
+            let before = disabled.clone();
+            assert_eq!(
+                run(send_with(
+                    disabled,
+                    Locale::En,
+                    Some(event()),
+                    reader,
+                    &url,
+                    Duration::from_secs(5)
+                )),
+                EmailStatus::Disabled
+            );
+            assert_eq!(reads.get(), 0);
+            assert_eq!(*disabled, before);
+            assert_eq!(requests.lock().unwrap().len(), 1);
+            assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
+        }
 
         // Re-habilitar reutiliza la clave disponible: segunda y última petición.
         let mut reenabled = saved;
         reenabled.email.enabled = true;
+        let before = reenabled.clone();
         assert_eq!(
             run(send_with(
                 &reenabled,
@@ -705,6 +722,8 @@ mod tests {
             EmailStatus::Accepted
         );
         handle.join().unwrap();
+        assert_eq!(reads.get(), 1);
+        assert_eq!(reenabled, before);
         assert_eq!(requests.lock().unwrap().len(), 2);
         assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
     }

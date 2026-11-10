@@ -176,38 +176,39 @@ describe('email Settings actions', () => {
     expect(invoke).toHaveBeenLastCalledWith('email_status');
   });
 
-  // Regresión T6 (#245): pin del coordinador real de guardado de Ajustes,
-  // `runMixedSave` + `api.saveConfig` con el puente Tauri mockeado, no un
-  // doble de la persistencia. Guardar con email deshabilitado conserva
-  // consentimiento y direcciones y emite solo `save_config`: nunca `set_secret`
-  // de nuevo ni ningún borrado de clave. Esto acredita la orquestación, no la
-  // persistencia del llavero del SO (manual por plataforma, S24) ni la UI
-  // montada ni lo visual.
+  // Regresión T6 (#245): runMixedSave → enqueueCanonicalConfig → cola →
+  // api.saveConfig, con puente Tauri y estado persistido simulados. Guardar con
+  // email deshabilitado conserva consentimiento y direcciones y emite solo
+  // save_config: nunca escribe ni borra secretos, ni aplica autostart.
+  // Acredita la orquestación, no el llavero del SO (manual por plataforma,
+  // S24), la UI montada ni lo visual.
   it('saving email disabled through the real save coordinator keeps consent and addresses and never touches secrets', async () => {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const mockInvoke = vi.mocked(invoke);
-    mockInvoke.mockClear();
-    mockInvoke.mockImplementationOnce(
-      async (_command: string, args?: unknown) => (args as { config: AppConfig }).config,
-    );
+    const f = persistenceFixture(true, true);
     const snapshot = {
-      alerts: { email: patchEmail({ ...email, enabled: true }, { enabled: false }) },
-    } as unknown as AppConfig;
+      ...f.stored(),
+      alerts: { ...f.stored().alerts, email: patchEmail({ ...email, enabled: true }, { enabled: false }) },
+    };
+    const before = structuredClone(snapshot);
+    const expected = { ...snapshot, opacity: 0.8 };
     const applyAutostart = vi.fn(async () => {
       throw new Error('autostart no debe aplicarse');
     });
     const result = await runMixedSave(
       { configDirty: true, configSnapshot: snapshot, autostartDirty: false, autostartDesired: false },
-      { saveConfig: api.saveConfig, applyAutostart },
+      { saveConfig: (s) => enqueueCanonicalConfig(f.enqueueSave, s, () => ({ opacity: 0.8 })), applyAutostart },
     );
-    expect(result.config).toEqual({ status: 'saved', saved: snapshot });
+    expect(result.config).toEqual({ status: 'saved', saved: expected });
     expect(result.autostart.status).toEqual('skipped');
-    expect(snapshot.alerts.email).toEqual({
+    expect(f.mockInvoke.mock.calls).toEqual([['save_config', { config: expected }]]);
+    expect(f.stored()).toEqual(expected);
+    expect(f.baseline()).toEqual(expected);
+    expect(f.stored().alerts.email).toEqual({
       enabled: false,
       consent: true,
       sender: 'sender@example.test',
       recipient: 'recipient@example.test',
     });
-    expect(mockInvoke.mock.calls).toEqual([['save_config', { config: snapshot }]]);
+    expect(snapshot).toEqual(before);
+    expect(applyAutostart).not.toHaveBeenCalled();
   });
 });
