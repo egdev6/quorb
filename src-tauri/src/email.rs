@@ -219,124 +219,98 @@ mod tests {
             .unwrap()
             .block_on(future)
     }
-    /// ¿Los bytes acumulados contienen ya una petición HTTP completa?
-    fn complete_request(bytes: &[u8]) -> bool {
-        let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") else {
-            return false;
-        };
-        let header = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
-        let length = header
-            .lines()
-            .find_map(|s| {
-                s.strip_prefix("content-length: ")
-                    .and_then(|s| s.parse::<usize>().ok())
-            })
-            .unwrap_or(0);
-        bytes.len() >= end + 4 + length
-    }
-
-    /// Servidor HTTP sintético de tests. Acepta conexiones hasta el cierre
-    /// explícito (`stop`), sin plazo de vida: la ventana fija de 350 ms era la
-    /// causa del fallo intermitente de L31 bajo carga de la suite. El timeout
-    /// de lectura acota a los clientes que no terminan la petición y el `Drop`
-    /// evita dejar hilos vivos aunque el test entre en pánico.
-    struct TestServer {
-        url: String,
-        requests: Arc<Mutex<Vec<String>>>,
+    struct ServerHandle {
         shutdown: Arc<AtomicBool>,
-        handle: Option<std::thread::JoinHandle<()>>,
+        thread: Option<std::thread::JoinHandle<()>>,
     }
 
-    impl TestServer {
-        fn start(status: u16, delay: Duration) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.set_nonblocking(true).unwrap();
-            let url = format!("http://{}/emails", listener.local_addr().unwrap());
-            let requests = Arc::new(Mutex::new(Vec::new()));
-            let shutdown = Arc::new(AtomicBool::new(false));
-            let (accepting, captured, stopping) = (listener, requests.clone(), shutdown.clone());
-            let handle = std::thread::spawn(move || {
-                while !stopping.load(Ordering::Acquire) {
-                    match accepting.accept() {
-                        Ok((mut stream, _)) => {
-                            stream
-                                .set_read_timeout(Some(Duration::from_millis(250)))
-                                .unwrap();
-                            let mut bytes = Vec::new();
-                            let mut buf = [0u8; 4096];
-                            let deadline = std::time::Instant::now() + Duration::from_secs(2);
-                            while !complete_request(&bytes) && std::time::Instant::now() < deadline
-                            {
-                                match stream.read(&mut buf) {
-                                    Ok(0) => break,
-                                    Ok(n) => bytes.extend_from_slice(&buf[..n]),
-                                    Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                                    Err(ref e)
-                                        if e.kind() == std::io::ErrorKind::WouldBlock
-                                            || e.kind() == std::io::ErrorKind::TimedOut => {}
-                                    Err(_) => break,
-                                }
-                            }
-                            // Solo se registran peticiones completas: un
-                            // cliente que aborta a mitad (timeout o reset bajo
-                            // carga) no debe falsear el recuento ni romper el
-                            // parseo del cuerpo con bytes parciales.
-                            let served = complete_request(&bytes);
-                            if served {
-                                captured
-                                    .lock()
-                                    .unwrap()
-                                    .push(String::from_utf8(bytes).unwrap());
-                            }
-                            if served {
-                                std::thread::sleep(delay);
-                                let body = "private-api-detail recipient@example.test secret-key";
-                                let _ = write!(stream, "HTTP/1.1 {status} response\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/forbidden\r\n\r\n{body}", body.len());
-                            }
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(Duration::from_millis(2));
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-            Self {
-                url,
-                requests,
-                shutdown,
-                handle: Some(handle),
-            }
-        }
-
-        /// Instantánea viva de las peticiones capturadas.
-        fn requests(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
-            self.requests.lock().unwrap()
-        }
-
-        /// Ventana breve acotada para que el servidor registre cualquier
-        /// petición extra antes de afirmar el número exacto: conserva la
-        /// capacidad de detectar reintentos sin plazos de vida del servidor.
-        fn observe(&self, window: Duration) {
-            std::thread::sleep(window);
-        }
-
-        fn stop(mut self) {
+    impl ServerHandle {
+        fn join(mut self) -> std::thread::Result<()> {
+            // Preserve the observation window for unexpected extra requests.
+            std::thread::sleep(Duration::from_millis(350));
             self.shutdown.store(true, Ordering::Release);
-            if let Some(handle) = self.handle.take() {
-                handle.join().unwrap();
-            }
+            self.thread.take().unwrap().join()
         }
     }
 
-    impl Drop for TestServer {
+    impl Drop for ServerHandle {
         fn drop(&mut self) {
             self.shutdown.store(true, Ordering::Release);
-            if let Some(handle) = self.handle.take() {
-                // En un pánico del test no se propaga un segundo pánico.
-                let _ = handle.join();
+            if let Some(thread) = self.thread.take() {
+                // Do not double-panic while unwinding a failed assertion.
+                let _ = thread.join();
             }
         }
+    }
+
+    fn server(status: u16, delay: Duration) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
+        server_with_accept(status, delay, |_| {})
+    }
+
+    fn server_with_accept(
+        status: u16,
+        delay: Duration,
+        on_accept: impl Fn(&std::net::TcpStream) + Send + 'static,
+    ) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/emails", listener.local_addr().unwrap());
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let requests = captured.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let stopping = shutdown.clone();
+        let handle = std::thread::spawn(move || {
+            // The owning test controls lifetime, not thread startup time.
+            while !stopping.load(Ordering::Acquire) {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    on_accept(&stream);
+                    // Winsock inherits the listener mode; request I/O must block.
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut bytes = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let n = stream.read(&mut buf).unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        bytes.extend_from_slice(&buf[..n]);
+                        if let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
+                            let header = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+                            let length = header
+                                .lines()
+                                .find_map(|s| {
+                                    s.strip_prefix("content-length: ")
+                                        .and_then(|s| s.parse::<usize>().ok())
+                                })
+                                .unwrap_or(0);
+                            if bytes.len() >= end + 4 + length {
+                                break;
+                            }
+                        }
+                    }
+                    requests
+                        .lock()
+                        .unwrap()
+                        .push(String::from_utf8(bytes).unwrap());
+                    std::thread::sleep(delay);
+                    let body = "private-api-detail recipient@example.test secret-key";
+                    let _ = write!(stream, "HTTP/1.1 {status} response\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/forbidden\r\n\r\n{body}", body.len());
+                } else {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+        });
+        (
+            url,
+            captured,
+            ServerHandle {
+                shutdown,
+                thread: Some(handle),
+            },
+        )
     }
 
     #[test]
@@ -360,7 +334,7 @@ mod tests {
                 None,
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::ConsentRequired
         );
@@ -373,7 +347,7 @@ mod tests {
                 None,
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::ConfigurationMissing
         );
@@ -386,7 +360,7 @@ mod tests {
                 Some(event()),
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::Disabled
         );
@@ -399,7 +373,7 @@ mod tests {
                 Some(event()),
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::Disabled
         );
@@ -418,7 +392,7 @@ mod tests {
                     None,
                     || key,
                     "http://127.0.0.1:1",
-                    Duration::from_secs(1)
+                    Duration::from_secs(5)
                 )),
                 expected
             );
@@ -430,7 +404,7 @@ mod tests {
 
     #[test]
     fn one_minimal_request_accepted_with_native_off() {
-        let server = TestServer::start(200, Duration::ZERO);
+        let (url, requests, handle) = server(200, Duration::ZERO);
         let mut cfg = config();
         cfg.native = false;
         let result = run(send_with(
@@ -438,13 +412,13 @@ mod tests {
             Locale::En,
             Some(event()),
             || Ok(Some("synthetic-key".into())),
-            &server.url,
-            Duration::from_secs(1),
+            &url,
+            Duration::from_secs(5),
         ));
-        server.observe(Duration::from_millis(50));
+        handle.join().unwrap();
         assert_eq!(result, EmailStatus::Accepted);
-        assert_eq!(server.requests().len(), 1);
-        let req = server.requests();
+        let req = requests.lock().unwrap();
+        assert_eq!(req.len(), 1);
         assert!(req[0].starts_with("POST /emails HTTP/1.1"));
         assert!(req[0]
             .to_lowercase()
@@ -456,8 +430,6 @@ mod tests {
             serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject":"Quorb: usage alert", "text":"Provider: claude\nMeter: five_hour\nWindow: 12345\nPercent: 95\nEvent: exceeded"})
         );
         assert!(!body.to_string().contains("synthetic-key"));
-        drop(req);
-        server.stop();
     }
 
     /// S21 (#245): asunto y cuerpo siguen el locale de la config; el inglés
@@ -476,27 +448,24 @@ mod tests {
                 "Provider: claude\nMeter: five_hour\nWindow: 12345\nPercent: 95\nEvent: exceeded",
             ),
         ] {
-            let server = TestServer::start(200, Duration::ZERO);
+            let (url, requests, handle) = server(200, Duration::ZERO);
             let result = run(send_with(
                 &config(),
                 locale,
                 Some(event()),
                 || Ok(Some("synthetic-key".into())),
-                &server.url,
-                Duration::from_secs(1),
+                &url,
+                Duration::from_secs(5),
             ));
-            server.observe(Duration::from_millis(50));
+            handle.join().unwrap();
             assert_eq!(result, EmailStatus::Accepted);
-            assert_eq!(server.requests().len(), 1);
-            let body: serde_json::Value = serde_json::from_str(
-                server.requests()[0].split("\r\n\r\n").nth(1).unwrap(),
-            )
-            .unwrap();
+            let req = requests.lock().unwrap();
+            let body: serde_json::Value =
+                serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
             assert_eq!(
                 body,
                 serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject": subject, "text": text})
             );
-            server.stop();
         }
     }
 
@@ -510,29 +479,27 @@ mod tests {
             ),
             (Locale::En, "Quorb: explicit email test (no usage data)."),
         ] {
-            let server = TestServer::start(200, Duration::ZERO);
+            let (url, requests, handle) = server(200, Duration::ZERO);
             let result = run(send_with(
                 &config(),
                 locale,
                 None,
                 || Ok(Some("synthetic-key".into())),
-                &server.url,
-                Duration::from_secs(1),
+                &url,
+                Duration::from_secs(5),
             ));
-            server.observe(Duration::from_millis(50));
+            handle.join().unwrap();
             assert_eq!(result, EmailStatus::Accepted);
-            assert_eq!(server.requests().len(), 1);
+            let req = requests.lock().unwrap();
             let body: serde_json::Value =
-                serde_json::from_str(server.requests()[0].split("\r\n\r\n").nth(1).unwrap())
-                    .unwrap();
+                serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
             assert_eq!(body["text"], text);
-            server.stop();
         }
     }
 
     #[test]
     fn explicit_test_works_while_disabled_without_activating() {
-        let server = TestServer::start(200, Duration::ZERO);
+        let (url, requests, handle) = server(200, Duration::ZERO);
         let mut cfg = config();
         cfg.enabled = false;
         cfg.email.enabled = false;
@@ -543,15 +510,62 @@ mod tests {
                 Locale::En,
                 None,
                 || Ok(Some("synthetic-key".into())),
-                &server.url,
-                Duration::from_secs(1)
+                &url,
+                Duration::from_secs(5)
             )),
             EmailStatus::Accepted
         );
-        server.observe(Duration::from_millis(50));
+        handle.join().unwrap();
         assert_eq!(cfg, before);
-        assert_eq!(server.requests().len(), 1);
-        server.stop();
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    /// Model Winsock's inherited nonblocking mode even on Unix hosts.
+    #[test]
+    fn nonblocking_accepted_socket_waits_for_complete_request() {
+        let (accepted_tx, accepted_rx) = std::sync::mpsc::channel();
+        let (url, requests, handle) = server_with_accept(200, Duration::ZERO, move |stream| {
+            stream.set_nonblocking(true).unwrap();
+            accepted_tx.send(()).unwrap();
+        });
+        let address = url
+            .strip_prefix("http://")
+            .unwrap()
+            .strip_suffix("/emails")
+            .unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        accepted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut byte = [0u8; 1];
+        let expect_no_response = |client: &mut std::net::TcpStream, byte: &mut [u8]| {
+            let result = client.read(byte);
+            assert!(
+                matches!(result, Err(ref error) if matches!(error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+                "fixture responded before the complete request: {result:?}"
+            );
+        };
+        expect_no_response(&mut client, &mut byte);
+        let header = "POST /emails HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\n";
+        client.write_all(header.as_bytes()).unwrap();
+        client.write_all(b"te").unwrap();
+        expect_no_response(&mut client, &mut byte);
+        client.write_all(b"st").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        handle.join().unwrap();
+        assert_eq!(response, format!("HTTP/1.1 200 response\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/forbidden\r\n\r\n{}",
+            "private-api-detail recipient@example.test secret-key".len(),
+            "private-api-detail recipient@example.test secret-key"));
+        assert_eq!(*requests.lock().unwrap(), vec![format!("{header}test")]);
     }
 
     /// S23 (#245): pin del backend, no del guardado de Ajustes. Con email
@@ -564,7 +578,7 @@ mod tests {
     /// por plataforma (S24) y queda fuera de este test.
     #[test]
     fn backend_gates_disabled_email_and_reuses_available_key() {
-        let server = TestServer::start(200, Duration::ZERO);
+        let (url, requests, handle) = server(200, Duration::ZERO);
         let store = Arc::new(Mutex::new(Some("synthetic-key".to_string())));
         let mut cfg = config();
         let reader = || Ok(store.lock().unwrap().clone());
@@ -574,12 +588,12 @@ mod tests {
                 Locale::En,
                 Some(event()),
                 reader,
-                &server.url,
-                Duration::from_secs(1)
+                &url,
+                Duration::from_secs(5)
             )),
             EmailStatus::Accepted
         );
-        assert_eq!(server.requests().len(), 1);
+        assert_eq!(requests.lock().unwrap().len(), 1);
         assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
 
         // Guardado de config con email desactivado: el round-trip de serde no
@@ -598,12 +612,12 @@ mod tests {
                 Locale::En,
                 Some(event()),
                 reader,
-                &server.url,
-                Duration::from_secs(1)
+                &url,
+                Duration::from_secs(5)
             )),
             EmailStatus::Disabled
         );
-        assert_eq!(server.requests().len(), 1);
+        assert_eq!(requests.lock().unwrap().len(), 1);
         assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
 
         // Re-habilitar reutiliza la clave disponible: segunda y última petición.
@@ -615,37 +629,32 @@ mod tests {
                 Locale::En,
                 Some(event()),
                 reader,
-                &server.url,
-                Duration::from_secs(1)
+                &url,
+                Duration::from_secs(5)
             )),
             EmailStatus::Accepted
         );
-        server.observe(Duration::from_millis(50));
-        assert_eq!(server.requests().len(), 2);
+        handle.join().unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 2);
         assert_eq!(store.lock().unwrap().as_deref(), Some("synthetic-key"));
-        server.stop();
     }
 
-    /// Reproducción determinista del plazo de vida de la fixture (L31): una
-    /// petición que llega tarde (primera poll bajo carga de la suite) debe
-    /// servirse igual. Con la ventana de 350 ms de la fixture antigua esto
-    /// daba `AcceptanceUnknown` porque el servidor ya había cerrado.
+    /// A loaded test runner may not poll the first request within 350 ms.
     #[test]
     fn late_first_request_is_still_served() {
-        let server = TestServer::start(200, Duration::ZERO);
+        let (url, requests, handle) = server(200, Duration::ZERO);
         std::thread::sleep(Duration::from_millis(400));
-        let result = run(send_with(
+        let status = run(send_with(
             &config(),
             Locale::En,
             Some(event()),
             || Ok(Some("synthetic-key".into())),
-            &server.url,
-            Duration::from_secs(1),
+            &url,
+            Duration::from_secs(5),
         ));
-        server.observe(Duration::from_millis(50));
-        assert_eq!(result, EmailStatus::Accepted);
-        assert_eq!(server.requests().len(), 1);
-        server.stop();
+        handle.join().unwrap();
+        assert_eq!(status, EmailStatus::Accepted);
+        assert_eq!(requests.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -657,29 +666,28 @@ mod tests {
             (429, Duration::ZERO, EmailStatus::RateLimited),
             (500, Duration::ZERO, EmailStatus::ServiceError),
             (302, Duration::ZERO, EmailStatus::RequestRejected),
-            (
-                200,
-                Duration::from_millis(150),
-                EmailStatus::AcceptanceUnknown,
-            ),
+            (200, Duration::from_secs(3), EmailStatus::AcceptanceUnknown),
         ] {
-            let server = TestServer::start(code, delay);
+            let (url, requests, handle) = server(code, delay);
             let status = run(send_with(
                 &config(),
                 Locale::En,
                 None,
                 || Ok(Some("synthetic-key".into())),
-                &server.url,
-                Duration::from_millis(100),
+                &url,
+                if delay.is_zero() {
+                    Duration::from_secs(5)
+                } else {
+                    Duration::from_secs(2)
+                },
             ));
-            server.observe(Duration::from_millis(50));
+            handle.join().unwrap();
             assert_eq!(status, expected);
-            assert_eq!(server.requests().len(), 1);
+            assert_eq!(requests.lock().unwrap().len(), 1);
             let diagnostic = serde_json::to_string(&status).unwrap();
             for private in ["private-api-detail", "recipient@example.test", "secret-key"] {
                 assert!(!diagnostic.contains(private));
             }
-            server.stop();
         }
     }
 
@@ -710,7 +718,7 @@ mod tests {
                     Some(bad),
                     || panic!("credential read"),
                     "http://127.0.0.1:1",
-                    Duration::from_secs(1)
+                    Duration::from_secs(5)
                 )),
                 EmailStatus::RequestRejected
             );
