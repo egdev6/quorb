@@ -151,46 +151,51 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     // `cloud-api.nan.builders`): `nan_cloud::parse_quota` toma `cap`, que es la asignación de
     // la cuenta para el periodo en curso (el mismo número que el panel muestra como
     // "Allowance per billing period"); el consumo y las fechas salen del mismo payload, así
-    // que cuota, uso y periodo son del mismo periodo. Si esta llamada falla queda `None`,
-    // `nan_meters` cae a la cuota publicada y el informe lo avisa como tal.
+    // que cuota, uso y periodo son del mismo periodo. Si esta llamada falla o no trae
+    // medidores, se lee `/v1/usage` y se cae a la cuota publicada, señalada como fallback.
     let account_quota = super::nan_cloud::fetch_account_quota(http, &key).await.ok();
+    let account_meters = account_quota
+        .as_ref()
+        .map(super::nan_cloud::parse_quota)
+        .filter(|m| !m.is_empty());
 
-    // 2. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
     let now = Utc::now();
-    let period_start = billing_period_start(now, cfg.billing_day);
-    let from = month_start(now).min(period_start);
-    let usage = fetch_usage(cfg, http, &key, from, now).await;
-
-    match usage {
-        Ok(pages) => {
-            // Para el mes natural solo contamos días del mes; para glm5.3, desde el inicio del periodo.
-            let month = summarize(&pages, Some(month_start(now)));
-            let period = summarize(&pages, Some(period_start));
-            let (meters, source) = nan_meters(
-                account_quota.as_ref(),
-                &month,
-                &period,
-                &quotas,
-                now,
-                cfg.billing_day,
-            );
-            report.meters = meters;
-            let total = month.total();
-            report.message = Some(usage_message(total, report.meters.len(), source));
-            if source == QuotaSource::Published {
-                report.status = Status::Warning;
+    if let Some(meters) = account_meters {
+        // 2. La cuota de la cuenta manda: cuota, consumo y fechas salen del mismo payload, así
+        // que no se lee `/v1/usage` (mide el consumo de esta key, de otro periodo) ni se usa
+        // `billing_day` (el periodo es el del payload).
+        let (meters, _source, header) =
+            nan_meters(Some(meters), None, &quotas, now, cfg.billing_day);
+        report.meters = meters;
+        report.message = Some(header);
+    } else {
+        // 3. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
+        let period_start = billing_period_start(now, cfg.billing_day);
+        let from = month_start(now).min(period_start);
+        match fetch_usage(cfg, http, &key, from, now).await {
+            Ok(pages) => {
+                // Para el mes natural solo contamos días del mes; para glm5.3, desde el inicio del periodo.
+                let month = summarize(&pages, Some(month_start(now)));
+                let period = summarize(&pages, Some(period_start));
+                let (meters, source, header) =
+                    nan_meters(None, Some((&month, &period)), &quotas, now, cfg.billing_day);
+                report.meters = meters;
+                report.message = Some(header);
+                if source == QuotaSource::Published {
+                    report.status = Status::Warning;
+                }
             }
-        }
-        Err(e) => {
-            report.status = Status::Warning;
-            report.message = Some(format!(
-                "No pude leer /v1/usage ({e}). {}",
-                plan_quota(&cfg.plan)
-            ));
+            Err(e) => {
+                report.status = Status::Warning;
+                report.message = Some(format!(
+                    "No pude leer /v1/usage ({e}). {}",
+                    plan_quota(&cfg.plan)
+                ));
+            }
         }
     }
 
-    // 3. Endpoint propio opcional (avanzado) + cabeceras de rate limit
+    // 4. Endpoint propio opcional (avanzado) + cabeceras de rate limit
     if let Some(m) = custom_usage(cfg, http, &key).await {
         report.meters.insert(0, m);
     }
@@ -526,37 +531,54 @@ pub(crate) fn quota_meters(
 }
 
 /// Meters of the account: the account quota wins; published quotas are only the fallback.
+///
+/// The account payload carries quota, usage and period dates together, so when it arrives
+/// the report describes that very period: the header and the meters never mix periods.
+/// `usage` is the aggregated consumption of the API key (`/v1/usage`), used only when the
+/// account payload does not answer.
 pub(crate) fn nan_meters(
-    account_quota: Option<&Value>,
-    month: &UsageSummary,
-    period: &UsageSummary,
+    account_meters: Option<Vec<Meter>>,
+    usage: Option<(&UsageSummary, &UsageSummary)>,
     published: &BTreeMap<String, Quota>,
     now: DateTime<Utc>,
     billing_day: u32,
-) -> (Vec<Meter>, QuotaSource) {
+) -> (Vec<Meter>, QuotaSource, String) {
     // The account quota carries quota, usage and period dates in the same payload.
-    if let Some(v) = account_quota {
-        let meters = super::nan_cloud::parse_quota(v);
-        if !meters.is_empty() {
-            return (meters, QuotaSource::Account);
-        }
+    if let Some(meters) = account_meters.filter(|m| !m.is_empty()) {
+        let total: f64 = meters.iter().filter_map(|m| m.used).sum();
+        let header = usage_message(total, meters.len(), QuotaSource::Account);
+        return (meters, QuotaSource::Account, header);
     }
+    let Some((month, period)) = usage else {
+        // Sin lectura de `/v1/usage` no hay nada que medir; el error lo arma quien lo sabe.
+        return (Vec::new(), QuotaSource::None, String::new());
+    };
     let meters = quota_meters(month, period, published, now, billing_day);
     if meters.is_empty() {
-        (Vec::new(), QuotaSource::None)
+        let header = usage_message(month.total(), 0, QuotaSource::None);
+        (Vec::new(), QuotaSource::None, header)
     } else {
-        (meters, QuotaSource::Published)
+        let header = usage_message(month.total(), meters.len(), QuotaSource::Published);
+        (meters, QuotaSource::Published, header)
     }
 }
 
-/// Month summary; the published quota is flagged as a fallback, not as the account one.
+/// Header of the report: it names the period the numbers come from. The published quota is
+/// flagged as a fallback, not as the account one.
 fn usage_message(total: f64, meters: usize, source: QuotaSource) -> String {
     let detail = if meters > 0 {
         "cuotas por modelo"
     } else {
         "sin cuotas con contador"
     };
-    let mut parts = vec![format!("{} tokens este mes", compact(total)), detail.into()];
+    let mut parts = vec![
+        if source == QuotaSource::Account {
+            format!("{} tokens del periodo de la cuenta", compact(total))
+        } else {
+            format!("{} tokens este mes", compact(total))
+        },
+        detail.into(),
+    ];
     if source == QuotaSource::Published {
         parts.push("cuota publicada (no es la asignación de tu cuenta)".into());
     }
@@ -580,11 +602,14 @@ fn plan_name(plan: &str) -> &'static str {
     }
 }
 
+/// Identidad del plan, sin cifras: la asignación de tokens depende de la cuenta (cada una
+/// recibe la suya) y la muestran los medidores. Un texto con una cifra fija prometería una
+/// cuota que no es la de la cuenta.
 fn plan_quota(plan: &str) -> &'static str {
     match plan {
-        "premium" => "Plan: 3B tokens/periodo de GLM 5.3 (cuota publicada).",
+        "premium" => "Plan: GLM Premium.",
         "community" => "Plan de comunidad (prioridad de cola).",
-        _ => "Plan: cluster sin contador · 3B tokens/mes en DeepSeek V4-Flash (cuota publicada).",
+        _ => "Plan: cluster sin contador.",
     }
 }
 
@@ -716,10 +741,13 @@ mod tests {
         let payload = json!({"periodStart": "2026-10-01", "models": [
             {"model": "deepseek-v4-flash", "tokensUsed": 200_000_000u64, "cap": 1_000_000_000u64, "remaining": 800_000_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
         ]});
-        let (meters, source) = nan_meters(
-            Some(&payload),
-            &UsageSummary::default(),
-            &UsageSummary::default(),
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let (meters, source, _header) = nan_meters(
+            Some(crate::providers::nan_cloud::parse_quota(&payload)),
+            Some((&month, &UsageSummary::default())),
             &published_quotas(),
             now(),
             1,
@@ -730,23 +758,94 @@ mod tests {
     }
 
     #[test]
+    fn the_plan_text_does_not_assert_fixed_quotas() {
+        for plan in ["premium", "community", "member"] {
+            let text = plan_quota(plan);
+            assert!(
+                !text.chars().any(|c| c.is_ascii_digit()),
+                "el plan {plan} afirma cifras fijas: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_account_header_describes_the_account_period() {
+        let msg = usage_message(1_452_206_378.0, 2, QuotaSource::Account);
+        assert!(msg.contains("periodo de la cuenta"), "{msg}");
+        assert!(!msg.contains("este mes"), "{msg}");
+    }
+
+    #[test]
     fn published_quota_is_used_and_signalled_as_a_fallback() {
         let month = UsageSummary {
             per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
             per_day: BTreeMap::new(),
         };
-        let (meters, source) = nan_meters(
+        let (meters, source, header) = nan_meters(
             None,
-            &month,
-            &UsageSummary::default(),
+            Some((&month, &UsageSummary::default())),
             &published_quotas(),
             now(),
             1,
         );
         assert_eq!(source, QuotaSource::Published);
         assert_eq!(meters[0].limit, Some(3e9));
-        let msg = usage_message(600_000_000.0, meters.len(), source);
-        assert!(msg.contains("cuota publicada"), "{msg}");
+        assert!(header.contains("este mes"), "{header}");
+        assert!(header.contains("cuota publicada"), "{header}");
+    }
+
+    #[test]
+    fn the_header_and_the_meters_describe_the_same_account_period() {
+        // The account payload carries the period: the meter and the header must name it.
+        let payload = crate::providers::nan_cloud::real_account_payload();
+        let (meters, source, header) = nan_meters(
+            Some(crate::providers::nan_cloud::parse_quota(&payload)),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(source, QuotaSource::Account);
+        assert_eq!(meters.len(), 2);
+        assert_eq!(
+            meters[0].resets_at.as_deref(),
+            Some("2026-12-05T22:15:31+00:00")
+        );
+        assert_eq!(
+            meters[0].window_seconds,
+            Some(30 * 86400 + 22 * 3600 + 15 * 60 + 31)
+        );
+        assert!(header.contains("periodo de la cuenta"), "{header}");
+        assert!(!header.contains("este mes"), "{header}");
+    }
+
+    #[test]
+    fn the_api_key_path_divides_by_the_allowance_of_the_account() {
+        // The API key path reads the same account payload: the denominator is the
+        // allowance of the account (`cap`), not the published table.
+        let payload = crate::providers::nan_cloud::real_account_payload();
+        let (meters, source, _header) = nan_meters(
+            Some(crate::providers::nan_cloud::parse_quota(&payload)),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(source, QuotaSource::Account);
+        let deepseek = meters
+            .iter()
+            .find(|m| m.id == "model:deepseek-v4-flash")
+            .expect("deepseek meter");
+        let glm = meters
+            .iter()
+            .find(|m| m.id == "model:glm5.3-flash")
+            .expect("glm meter");
+        assert_eq!(deepseek.limit, Some(1e9));
+        assert_eq!(deepseek.used, Some(955_581_032.0));
+        assert!((deepseek.percent.unwrap() - 95.558).abs() < 0.01);
+        assert_eq!(glm.limit, Some(5e8));
+        assert_eq!(glm.used, Some(496_625_346.0));
+        assert!((glm.percent.unwrap() - 99.325).abs() < 0.01);
     }
 
     #[test]

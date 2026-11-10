@@ -284,6 +284,17 @@ pub(crate) fn parse_daily(v: &Value) -> Vec<Daily> {
         .collect()
 }
 
+/// Payload real de una cuenta (censurado): es lo que devuelve
+/// `GET https://cloud-api.nan.builders/api/usage/quota` con la API key de la cuenta.
+/// Fixture canónico de #252: la forma real del contrato, sin campos inventados.
+#[cfg(test)]
+pub(crate) fn real_account_payload() -> Value {
+    serde_json::json!({"periodStart": "2026-11-05", "models": [
+        {"model": "deepseek-v4-flash", "tokensUsed": 955_581_032u64, "cap": 1_000_000_000u64, "remaining": 44_418_968u64, "periodEnd": "2026-12-05T22:15:31Z", "extraTokens": 0u64, "extraUsable": true},
+        {"model": "glm5.3-flash", "tokensUsed": 496_625_346u64, "cap": 500_000_000u64, "remaining": 3_374_654u64, "periodEnd": "2026-12-05T22:15:31Z", "extraTokens": 0u64, "extraUsable": true}
+    ]})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,47 +302,57 @@ mod tests {
 
     #[test]
     fn parses_quota_like_the_dashboard() {
-        let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "deepseek-v4-flash", "tokensUsed": 444165538u64, "cap": 3000000000u64, "remaining": 2555834462u64, "periodEnd": "2026-11-01T00:00:00Z"},
-            {"model": "mimo-v2.6-flash", "tokensUsed": 75802306, "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"},
-            {"model": "glm5.3", "tokensUsed": 0, "cap": 3000000000u64, "periodEnd": "2026-10-17T05:53:20Z", "fullWindowTokens": 400000000, "windowHours": 4},
-            {"model": "qwen3.8-flash", "tokensUsed": 0, "cap": 500000000, "periodEnd": "2026-11-01T00:00:00Z"}
-        ]});
-        let m = parse_quota(&v);
+        // The real payload of an account is the canonical fixture: two metered models,
+        // the same numbers the dashboard shows ("your tier").
+        let m = parse_quota(&real_account_payload());
         assert_eq!(m.len(), 2);
-        assert_eq!(m[0].label, "deepseek-v4-flash");
-        assert_eq!(m[0].id, "model:deepseek-v4-flash");
-        assert_eq!(m[1].id, "model:mimo-v2.6-flash");
-        assert!((m[0].percent.unwrap() - 14.8055).abs() < 0.01);
-        assert_eq!(m[0].resets_at.as_deref(), Some("2026-11-01T00:00:00+00:00"));
-        assert_eq!(m[0].window_seconds, Some(31 * 86400));
-        assert_eq!(m[1].label, "mimo-v2.6-flash");
+        assert_eq!(m[0].id, "model:glm5.3-flash");
+        assert_eq!(m[1].id, "model:deepseek-v4-flash");
+        assert!((m[0].percent.unwrap() - 99.325).abs() < 0.01);
+        assert!((m[1].percent.unwrap() - 95.558).abs() < 0.01);
+        assert_eq!(m[0].resets_at.as_deref(), Some("2026-12-05T22:15:31+00:00"));
+        assert_eq!(
+            m[0].window_seconds,
+            Some(30 * 86400 + 22 * 3600 + 15 * 60 + 31)
+        );
     }
 
     #[test]
     fn uses_the_account_allowance_from_the_payload() {
         // Real payload of an account: `cap` is the allowance of the plan (1.000M) and
         // `tokensUsed` the consumption of that same period.
-        let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "deepseek-v4-flash", "tokensUsed": 917_800_000u64, "cap": 1_000_000_000u64, "remaining": 82_200_000u64, "periodEnd": "2026-11-01T00:00:00Z"}
-        ]});
-        let m = parse_quota(&v);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].limit, Some(1e9));
-        assert_eq!(m[0].used, Some(917_800_000.0));
-        assert!((m[0].percent.unwrap() - 91.78).abs() < 0.01);
+        let m = parse_quota(&real_account_payload());
+        let deepseek = m
+            .iter()
+            .find(|x| x.id == "model:deepseek-v4-flash")
+            .expect("deepseek meter");
+        let glm = m
+            .iter()
+            .find(|x| x.id == "model:glm5.3-flash")
+            .expect("glm meter");
+        assert_eq!(deepseek.limit, Some(1e9));
+        assert_eq!(deepseek.used, Some(955_581_032.0));
+        assert!((deepseek.percent.unwrap() - 95.558).abs() < 0.01);
+        assert_eq!(glm.limit, Some(5e8));
+        assert_eq!(glm.used, Some(496_625_346.0));
+        assert!((glm.percent.unwrap() - 99.325).abs() < 0.01);
     }
 
     #[test]
-    fn keeps_the_cap_as_denominator_when_the_payload_carries_extra_tokens() {
-        // `extraTokens`/`extraUsable` travel in the real payload. Their meaning is still
-        // undefined, so the denominator stays `cap`: it never understates the consumption.
-        let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "deepseek-v4-flash", "tokensUsed": 950_000_000u64, "cap": 1_000_000_000u64, "remaining": 50_000_000u64, "periodEnd": "2026-11-01T00:00:00Z", "extraTokens": 0u64, "extraUsable": true}
-        ]});
-        let m = parse_quota(&v);
-        assert_eq!(m[0].limit, Some(1e9));
-        assert!((m[0].percent.unwrap() - 95.0).abs() < 0.01);
+    fn unknown_fields_do_not_change_the_meters() {
+        // We assert nothing about the meaning of `extraTokens`/`extraUsable`: the only
+        // claim here is that the parser ignores the fields it does not know.
+        let with_extra = real_account_payload();
+        let mut without_extra = real_account_payload();
+        if let Some(models) = without_extra["models"].as_array_mut() {
+            for model in models {
+                if let Some(o) = model.as_object_mut() {
+                    o.remove("extraTokens");
+                    o.remove("extraUsable");
+                }
+            }
+        }
+        assert_eq!(parse_quota(&with_extra), parse_quota(&without_extra));
     }
 
     #[test]
