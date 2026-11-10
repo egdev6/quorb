@@ -857,10 +857,36 @@ async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool,
                 return Ok(false);
             };
             tauri::async_runtime::spawn_blocking(move || {
-                let Some(a) = cfg.accounts.iter().find(|a| a.id == id) else {
-                    return Ok(false);
+                // Cuenta principal (id de proveedor) o adicional: la MISMA
+                // resolución del entorno (#91). Principal con
+                // `credentials_path` > ruta por defecto del guest.
+                let path = match cfg.accounts.iter().find(|a| a.id == id) {
+                    Some(a) => crate::providers::account_session_path_in(a, Some(&r)),
+                    None => {
+                        let kind = match id.as_str() {
+                            "claude" => Some(crate::providers::CliSessionKind::Claude),
+                            "codex" => Some(crate::providers::CliSessionKind::Codex),
+                            "gemini" => Some(crate::providers::CliSessionKind::Gemini),
+                            "grok" => Some(crate::providers::CliSessionKind::Grok),
+                            _ => None,
+                        };
+                        let Some(kind) = kind else {
+                            return Ok(false);
+                        };
+                        let c = match id.as_str() {
+                            "claude" => &cfg.claude,
+                            "codex" => &cfg.codex,
+                            "gemini" => &cfg.gemini,
+                            _ => &cfg.grok,
+                        };
+                        r.resolve(
+                            c.credentials_path.as_deref(),
+                            &r.default_path(crate::providers::session_relative(kind).as_path()),
+                        )
+                        .map(|p| Some(p.to_string_lossy().into_owned()))
+                    }
                 };
-                match crate::providers::account_session_path_in(Some(a), Some(&r))? {
+                match path? {
                     // Proveedor sin sesión CLI en este entorno.
                     None => Ok(false),
                     Some(path) => {
