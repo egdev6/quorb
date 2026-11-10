@@ -79,10 +79,25 @@ La prueba no incluye datos de consumo. El último estado vive solo en memoria;
 no se guardan eventos ni payloads. La API no devuelve claves ni respuestas crudas.
 
 El estado aceptado significa **Solicitud aceptada por Resend**, no entrega en
-la bandeja de entrada. Fallos de autenticación (401), remitente/destinatario o
-dominio (403), petición (otros 4xx), límite (429) y servicio (5xx) se distinguen
-sin mostrar la respuesta del servidor. Un error de transporte/timeout deja la
-aceptación incierta y nunca provoca un reintento automático.
+la bandeja de entrada. Los errores se presentan mediante estados sanitizados:
+
+| Respuesta | Estado |
+| --- | --- |
+| 2xx | `Accepted`: solicitud aceptada, no entrega confirmada. |
+| 401; 403 con `name: invalid_api_key` | `AuthenticationError`: fallo de autenticación. |
+| 422 con `name: invalid_from_address` | `SenderRejected`: remitente rechazado. |
+| 403 sin el nombre reconocido `invalid_api_key` | `SenderRejected`: conserva la clasificación anterior para rechazos de remitente o dominio. |
+| 429 | `RateLimited`: límite de solicitudes. |
+| 5xx | `ServiceError`: fallo del servicio. |
+| Cualquier otro estado HTTP, incluido 422 sin `invalid_from_address` y las redirecciones | `RequestRejected`: petición rechazada. |
+| Error de transporte/timeout antes de recibir la respuesta | `AcceptanceUnknown`: aceptación incierta. |
+
+Solo se deserializa `name` a un conjunto cerrado (`invalid_api_key` e
+`invalid_from_address`) para las dos correcciones de 403/422. No se interpretan
+mensajes libres ni se muestran cuerpos, direcciones, cabeceras o secretos
+remotos. Los nombres desconocidos, JSON no válido, cuerpos mayores de 4 KiB
+o fallos de lectura conservan el estado de fallback HTTP de la tabla. La lectura
+del cuerpo mantiene el timeout del intento; nunca provoca reintentos automáticos.
 
 Referencia de protocolo: [Send Email](https://resend.com/docs/api-reference/emails/send-email)
 y [Errors](https://resend.com/docs/api-reference/errors). Solo se consultó la

@@ -22,6 +22,39 @@ pub enum EmailStatus {
     AcceptanceUnknown,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ResendErrorName {
+    InvalidApiKey,
+    InvalidFromAddress,
+}
+
+// El timeout del cliente también cubre esta lectura; no acumular un cuerpo
+// remoto sin límite ni conservar mensajes, cabeceras o diagnósticos libres.
+async fn resend_error_name(mut response: reqwest::Response) -> Option<ResendErrorName> {
+    const MAX_ERROR_BODY_BYTES: usize = 4096;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_ERROR_BODY_BYTES as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > MAX_ERROR_BODY_BYTES - body.len() {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    #[derive(Deserialize)]
+    struct ResendError {
+        name: ResendErrorName,
+    }
+    serde_json::from_slice::<ResendError>(&body)
+        .ok()
+        .map(|error| error.name)
+}
+
 #[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum EventKind {
@@ -172,14 +205,26 @@ async fn send_with(
         .send()
         .await;
     match response {
-        Ok(response) => match response.status().as_u16() {
-            200..=299 => EmailStatus::Accepted,
-            401 => EmailStatus::AuthenticationError,
-            403 => EmailStatus::SenderRejected,
-            429 => EmailStatus::RateLimited,
-            500..=599 => EmailStatus::ServiceError,
-            _ => EmailStatus::RequestRejected,
-        },
+        Ok(response) => {
+            let code = response.status().as_u16();
+            let fallback = match code {
+                200..=299 => EmailStatus::Accepted,
+                401 => EmailStatus::AuthenticationError,
+                403 => EmailStatus::SenderRejected,
+                429 => EmailStatus::RateLimited,
+                500..=599 => EmailStatus::ServiceError,
+                _ => EmailStatus::RequestRejected,
+            };
+            if matches!(code, 403 | 422) {
+                match (code, resend_error_name(response).await) {
+                    (403, Some(ResendErrorName::InvalidApiKey)) => EmailStatus::AuthenticationError,
+                    (422, Some(ResendErrorName::InvalidFromAddress)) => EmailStatus::SenderRejected,
+                    _ => fallback,
+                }
+            } else {
+                fallback
+            }
+        }
         // No se devuelve reqwest::Error ni cuerpo/URL/headers de Resend.
         Err(_) => EmailStatus::AcceptanceUnknown,
     }
@@ -252,6 +297,22 @@ mod tests {
         delay: Duration,
         on_accept: impl Fn(&std::net::TcpStream) + Send + 'static,
     ) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
+        server_with_body_and_accept(
+            status,
+            delay,
+            "private-api-detail recipient@example.test secret-key".into(),
+            false,
+            on_accept,
+        )
+    }
+
+    fn server_with_body_and_accept(
+        status: u16,
+        delay: Duration,
+        body: String,
+        chunked: bool,
+        on_accept: impl Fn(&std::net::TcpStream) + Send + 'static,
+    ) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/emails", listener.local_addr().unwrap());
@@ -296,8 +357,17 @@ mod tests {
                         .unwrap()
                         .push(String::from_utf8(bytes).unwrap());
                     std::thread::sleep(delay);
-                    let body = "private-api-detail recipient@example.test secret-key";
-                    let _ = write!(stream, "HTTP/1.1 {status} response\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/forbidden\r\n\r\n{body}", body.len());
+                    if chunked {
+                        let _ = write!(stream, "HTTP/1.1 {status} response\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+                        for chunk in body.as_bytes().chunks(1024) {
+                            let _ = write!(stream, "{:x}\r\n", chunk.len());
+                            let _ = stream.write_all(chunk);
+                            let _ = stream.write_all(b"\r\n");
+                        }
+                        let _ = stream.write_all(b"0\r\n\r\n");
+                    } else {
+                        let _ = write!(stream, "HTTP/1.1 {status} response\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/forbidden\r\n\r\n{body}", body.len());
+                    }
                 } else {
                     std::thread::sleep(Duration::from_millis(2));
                 }
@@ -687,6 +757,148 @@ mod tests {
             let diagnostic = serde_json::to_string(&status).unwrap();
             for private in ["private-api-detail", "recipient@example.test", "secret-key"] {
                 assert!(!diagnostic.contains(private));
+            }
+        }
+    }
+
+    fn assert_http_error(code: u16, body: String, expected: EmailStatus, serialized: &str) {
+        for chunked in [false, true] {
+            let (url, requests, handle) =
+                server_with_body_and_accept(code, Duration::ZERO, body.clone(), chunked, |_| {});
+            let cfg = config();
+            let before = cfg.clone();
+            let reads = std::cell::Cell::new(0);
+            let status = run(send_with(
+                &cfg,
+                Locale::En,
+                None,
+                || {
+                    reads.set(reads.get() + 1);
+                    Ok(Some("synthetic-key".into()))
+                },
+                &url,
+                Duration::from_secs(5),
+            ));
+            handle.join().unwrap();
+            assert_eq!(status, expected, "HTTP {code}, chunked: {chunked}");
+            // El único resultado observable es el estado cerrado, nunca el cuerpo,
+            // mensaje remoto, dirección ni la clave sintética de la petición.
+            assert_eq!(serde_json::to_string(&status).unwrap(), serialized);
+            assert_eq!(cfg, before);
+            assert_eq!(reads.get(), 1);
+            assert_eq!(requests.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn resend_invalid_api_key_is_authentication_error_on_403() {
+        assert_http_error(
+            403,
+            r#"{"name":"invalid_api_key","message":"private-api-detail recipient@example.test synthetic-key"}"#.into(),
+            EmailStatus::AuthenticationError,
+            "\"authenticationError\"",
+        );
+    }
+
+    #[test]
+    fn resend_invalid_from_address_is_sender_rejected_on_422() {
+        assert_http_error(
+            422,
+            r#"{"name":"invalid_from_address","message":"private-api-detail recipient@example.test synthetic-key"}"#.into(),
+            EmailStatus::SenderRejected,
+            "\"senderRejected\"",
+        );
+    }
+
+    #[test]
+    fn unknown_or_malformed_resend_errors_preserve_safe_http_fallback() {
+        for body in [
+            r#"{"name":"unknown_error","message":"invalid_api_key invalid_from_address private-api-detail"}"#,
+            r#"{"message":"invalid_api_key invalid_from_address recipient@example.test"}"#,
+            r#"{"name":null}"#,
+            r#"{"name":123}"#,
+            r#"{"name":{"invalid_api_key":true}}"#,
+            r#"{"name":"INVALID_API_KEY"}"#,
+            r#"{"name":"invalid_api_key","name":"invalid_from_address"}"#,
+            r#"{"name":"invalid_api_key"} trailing private-api-detail"#,
+            r#"{"name":"invalid_from_address""#,
+            "private-api-detail recipient@example.test synthetic-key",
+            "",
+        ] {
+            for (code, expected, serialized) in [
+                (403, EmailStatus::SenderRejected, "\"senderRejected\""),
+                (422, EmailStatus::RequestRejected, "\"requestRejected\""),
+            ] {
+                assert_http_error(code, body.into(), expected, serialized);
+            }
+        }
+    }
+
+    #[test]
+    fn sender_domain_errors_on_403_keep_existing_category() {
+        for name in ["validation_error", "invalid_from_address"] {
+            assert_http_error(
+                403,
+                serde_json::json!({
+                    "name": name,
+                    "message": "Domain is not verified: sender@example.test private-api-detail"
+                })
+                .to_string(),
+                EmailStatus::SenderRejected,
+                "\"senderRejected\"",
+            );
+        }
+    }
+
+    #[test]
+    fn resend_error_body_size_is_bounded() {
+        for (code, name, recognized, fallback, serialized, fallback_serialized) in [
+            (
+                403,
+                "invalid_api_key",
+                EmailStatus::AuthenticationError,
+                EmailStatus::SenderRejected,
+                "\"authenticationError\"",
+                "\"senderRejected\"",
+            ),
+            (
+                422,
+                "invalid_from_address",
+                EmailStatus::SenderRejected,
+                EmailStatus::RequestRejected,
+                "\"senderRejected\"",
+                "\"requestRejected\"",
+            ),
+        ] {
+            let mut body = serde_json::json!({"name": name}).to_string();
+            body.extend(std::iter::repeat_n(' ', 4096 - body.len()));
+            assert_http_error(code, body.clone(), recognized, serialized);
+            body.push(' ');
+            assert_http_error(code, body, fallback, fallback_serialized);
+        }
+    }
+
+    #[test]
+    fn known_names_do_not_override_untouched_http_statuses() {
+        for (code, expected, serialized) in [
+            (200, EmailStatus::Accepted, "\"accepted\""),
+            (
+                401,
+                EmailStatus::AuthenticationError,
+                "\"authenticationError\"",
+            ),
+            (429, EmailStatus::RateLimited, "\"rateLimited\""),
+            (500, EmailStatus::ServiceError, "\"serviceError\""),
+            (302, EmailStatus::RequestRejected, "\"requestRejected\""),
+            (400, EmailStatus::RequestRejected, "\"requestRejected\""),
+        ] {
+            for name in ["invalid_api_key", "invalid_from_address"] {
+                assert_http_error(
+                    code,
+                    serde_json::json!({"name": name, "message": "private-api-detail"}).to_string(),
+                    expected,
+                    serialized,
+                );
             }
         }
     }
