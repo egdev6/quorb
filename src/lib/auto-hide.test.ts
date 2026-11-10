@@ -3,11 +3,12 @@ import { Widget } from '../Widget';
 import { createElement, isValidElement, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import hook from './useDockReveal.ts?raw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
 import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
-import { physicalPanelBounds } from './detail-panel';
+import { DETAIL_EVENTS, physicalPanelBounds } from './detail-panel';
+import { NO_PANEL } from './anchor-panel';
 import type { UsageReport } from './types';
 
 type GripHandlers = {
@@ -42,6 +43,25 @@ function findOrbHover(node: ReactNode): ((el: HTMLElement) => void) | undefined 
   if (!isValidElement<{ onPointerEnter?: (el: HTMLElement) => void; children?: ReactNode }>(node)) return;
   if (node.props.onPointerEnter) return node.props.onPointerEnter;
   return findOrbHover(node.props.children);
+}
+
+type DockHandlers = {
+  onMouseEnter(): void;
+  onMouseLeave(): void;
+};
+
+/** The strip's own pointer handlers, taken from the rendered tree. */
+function findDock(node: ReactNode): DockHandlers | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const dock = findDock(child);
+      if (dock) return dock;
+    }
+    return;
+  }
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(node)) return;
+  if (node.props.className === 'dock') return node.props as unknown as DockHandlers;
+  return findDock(node.props.children);
 }
 
 // Capture the real Widget effect callbacks while SSR supplies its hook scope.
@@ -996,7 +1016,7 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[12] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
     // El puntero está dentro del detalle.
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[10].current = 'detail';
     // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
     // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
     listener.run();
@@ -1012,8 +1032,8 @@ describe('Widget effect mutation ordering', () => {
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
     expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
-    // ...y baja la presencia del detalle.
-    expect(widgetEffects.refs[10].current).toBe(false);
+    // ...y el detalle ya no cuenta como superficie bajo el puntero.
+    expect(widgetEffects.refs[10].current).toBe('outside');
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
     const after = renderStrip(true);
@@ -1025,7 +1045,7 @@ describe('Widget effect mutation ordering', () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[7] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[10].current = 'detail';
     listener.run();
     await flush();
     const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
@@ -1036,21 +1056,21 @@ describe('Widget effect mutation ordering', () => {
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
-    expect(widgetEffects.refs[10].current).toBe(true);
+    expect(widgetEffects.refs[10].current).toBe('detail');
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[7] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[10].current = 'detail';
     listener.run();
     await flush();
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
     expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
-    expect(widgetEffects.refs[10].current).toBe(false);
+    expect(widgetEffects.refs[10].current).toBe('outside');
   });
 
   // El cierre pedido por el detalle es idéntico al cierre normal: también
@@ -1141,5 +1161,138 @@ describe('the localized placement reason', () => {
     const en = markup('en', false);
     expect(en).toContain('aria-label="Show Quorb"');
     expect(en).not.toContain('data-placement-reason');
+  });
+});
+
+// #250 (S16): the close decision follows the pointer presence model, never a
+// flag that only one of the two surfaces owns. On Wayland native the strip's
+// `mouseleave` is dropped, so the detail's own `leave` has to arm the close.
+describe('hover presence wiring', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  const report = {
+    id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+  } as unknown as UsageReport;
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+  /**
+   * The real strip handlers and the real detail interaction listener: the
+   * strip's `mouseenter`/`mouseleave` come from the rendered tree and the
+   * detail's `enter`/`leave` from the listener the Widget registers.
+   */
+  const wire = async (anchored = false) => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.states[0] = null;
+    widgetEffects.states[1] = [report];
+    widgetEffects.states[5] = geo;
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[7] = { providerId: 'a', anchored };
+    widgetEffects.states[9] = false;
+    let dock: DockHandlers | undefined;
+    function CaptureWidget() {
+      const tree = Widget();
+      dock = findDock(tree); // Real handlers from the returned JSX, not copied logic.
+      return tree;
+    }
+    renderToStaticMarkup(createElement(CaptureWidget));
+    // The detail state effect publishes the revision that the interaction carries.
+    const detailState = widgetEffects.effects.find((e) => e.deps?.[0] === report)!;
+    detailState.run();
+    const published = widgetEffects.refs
+      .map((r) => r.current)
+      .find((v): v is { revision: number; report: { id: string } } =>
+        !!v && typeof v === 'object' && 'report' in v)!;
+    // The listener that receives the detail window's interaction events.
+    widgetEffects.listeners.delete(DETAIL_EVENTS.interaction);
+    const listener = widgetEffects.effects.find((e) => e.run.toString().includes('DETAIL_EVENTS.interaction'))!;
+    listener.run();
+    await flush();
+    const handlers = (widgetEffects.listeners.get(DETAIL_EVENTS.interaction) ?? []) as ((event: { payload: unknown }) => void)[];
+    return {
+      dock: dock!,
+      detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => (
+        h({ payload: { revision: published.revision, provider: 'a', kind } })
+      )),
+    };
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });
+  });
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('closes the detail when it reports leave even if the strip never reported mouseleave', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter(); // The pointer enters the strip.
+    detail('enter'); // The detail window reports the pointer inside it.
+    // The strip's `mouseleave` never arrives: Wayland native drops it.
+    detail('leave'); // The detail window reports the pointer left it.
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  it('closes the detail when the strip reports leave and the pointer is outside both surfaces', async () => {
+    const { dock } = await wire();
+    dock.onMouseEnter();
+    dock.onMouseLeave();
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  it('keeps the detail open while the pointer is inside it', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    dock.onMouseLeave(); // Arms the close.
+    detail('enter'); // The detail cancels it.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  it('keeps the detail open when the pointer returns to the strip', async () => {
+    const { dock, detail } = await wire();
+    detail('enter');
+    detail('leave'); // Arms the close.
+    dock.onMouseEnter(); // The strip cancels it.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  it('releases the strip presence when the detail reports enter', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    expect(widgetEffects.states[11]).toBe(true); // The strip knows the pointer is on it.
+    detail('enter');
+    // The pointer cannot be in the two windows at once: the strip's presence
+    // is invalid, so its auto-hide is not frozen any more.
+    expect(widgetEffects.states[11]).toBe(false);
+  });
+
+  // #170/#223: que un panel anclado siga abierto es intencional. El modelo
+  // decide el cierre por hover, así que tiene que respetar esa salida: con el
+  // panel anclado, salir de las dos superficies no arma ningún cierre.
+  it('keeps an anchored detail open when the pointer leaves both surfaces (#170/#223)', async () => {
+    const { dock, detail } = await wire(true);
+    dock.onMouseEnter();
+    detail('enter');
+    detail('leave');
+    dock.onMouseLeave();
+    // Más que el retardo de cierre: si el guard del anclaje desapareciera, el
+    // timer se armaría y el panel se cerraría solo.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
   });
 });

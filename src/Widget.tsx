@@ -31,6 +31,14 @@ import { pointerInsideViewport } from './lib/pointer-viewport';
 import { createFocusTracker, FOCUS_EVENT, type OwnWindow } from './lib/anchor-focus';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
+import {
+  forgetSurface,
+  nextPointerTarget,
+  pointerInsideWidget,
+  shouldArmClose,
+  type HoverEvent,
+  type PointerTarget,
+} from './lib/hover-presence';
 import { openDelayForOs, osFromUA } from './lib/os-detect';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
@@ -215,8 +223,13 @@ export function Widget() {
   const detailStateRef = useRef<DetailState | null>(null);
   const detailReadyRef = useRef(false);
   const detailRevision = useRef(Date.now());
-  const detailInsideRef = useRef(false);
-  const insideRef = useRef(false);
+  /**
+   * Pointer presence of the two surfaces (#250): the close decision follows
+   * this model, never a flag that only one of the surfaces owns. A native
+   * compositor can drop the strip's `mouseleave` (Wayland native), so the
+   * detail's own `leave` has to be enough to close the popup.
+   */
+  const hoverRef = useRef<PointerTarget>('outside');
   const configRef = useRef<AppConfig | null>(null);
   const reportsRef = useRef<UsageReport[]>([]);
   const geoRef = useRef<Geo | null>(null);
@@ -242,8 +255,8 @@ export function Widget() {
     createDetailPresence({
       isOpen: () => detailStateRef.current != null,
       scheduleClose: () => {
-        // Direct close timer: never gated by the DOM-only `detailInsideRef`,
-        // which is exactly what gets stuck on macOS.
+        // Direct close timer: never gated by the DOM-only presence, which is
+        // exactly what gets stuck on macOS.
         window.clearTimeout(closeTimer.current);
         closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
       },
@@ -263,6 +276,23 @@ export function Widget() {
   const openPeakRef = useRef<() => void>(() => {});
   const dragWork = useRef<Promise<void>>(Promise.resolve());
   const dragMounted = useRef(true);
+
+  /** Move the pointer's location in the presence model (#250). */
+  const setHoverTarget = (target: PointerTarget) => {
+    hoverRef.current = target;
+    // The strip's presence follows the model: the pointer cannot be in both
+    // windows, so the detail's `enter` releases the strip's auto-hide.
+    setInside(pointerInsideWidget(target));
+  };
+
+  /** A pointer transition reported by one of the two surfaces. */
+  const applyHover = (event: HoverEvent) => {
+    const next = nextPointerTarget(hoverRef.current, event);
+    setHoverTarget(next);
+    // The close is armed only while the pointer is outside both surfaces.
+    if (shouldArmClose(next)) scheduleClose();
+    else window.clearTimeout(closeTimer.current);
+  };
 
   const edge: Edge = config && isEdge(config.dockEdge) ? config.dockEdge : 'top';
   const offset = config?.dockOffset ?? 0.5;
@@ -770,7 +800,8 @@ export function Widget() {
         usageUrl: officialUsageUrl(active.id, config?.nineRouter.baseUrl),
       } : null;
     detailStateRef.current = state;
-    if (!state) detailInsideRef.current = false;
+    // The detail window is gone: its presence is void, the strip keeps its own.
+    if (!state) setHoverTarget(forgetSurface(hoverRef.current, 'detail'));
     if (detailReadyRef.current) emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, state).catch(console.warn);
   }, [active, geo, stripSize, textScale, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
 
@@ -792,7 +823,8 @@ export function Widget() {
    */
   const closeFromDetail = () => {
     cancelTimers();
-    detailInsideRef.current = false;
+    // The detail is gone: its presence is void, the strip keeps its own.
+    setHoverTarget(forgetSurface(hoverRef.current, 'detail'));
     setPanel(closePanel());
   };
 
@@ -822,11 +854,14 @@ export function Widget() {
           return;
         }
         if (payload.kind === 'enter') {
-          detailInsideRef.current = true;
-          window.clearTimeout(closeTimer.current);
+          // The pointer cannot be in both windows at once: the detail's
+          // presence invalidates the strip's, even if the strip's
+          // `mouseleave` never arrives (Wayland native drops it).
+          applyHover({ surface: 'detail', kind: 'enter' });
         } else if (payload.kind === 'leave') {
-          detailInsideRef.current = false;
-          if (!insideRef.current) scheduleClose();
+          // The detail's own `leave` arms the close: it does not depend on a
+          // flag that only the strip owns.
+          applyHover({ surface: 'detail', kind: 'leave' });
         } else if (payload.kind === 'hide') {
           cancelTimers();
           setPanel(closePanel());
@@ -836,10 +871,8 @@ export function Widget() {
       }));
       await add(listen(DETAIL_EVENTS.widgetHidden, () => {
         cancelTimers();
-        detailInsideRef.current = false;
-        insideRef.current = false;
+        setHoverTarget('outside');
         reorderHold.current = false;
-        setInside(false);
         setPanel(closePanel());
       }));
       await add(listen(DETAIL_EVENTS.dismiss, () => {
@@ -929,7 +962,8 @@ export function Widget() {
     cancelTimers();
     const rel = relOf(el);
     const go = () => {
-      detailInsideRef.current = false;
+      // The pointer is on the strip: its presence is already in the model, so
+      // the detail's presence does not need to be cleared here.
       setAnchorRel(rel);
       setPanel((current) => hoverPanel(current, id));
     };
@@ -945,7 +979,6 @@ export function Widget() {
     // (`lastReorderAt`) cubre el clic que llega después de soltar.
     if (isReorderGesture(lastReorderAt.current, Date.now())) return;
     cancelTimers();
-    detailInsideRef.current = false;
     setAnchorRel(relOf(el));
     setPanel((current) => clickPanel(current, id));
   };
@@ -971,7 +1004,6 @@ export function Widget() {
 
   const scheduleClose = () => {
     cancelTimers();
-    if (detailInsideRef.current) return;
     // Con el panel anclado, el puntero no lo cierra (#170).
     if (panel.anchored) return;
     closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
@@ -1006,8 +1038,15 @@ export function Widget() {
         const [widget, detail] = await Promise.all([boundsOf('widget'), boundsOf(DETAIL_WINDOW)]);
         if (disposed || !widget || !detail) return;
         const { widget: inWidget, detail: inDetail } = presenceFromPoint(point, widget, detail);
-        // Sincroniza el flag DOM-only por si su `mouseleave` nunca llegó.
-        detailInsideRef.current = inDetail;
+        // La verdad nativa sobre el puntero (#154): corrige el `enter` del
+        // detalle que el WebView transparente no entregó. Sólo informa la
+        // presencia del detalle; el resto del modelo lo decide el DOM, y el
+        // cierre lo sigue llevando el tracker nativo.
+        // La presencia del detalle se sincroniza en los dos sentidos, como la
+        // bandera DOM de antes: si la verdad nativa dice que el puntero no
+        // está en el detalle, su presencia es nula (si no, el modelo quedaría
+        // con un 'detail' viejo y cancelaría cierres que ya están armados).
+        setHoverTarget(inDetail ? 'detail' : forgetSurface(hoverRef.current, 'detail'));
         presenceRef.sample(inWidget, inDetail);
       } catch {
         // Sin posición de cursor (p. ej. Wayland): no hay conclusión.
@@ -1265,7 +1304,8 @@ export function Widget() {
       if (od?.moved) {
         lastReorderAt.current = Date.now();
         // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
-        // la captura, `insideRef` queda desactualizado: se usan las coordenadas.
+        // la captura, la presencia del puntero queda desactualizada: se usan
+        // las coordenadas.
         const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
         reorderHold.current = inside;
       }
@@ -1297,15 +1337,11 @@ export function Widget() {
       onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
       style={{ '--panel-alpha': String(opacity), '--ring-1': ring1, '--ring-2': ring2, '--ring-3': ring3 } as CSSProperties}
       onMouseEnter={() => {
-        insideRef.current = true;
-        window.clearTimeout(closeTimer.current);
-        setInside(true);
+        applyHover({ surface: 'widget', kind: 'enter' });
       }}
       onMouseLeave={() => {
-        insideRef.current = false;
         reorderHold.current = false;
-        setInside(false);
-        scheduleClose();
+        applyHover({ surface: 'widget', kind: 'leave' });
       }}
     >
       {showHandle && <button
