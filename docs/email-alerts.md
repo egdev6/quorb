@@ -24,9 +24,12 @@ a esta integración.
 2. Introduce remitente y destinatario y guarda tu API key mediante el campo
    oculto de Resend. No se puede recuperar el valor guardado desde la interfaz.
 3. Marca el consentimiento explícito. Guardar por sí solo no habilita email.
-4. Si quieres, pulsa **Enviar prueba**: guarda la configuración del formulario
-   y hace una única solicitud de prueba sin datos de consumo. No activa email
-   y funciona aunque Alertas global esté desactivado. Si guardar falla, no envía.
+4. Si quieres, pulsa **Enviar prueba**: guarda los campos del formulario,
+   incluidos consentimiento, remitente y destinatario, conservando los valores
+   ya guardados de los interruptores de Alertas global y email, aunque el
+   borrador muestre otros. Después hace una única solicitud de prueba sin datos
+   de consumo. No activa ni desactiva los avisos automáticos y funciona aunque
+   Alertas global esté desactivado. Si guardar falla, no envía.
 5. Para avisos automáticos, activa tanto email como Alertas global y guarda.
    Desactivar la notificación nativa no desactiva el email.
 

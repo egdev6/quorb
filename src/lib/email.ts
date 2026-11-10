@@ -1,5 +1,6 @@
 import type { AlertEvent } from './alerts';
-import type { AlertsConfig, EmailAlertsConfig, EmailEvent, EmailStatus } from './types';
+import type { AlertsConfig, AppConfig, EmailAlertsConfig, EmailEvent, EmailStatus } from './types';
+import { api } from './api';
 
 export const emailDefaults: EmailAlertsConfig = { enabled: false, consent: false, sender: '', recipient: '' };
 
@@ -15,6 +16,25 @@ const validAddress = (value: string) => value.length <= 254
 
 export function emailReady(email: EmailAlertsConfig | undefined): boolean {
   return !!email?.consent && validAddress(email.sender) && validAddress(email.recipient);
+}
+
+/** Persiste la prueba por la cola de Ajustes, que confirma la base del backend. */
+export function persistEmailTestAlerts(
+  alerts: AlertsConfig,
+  enqueueSave: (build: () => Promise<AppConfig>) => Promise<AppConfig>,
+): Promise<void> {
+  return enqueueSave(async () => {
+    // Releer dentro de la cola: un guardado anterior puede cambiar los interruptores.
+    const current = await api.getConfig();
+    return {
+      ...current,
+      alerts: {
+        ...alerts,
+        enabled: current.alerts.enabled,
+        email: { ...emailDefaults, ...alerts.email, enabled: current.alerts.email?.enabled ?? false },
+      },
+    };
+  }).then(() => undefined);
 }
 
 /** Acción de prueba explícita: guardar no cambia enabled; nunca reintenta. */

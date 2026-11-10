@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { emailDefaults, emailReady, patchEmail, sendEmailTest } from './lib/email';
+import { emailDefaults, emailReady, patchEmail, persistEmailTestAlerts, sendEmailTest } from './lib/email';
 import { osFromUA } from './lib/os-detect';
 import type { EmailStatus } from './lib/types';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
@@ -1643,7 +1643,7 @@ export function EmailStatusLine({ locale, status }: { locale: Locale; status: Em
 
 function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }: {
   locale: Locale; alerts: AlertsConfig; onAlerts: (patch: Partial<AlertsConfig>) => void;
-  onPersist: (alerts: AlertsConfig) => Promise<void>; secrets: SecretStatus; onSecrets: () => void;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>; secrets: SecretStatus; onSecrets: () => void;
 }) {
   const email = alerts.email ?? emailDefaults;
   const [status, setStatus] = useState<EmailStatus>('idle');
@@ -1661,7 +1661,7 @@ function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }
     if (busy) return;
     setBusy(true);
     try {
-      setStatus(await sendEmailTest(email, () => onPersist(alerts), () => api.sendEmailAlert(null)));
+      setStatus(await sendEmailTest(email, () => onPersist(alerts, { emailTest: true }), () => api.sendEmailAlert(null)));
     } finally { setBusy(false); }
   };
   return (
@@ -1699,7 +1699,7 @@ export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, se
   locale: Locale;
   alerts: AlertsConfig;
   onAlerts: (patch: Partial<AlertsConfig>) => void;
-  onPersist: (alerts: AlertsConfig) => Promise<void>;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>;
   onError: (msg: string) => void;
   secrets?: SecretStatus;
   onSecrets?: () => void;
@@ -2375,8 +2375,10 @@ export function Settings() {
 
   // La prueba de un efecto guarda antes los avisos del formulario: pasa por la
   // misma cola para que la base canónica no quede desincronizada del backend.
-  const persistAlerts = (alerts: AppConfig['alerts']) =>
-    enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
+  const persistAlerts = (alerts: AppConfig['alerts'], options?: { emailTest: boolean }) =>
+    options?.emailTest
+      ? persistEmailTestAlerts(alerts, enqueueSave)
+      : enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
 
   // El selector de Idioma guarda por la misma cola que el resto de Ajustes y
   // también lo adopta en el borrador (ver `changeLocale` en i18n/use-locale).
