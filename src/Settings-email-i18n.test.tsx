@@ -69,6 +69,17 @@ describe('EmailStatusLine (SSR, i18n)', () => {
     }
   });
 
+  it.each([
+    ['es', 'authenticationError', 'Resend rechazó la clave.'],
+    ['en', 'authenticationError', 'Resend rejected the key.'],
+    ['es', 'senderRejected', 'Resend rechazó remitente, destinatario o dominio. Revisa las restricciones de pruebas.'],
+    ['en', 'senderRejected', 'Resend rejected the sender, recipient or domain. Check testing restrictions.'],
+  ] as const)('renders %s/%s without a fixed HTTP code', (locale, status, text) => {
+    const html = line(locale, status);
+    expect(html).toBe(`<p class="eg-notice eg-notice--sm eg-notice--danger" role="status">${text}</p>`);
+    expect(html).not.toMatch(/\b[1-5]\d{2}\b/);
+  });
+
   it('acceptance states «Solicitud aceptada por Resend», never inbox delivery (S20)', () => {
     expect(statusText('es', 'accepted')).toBe('Solicitud aceptada por Resend');
     expect(statusText('en', 'accepted')).toBe('Request accepted by Resend');
