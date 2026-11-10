@@ -244,6 +244,14 @@ mod tests {
     }
 
     fn server(status: u16, delay: Duration) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
+        server_with_accept(status, delay, |_| {})
+    }
+
+    fn server_with_accept(
+        status: u16,
+        delay: Duration,
+        on_accept: impl Fn(&std::net::TcpStream) + Send + 'static,
+    ) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/emails", listener.local_addr().unwrap());
@@ -255,6 +263,9 @@ mod tests {
             // The owning test controls lifetime, not thread startup time.
             while !stopping.load(Ordering::Acquire) {
                 if let Ok((mut stream, _)) = listener.accept() {
+                    on_accept(&stream);
+                    // Winsock inherits the listener mode; request I/O must block.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(5)))
                         .unwrap();
@@ -507,6 +518,54 @@ mod tests {
         handle.join().unwrap();
         assert_eq!(cfg, before);
         assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    /// Model Winsock's inherited nonblocking mode even on Unix hosts.
+    #[test]
+    fn nonblocking_accepted_socket_waits_for_complete_request() {
+        let (accepted_tx, accepted_rx) = std::sync::mpsc::channel();
+        let (url, requests, handle) = server_with_accept(200, Duration::ZERO, move |stream| {
+            stream.set_nonblocking(true).unwrap();
+            accepted_tx.send(()).unwrap();
+        });
+        let address = url
+            .strip_prefix("http://")
+            .unwrap()
+            .strip_suffix("/emails")
+            .unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        accepted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut byte = [0u8; 1];
+        let expect_no_response = |client: &mut std::net::TcpStream, byte: &mut [u8]| {
+            let result = client.read(byte);
+            assert!(
+                matches!(result, Err(ref error) if matches!(error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+                "fixture responded before the complete request: {result:?}"
+            );
+        };
+        expect_no_response(&mut client, &mut byte);
+        let header = "POST /emails HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\n";
+        client.write_all(header.as_bytes()).unwrap();
+        client.write_all(b"te").unwrap();
+        expect_no_response(&mut client, &mut byte);
+        client.write_all(b"st").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        handle.join().unwrap();
+        assert_eq!(response, format!("HTTP/1.1 200 response\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/forbidden\r\n\r\n{}",
+            "private-api-detail recipient@example.test secret-key".len(),
+            "private-api-detail recipient@example.test secret-key"));
+        assert_eq!(*requests.lock().unwrap(), vec![format!("{header}test")]);
     }
 
     /// A loaded test runner may not poll the first request within 350 ms.
