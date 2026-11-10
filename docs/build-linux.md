@@ -171,7 +171,7 @@ Decisiones aceptadas en este baseline (revisables solo con evidencia nueva):
 | Paquete local | `.deb` (Debian/Ubuntu) y `.AppImage` (Arch y resto). AUR fuera del MVP. Firma digital fuera (F5) |
 | Compilación ≠ experiencia | El binario puede compilar y no ser usable en un compositor/distro dado; esto no se considera "soportado" sin la matriz §6 y el smoke real |
 
-## 6. Matriz de 7 entornos (L0b) — qué funciona y qué degrada
+## 6. Matriz de 8 entornos (L0b) — qué funciona y qué degrada
 
 Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 (no verificado aquí; CachyOS/Omarchy/Arch por Rafael y la comunidad),
@@ -185,7 +185,8 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 | Arch rolling GNOME (Wayland) | pendiente contribuidor | – | – | – | – | – | – |
 | Arch rolling KDE Plasma (Wayland) | pendiente contribuidor | – | – | – | – | – | – |
 | CachyOS KDE Plasma | pendiente contribuidor | – | – | – | – | – | – |
-| CachyOS / Omarchy Hyprland | medido (contribuidor, #250) | medido (Wayland nativo y XWayland) | sí con #250 (61×181 ajustada a la tira; sin el fix, caja de 1270×1026 en nativo y mosaico en XWayland) | pendiente | pendiente | pendiente | pendiente |
+| CachyOS Hyprland (0.57.0) | medido (contribuidor, #250) | medido (Wayland nativo y XWayland) | sí con #250 (61×181 ajustada a la tira; sin el fix, caja de 1270×1026 en nativo y mosaico en XWayland) | pendiente | pendiente | pendiente | pendiente |
+| Omarchy Hyprland | pendiente contribuidor | – | – | – | – | – | – |
 
 > Nota: la matriz cubre solo lo **medido o asignado**. Las celdas sin evidencia
 > no se marcan como soportadas; la política de soporte (§5) es el único
@@ -209,7 +210,8 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
   expórtalo antes (`export GDK_BACKEND=x11`). Un comando separado con `&`
   (por ejemplo `GDK_BACKEND=x11 &` en su propia línea) aplica la variable solo
   a la subshell y la app no la hereda.
-- **Hyprland (medido, #250)**: en Wayland nativo el compositor conserva el
+- **Hyprland (medido, #250)**: la instalación medida es **CachyOS con Hyprland
+  0.57.0** (Wayland nativo y XWayland). En Wayland nativo el compositor conserva el
   tamaño con el que mapea la ventana (caja decorada de 1270×1026 cuando se
   pide 61×181) porque la ruta sin ciclo no manda la petición de tamaño ni las
   pistas `min == max`; en XWayland la coloca en mosaico y el layout fija el
@@ -217,6 +219,9 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
   ciclo y declara el tipo de ventana `Utility` antes del primer `show`, en
   ambos casos solo para el perfil Hyprland: el resto de escritorios conserva
   el comportamiento de siempre.
+- **Omarchy con Hyprland no está medido**: la fila de Omarchy queda
+  `pendiente contribuidor`. Lo medido en CachyOS no se extiende a Omarchy
+  (distribución y compositor distintos) hasta que alguien lo mida.
 
 ## 7. Riesgos priorizados (L0a→L0d)
 
