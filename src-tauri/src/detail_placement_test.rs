@@ -603,6 +603,43 @@ fn the_detail_asks_for_the_size_hints_with_the_scale_the_window_reports() {
     );
 }
 
+/// S20 (revalidado): el detalle abierto con la ventana **oculta** mientras el
+/// monitor pedido tiene **otra escala**.
+///
+/// El frontend manda los bounds del panel ya en píxeles físicos del monitor
+/// pedido (`physicalPanelBounds` con su `scaleFactor`), pero la petición no
+/// lleva el factor del monitor (`PhysicalBounds` no tiene ese campo). Rust
+/// convierte esos físicos a lógicos con el factor que **informa la ventana**
+/// (`ScaleSource::Window`), y una ventana oculta todavía no está en el monitor
+/// pedido: informa el factor del monitor en el que está (o del principal).
+///
+/// Esta prueba fija ese comportamiento actual —el factor de la ventana, no el
+/// del monitor pedido— y deja escrito el límite: en **DPI mixto** el detalle
+/// puede quedar con un tamaño que no corresponde al monitor pedido (aquí, el
+/// doble de lo pedido, porque el factor es la mitad). Corregirlo (llevar el
+/// factor del monitor en la petición) es otro contrato y no está autorizado
+/// (#250, S13).
+///
+/// La escala que se usa es la de la ventana; con la ventana ya en el monitor
+/// pedido (o sin DPI mixto) los dos factores coinciden y no hay diferencia.
+#[test]
+fn the_hidden_detail_uses_the_scale_of_the_window_not_the_requested_monitor() {
+    let plan = fit_plan(hyprland_profile(), Transport::Other);
+    // El monitor pedido tiene escala 2: el panel lógico 157×190 llega en
+    // píxeles físicos (314×379).
+    let physical = (314, 379);
+    // La ventana del detalle sigue oculta: informa el factor 1 (el monitor en
+    // el que está), no el 2 del monitor pedido.
+    let mut surface = FakeFitSurface::new(1.0);
+    let outcome = fit_detail(&mut surface, &plan, physical, || false);
+    assert_eq!(outcome, FitOutcome::Applied);
+    assert_eq!(
+        surface.calls(),
+        vec!["constraints 314x379"],
+        "la conversión usa el factor de la ventana oculta, no el del monitor pedido"
+    );
+}
+
 /// Fuera de Hyprland el detalle no pide ninguna pista: el comportamiento de
 /// siempre (S1).
 #[test]
