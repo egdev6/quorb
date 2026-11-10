@@ -350,6 +350,18 @@ describe('ProjectSection (SSR, i18n)', () => {
   });
 });
 
+describe('Email alerts in existing Settings alerts (SSR)', () => {
+  it('shows consent/privacy before opt-in and explicit test in both languages', () => {
+    const es = alerts('es'); const en = alerts('en');
+    for (const text of ['Email con Resend', 'Resend procesa remitente y destinatario', 'Quorb abierto', 'Sin reintentos', 'dominio verificado', 'keyutils', 'Enviar prueba']) expect(es).toContain(text);
+    for (const text of ['Email with Resend', 'Resend processes sender and recipient', 'Quorb open', 'No retries', 'verified domain', 'keyutils', 'Send test']) expect(en).toContain(text);
+    expect(es).toContain('type="password"');
+    expect(es).toContain('disabled=""');
+    expect(es).not.toContain('Integraciones');
+    expect(es.indexOf('Resend procesa')).toBeLessThan(es.indexOf('Consiento'));
+  });
+});
+
 describe('SecretInput, shared primitive (SSR, i18n)', () => {
   it('renders its own Spanish literals verbatim in es and English in en', () => {
     const props = { id: 'cursor_token' as const, label: 'Token manual (opcional)', configured: false, onSaved: noop };
