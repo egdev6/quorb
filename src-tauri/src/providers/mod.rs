@@ -295,6 +295,22 @@ fn account_session_path(
             .credentials_file(&home())
             .map(|p| p.to_string_lossy().into_owned()));
     };
+    account_session_path_in(a, Some(r))
+}
+
+/// La misma resolución para el SONDEO de presencia (`account_session`,
+/// revisión PR #92): con `resolver` la ruta sale del ENTORNO elegido (el
+/// guest), no del disco del host — tras un login en WSL, sondear el host
+/// daría por buena una sesión de Windows sin relación.
+pub(crate) fn account_session_path_in(
+    a: &Account,
+    resolver: Option<&SessionResolver>,
+) -> Result<Option<String>, String> {
+    let Some(r) = resolver else {
+        return Ok(a
+            .credentials_file(&home())
+            .map(|p| p.to_string_lossy().into_owned()));
+    };
     // Proveedores SIN login por CLI (openrouter, zai, nan, copilot…): la
     // cuenta no resuelve sesión en este entorno; su fetch usa su token
     // normal. NO cortar `fetch_account` (revisión rust 2026-11-04).

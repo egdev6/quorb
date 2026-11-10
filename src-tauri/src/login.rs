@@ -9,7 +9,7 @@
 //! (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` o `GEMINI_CLI_HOME`), así no pisan la principal.
 
 use crate::config::{Account, AppConfig};
-use crate::wsl::{self, WslAdapter};
+use crate::wsl::{self, ShellStrategy, WslAdapter};
 use std::path::{Path, PathBuf};
 
 /// `id`: el proveedor (cuenta principal) o el id de una cuenta adicional.
@@ -45,8 +45,10 @@ pub(crate) fn open(id: &str, cfg: &AppConfig, wsl: Option<WslLogin<'_>>) -> Resu
         None => {
             // Antes de abrir la terminal se comprueba que el CLI está
             // instalado: si no, la consola solo diría «no se reconoce como
-            // un comando» y no sabrías qué hacer.
-            let program = program_of(command);
+            // un comando» y no sabrías qué hacer. El MISMO tokenizador que
+            // la ejecución decide el programa (revisión PR #92): comillas y
+            // escapes se ven igual aquí y en la terminal.
+            let (program, _) = split_login_command(command)?;
             let extra_dir = match find_program(&program) {
                 Found::OnPath => None,
                 Found::In(dir) => Some(dir),
@@ -159,10 +161,12 @@ pub(crate) fn cli_status(
 }
 
 /// Estado de la CLI de login dentro de la distro (#92).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum CliCheck {
-    /// Instalada y la distro está Running.
-    Ready,
+    /// Instalada y la distro está Running. Lleva la ESTRATEGIA de shell
+    /// detectada: el argv la reutiliza en vez de asumir `bash -lc`
+    /// (revisión 2 PR #92).
+    Ready(ShellStrategy),
     /// La distro está detenida o en transición: el SONDEO no la despierta,
     /// pero el login explícito puede activarla.
     Stopped,
@@ -203,7 +207,7 @@ fn cli_check(wsl: &WslLogin<'_>, program: &str) -> Result<CliCheck, String> {
                 .program_available(wsl.distro, shell, program)
                 .map_err(|e| format!("WSL: {e:?}"))?;
             Ok(if available {
-                CliCheck::Ready
+                CliCheck::Ready(shell)
             } else {
                 CliCheck::Missing
             })
@@ -299,15 +303,25 @@ fn prepare_wsl_login(
     command: &str,
     env: &SessionEnv,
 ) -> Result<Vec<std::ffi::OsString>, String> {
-    let program = program_of(command);
+    // El MISMO tokenizador que la ejecución decide el programa de la sonda
+    // (revisión PR #92): una ruta entre comillas o con escapes se ejecuta
+    // bien, pero `program_of` la daría por ausente.
+    let (program, _) = split_login_command(command)?;
     match cli_check(wsl, &program)? {
-        CliCheck::Ready | CliCheck::Stopped => {
-            // Login EXPLÍCITO: si la distro está detenida, el propio
-            // `wsl -d` la activa y el usuario lo ve en la terminal (política
-            // del entorno: el sondeo no la despierta, el login sí). Un «no
-            // instalada» falso bloquearía el login justo en el caso habitual
-            // (distro apagada).
-            wsl_login_argv(wsl.distro, command, env)
+        // `Ready(shell)` ya trae la estrategia DETECTADA (no asumimos bash);
+        // `Stopped` — login explícito: el propio `wsl -d` la activa. Como se
+        // va a activar de todos modos, aquí sí se resuelve la shell de la
+        // distro (el sondeo informativo no la despierta; el login sí) y el
+        // argv la lleva: en una distro sin bash, la CLI aparece «lista» con
+        // sh y el login debe usar sh, no `bash: not found` (bloqueante 3,
+        // revisión 2 PR #92).
+        CliCheck::Ready(shell) => wsl_login_argv(wsl.distro, shell, command, env),
+        CliCheck::Stopped => {
+            let shell = wsl
+                .adapter
+                .shell_strategy(wsl.distro)
+                .map_err(|e| format!("WSL: {e:?}"))?;
+            wsl_login_argv(wsl.distro, shell, command, env)
         }
         CliCheck::Missing => Err(not_installed_wsl(provider, &program, wsl.distro)),
     }
@@ -344,6 +358,7 @@ const WSL_LOGIN_WRAP_MKDIR: &str =
 
 fn wsl_login_argv(
     distro: &str,
+    shell: ShellStrategy,
     login_command: &str,
     env: &SessionEnv,
 ) -> Result<Vec<std::ffi::OsString>, String> {
@@ -351,13 +366,21 @@ fn wsl_login_argv(
     if program.is_empty() {
         return Err("Comando de login vacío (revísalo en Ajustes)".into());
     }
+    // La estrategia de shell DETECTADA decide bash -lc o sh -c (revisión PR
+    // #92): sin esto, una distro sin bash muestra la CLI como lista (el
+    // sondeo de `command -v` usa sh) pero el login muere en `bash: not
+    // found`. Llega explícita: `prepare_wsl_login` la resuelve y la pasa.
+    let (shell_bin, shell_flag) = match shell {
+        ShellStrategy::BashLogin => ("bash", "-lc"),
+        ShellStrategy::ShPosix => ("sh", "-c"),
+    };
     let mut argv: Vec<std::ffi::OsString> = vec![
         "wsl.exe".into(),
         "-d".into(),
         distro.into(),
         "-e".into(),
-        "bash".into(),
-        "-lc".into(),
+        shell_bin.into(),
+        shell_flag.into(),
         WSL_LOGIN_WRAP.into(),
         "quorb".into(),
     ];
@@ -403,12 +426,15 @@ fn spawn_wsl_terminal(_argv: &[std::ffi::OsString]) -> Result<(), String> {
 }
 
 /// Primer elemento del comando (`codex login` → `codex`), sin comillas.
+/// Primer elemento del comando con el tokenizador de la EJECUCIÓN
+/// (`split_login_command`): comillas, escapes y rutas con espacios se ven
+/// igual en la detección y en el login (revisión PR #92: `program_of` era
+/// una heurística distinta y daba por ausente lo que luego se ejecutaba).
+/// Comando vacío o con comillas sin cerrar → vacío (no localizable).
 fn program_of(command: &str) -> String {
-    let c = command.trim();
-    if let Some(rest) = c.strip_prefix('"') {
-        return rest.split('"').next().unwrap_or("").to_string();
-    }
-    c.split_whitespace().next().unwrap_or("").to_string()
+    split_login_command(command)
+        .map(|(p, _)| p)
+        .unwrap_or_default()
 }
 
 #[derive(Debug, PartialEq)]
@@ -1355,7 +1381,7 @@ mod wsl_login_tests {
         });
         assert!(matches!(
             cli_check(&wsl_of(&mock), "codex").expect("sonda"),
-            CliCheck::Ready
+            CliCheck::Ready(shell) if shell == ShellStrategy::BashLogin
         ));
         // CLI ausente dentro de la distro (exit 127 de `command -v`).
         mock.set_command_output(CommandOutput {
@@ -1402,8 +1428,13 @@ mod wsl_login_tests {
     /// carpeta de la cuenta viaja con `env` dentro del guest (sin WSLENV).
     #[test]
     fn wsl_login_argv_tokenizes_program_and_args_and_applies_env_inside() {
-        let argv =
-            wsl_login_argv("Ubuntu 24.04", "codex login --device-auth", &None).expect("argv");
+        let argv = wsl_login_argv(
+            "Ubuntu 24.04",
+            ShellStrategy::BashLogin,
+            "codex login --device-auth",
+            &None,
+        )
+        .expect("argv");
         assert_eq!(
             argv,
             vec![
@@ -1424,8 +1455,13 @@ mod wsl_login_tests {
         );
         // AC6: no-ASCII y metacaracteres viajan como DATO (token), no
         // interpretados por el host.
-        let odd = wsl_login_argv("Distro Ñandú", "codex login --label \"ñ&|;$HOME\"", &None)
-            .expect("argv");
+        let odd = wsl_login_argv(
+            "Distro Ñandú",
+            ShellStrategy::BashLogin,
+            "codex login --label \"ñ&|;$HOME\"",
+            &None,
+        )
+        .expect("argv");
         assert!(odd.iter().any(|t| t.to_string_lossy() == "Distro Ñandú"));
         assert!(odd
             .iter()
@@ -1443,6 +1479,7 @@ mod wsl_login_tests {
         ));
         let argv = wsl_login_argv(
             "Ubuntu-22.04",
+            ShellStrategy::BashLogin,
             "claude --dangerously-skip-permissions",
             &env,
         )
@@ -1471,13 +1508,44 @@ mod wsl_login_tests {
         assert!(folder < pos, "carpeta ($1) precede a env");
     }
 
+    /// La estrategia de shell DETECTADA llega al argv (bloqueante 3, revisión
+    /// 2 PR #92): `ShPosix` → `sh -c`, no `bash -lc` — en una distro sin bash
+    /// el login moría en `bash: not found` tras anunciarse la CLI como lista.
+    #[test]
+    fn wsl_login_argv_uses_the_detected_shell_strategy() {
+        let posix =
+            wsl_login_argv("Ubuntu-22.04", ShellStrategy::ShPosix, "codex", &None).expect("argv");
+        let sh = posix
+            .iter()
+            .position(|t| t.to_string_lossy() == "sh")
+            .expect("sh presente");
+        assert_eq!(posix[sh + 1].to_string_lossy(), "-c");
+        assert!(
+            !posix.iter().any(|t| t.to_string_lossy() == "bash"),
+            "sin bash en la distro, el argv no puede invocarlo"
+        );
+        // BashLogin sigue usando `bash -lc`.
+        let login =
+            wsl_login_argv("Ubuntu-22.04", ShellStrategy::BashLogin, "codex", &None).expect("argv");
+        let bash = login
+            .iter()
+            .position(|t| t.to_string_lossy() == "bash")
+            .expect("bash presente");
+        assert_eq!(login[bash + 1].to_string_lossy(), "-lc");
+    }
+
     /// AC7: el comando del usuario se ejecuta DENTRO de la distro y no
     /// recibe un `wsl` adicional; la semántica se documenta aquí (el
     /// ejecutable `wsl.exe` solo aparece UNA vez, como lanzador del host).
     #[test]
     fn wsl_login_argv_has_a_single_launcher_and_no_double_wsl() {
-        let argv =
-            wsl_login_argv("Ubuntu-22.04", "codex login --device-auth", &None).expect("argv");
+        let argv = wsl_login_argv(
+            "Ubuntu-22.04",
+            ShellStrategy::BashLogin,
+            "codex login --device-auth",
+            &None,
+        )
+        .expect("argv");
         assert_eq!(
             argv.iter().filter(|t| *t == "wsl.exe").count(),
             1,
@@ -1486,7 +1554,13 @@ mod wsl_login_tests {
         // Si el usuario escribiera un comando que YA empieza por wsl, seguiría
         // siendo un DATO del guest (no se le antepone otro wsl.exe): el token
         // `wsl` vive después de `quorb` (posiciones 2+), nunca como lanzador.
-        let double = wsl_login_argv("Ubuntu-22.04", "wsl codex login", &None).expect("argv");
+        let double = wsl_login_argv(
+            "Ubuntu-22.04",
+            ShellStrategy::BashLogin,
+            "wsl codex login",
+            &None,
+        )
+        .expect("argv");
         let quorb = double.iter().position(|t| t == "quorb").expect("argv0");
         let guest_wsl = double
             .iter()
@@ -1667,7 +1741,12 @@ mod wsl_login_tests {
     #[test]
     fn open_in_wsl_activates_a_stopped_distro_instead_of_saying_missing() {
         let mock = MockWslAdapter::new();
+        mock.set_installed(true);
         mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        // El login EXPLÍCITO resuelve la estrategia de shell aunque la
+        // distro esté detenida (la despierta el propio `wsl -d`): el argv
+        // reutiliza bash/sh detectado, no asume bash (revisión 2 PR #92).
+        mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
         let cfg = AppConfig::default();
         let env: SessionEnv = None;
         let argv = prepare_wsl_login(
@@ -1717,6 +1796,45 @@ mod wsl_login_tests {
         assert!(!argv
             .iter()
             .any(|t| t.to_string_lossy().contains("no está instalado dentro")));
+    }
+
+    /// La detección y la ejecución usan el MISMO tokenizador (revisión 2 PR
+    /// #92): una ruta entre comillas con espacios se detecta como presente
+    /// y se ejecuta con su argv exacto — no da por ausente lo que luego se
+    /// ejecutaría.
+    #[test]
+    fn detection_and_execution_agree_on_a_quoted_path_with_spaces() {
+        let mock = MockWslAdapter::new();
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
+        mock.set_command_output(CommandOutput {
+            code: 0,
+            stdout: "/opt/mis herramientas/claude\n".into(),
+            stderr: String::new(),
+        });
+        let cmd = "\"/opt/mis herramientas/claude\" login";
+        // La sonda recibe el ejecutable tokenizado (con espacios intactos).
+        assert!(
+            matches!(
+                cli_check(&wsl_of(&mock), &program_of(cmd)).expect("sonda"),
+                CliCheck::Ready(_)
+            ),
+            "una ruta entre comillas se detecta como presente"
+        );
+        // Y la ejecución lanza ESE MISMO programa como token del guest.
+        let argv = prepare_wsl_login(&wsl_of(&mock), "claude", cmd, &None).expect("argv del login");
+        assert!(
+            argv.iter()
+                .any(|t| t.to_string_lossy() == "/opt/mis herramientas/claude"),
+            "el ejecutable viaja como token con espacios intactos: {argv:?}"
+        );
+        // El texto del comando NUNCA va como un único elemento (F14).
+        assert!(
+            !argv.iter().any(|t| t
+                .to_string_lossy()
+                .contains("mis herramientas/claude\" login")),
+            "el comando no viaja como un solo elemento"
+        );
     }
 
     /// El mensaje de CLI ausente no lleva espacios dobles ni saltos Rare
@@ -1808,7 +1926,7 @@ mod wsl_evidence {
         // tiene): la detección debe encontrarlos dentro de la distro.
         for cli in ["codex", "claude"] {
             assert!(
-                matches!(cli_check(&wsl, cli), Ok(CliCheck::Ready)),
+                matches!(cli_check(&wsl, cli), Ok(CliCheck::Ready(_))),
                 "«{cli}» debe estar Ready dentro de la distro"
             );
         }
@@ -1830,7 +1948,8 @@ mod wsl_evidence {
     fn gap2_login_command_runs_inside_the_distro() {
         let d = distro();
         // Mismo argv que compone la app (script constante + comando como dato).
-        let argv = wsl_login_argv(&d, "codex", &None).expect("argv del login");
+        let argv =
+            wsl_login_argv(&d, ShellStrategy::BashLogin, "codex", &None).expect("argv del login");
         let out = std::process::Command::new("wsl.exe")
             .args(argv.iter().skip(1))
             .output()

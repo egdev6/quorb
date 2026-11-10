@@ -238,6 +238,10 @@ export const en = {
         copy: 'Copy',
         copied: 'Copied',
       },
+      cliMissingWsl: {
+        title: '{name} is missing inside the WSL distro{distro}.',
+        body: 'The session host is WSL: Windows installers do not apply. Install it inside the distro (for example, in a WSL terminal) and press "Sign in" again.',
+      },
       showInWidget: 'Show in the widget',
       checkTitle: 'Check',
       apiKey: 'API key',

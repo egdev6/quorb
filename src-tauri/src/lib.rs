@@ -838,12 +838,50 @@ fn account_session_file_found(cfg: &AppConfig, id: &str, home: &std::path::Path)
     providers::session_file(cfg, id, home).is_some_and(|p| p.is_file())
 }
 
-/// ¿Hay fichero de sesión del CLI para una cuenta adicional? `true` es presencia,
-/// no validez de la sesión.
+/// ¿Hay fichero de sesión del CLI para una cuenta? `true` es presencia, no
+/// validez de la sesión. Sigue al ENTORNO elegido (revisión PR #92): en WSL
+/// la sesión vive dentro de la distro y el sondeo debe consultarla ahí — el
+/// disco del host no ve la sesión del guest y, peor, daría por buena una
+/// sesión de Windows que no tiene relación con el entorno WSL.
 #[tauri::command]
-fn account_session(state: State<'_, AppState>, id: String) -> bool {
+async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let cfg = state.config.lock().unwrap().clone();
-    account_session_file_found(&cfg, &id, &providers::home())
+    let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
+    match cfg.session_env() {
+        wsl::SessionEnv::Host => Ok(account_session_file_found(&cfg, &id, &providers::home())),
+        wsl::SessionEnv::Wsl { .. } => {
+            let resolver = session_resolver(&cfg, adapter, &state.wsl_homes).await?;
+            let Some(r) = resolver else {
+                // Sin distro resuelta (p. ej. no configurada): nada que
+                // sondear; no caer al disco del host.
+                return Ok(false);
+            };
+            tauri::async_runtime::spawn_blocking(move || {
+                let Some(a) = cfg.accounts.iter().find(|a| a.id == id) else {
+                    return Ok(false);
+                };
+                match crate::providers::account_session_path_in(Some(a), Some(&r))? {
+                    // Proveedor sin sesión CLI en este entorno.
+                    None => Ok(false),
+                    Some(path) => {
+                        use crate::wsl::SessionError;
+                        match r.read(std::path::Path::new(&path)) {
+                            Ok(_) => Ok(true),
+                            // Sin fichero en la distro: no hay sesión.
+                            Err(SessionError::Absent(_)) => Ok(false),
+                            // El guard de la distro también "lee" el fichero
+                            // de sesión; si falla de otra forma, no es
+                            // "conectada" — se informa para no dar por buena
+                            // una sesión que no se pudo comprobar.
+                            Err(e) => Err(format!("WSL: {e:?}")),
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|e| format!("WSL: {e}"))?
+        }
+    }
 }
 
 #[tauri::command]

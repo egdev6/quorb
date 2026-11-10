@@ -22,6 +22,7 @@ import { keyringErrorHint } from './lib/keyring-message';
 import { comboFromEvent, prettyCombo } from './lib/shortcuts';
 import { detectWindowManager, type WindowManagerInfo } from './lib/wm-detect';
 import { desktopCompatRows, showDesktopCompat } from './lib/desktop-compat';
+import { osFromUA, type Os } from './lib/os-detect';
 import { ProviderLogo } from './components/ProviderLogo';
 import { CodexInstall } from './components/CodexInstall';
 import quorbLogo from './assets/quorb-logo.png';
@@ -590,6 +591,55 @@ export function CliMissing({ provider, locale = 'es' }: { provider: AccountProvi
   );
 }
 
+/** Falta la CLI DENTRO de la distro WSL: instrucciones manuales del guest
+ *  (los instaladores de Windows no aplican ahí — revisión PR #92). */
+export function CliMissingWsl({ provider, locale = 'es', wslDistro }: { provider: AccountProvider; locale?: Locale; wslDistro?: string }) {
+  const how = CLI_INSTALL[provider];
+  if (!how) return null;
+  const distro = wslDistro?.trim();
+  // «Ubuntu-22.04» o vacío: el título no debe pegar el nombre sin separador.
+  const namedDistro = distro ? ` «${distro}»` : '';
+  const perProvider: Record<string, string> = {
+    claude: `curl -fsSL https://claude.ai/install.sh | bash`,
+    codex: `npm install -g @openai/codex`,
+    gemini: `npm install -g @google/gemini-cli`,
+    grok: `npm install -g @vibe-kit/grok-cli`,
+  };
+  const cmd = perProvider[provider] ?? '';
+  return (
+    <div className="eg-notice eg-notice--sm eg-notice--warning q-cli" role="status">
+      <span className="eg-notice__text">
+        <b>{t(locale, 'settings.providers.cliMissingWsl.title', { name: how.name, distro: namedDistro })}</b>{' '}
+        {t(locale, 'settings.providers.cliMissingWsl.body')}
+      </span>
+      {cmd && (
+        <span className="q-cli__cmd">
+          <code>{cmd}</code>
+          <CliCopyButton text={cmd} locale={locale} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Botón de copiar reutilizable para comandos (extraído de CliMissing). */
+function CliCopyButton({ text, locale }: { text: string; locale: Locale }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () =>
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  return (
+    <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={copy}>
+      {copied ? t(locale, 'settings.providers.cliMissing.copied') : t(locale, 'settings.providers.cliMissing.copy')}
+    </button>
+  );
+}
+
 /** Lo que necesita el paso de comprobación: lo guardado, las claves y si hay cambios sin guardar. */
 type HealthProps = {
   /** Config guardada: cuando cambia (al guardar) se vuelve a comprobar. */
@@ -794,6 +844,8 @@ function CliConnect({
   health,
   codexInstall,
   onCodexRecheck,
+  sessionEnv,
+  wslDistro,
 }: {
   /** Idioma de los pasos. */
   locale: Locale;
@@ -810,6 +862,10 @@ function CliConnect({
   codexInstall: CodexInstallController;
   /** Relectura del CLI compartida con la raíz tras una instalación. */
   onCodexRecheck: () => void;
+  /** Entorno elegido: en WSL no se ofrecen los instaladores de Windows. */
+  sessionEnv: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa). */
+  wslDistro: string;
 }) {
   const connected = useCliSession(id, persisted);
   const [busy, setBusy] = useState(false);
@@ -844,6 +900,8 @@ function CliConnect({
       health={health}
       codexInstall={codexInstall}
       onCodexRecheck={onCodexRecheck}
+      sessionEnv={sessionEnv}
+      wslDistro={wslDistro}
       connected={connected}
       busy={busy}
       loginError={loginError}
@@ -869,6 +927,8 @@ export function CliConnectView({
   busy,
   loginError,
   onConnect,
+  sessionEnv,
+  wslDistro,
 }: {
   locale: Locale;
   id: string;
@@ -887,14 +947,28 @@ export function CliConnectView({
   /** Diagnóstico del último intento de login que falló. */
   loginError: string | null;
   onConnect: () => void;
+  /** Entorno elegido: en WSL no se ofrecen los instaladores de Windows (revisión PR #92). */
+  sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
+  const wsl = sessionEnv === 'wsl';
   return (
     <>
       {cliMissing && (
         <li>
-          <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
-          <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
-          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+          {wsl ? (
+            // Instaladores de host (Codex asistido, comandos de Windows) NO
+            // aplican dentro de la distro: se ofrecen las instrucciones
+            // manuales del guest (revisión PR #92).
+            <CliMissingWsl provider={provider} locale={locale} wslDistro={wslDistro} />
+          ) : (
+            <>
+              <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
+              <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
+              {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+            </>
+          )}
         </li>
       )}
       <li data-done={connected || undefined}>
@@ -950,6 +1024,8 @@ export function AccountEditor({
   health,
   codexInstall,
   onCodexRecheck,
+  sessionEnv,
+  wslDistro,
 }: {
   /** Idioma del editor. */
   locale: Locale;
@@ -963,6 +1039,10 @@ export function AccountEditor({
   /** El CLI de login no está instalado: se avisa con la orden para instalarlo. */
   cliMissing: boolean;
   health: HealthProps;
+  /** Entorno elegido: en WSL no se ofrecen los instaladores de Windows. */
+  sessionEnv: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa). */
+  wslDistro: string;
   secrets: SecretStatus;
   onChange: (patch: Partial<Account>) => void;
   onRemove: () => void;
@@ -1005,7 +1085,7 @@ export function AccountEditor({
         </li>
 
         {session && (
-          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} />
+          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} wslDistro={wslDistro} />
         )}
 
         {a.provider === 'cursor' && (
@@ -1290,7 +1370,7 @@ function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect
 
 /** Tarjeta de la página «Proveedores»: intervalo de consulta y las dos listas
  *  (suscripciones y APIs). Extraída para poder renderizarla en pruebas de i18n. */
-export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro }: {
+export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro, platform }: {
   locale: Locale;
   cfg: AppConfig;
   secrets: SecretStatus;
@@ -1300,6 +1380,8 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
   onRefreshMinutes: (minutes: number) => void;
   onSessionEnv: (env: 'host' | 'wsl') => void;
   onWslDistro: (distro: string) => void;
+  /** Plataforma que sirve esta webview — el selector WSL solo existe en Windows (revisión PR #92). */
+  platform: Os;
 }) {
   const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
     <ProviderCard
@@ -1323,20 +1405,24 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
           <input type="number" min={1} max={120} value={cfg.refreshMinutes} onChange={(e) => onRefreshMinutes(Number(e.target.value) || 1)} />
           {t(locale, 'settings.providers.refreshUnit')}
         </label>
-        <label className="q-section__aside">
-          {t(locale, 'settings.providers.sessionEnv')}
-          <select value={cfg.sessionEnv} onChange={(e) => onSessionEnv(e.target.value as 'host' | 'wsl')}>
-            <option value="host">{t(locale, 'settings.providers.sessionHost')}</option>
-            <option value="wsl">WSL</option>
-          </select>
-          <small className="eg-field__hint">{t(locale, 'settings.providers.sessionEnvHint')}</small>
-        </label>
-        {cfg.sessionEnv === 'wsl' && (
-          <label className="q-section__aside">
-            {t(locale, 'settings.providers.wslDistro')}
-            <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
-            <small className="eg-field__hint">{t(locale, 'settings.providers.wslDistroHint')}</small>
-          </label>
+        {platform === 'windows' && (
+          <>
+            <label className="q-section__aside">
+              {t(locale, 'settings.providers.sessionEnv')}
+              <select value={cfg.sessionEnv} onChange={(e) => onSessionEnv(e.target.value as 'host' | 'wsl')}>
+                <option value="host">{t(locale, 'settings.providers.sessionHost')}</option>
+                <option value="wsl">WSL</option>
+              </select>
+              <small className="eg-field__hint">{t(locale, 'settings.providers.sessionEnvHint')}</small>
+            </label>
+            {cfg.sessionEnv === 'wsl' && (
+              <label className="q-section__aside">
+                {t(locale, 'settings.providers.wslDistro')}
+                <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
+                <small className="eg-field__hint">{t(locale, 'settings.providers.wslDistroHint')}</small>
+              </label>
+            )}
+          </>
         )}
       </div>
       <div className="eg-module-card__body">
@@ -1953,6 +2039,8 @@ export function SubscriptionPanel({
           health={healthFor(p, !cfg[p].enabled)}
           codexInstall={codexInstall}
           onCodexRecheck={onCodexRecheck}
+          sessionEnv={cfg.sessionEnv}
+          wslDistro={cfg.wslDistro}
         />
       </ol>
       <details className="q-details">
@@ -2520,7 +2608,18 @@ export function Settings() {
   const sectionDirty = (id: string) => {
     const acc = cfg.accounts.find((a) => a.id === id);
     const k = configKeyFor(acc?.provider ?? id);
-    return isConnectionDirty(acc, baseline?.accounts.find((a) => a.id === id), k ? cfg[k] : undefined, k ? baseline?.[k] : undefined);
+    // El entorno (host/WSL + distro) es parte de la conexión (revisión PR
+    // #92): cambiarlo y pulsar iniciar sesión sin guardar usaría el entorno
+    // guardado, no el que se ve.
+    const envOf = (c: typeof cfg) => ({ sessionEnv: c.sessionEnv, wslDistro: c.wslDistro });
+    return isConnectionDirty(
+      acc,
+      baseline?.accounts.find((a) => a.id === id),
+      k ? cfg[k] : undefined,
+      k ? baseline?.[k] : undefined,
+      envOf(cfg),
+      baseline ? envOf(baseline) : undefined,
+    );
   };
   const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save, locale });
   const panel = { locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor };
@@ -2602,6 +2701,7 @@ export function Settings() {
                 onRefreshMinutes={(minutes) => set('refreshMinutes', minutes)}
                 onSessionEnv={(env) => set('sessionEnv', env)}
                 onWslDistro={(distro) => set('wslDistro', distro)}
+                platform={osFromUA(navigator.userAgent)}
               />
               <div className="q-drawer-scrim" data-open={drawerOpen || undefined} onClick={closeDrawer} aria-hidden="true" />
               <aside
@@ -2631,6 +2731,8 @@ export function Settings() {
           onSecrets={loadSecrets}
           health={healthFor(selAccount.id, !selAccount.enabled)}
           cliMissing={cli[selAccount.provider] === "missing"}
+          sessionEnv={cfg.sessionEnv}
+          wslDistro={cfg.wslDistro}
           loginCommand={
             selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini' || selAccount.provider === 'grok'
               ? cfg[selAccount.provider].loginCommand

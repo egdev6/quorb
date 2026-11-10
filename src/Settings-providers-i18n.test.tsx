@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Account, AppConfig, Locale, UsageReport } from './lib/types';
 import type { WindowManagerInfo } from './lib/wm-detect';
+import type { Os } from './lib/os-detect';
 import {
   AccountsBar,
   AutostartNotice,
@@ -63,9 +64,9 @@ const enabledOnly = (...ids: string[]) => {
 // claude: activo con 1 cuenta extra · copilot: activo sin token (falta conectar) · resto desactivados.
 const cfg = enabledOnly('claude', 'copilot');
 
-const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true) =>
+const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true, platform: Os = 'windows') =>
   renderToStaticMarkup(
-    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} />,
+    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform={platform} />,
   );
 
 const descriptions: [es: string, en: string][] = [
@@ -469,5 +470,24 @@ describe('Provider cards: aria-current and aria-expanded follow the selection (S
     expect(count(html, 'aria-expanded="true"')).toBe(0);
     expect(count(html, 'aria-current="false"')).toBe(cards(html));
     expect(count(html, 'aria-expanded="false"')).toBe(cards(html));
+  });
+
+  // El selector de entorno (host/WSL + distro) SIEMPRE abre el login hacia
+  // `wsl.exe` y las sesiones del guest: solo existe en Windows (revisión PR
+  // #92). Fuera de Windows no se renderiza la etiqueta ni el campo.
+  it('hides the session environment selector outside Windows', () => {
+    for (const platform of ['macos', 'linux'] as const) {
+      const html = card('es', 'claude', true, platform);
+      expect(html).not.toContain('Sesión de los CLIs');
+      expect(html).not.toContain('Distro WSL');
+      expect(html).not.toContain('sessionEnv');
+    }
+  });
+
+  it('renders the session environment selector on Windows', () => {
+    const html = card('es', 'claude', true, 'windows');
+    expect(html).toContain('Sesión de los CLIs');
+    // El campo de distro solo aparece en modo WSL (el helper cfg usa host).
+    expect(html).not.toContain('Distro WSL');
   });
 });

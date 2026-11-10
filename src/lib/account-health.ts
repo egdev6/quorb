@@ -10,8 +10,23 @@ export function effectivePersisted(persisted: boolean, dirty: boolean): boolean 
 }
 
 /** Incluye la cuenta y los ajustes heredados del proveedor, sin leer credenciales. */
-export function isConnectionDirty(account: unknown, savedAccount: unknown, provider: unknown, savedProvider: unknown): boolean {
-  return JSON.stringify(account) !== JSON.stringify(savedAccount) || JSON.stringify(provider) !== JSON.stringify(savedProvider);
+export function isConnectionDirty(
+  account: unknown,
+  savedAccount: unknown,
+  provider: unknown,
+  savedProvider: unknown,
+  env?: { sessionEnv: unknown; wslDistro: unknown },
+  savedEnv?: { sessionEnv: unknown; wslDistro: unknown },
+): boolean {
+  return (
+    JSON.stringify(account) !== JSON.stringify(savedAccount) ||
+    JSON.stringify(provider) !== JSON.stringify(savedProvider) ||
+    // El ENTORNO es parte de la conexión (revisión PR #92): cambiar de
+    // Windows a WSL, o de una distro a otra, sin guardar haría que el login
+    // usara el entorno guardado, no el que se ve en pantalla.
+    env?.sessionEnv !== savedEnv?.sessionEnv ||
+    env?.wslDistro !== savedEnv?.wslDistro
+  );
 }
 
 export interface PresencePollerOptions {

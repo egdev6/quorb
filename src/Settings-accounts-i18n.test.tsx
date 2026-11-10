@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { CLI_INSTALL, defaultSessionDir } from './lib/accounts';
 import type { CodexInstallController } from './lib/codex-install';
 import type { Account, AccountProvider, Locale } from './lib/types';
-import { AccountEditor, CliConnectView, CliMissing } from './Settings';
+import { AccountEditor, CliConnectView, CliMissing, CliMissingWsl } from './Settings';
 
 const noop = () => {};
 
@@ -35,8 +35,8 @@ const codexInstall = {} as CodexInstallController;
 
 const connect = (
   locale: Locale,
-  provider: 'claude' | 'gemini',
-  over: { cliMissing?: boolean; persisted?: boolean; extra?: boolean; dirty?: boolean; connected?: boolean; loginError?: string | null } = {},
+  provider: 'claude' | 'codex' | 'gemini',
+  over: { cliMissing?: boolean; persisted?: boolean; extra?: boolean; dirty?: boolean; connected?: boolean; loginError?: string | null; sessionEnv?: 'host' | 'wsl'; wslDistro?: string } = {},
 ) =>
   renderToStaticMarkup(
     <CliConnectView
@@ -50,6 +50,8 @@ const connect = (
       health={health(locale, { dirty: over.dirty })}
       codexInstall={codexInstall}
       onCodexRecheck={noop}
+      sessionEnv={over.sessionEnv ?? 'host'}
+      wslDistro={over.wslDistro ?? ''}
       connected={over.connected ?? false}
       busy={false}
       loginError={over.loginError ?? null}
@@ -200,6 +202,8 @@ describe('AccountEditor (SSR, i18n)', () => {
         health={health(locale)}
         codexInstall={codexInstall}
         onCodexRecheck={noop}
+        sessionEnv="host"
+        wslDistro=""
       />,
     );
 
@@ -472,5 +476,55 @@ describe('CLI_INSTALL.whereKey (CliMissing, i18n)', () => {
       if (before === undefined) delete gemini.where;
       else gemini.where = before;
     }
+  });
+});
+
+// CLI ausente en los DOS entornos (revisión 2 PR #92): en host se ofrecen
+// los instaladores de Windows; en WSL, instrucciones manuales del guest
+// (los instaladores de Windows no aplican dentro de la distro).
+describe('Missing CLI per environment (SSR, i18n)', () => {
+  it('offers Windows installers on host', () => {
+    const html = connect('es', 'claude', { cliMissing: true, sessionEnv: 'host' });
+    expect(html).toContain('Falta Claude Code en este equipo.');
+    expect(html).toContain('install.ps1');
+  });
+
+  it('does not offer the Codex host installer inside WSL', () => {
+    // `-codex` en host montaría `CodexInstall` (useSyncExternalStore, no
+    // renderizable en SSR); lo que importa es que en WSL NO aparezca.
+    const html = connect('es', 'codex', {
+      cliMissing: true,
+      sessionEnv: 'wsl',
+      wslDistro: 'Ubuntu-22.04',
+    });
+    expect(html).toContain('Falta Codex CLI dentro de la distro WSL «Ubuntu-22.04».');
+    expect(html).toContain('npm install -g @openai/codex');
+    expectNone(html, ['Instala Codex', 'install.ps1', 'Código de instalación'], 'es');
+  });
+
+  it('offers guest instructions in WSL instead of Windows installers', () => {
+    const html = connect('es', 'claude', {
+      cliMissing: true,
+      sessionEnv: 'wsl',
+      wslDistro: 'Ubuntu-22.04',
+    });
+    // Instrucciones del guest, con la distro en el mensaje…
+    expect(html).toContain('Falta Claude Code dentro de la distro WSL «Ubuntu-22.04».');
+    expect(html).toContain('Ubuntu-22.04');
+    expect(html).toContain('curl -fsSL https://claude.ai/install.sh | bash');
+    // …y NINGÚN instalador de Windows (ni el asistido ni comandos de host).
+    expectNone(html, ['install.ps1', 'Instala Claude Code en este equipo', 'Instalar'], 'es');
+  });
+
+  it('CliMissingWsl keeps the distro optional and translates to en', () => {
+    const withDistro = renderToStaticMarkup(
+      <CliMissingWsl provider="codex" locale="en" wslDistro="Ubuntu-24.04" />,
+    );
+    expectAll(withDistro, ['is missing inside the WSL distro', 'Ubuntu-24.04', 'npm install -g @openai/codex'], 'en');
+    const withoutDistro = renderToStaticMarkup(
+      <CliMissingWsl provider="gemini" locale="es" />,
+    );
+    expectAll(withoutDistro, ['dentro de la distro WSL', 'npm install -g @google/gemini-cli'], 'es');
+    expectNone(withoutDistro, ['install.ps1'], 'es');
   });
 });

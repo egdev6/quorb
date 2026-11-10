@@ -62,6 +62,48 @@ describe('isConnectionDirty', () => {
     expect(isConnectionDirty(undefined, undefined, { ...provider, credentialsPath: 'work.json' }, provider)).toBe(true);
     expect(isConnectionDirty(undefined, undefined, provider, provider)).toBe(false);
   });
+
+  // El entorno es parte de la conexión (revisión PR #92): cambiar de
+  // Windows a WSL — o de una distro a otra — sin guardar deja la sección
+  // sucia; el login usa lo GUARDADO, no lo que se ve en pantalla.
+  it('detects a sessionEnv switch from host to wsl', () => {
+    expect(
+      isConnectionDirty(
+        account,
+        account,
+        provider,
+        provider,
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+        { sessionEnv: 'host', wslDistro: '' },
+      ),
+    ).toBe(true);
+  });
+
+  it('detects a distro change inside wsl', () => {
+    expect(
+      isConnectionDirty(
+        account,
+        account,
+        provider,
+        provider,
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-24.04' },
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps an unchanged environment clean', () => {
+    expect(
+      isConnectionDirty(
+        account,
+        account,
+        provider,
+        provider,
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+      ),
+    ).toBe(false);
+  });
 });
 
 describe('createPresencePoller', () => {

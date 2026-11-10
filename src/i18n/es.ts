@@ -250,6 +250,10 @@ export const es = {
         copy: 'Copiar',
         copied: 'Copiado',
       },
+      cliMissingWsl: {
+        title: 'Falta {name} dentro de la distro WSL{distro}.',
+        body: 'El entorno de sesión es WSL: los instaladores de Windows no aplican. Instálalo dentro de la distro (por ejemplo, en una terminal de WSL) y vuelve a pulsar «Iniciar sesión».',
+      },
       // Trozos que comparten los pasos por CLI, el editor de cuentas y los paneles
       // por proveedor (T2c slice 2 C1, #66).
       showInWidget: 'Mostrar en el widget',
