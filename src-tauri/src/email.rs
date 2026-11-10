@@ -73,15 +73,21 @@ impl EmailEvent {
             && self.percent.is_finite()
             && (0.0..=10000.0).contains(&self.percent)
     }
-    fn text(&self) -> String {
+    fn text(&self, locale: crate::i18n::Locale) -> String {
+        let (labels, kinds) = crate::i18n::email_event_words(locale);
         let kind = match self.kind {
-            EventKind::Exceeded => "exceeded",
-            EventKind::Reset => "reset",
+            EventKind::Exceeded => kinds.0,
+            EventKind::Reset => kinds.1,
         };
-        format!(
-            "Provider: {}\nMeter: {}\nWindow: {}\nPercent: {}\nEvent: {}",
-            self.provider, self.meter, self.window, self.percent, kind
-        )
+        [
+            (labels.0, self.provider.as_str()),
+            (labels.1, self.meter.as_str()),
+            (labels.2, self.window.as_str()),
+            (labels.3, self.percent.to_string().as_str()),
+            (labels.4, kind),
+        ]
+        .map(|(label, value)| format!("{label}: {value}"))
+        .join("\n")
     }
 }
 
@@ -101,9 +107,14 @@ fn valid_address(value: &str) -> bool {
         })
 }
 
-pub async fn send(cfg: &crate::config::AlertsConfig, event: Option<EmailEvent>) -> EmailStatus {
+pub async fn send(
+    cfg: &crate::config::AlertsConfig,
+    locale: crate::i18n::Locale,
+    event: Option<EmailEvent>,
+) -> EmailStatus {
     send_with(
         cfg,
+        locale,
         event,
         crate::secrets::get_resend_api_key,
         "https://api.resend.com/emails",
@@ -114,6 +125,7 @@ pub async fn send(cfg: &crate::config::AlertsConfig, event: Option<EmailEvent>) 
 
 async fn send_with(
     cfg: &crate::config::AlertsConfig,
+    locale: crate::i18n::Locale,
     event: Option<EmailEvent>,
     read_key: impl FnOnce() -> Result<Option<String>, String>,
     endpoint: &str,
@@ -148,14 +160,14 @@ async fn send_with(
         Err(_) => return EmailStatus::ServiceError,
     };
     let text = event
-        .map(|e| e.text())
-        .unwrap_or_else(|| "Quorb: explicit email test (no usage data).".into());
+        .map(|e| e.text(locale))
+        .unwrap_or_else(|| crate::i18n::email_test_body(locale).into());
     let response = client
         .post(endpoint)
         .bearer_auth(key)
         .json(&serde_json::json!({
             "from": cfg.email.sender, "to": [cfg.email.recipient],
-            "subject": "Quorb: usage alert", "text": text,
+            "subject": crate::i18n::email_subject(locale), "text": text,
         }))
         .send()
         .await;
@@ -176,6 +188,7 @@ async fn send_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::Locale;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -317,6 +330,7 @@ mod tests {
         assert_eq!(
             run(send_with(
                 &cfg,
+                Locale::En,
                 None,
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
@@ -329,6 +343,7 @@ mod tests {
         assert_eq!(
             run(send_with(
                 &cfg,
+                Locale::En,
                 None,
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
@@ -341,6 +356,7 @@ mod tests {
         assert_eq!(
             run(send_with(
                 &cfg,
+                Locale::En,
                 Some(event()),
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
@@ -353,6 +369,7 @@ mod tests {
         assert_eq!(
             run(send_with(
                 &cfg,
+                Locale::En,
                 Some(event()),
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
@@ -371,6 +388,7 @@ mod tests {
             assert_eq!(
                 run(send_with(
                     &config(),
+                    Locale::En,
                     None,
                     || key,
                     "http://127.0.0.1:1",
@@ -391,6 +409,7 @@ mod tests {
         cfg.native = false;
         let result = run(send_with(
             &cfg,
+            Locale::En,
             Some(event()),
             || Ok(Some("synthetic-key".into())),
             &url,
@@ -413,6 +432,71 @@ mod tests {
         assert!(!body.to_string().contains("synthetic-key"));
     }
 
+    /// S21 (#245): asunto y cuerpo siguen el locale de la config; el inglés
+    /// conserva los literales originales byte a byte.
+    #[test]
+    fn email_texts_follow_configured_locale() {
+        for (locale, subject, text) in [
+            (
+                Locale::Es,
+                "Quorb: alerta de consumo",
+                "Proveedor: claude\nMedidor: five_hour\nVentana: 12345\nPorcentaje: 95\nEvento: superado",
+            ),
+            (
+                Locale::En,
+                "Quorb: usage alert",
+                "Provider: claude\nMeter: five_hour\nWindow: 12345\nPercent: 95\nEvent: exceeded",
+            ),
+        ] {
+            let (url, requests, handle) = server(200, Duration::ZERO);
+            let result = run(send_with(
+                &config(),
+                locale,
+                Some(event()),
+                || Ok(Some("synthetic-key".into())),
+                &url,
+                Duration::from_secs(5),
+            ));
+            handle.join().unwrap();
+            assert_eq!(result, EmailStatus::Accepted);
+            let req = requests.lock().unwrap();
+            let body: serde_json::Value =
+                serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject": subject, "text": text})
+            );
+        }
+    }
+
+    /// S21 (#245): el cuerpo de la prueba explícita también se traduce.
+    #[test]
+    fn test_email_body_follows_locale() {
+        for (locale, text) in [
+            (
+                Locale::Es,
+                "Quorb: prueba explícita de email (sin datos de consumo).",
+            ),
+            (Locale::En, "Quorb: explicit email test (no usage data)."),
+        ] {
+            let (url, requests, handle) = server(200, Duration::ZERO);
+            let result = run(send_with(
+                &config(),
+                locale,
+                None,
+                || Ok(Some("synthetic-key".into())),
+                &url,
+                Duration::from_secs(5),
+            ));
+            handle.join().unwrap();
+            assert_eq!(result, EmailStatus::Accepted);
+            let req = requests.lock().unwrap();
+            let body: serde_json::Value =
+                serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            assert_eq!(body["text"], text);
+        }
+    }
+
     #[test]
     fn explicit_test_works_while_disabled_without_activating() {
         let (url, requests, handle) = server(200, Duration::ZERO);
@@ -423,6 +507,7 @@ mod tests {
         assert_eq!(
             run(send_with(
                 &cfg,
+                Locale::En,
                 None,
                 || Ok(Some("synthetic-key".into())),
                 &url,
@@ -490,6 +575,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(400));
         let status = run(send_with(
             &config(),
+            Locale::En,
             Some(event()),
             || Ok(Some("synthetic-key".into())),
             &url,
@@ -514,6 +600,7 @@ mod tests {
             let (url, requests, handle) = server(code, delay);
             let status = run(send_with(
                 &config(),
+                Locale::En,
                 None,
                 || Ok(Some("synthetic-key".into())),
                 &url,
@@ -556,6 +643,7 @@ mod tests {
             assert_eq!(
                 run(send_with(
                     &config(),
+                    Locale::En,
                     Some(bad),
                     || panic!("credential read"),
                     "http://127.0.0.1:1",
