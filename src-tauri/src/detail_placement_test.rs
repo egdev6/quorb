@@ -15,6 +15,8 @@
 use super::detail_placement::*;
 use crate::detail_geometry::Bounds;
 use crate::widget_placement::{Geometry, Reason, Status, Transport, READS};
+use crate::window_fit::{fit_plan, FitOutcome};
+use crate::window_fit_test::{hyprland_profile, FakeFitSurface};
 
 /// Doble del gestor de ventanas: la ventana suele estar oculta cuando llegan
 /// los bounds, el compositor puede rechazar el tamaño, y el permiso vive
@@ -577,6 +579,59 @@ fn the_unverified_report_carries_no_geometry_and_no_reason() {
     assert_eq!(report.bounds, None);
     assert!(report.reason.is_none());
     assert!(!report.read_back);
+}
+
+/// El ajuste del detalle en la ruta sin ciclo (#250): la ventana pide las
+/// pistas `min == max` que el ciclo X11 sí manda.
+///
+/// S13 (revalidado): la conversión usa el factor que **informa la propia
+/// ventana** (GTK mide en lógicos y la petición llega en físicos): una ventana
+/// que informa escala 2 recibe las pistas a la mitad, no las físicas. La
+/// limitación en DPI mixto (la ventana aún no mostrada puede estar en otro
+/// monitor) queda documentada, no corregida.
+#[test]
+fn the_detail_asks_for_the_size_hints_with_the_scale_the_window_reports() {
+    let plan = fit_plan(hyprland_profile(), Transport::Other);
+    // La ventana del detalle informa escala 2.
+    let mut surface = FakeFitSurface::new(2.0);
+    let outcome = fit_detail(&mut surface, &plan, (314, 379), || false);
+    assert_eq!(outcome, FitOutcome::Applied);
+    assert_eq!(
+        surface.calls(),
+        vec!["constraints 157x190"],
+        "las pistas van en píxeles lógicos, con la escala de la ventana"
+    );
+}
+
+/// Fuera de Hyprland el detalle no pide ninguna pista: el comportamiento de
+/// siempre (S1).
+#[test]
+fn the_detail_asks_for_no_hints_outside_hyprland() {
+    let plan = fit_plan(crate::window_fit::FitProfile::NONE, Transport::Other);
+    let mut surface = FakeFitSurface::new(1.0);
+    let outcome = fit_detail(&mut surface, &plan, (314, 379), || false);
+    assert_eq!(outcome, FitOutcome::NotRequested);
+    assert!(
+        surface.calls().is_empty(),
+        "fuera de Hyprland no hay llamadas nuevas: {:?}",
+        surface.calls()
+    );
+}
+
+/// S9: una colocación caducada no deja su tamaño bloqueado (el detalle crece
+/// con el contenido: un tamaño viejo lo limitaría).
+#[test]
+fn a_superseded_detail_placement_does_not_apply_the_size_hints() {
+    let plan = fit_plan(hyprland_profile(), Transport::Other);
+    let mut surface = FakeFitSurface::new(1.0);
+    // El cancelador dice que la colocación ya no es vigente.
+    let outcome = fit_detail(&mut surface, &plan, (314, 379), || true);
+    assert_eq!(outcome, FitOutcome::Superseded);
+    assert!(
+        surface.calls().is_empty(),
+        "una colocación caducada no toca la ventana: {:?}",
+        surface.calls()
+    );
 }
 
 /// Prueba en vivo de la secuencia nativa de tamaño con un webview real (#215).
