@@ -191,6 +191,7 @@ mod tests {
     use crate::i18n::Locale;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -218,21 +219,44 @@ mod tests {
             .unwrap()
             .block_on(future)
     }
-    fn server(
-        status: u16,
-        delay: Duration,
-    ) -> (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
+    struct ServerHandle {
+        shutdown: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl ServerHandle {
+        fn join(mut self) -> std::thread::Result<()> {
+            // Preserve the observation window for unexpected extra requests.
+            std::thread::sleep(Duration::from_millis(350));
+            self.shutdown.store(true, Ordering::Release);
+            self.thread.take().unwrap().join()
+        }
+    }
+
+    impl Drop for ServerHandle {
+        fn drop(&mut self) {
+            self.shutdown.store(true, Ordering::Release);
+            if let Some(thread) = self.thread.take() {
+                // Do not double-panic while unwinding a failed assertion.
+                let _ = thread.join();
+            }
+        }
+    }
+
+    fn server(status: u16, delay: Duration) -> (String, Arc<Mutex<Vec<String>>>, ServerHandle) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/emails", listener.local_addr().unwrap());
         let captured = Arc::new(Mutex::new(Vec::new()));
         let requests = captured.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let stopping = shutdown.clone();
         let handle = std::thread::spawn(move || {
-            let start = std::time::Instant::now();
-            while start.elapsed() < Duration::from_millis(350) {
+            // The owning test controls lifetime, not thread startup time.
+            while !stopping.load(Ordering::Acquire) {
                 if let Ok((mut stream, _)) = listener.accept() {
                     stream
-                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .set_read_timeout(Some(Duration::from_secs(5)))
                         .unwrap();
                     let mut bytes = Vec::new();
                     let mut buf = [0u8; 4096];
@@ -268,7 +292,14 @@ mod tests {
                 }
             }
         });
-        (url, captured, handle)
+        (
+            url,
+            captured,
+            ServerHandle {
+                shutdown,
+                thread: Some(handle),
+            },
+        )
     }
 
     #[test]
@@ -292,7 +323,7 @@ mod tests {
                 None,
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::ConsentRequired
         );
@@ -305,7 +336,7 @@ mod tests {
                 None,
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::ConfigurationMissing
         );
@@ -318,7 +349,7 @@ mod tests {
                 Some(event()),
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::Disabled
         );
@@ -331,7 +362,7 @@ mod tests {
                 Some(event()),
                 || panic!("credential read"),
                 "http://127.0.0.1:1",
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::Disabled
         );
@@ -350,7 +381,7 @@ mod tests {
                     None,
                     || key,
                     "http://127.0.0.1:1",
-                    Duration::from_secs(1)
+                    Duration::from_secs(5)
                 )),
                 expected
             );
@@ -371,7 +402,7 @@ mod tests {
             Some(event()),
             || Ok(Some("synthetic-key".into())),
             &url,
-            Duration::from_secs(1),
+            Duration::from_secs(5),
         ));
         handle.join().unwrap();
         assert_eq!(result, EmailStatus::Accepted);
@@ -413,7 +444,7 @@ mod tests {
                 Some(event()),
                 || Ok(Some("synthetic-key".into())),
                 &url,
-                Duration::from_secs(1),
+                Duration::from_secs(5),
             ));
             handle.join().unwrap();
             assert_eq!(result, EmailStatus::Accepted);
@@ -444,7 +475,7 @@ mod tests {
                 None,
                 || Ok(Some("synthetic-key".into())),
                 &url,
-                Duration::from_secs(1),
+                Duration::from_secs(5),
             ));
             handle.join().unwrap();
             assert_eq!(result, EmailStatus::Accepted);
@@ -469,12 +500,30 @@ mod tests {
                 None,
                 || Ok(Some("synthetic-key".into())),
                 &url,
-                Duration::from_secs(1)
+                Duration::from_secs(5)
             )),
             EmailStatus::Accepted
         );
         handle.join().unwrap();
         assert_eq!(cfg, before);
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    /// A loaded test runner may not poll the first request within 350 ms.
+    #[test]
+    fn late_first_request_is_still_served() {
+        let (url, requests, handle) = server(200, Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(400));
+        let status = run(send_with(
+            &config(),
+            Locale::En,
+            Some(event()),
+            || Ok(Some("synthetic-key".into())),
+            &url,
+            Duration::from_secs(5),
+        ));
+        handle.join().unwrap();
+        assert_eq!(status, EmailStatus::Accepted);
         assert_eq!(requests.lock().unwrap().len(), 1);
     }
 
@@ -487,11 +536,7 @@ mod tests {
             (429, Duration::ZERO, EmailStatus::RateLimited),
             (500, Duration::ZERO, EmailStatus::ServiceError),
             (302, Duration::ZERO, EmailStatus::RequestRejected),
-            (
-                200,
-                Duration::from_millis(150),
-                EmailStatus::AcceptanceUnknown,
-            ),
+            (200, Duration::from_secs(3), EmailStatus::AcceptanceUnknown),
         ] {
             let (url, requests, handle) = server(code, delay);
             let status = run(send_with(
@@ -500,7 +545,11 @@ mod tests {
                 None,
                 || Ok(Some("synthetic-key".into())),
                 &url,
-                Duration::from_millis(100),
+                if delay.is_zero() {
+                    Duration::from_secs(5)
+                } else {
+                    Duration::from_secs(2)
+                },
             ));
             handle.join().unwrap();
             assert_eq!(status, expected);
@@ -539,7 +588,7 @@ mod tests {
                     Some(bad),
                     || panic!("credential read"),
                     "http://127.0.0.1:1",
-                    Duration::from_secs(1)
+                    Duration::from_secs(5)
                 )),
                 EmailStatus::RequestRejected
             );
