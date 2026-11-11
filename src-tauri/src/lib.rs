@@ -1054,11 +1054,19 @@ fn second_instance_target(picker_open: bool) -> &'static str {
     }
 }
 
+/// Título del selector de primer arranque (#227). Fijo y bilingüe: se muestra
+/// antes de elegir idioma, así que no pasa por la traducción. No empieza por el
+/// nombre de la app, como Ajustes, para que la regla de KWin documentada en
+/// docs/build-linux.md §6.2 no lo alcance.
+fn locale_picker_title(channel: &str) -> String {
+    format!("Idioma / Language · {channel}")
+}
+
 /// Pantalla de primer arranque (S8, P1): ventana aparte, con decoraciones y sin
 /// transparencia ni «siempre encima».
 fn open_locale_picker(app: &AppHandle) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, LOCALE_PICKER, WebviewUrl::App("index.html".into()))
-        .title("Quorb")
+        .title(locale_picker_title(channel::current().name))
         .inner_size(420.0, 240.0)
         .min_inner_size(420.0, 240.0)
         .center()
@@ -1414,6 +1422,39 @@ mod tests {
         assert!(!locale_picker_needed(true, &chosen));
         assert!(!locale_picker_needed(false, &fresh));
         assert!(!locale_picker_needed(false, &chosen));
+    }
+
+    /// #227: la regla de KWin documentada en docs/build-linux.md §6.2 solo debe
+    /// alcanzar a la tira, el detalle y el overlay; ni a Ajustes ni al selector.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn documented_kwin_rule_matches_only_strip_detail_and_overlay() {
+        let doc = include_str!("../../docs/build-linux.md");
+        let mut rules = doc.lines().filter_map(|l| l.strip_prefix("title="));
+        let pattern = rules.next().expect("regla de KWin documentada (title=)");
+        assert!(rules.next().is_none(), "una sola línea title= en el documento");
+        let rule = regex::Regex::new(pattern).expect("expresión válida");
+
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let strip = conf["app"]["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["label"] == WIDGET)
+            .and_then(|w| w["title"].as_str())
+            .expect("título de la tira");
+        let channel = channel::STABLE.name;
+        assert!(rule.is_match(strip), "tira: {strip}");
+        for locale in [i18n::Locale::Es, i18n::Locale::En] {
+            for title in [i18n::detail_title(locale, channel), i18n::overlay_title(locale, channel)] {
+                assert!(rule.is_match(&title), "debe coincidir: {title}");
+            }
+            let settings = i18n::settings_title(locale, channel);
+            assert!(!rule.is_match(&settings), "no debe coincidir: {settings}");
+        }
+        let picker = locale_picker_title(channel);
+        assert!(!rule.is_match(&picker), "no debe coincidir: {picker}");
     }
 
     #[test]
