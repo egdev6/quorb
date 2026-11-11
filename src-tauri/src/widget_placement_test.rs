@@ -8,6 +8,8 @@
 
 use super::widget_placement::*;
 use crate::detail_geometry::Bounds;
+use crate::window_fit::{fit_plan, FitOutcome};
+use crate::window_fit_test::{hyprland_profile, FakeFitSurface};
 
 /// Gestor de ventanas simulado: la visibilidad es del frontend, el compositor
 /// responde tarde y el permiso de resize sólo vive durante el resize.
@@ -828,6 +830,87 @@ fn the_report_travels_with_the_effective_geometry_and_its_reason_code() {
     assert_eq!(json["reason"], "superseded");
     assert!(json["bounds"].is_null());
     assert_eq!(json["read_back"], false);
+}
+
+/// El ajuste de la tira en la ruta sin ciclo (#250): la ventana pide las
+/// pistas `min == max` que el ciclo X11 sí manda, y la conversión usa el
+/// factor con el que se calculó la petición.
+#[test]
+fn the_strip_asks_for_the_size_hints_on_native_wayland() {
+    let plan = fit_plan(hyprland_profile(), Transport::Other);
+    let mut surface = FakeFitSurface::new(1.0);
+    let outcome = fit_widget(&mut surface, &plan, (61, 181), 1.0, || false);
+    assert_eq!(outcome, FitOutcome::Applied);
+    assert_eq!(
+        surface.calls(),
+        vec!["constraints 61x181"],
+        "la tira pide las pistas de su tamaño"
+    );
+}
+
+/// Fuera de Hyprland la tira no pide ninguna pista: el comportamiento de
+/// siempre (S1).
+#[test]
+fn the_strip_asks_for_no_hints_outside_hyprland() {
+    let plan = fit_plan(crate::window_fit::FitProfile::NONE, Transport::Other);
+    let mut surface = FakeFitSurface::new(1.0);
+    let outcome = fit_widget(&mut surface, &plan, (61, 181), 1.0, || false);
+    assert_eq!(outcome, FitOutcome::NotRequested);
+    assert!(
+        surface.calls().is_empty(),
+        "fuera de Hyprland no hay llamadas nuevas: {:?}",
+        surface.calls()
+    );
+}
+
+/// S9: una colocación caducada no deja su tamaño bloqueado (con `min == max`
+/// fijadas, la ventana quedaría sujeta al tamaño viejo).
+#[test]
+fn a_superseded_strip_placement_does_not_apply_the_size_hints() {
+    let plan = fit_plan(hyprland_profile(), Transport::Other);
+    let mut surface = FakeFitSurface::new(1.0);
+    // El cancelador dice que la colocación ya no es vigente.
+    let outcome = fit_widget(&mut surface, &plan, (61, 181), 1.0, || true);
+    assert_eq!(outcome, FitOutcome::Superseded);
+    assert!(
+        surface.calls().is_empty(),
+        "una colocación caducada no toca la ventana: {:?}",
+        surface.calls()
+    );
+}
+
+/// S10: el cierre que no corrió (fallo del hilo de UI o timeout) se informa
+/// con su motivo, no se descarta en silencio.
+#[test]
+fn a_native_call_that_never_ran_is_reported_with_its_reason() {
+    let report = fit_report(None).expect("el cierre que no corrió se informa");
+    assert_eq!(report.status, Status::Unverified);
+    assert_eq!(report.reason, Some(Reason::ReadFailed));
+    assert_eq!(report.bounds, None, "sin geometría que cachear");
+}
+
+/// S9: la colocación sustituida se informa como `superseded`.
+#[test]
+fn a_cancelled_native_placement_is_reported_as_superseded() {
+    let report =
+        fit_report(Some(FitOutcome::Superseded)).expect("la colocación cancelada se informa");
+    assert_eq!(report.status, Status::Superseded);
+    assert_eq!(report.reason, Some(Reason::Superseded));
+    assert_eq!(report.bounds, None, "quedó a medias: no hay geometría");
+}
+
+/// Las pistas aplicadas no cortan la colocación: sigue su curso y se informa
+/// como antes (sin motivo: en esta ruta no hay read-back).
+#[test]
+fn the_native_hints_do_not_stop_the_placement() {
+    assert!(
+        fit_report(Some(FitOutcome::Applied)).is_none(),
+        "la colocación sigue"
+    );
+    assert!(
+        fit_report(Some(FitOutcome::NotRequested)).is_none(),
+        "la colocación sigue"
+    );
 }
 
 /// Prueba en vivo de la secuencia nativa con un webview real (#179). No es

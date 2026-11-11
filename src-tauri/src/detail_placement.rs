@@ -259,6 +259,36 @@ fn superseded_report() -> Report {
     }
 }
 
+/// El ajuste de la ventana de detalle en la ruta sin ciclo (#250): pide las
+/// pistas que el plan pide. La conversión usa el factor que informa la propia
+/// ventana (GTK mide en lógicos), como en `UiSurface::request_size`.
+///
+/// El cancelador se comprueba **dentro** del hilo de UI, como en
+/// `UiSurface::set_size_constraints`: con las pistas `min == max` fijadas, una
+/// colocación caducada dejaría su tamaño bloqueado y el detalle, que crece con
+/// el contenido, quedaría limitado a él (S9).
+pub(crate) fn fit_detail<S: crate::window_fit::FitSurface>(
+    surface: &mut S,
+    plan: &crate::window_fit::FitPlan,
+    physical: (i32, i32),
+    mut superseded: impl FnMut() -> bool,
+) -> crate::window_fit::FitOutcome {
+    if superseded() {
+        // La colocación está caducada: no se toca la ventana.
+        return crate::window_fit::FitOutcome::Superseded;
+    }
+    if crate::window_fit::apply_size_hints(
+        surface,
+        plan,
+        physical,
+        crate::window_fit::ScaleSource::Window,
+    ) {
+        crate::window_fit::FitOutcome::Applied
+    } else {
+        crate::window_fit::FitOutcome::NotRequested
+    }
+}
+
 /// Una colocación cuya llamada nativa no se pudo confirmar: nada que cachear.
 fn failed_report(reason: Reason) -> Report {
     Report {
@@ -316,9 +346,28 @@ pub async fn place(
     {
         // GDK sólo se puede tocar en el hilo de UI: la detección del
         // transporte va allí, como todas las llamadas nativas.
-        if route_of(crate::widget_placement::transport_on_ui(window).await) == Route::X11Cycle {
+        let transport = crate::widget_placement::transport_on_ui(window).await;
+        if route_of(transport) == Route::X11Cycle {
             let mut surface = UiSurface::new(window.clone(), generation);
             return Ok(drive(&mut surface, bounds, || superseded(generation)).await);
+        }
+        // Wayland nativo (#250): las pistas de tamaño antes de aplicar la
+        // petición, sólo si el plan del compositor las pide. La escala sale
+        // de la propia ventana, como en `UiSurface::request_size`; la
+        // conversión a píxeles lógicos es la de `hint_size`.
+        let plan = crate::window_fit::fit_plan(crate::window_fit::fit_profile(), transport);
+        if plan.size_hints() {
+            let (w, h) = (bounds.w as i32, bounds.h as i32);
+            let outcome = crate::widget_placement::on_ui(window, move |gtk_window| {
+                let mut surface = crate::window_fit::GtkFitSurface(gtk_window);
+                fit_detail(&mut surface, &plan, (w, h), || superseded(generation))
+            })
+            .await;
+            // El desenlace del cierre se informa: una colocación sustituida o
+            // un cierre que no corrió no se descartan en silencio (S9, S10).
+            if let Some(report) = crate::widget_placement::fit_report(outcome) {
+                return Ok(report);
+            }
         }
     }
     // Sin read-back del compositor en esta plataforma la petición se aplica

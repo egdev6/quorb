@@ -70,7 +70,8 @@ pub enum Reason {
     PositionRefused,
     /// La ventana todavía no era visible: no hay read-back del compositor.
     NotViewable,
-    /// La lectura nativa falló.
+    /// La lectura nativa falló (o la llamada nativa no se pudo confirmar: el
+    /// hilo de UI no respondió).
     ReadFailed,
     /// La colocación fue sustituida por otra más reciente.
     Superseded,
@@ -470,7 +471,7 @@ fn report_of(wanted: (i32, i32), effective: Geometry, target: (i32, i32)) -> Rep
 }
 
 /// Una colocación cancelada: la geometría quedó a medias y no se informa.
-fn superseded_report() -> Report {
+pub(crate) fn superseded_report() -> Report {
     Report {
         status: Status::Superseded,
         bounds: None,
@@ -480,12 +481,61 @@ fn superseded_report() -> Report {
 }
 
 /// Una colocación sin lectura fiable: no hay geometría que cachear.
-fn failed_report(reason: Reason) -> Report {
+pub(crate) fn failed_report(reason: Reason) -> Report {
     Report {
         status: Status::Unverified,
         bounds: None,
         reason: Some(reason),
         read_back: false,
+    }
+}
+
+/// El ajuste de la tira en la ruta sin ciclo (#250): pide las pistas de tamaño
+/// que el plan pide, con el factor con el que se calculó la petición.
+///
+/// El cancelador se comprueba **dentro** del hilo de UI, como en
+/// `UiSurface::set_size_constraints`: con las pistas `min == max` fijadas, una
+/// colocación caducada dejaría su tamaño bloqueado y la colocación siguiente
+/// quedaría limitada a él (S9).
+pub(crate) fn fit_widget<S: crate::window_fit::FitSurface>(
+    surface: &mut S,
+    plan: &crate::window_fit::FitPlan,
+    physical: (i32, i32),
+    scale: f64,
+    mut superseded: impl FnMut() -> bool,
+) -> crate::window_fit::FitOutcome {
+    if superseded() {
+        // La colocación está caducada: no se toca la ventana.
+        return crate::window_fit::FitOutcome::Superseded;
+    }
+    if crate::window_fit::apply_size_hints(
+        surface,
+        plan,
+        physical,
+        crate::window_fit::ScaleSource::Request(scale),
+    ) {
+        crate::window_fit::FitOutcome::Applied
+    } else {
+        crate::window_fit::FitOutcome::NotRequested
+    }
+}
+
+/// El informe de la ruta sin ciclo según el desenlace del cierre: `None`
+/// cuando la colocación sigue su curso (las pistas se aplicaron o el plan no
+/// pedía ninguna).
+///
+/// El cierre que no corrió (fallo del hilo de UI o timeout) se informa con su
+/// motivo en vez de descartarse en silencio (S10), y una colocación sustituida
+/// se informa como `superseded` (S9).
+pub(crate) fn fit_report(outcome: Option<crate::window_fit::FitOutcome>) -> Option<Report> {
+    match outcome {
+        Some(crate::window_fit::FitOutcome::Applied)
+        | Some(crate::window_fit::FitOutcome::NotRequested) => None,
+        // La colocación fue sustituida por otra posterior: no hay geometría
+        // que informar (quedó a medias).
+        Some(crate::window_fit::FitOutcome::Superseded) => Some(superseded_report()),
+        // El cierre no corrió: la colocación lo informa con su motivo.
+        None => Some(failed_report(Reason::ReadFailed)),
     }
 }
 
@@ -520,9 +570,31 @@ pub async fn place(
     {
         // GDK sólo se puede tocar en el hilo de UI: la detección del transporte
         // va allí, como todas las llamadas nativas.
-        if transport_on_ui(window).await == Transport::X11 {
+        let transport = transport_on_ui(window).await;
+        if transport == Transport::X11 {
             let mut surface = UiSurface::new(window.clone(), placement.scale, generation).await;
             return Ok(drive(&mut surface, &placement, || superseded(generation)).await);
+        }
+        // Wayland nativo (#250): los compositores que no respetan el tamaño de
+        // la ventana reciben aquí las pistas que el ciclo X11 sí manda, antes
+        // de aplicar la petición. El plan decide: sin su bandera no se toca
+        // la ventana (GNOME y el resto conservan el comportamiento de siempre).
+        let plan = crate::window_fit::fit_plan(crate::window_fit::fit_profile(), transport);
+        if plan.size_hints() {
+            let (w, h) = (bounds.w as i32, bounds.h as i32);
+            let scale = placement.scale;
+            let outcome = on_ui(window, move |gtk_window| {
+                let mut surface = crate::window_fit::GtkFitSurface(gtk_window);
+                fit_widget(&mut surface, &plan, (w, h), scale, || {
+                    superseded(generation)
+                })
+            })
+            .await;
+            // El desenlace del cierre se informa: una colocación sustituida o
+            // un cierre que no corrió no se descartan en silencio (S9, S10).
+            if let Some(report) = fit_report(outcome) {
+                return Ok(report);
+            }
         }
     }
     // Sin read-back en esta plataforma: la solicitud se aplica como antes, y
@@ -802,9 +874,11 @@ fn display_kind() -> DisplayKind {
 }
 
 /// El transporte de la superficie nativa, derivado del display real (caché
-/// de `display_kind`, hilo de UI): X11/XWayland o native Wayland.
+/// de `display_kind`, hilo de UI): X11/XWayland o native Wayland. `pub(crate)`
+/// para que `start_main_ui` evalúe el transporte en el sitio de la llamada
+/// del type hint (#250); corre en el hilo principal de `setup`.
 #[cfg(target_os = "linux")]
-fn transport() -> Transport {
+pub(crate) fn transport() -> Transport {
     match display_kind() {
         DisplayKind::X11 => Transport::X11,
         DisplayKind::Wayland | DisplayKind::Unknown => Transport::Other,
