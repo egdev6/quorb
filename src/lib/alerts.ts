@@ -17,6 +17,11 @@ export interface AlertEvent {
   kind: AlertMoment;
   providerId: string;
   providerName: string;
+  /** Identidad existente del medidor y ventana; no añade memoria de email. */
+  meterId: string;
+  /** ID real del informe, sin fallback a etiquetas; solo este dato puede salir por email. */
+  realMeterId: string;
+  window: string;
   label: string;
   percent: number;
 }
@@ -57,7 +62,7 @@ export function detectAlerts(
     for (const m of r.meters) {
       if (m.percent == null) continue;
       const pct = m.percent;
-      const ev = { providerId: r.id, providerName: r.name, label: m.label, percent: pct };
+      const ev = { providerId: r.id, providerName: r.name, meterId: meterKey(m), realMeterId: m.id, window: windowKey(m.resetsAt), label: m.label, percent: pct };
 
       // 1. Límite superado (una vez por ventana)
       const key = `${r.id}|${meterKey(m)}|${windowKey(m.resetsAt)}`;

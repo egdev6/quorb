@@ -39,6 +39,8 @@ pub enum Msg {
     CodexConsentInstall,
     /// Diálogo de Codex: botón de cancelación.
     CodexConsentCancel,
+    /// Email #245: asunto del aviso.
+    EmailSubject,
 }
 
 /// Todas las variantes: los tests de paridad recorren esta lista y el match
@@ -56,6 +58,7 @@ pub const ALL_MSGS: &[Msg] = &[
     Msg::CodexConsentMessage,
     Msg::CodexConsentInstall,
     Msg::CodexConsentCancel,
+    Msg::EmailSubject,
 ];
 
 /// Texto original del diálogo de consentimiento de Codex, byte a byte (nace de
@@ -94,6 +97,47 @@ pub fn text(locale: Locale, msg: Msg) -> &'static str {
         (Locale::En, Msg::CodexConsentInstall) => "Install",
         (Locale::Es, Msg::CodexConsentCancel) => "Cancelar",
         (Locale::En, Msg::CodexConsentCancel) => "Cancel",
+        (Locale::Es, Msg::EmailSubject) => "Quorb: alerta de consumo",
+        (Locale::En, Msg::EmailSubject) => "Quorb: usage alert",
+    }
+}
+
+/// Asunto del email de aviso (#245).
+pub fn email_subject(locale: Locale) -> &'static str {
+    text(locale, Msg::EmailSubject)
+}
+
+/// Cuerpo del email de prueba explícita, sin datos de consumo (#245).
+pub fn email_test_body(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Es => "Quorb: prueba explícita de email (sin datos de consumo).",
+        Locale::En => "Quorb: explicit email test (no usage data).",
+    }
+}
+
+/// Etiquetas del cuerpo del evento y nombres del tipo, en orden:
+/// proveedor, medidor, ventana, porcentaje; superado y reinicio.
+pub fn email_event_words(
+    locale: Locale,
+) -> (
+    (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+    ),
+    (&'static str, &'static str),
+) {
+    match locale {
+        Locale::Es => (
+            ("Proveedor", "Medidor", "Ventana", "Porcentaje", "Evento"),
+            ("superado", "reinicio"),
+        ),
+        Locale::En => (
+            ("Provider", "Meter", "Window", "Percent", "Event"),
+            ("exceeded", "reset"),
+        ),
     }
 }
 
@@ -193,6 +237,34 @@ mod tests {
         assert_eq!(es(Msg::CodexConsentInstall), "Instalar");
         assert_eq!(es(Msg::CodexConsentCancel), "Cancelar");
         assert_eq!(es(Msg::CodexConsentMessage), CODEX_CONSENT_MESSAGE_ES);
+    }
+
+    /// Textos del email #245 por idioma: inglés byte a byte (era el literal
+    /// original) y su traducción española, con paridad vía `ALL_MSGS`.
+    #[test]
+    fn email_texts_match_locale() {
+        assert_eq!(email_subject(Locale::En), "Quorb: usage alert");
+        assert_eq!(email_subject(Locale::Es), "Quorb: alerta de consumo");
+        assert_eq!(
+            email_test_body(Locale::En),
+            "Quorb: explicit email test (no usage data)."
+        );
+        assert_eq!(
+            email_test_body(Locale::Es),
+            "Quorb: prueba explícita de email (sin datos de consumo)."
+        );
+        let (en_labels, en_kinds) = email_event_words(Locale::En);
+        let (es_labels, es_kinds) = email_event_words(Locale::Es);
+        assert_eq!(
+            en_labels,
+            ("Provider", "Meter", "Window", "Percent", "Event")
+        );
+        assert_eq!(en_kinds, ("exceeded", "reset"));
+        assert_eq!(
+            es_labels,
+            ("Proveedor", "Medidor", "Ventana", "Porcentaje", "Evento")
+        );
+        assert_eq!(es_kinds, ("superado", "reinicio"));
     }
 
     /// Parseo del locale guardado: known → su variante; desconocido → `Es`.
