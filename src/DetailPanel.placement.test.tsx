@@ -100,16 +100,26 @@ const detailState: DetailState = {
   usageUrl: undefined,
 };
 
+/** Altura natural del panel; un test la cambia para simular un reajuste de tamaño. */
+let panelHeight = 400;
+
 /** El elemento que el efecto de layout mide, recorta y coloca. */
 const panelElement = {
   dataset: {} as Record<string, string>,
   style: { transform: 'scale(1)' },
-  getBoundingClientRect: () => ({ x: 0, y: 0, width: 330, height: 400, top: 0, left: 0, right: 330, bottom: 400 }),
+  getBoundingClientRect: () => ({ x: 0, y: 0, width: 330, height: panelHeight, top: 0, left: 0, right: 330, bottom: panelHeight }),
 };
 
-/** Slots del componente: estado 1 = `positioned`, ref 3 = `lastAppliedRef`. */
+/** El callback del ResizeObserver que registró el efecto (el reajuste de tamaño). */
+let resize: ((entries: unknown[]) => void) | null = null;
+
+/**
+ * Slots del componente: estado 1 = `positioned`, ref 3 = `lastAppliedRef`,
+ * ref 5 = `positionedRef`.
+ */
 const positioned = () => harness.states[1] === true;
 const cached = () => harness.refs[3].current as PhysicalBounds | null;
+const positionedMark = () => harness.refs[5].current;
 
 /** Espera a que la cola de colocación termine (la cola encadena promesas). */
 const flush = async () => {
@@ -151,7 +161,10 @@ describe('the detail placement effect (#250/S17)', () => {
       removeEventListener: () => {},
       devicePixelRatio: 1,
     });
+    panelHeight = 400;
+    resize = null;
     vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: (entries: unknown[]) => void) { resize = callback; }
       observe() {}
       unobserve() {}
       disconnect() {}
@@ -198,6 +211,48 @@ describe('the detail placement effect (#250/S17)', () => {
     expect(native.showDetail).toHaveBeenCalledTimes(1);
     expect(positioned()).toBe(true);
     expect(cached()).toEqual(granted);
+    if (typeof cleanup === 'function') cleanup();
+  });
+
+  it('hides the open panel when a resize exhausts the read_failed retries (#250/S21)', async () => {
+    // Escenario del mantenedor: una colocación correcta deja el panel visible...
+    const cleanup = await runPlacement([applied()]);
+    expect(positioned()).toBe(true);
+    expect(native.hide).not.toHaveBeenCalled();
+    // ...y luego el contenido cambia de tamaño y la llamada nativa falla en
+    // todos los intentos.
+    native.setDetailBounds.mockImplementation(async () => readFailed());
+    panelHeight = 500;
+    expect(resize).not.toBeNull();
+    resize?.([]);
+    await flush();
+    // La inicial, la del reajuste y el presupuesto de reintentos (5 lecturas).
+    expect(native.setDetailBounds).toHaveBeenCalledTimes(7);
+    // El panel no se queda visible con la geometría anterior: se oculta...
+    expect(native.hide).toHaveBeenCalledTimes(1);
+    // ...deja de estar colocado (estado y ref, que decide la deduplicación)...
+    expect(positioned()).toBe(false);
+    expect(positionedMark()).toBe(false);
+    // ...y nada queda cacheado como confirmado.
+    expect(cached()).toBeNull();
+    // No se vuelve a mostrar ni a recortar.
+    expect(native.showDetail).toHaveBeenCalledTimes(1);
+    expect(native.setSurfaceClip).toHaveBeenCalledTimes(1);
+    if (typeof cleanup === 'function') cleanup();
+  });
+
+  it('keeps the open panel visible when a resize is placed correctly', async () => {
+    // Preservado: un reajuste confirmado no oculta ni desmarca el panel.
+    const cleanup = await runPlacement([applied()]);
+    native.setDetailBounds.mockImplementation(async () => ({ status: 'applied', bounds: { ...granted, h: 500 }, read_back: true }));
+    panelHeight = 500;
+    resize?.([]);
+    await flush();
+    expect(native.setDetailBounds).toHaveBeenCalledTimes(2);
+    expect(native.hide).not.toHaveBeenCalled();
+    expect(positioned()).toBe(true);
+    expect(positionedMark()).toBe(true);
+    expect(cached()).toEqual({ ...granted, h: 500 });
     if (typeof cleanup === 'function') cleanup();
   });
 

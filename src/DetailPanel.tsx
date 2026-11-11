@@ -146,12 +146,20 @@ export function DetailPanel() {
         // geometry never reached the window. The panel must not appear with the
         // previous geometry nor with the factory one: the placement is asked
         // again within the bounded budget, and if the budget runs out the panel
-        // stays hidden with nothing cached as confirmed.
+        // stays hidden with nothing cached as confirmed. #250/S21: that includes
+        // a panel already open, which would keep the previous geometry, so it is
+        // hidden and no longer marked as placed.
         if (detailPlacementFailed(report)) {
           const retried = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
           if (!current() || disposed || !retried) return;
           retry = confirmDetailPlacement(retried, cache);
-          if (detailPlacementFailed(retried)) return;
+          if (detailPlacementFailed(retried)) {
+            if (!positionedRef.current) return;
+            positionedRef.current = false;
+            setPositioned(false);
+            await getCurrentWindow().hide();
+            return;
+          }
         }
         await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
         if (!current() || disposed) return;
