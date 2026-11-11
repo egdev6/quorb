@@ -32,8 +32,8 @@ export function isConnectionDirty(
 export interface PresencePollerOptions {
   /** Comprueba la presencia del fichero de sesión (no su validez). */
   exists: () => Promise<boolean>;
-  /** Recibe cada resultado vigente; los descartados no se notifican. */
-  onResult: (found: boolean) => void;
+  /** Recibe cada resultado vigente; `null` indica fallo de sondeo. */
+  onResult: (found: boolean | null) => void;
   /** Intervalo entre sondeos, en ms. Por defecto 3000. */
   intervalMs?: number;
   /** Temporizador inyectable para las pruebas (por defecto `setInterval`). */
@@ -67,7 +67,11 @@ export function createPresencePoller(options: PresencePollerOptions): PresencePo
       .then((found) => {
         if (running && gen === generation) options.onResult(found);
       })
-      .catch(() => {});
+      // Un fallo de sondeo no puede dejar la última respuesta como verdad:
+      // se notifica `null` (revisión PR #92) y la UI muestra estado desconocido.
+      .catch(() => {
+        if (running && gen === generation) options.onResult(null);
+      });
   };
   return {
     start() {

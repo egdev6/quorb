@@ -806,9 +806,30 @@ async fn check_provider(
 
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
 /// `async` lo saca del hilo principal: consulta el PATH fresco del registro.
+/// `session_env`/`wsl_distro` (opcionales) son el ENTORNO DEL BORRADOR que
+/// muestra Ajustes (revisión PR #92, punto 10): si vienen, la detección
+/// consulta ese entorno y no la config persistida — así el aviso «falta la
+/// CLI» y el estado del botón responden a lo que el usuario ve, no a lo que
+/// quedó guardado. Sin override (p. ej. el widget), se usa la persistida.
 #[tauri::command(async)]
-async fn cli_status(state: State<'_, AppState>) -> Result<BTreeMap<String, String>, String> {
-    let cfg = state.config.lock().unwrap().clone();
+async fn cli_status(
+    state: State<'_, AppState>,
+    session_env: Option<String>,
+    wsl_distro: Option<String>,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut cfg = state.config.lock().unwrap().clone();
+    if let Some(env) = session_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    {
+        cfg.session_env = if env == "wsl" {
+            crate::config::SessionEnvConfig::Wsl
+        } else {
+            crate::config::SessionEnvConfig::Host
+        };
+        cfg.wsl_distro = wsl_distro.unwrap_or_default();
+    }
     // #92: la detección en WSL lanza procesos `wsl.exe` (enumeración + `command
     // -v`), así que va en un hilo bloqueante: en el hilo del executor
     // congelaría la UI (hasta 20 s de timeout por operación).

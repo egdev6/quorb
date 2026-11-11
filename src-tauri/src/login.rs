@@ -48,7 +48,11 @@ pub(crate) fn open(id: &str, cfg: &AppConfig, wsl: Option<WslLogin<'_>>) -> Resu
             // un comando» y no sabrías qué hacer. El MISMO tokenizador que
             // la ejecución decide el programa (revisión PR #92): comillas y
             // escapes se ven igual aquí y en la terminal.
-            let (program, _) = split_login_command(command)?;
+            // En HOST la ruta es del sistema: `C:\tools\codex.cmd` no debe
+            // leer `\t`/`\c` como escapes POSIX (revisión PR #92, punto 8).
+            // `program_of` es la heurística de host: primer token por
+            // espacios o comillas envolventes, sin interpretar backslashes.
+            let program = program_of(command);
             let extra_dir = match find_program(&program) {
                 Found::OnPath => None,
                 Found::In(dir) => Some(dir),
@@ -128,12 +132,14 @@ pub(crate) fn cli_status(
             providers
                 .into_iter()
                 .map(|(p, c)| {
+                    // Detección en el GUEST: mismo tokenizador POSIX que la
+                    // ejecución (revisión PR #92, punto 5) — `program_of` es
+                    // la heurística del HOST (punto 8) y aquí no aplica.
                     let status = match &shell {
                         Some(shell) => {
-                            match w
-                                .adapter
-                                .program_available(w.distro, *shell, &program_of(c))
-                            {
+                            let program =
+                                split_login_command(c).map(|(p, _)| p).unwrap_or_default();
+                            match w.adapter.program_available(w.distro, *shell, &program) {
                                 Ok(true) => CliStatus::Ready,
                                 Ok(false) => CliStatus::Missing,
                                 // Falla el subsistema a media sonda.
@@ -264,7 +270,11 @@ fn account_session_dir_linux(a: &Account, wsl: &WslLogin<'_>) -> Result<PathBuf,
                     a.id
                 ));
             }
-            Ok(PathBuf::from(d.trim_end_matches('/')))
+            // `"/"` es válida pero el recorte de barras la deja vacía: en el
+            // guest `mkdir -p -- ""` falla (revisión PR #92, menor). La raíz
+            // se queda como raíz.
+            let trimmed = d.trim_end_matches('/');
+            Ok(PathBuf::from(if trimmed.is_empty() { "/" } else { trimmed }))
         }
         None => {
             // La MISMA carpeta por defecto que el host (revisión del
@@ -433,15 +443,17 @@ fn spawn_wsl_terminal(_argv: &[std::ffi::OsString]) -> Result<(), String> {
 }
 
 /// Primer elemento del comando (`codex login` → `codex`), sin comillas.
-/// Primer elemento del comando con el tokenizador de la EJECUCIÓN
-/// (`split_login_command`): comillas, escapes y rutas con espacios se ven
-/// igual en la detección y en el login (revisión PR #92: `program_of` era
-/// una heurística distinta y daba por ausente lo que luego se ejecutaba).
-/// Comando vacío o con comillas sin cerrar → vacío (no localizable).
+/// Primer elemento del comando en HOST (#92): sin interpretar backslashes
+/// como escapes (en Windows son separadores de carpeta; `C:\tools\codex.cmd`
+/// no puede quedar `C:toolscodex.cmd` — revisión PR #92, punto 8). En WSL la
+/// detección y la ejecución comparten `split_login_command` (semántica
+/// POSIX del guest); son dos dominios con tokenizadores propios.
 fn program_of(command: &str) -> String {
-    split_login_command(command)
-        .map(|(p, _)| p)
-        .unwrap_or_default()
+    let c = command.trim();
+    if let Some(rest) = c.strip_prefix('"') {
+        return rest.split('"').next().unwrap_or("").to_string();
+    }
+    c.split_whitespace().next().unwrap_or("").to_string()
 }
 
 #[derive(Debug, PartialEq)]

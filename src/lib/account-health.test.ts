@@ -118,6 +118,35 @@ describe('createPresencePoller', () => {
     poller.stop();
   });
 
+  it('notifica null cuando el sondeo falla (no conserva el último resultado)', async () => {
+    const onResult = vi.fn();
+    let tick: (() => void) | undefined;
+    let attempt = 0;
+    const poller = createPresencePoller({
+      exists: async () => {
+        attempt += 1;
+        if (attempt === 1) return true;
+        throw new Error('wsl caído');
+      },
+      onResult,
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
+      clearInterval: () => {},
+    });
+    poller.start();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledWith(true);
+    // Segunda comprobación que falla → `null` (desconocido), no `true` viejo.
+    tick?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledWith(null);
+    poller.stop();
+  });
+
   it('descarta una respuesta en vuelo después de stop (desmontaje)', async () => {
     let resolve!: (value: boolean) => void;
     const onResult = vi.fn();
@@ -171,20 +200,34 @@ describe('createPresencePoller', () => {
     poller.stop();
   });
 
-  it('un fallo al comprobar no tumba el sondeo', async () => {
+  it('un fallo al comprobar no tumba el sondeo ni conserva el resultado viejo', async () => {
     const onResult = vi.fn();
+    let tick: (() => void) | undefined;
+    let fails = 0;
     const poller = createPresencePoller({
       exists: async () => {
-        throw new Error('boom');
+        // El fallo solo ocurre una vez: el sondeo debe seguir tras él.
+        fails += 1;
+        if (fails === 1) throw new Error('boom');
+        return true;
       },
       onResult,
-      setInterval: () => 0,
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
       clearInterval: () => {},
     });
     poller.start();
     await Promise.resolve();
     await Promise.resolve();
-    expect(onResult).not.toHaveBeenCalled();
+    // El fallo se notifica como desconocido, no se traga en silencio.
+    expect(onResult).toHaveBeenCalledWith(null);
+    // Y el sondeo continúa: el siguiente tick vuelve a comprobar.
+    tick?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledWith(true);
     poller.stop();
   });
 });

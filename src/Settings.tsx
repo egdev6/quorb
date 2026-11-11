@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
@@ -809,9 +809,11 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
   );
 }
 
-/** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta. */
+/** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta.
+ *  Los sondeos fallidos se degradan a "no hay fichero confirmado" (revisión PR
+ *  #92, punto 11): jamás se muestra conectada por omisión. */
 function useCliSession(id: string, active: boolean): boolean {
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState<boolean | null>(false);
   useEffect(() => {
     if (!active) {
       setConnected(false);
@@ -821,12 +823,16 @@ function useCliSession(id: string, active: boolean): boolean {
     // respuestas en vuelo se descartan (no marca conectada otra cuenta).
     const poller = createPresencePoller({
       exists: () => api.accountSessionFileExists(id),
+      // Un fallo de sondeo deja `null` (desconocido); jamás "conectada" por
+      // omisión (revisión PR #92, punto 11).
       onResult: setConnected,
     });
     poller.start();
     return () => poller.stop();
   }, [id, active]);
-  return connected;
+  // `null` (sondeo fallido) se degrada a "no hay fichero confirmado": la UI
+  // nunca muestra el botón "conectada" sin una prueba vigente.
+  return connected === true;
 }
 
 /**
@@ -2252,30 +2258,54 @@ export function Settings() {
   // Solo 'missing' propone instalar la CLI: una distro detenida (stopped) o
   // un fallo de WSL (error) no se arreglan instalando nada.
   const [cli, setCli] = useState<Record<string, string>>({});
+  // El ENTORNO DEL BORRADOR (host/WSL + distro) es el que se detecta (revisión
+  // PR #92, punto 10): `cli_status` refleja lo que el usuario ve, no la config
+  // persistida. Cambiar el entorno en el selector re-sondea; el objeto se
+  // memoiza para que un render no reinicie el sondeo.
+  const cliSessionEnv = cfg?.sessionEnv;
+  const cliWslDistro = cfg?.wslDistro;
+  const cliEnv = useMemo(
+    () => (cliSessionEnv === undefined ? undefined : { sessionEnv: cliSessionEnv, wslDistro: cliWslDistro ?? '' }),
+    [cliSessionEnv, cliWslDistro],
+  );
+  // Ref del entorno: el controlador de instalación de Codex se crea una sola
+  // vez y conserva la clausura del primer render; el recheck debe leer el
+  // entorno VIGENTE, no el de entonces.
+  const cliEnvRef = useRef(cliEnv);
+  cliEnvRef.current = cliEnv;
   // Relectura puntual del CLI fuera del intervalo: la usa la instalación asistida
   // al terminar para habilitar el login sin depender de que la ventana siga abierta.
   const cliRecheck = useCallback(() => {
     api
-      .cliStatus()
+      .cliStatus(cliEnvRef.current)
       .then(setCli)
       .catch(() => {});
   }, []);
   useEffect(() => {
     let alive = true;
-    const check = () =>
+    // Control de orden de los sondeos superpuestos (revisión PR #92, punto
+    // 10): si uno tarda más que el siguiente, solo gana la última petición
+    // lanzada — una respuesta vieja no pisa el estado del entorno actual.
+    let seq = 0;
+    const check = () => {
+      const n = ++seq;
       api
-        .cliStatus()
-        .then((st) => alive && setCli(st))
+        .cliStatus(cliEnv)
+        .then((st) => {
+          if (alive && n === seq) setCli(st);
+        })
         .catch(() => {});
+    };
     check();
     const t = window.setInterval(check, 5000);
     window.addEventListener('focus', check);
     return () => {
       alive = false;
+      seq += 1;
       window.clearInterval(t);
       window.removeEventListener('focus', check);
     };
-  }, []);
+  }, [cliEnv]);
   // Controlador de la instalación asistida de Codex: vive en la raíz de Ajustes
   // para seguir vivo si el aviso del CLI desaparece (o se desmonta) antes de que
   // resuelva la instalación. Nunca instala por sí solo: solo lee estado pasivo.
