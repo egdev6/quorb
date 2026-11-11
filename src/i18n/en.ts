@@ -175,6 +175,7 @@ export const en = {
       sessionHost: 'Windows',
       wslDistro: 'WSL distro',
       wslDistroHint: 'Distro where the CLIs and their sessions live (e.g. Ubuntu-22.04).',
+      wslDistroMissing: 'Without a distro, WSL is incomplete: until you type one, the session is read from the host (Windows).',
       refreshEvery: 'Check every',
       refreshUnit: 'min',
       subscriptions: 'Subscriptions',

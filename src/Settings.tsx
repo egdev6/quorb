@@ -1425,7 +1425,13 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
               <label className="q-section__aside">
                 {t(locale, 'settings.providers.wslDistro')}
                 <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
-                <small className="eg-field__hint">{t(locale, 'settings.providers.wslDistroHint')}</small>
+                <small className="eg-field__hint">
+                  {/* WSL sin distro resuelve como host (config.rs; revisión PR
+                      #92, punto 5): que no parezca que sigue en WSL. */}
+                  {cfg.wslDistro.trim() === ''
+                    ? t(locale, 'settings.providers.wslDistroMissing')
+                    : t(locale, 'settings.providers.wslDistroHint')}
+                </small>
               </label>
             )}
           </>
