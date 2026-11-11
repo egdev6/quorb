@@ -210,6 +210,72 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
   (por ejemplo `GDK_BACKEND=x11 &` en su propia línea) aplica la variable solo
   a la subshell y la app no la hereda.
 
+### 6.2 Todos los escritorios en KDE Plasma (Wayland) con XWayland: regla de KWin optativa (#227)
+
+Quorb pide que la tira, el detalle y el overlay estén en todos los escritorios
+virtuales (`gtk_window_stick`, #232). KWin en sesión Wayland ignora esa petición
+cuando viene de un cliente XWayland: le informa un solo escritorio y descarta
+sus cambios de escritorio (commit de KWin `55fd1912`; la variable que permitía
+desactivarlo se eliminó en `672c3c74`, incluido en 6.7.5). En ese entorno la
+tira se queda en el escritorio donde se abrió.
+
+**Apaño manual, optativo y creado por el usuario**: una regla de KWin. Quorb no
+la instala ni carga scripts en el compositor, y no es un arreglo general (#227
+sigue abierta).
+
+En *Preferencias del sistema → Gestión de ventanas → Reglas de ventanas*, una
+regla nueva con:
+
+- **Clase de ventana**: `[Qq]uorb`, como expresión regular. La comparación
+  distingue mayúsculas y KWin ve la clase como `Quorb`, así que `quorb` a secas
+  no coincide.
+- **Título de ventana**: `^Quorb( · .+)?$`, como expresión regular.
+- **Escritorio virtual**: *Forzar* → *Todos los escritorios*.
+
+Equivale a esta entrada de `~/.config/kwinrulesrc` (`<id>` es cualquier
+identificador único; si ya hay reglas, se añade a la lista `rules` y se
+incrementa `count`). KWin la aplica tras `qdbus6 org.kde.KWin /KWin reconfigure`:
+
+```ini
+[General]
+count=1
+rules=<id>
+
+[<id>]
+Description=Quorb en todos los escritorios
+wmclass=[Qq]uorb
+wmclassmatch=3
+wmclasscomplete=false
+title=^Quorb( · .+)?$
+titlematch=3
+desktops=\\0
+desktopsrule=2
+```
+
+**Qué ventanas alcanza.** La regla coincide con la tira (`Quorb`), el detalle
+(`Quorb · detalle` / `Quorb · details`) y el overlay (`Quorb · efectos` /
+`Quorb · effects`). No coincide con Ajustes (`Ajustes · Quorb` /
+`Settings · Quorb`) ni con el selector de idioma del primer arranque
+(`Idioma / Language · Quorb`). La expresión es la misma de siempre: coincide con
+`Quorb` o con `Quorb · …`. Ajustes y el selector quedan fuera porque su título
+no empieza por `Quorb`. Se filtra por título porque las ventanas no exponen
+`WM_WINDOW_ROLE`.
+El test `documented_kwin_rule_matches_only_strip_detail_and_overlay`
+(`src-tauri/src/lib.rs`) lee la línea `title=` de este bloque y la comprueba
+contra los títulos reales: si cambia la regla o un título, falla.
+
+**Entorno probado y limitaciones medidas**: CachyOS, KDE Plasma / KWin 6.7.5 en
+sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
+
+- La tira y el detalle transitorio acompañan al cambiar de escritorio; Ajustes
+  se queda en el suyo (3 de 3 pruebas).
+- El detalle anclado acompañó en 2 de 3 pruebas; en la otra desapareció al
+  cambiar de escritorio, sin causa identificada.
+- El overlay solo se pudo medir en 1 de 3 pruebas, porque el efecto dura unos
+  4 s; en esa quedó en todos los escritorios.
+- Plasma X11 y GNOME no están verificados. En Wayland nativo no aplica: no hay
+  protocolo para pedir «todos los escritorios».
+
 ## 7. Riesgos priorizados (L0a→L0d)
 
 | Riesgo | Prob. | Impacto | Mitigación | Evidencia / entrada de código |

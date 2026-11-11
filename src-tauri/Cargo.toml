@@ -75,6 +75,8 @@ gtk = "0.18"
 # Solo Linux: la prueba en vivo del ciclo (#179) con un webview real.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+# Solo Linux: comprueba la regla de KWin documentada en build-linux.md (#227).
+regex = "1"
 
 [profile.release]
 codegen-units = 1
