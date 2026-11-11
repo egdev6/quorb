@@ -1429,10 +1429,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn documented_kwin_rule_matches_only_strip_detail_and_overlay() {
+        // Solo el bloque `ini` de §6.2: un `title=` en otra sección no es la regla.
         let doc = include_str!("../../docs/build-linux.md");
-        let mut rules = doc.lines().filter_map(|l| l.strip_prefix("title="));
+        let section = doc.split_once("### 6.2 ").expect("sección 6.2").1;
+        let block = section
+            .split_once("```ini\n")
+            .and_then(|(_, rest)| rest.split_once("```"))
+            .expect("bloque ini de la regla en §6.2")
+            .0;
+        let mut rules = block.lines().filter_map(|l| l.strip_prefix("title="));
         let pattern = rules.next().expect("regla de KWin documentada (title=)");
-        assert!(rules.next().is_none(), "una sola línea title= en el documento");
+        assert!(rules.next().is_none(), "una sola línea title= en la regla");
         let rule = regex::Regex::new(pattern).expect("expresión válida");
 
         let conf: serde_json::Value =

@@ -256,9 +256,10 @@ desktopsrule=2
 (`Quorb · detalle` / `Quorb · details`) y el overlay (`Quorb · efectos` /
 `Quorb · effects`). No coincide con Ajustes (`Ajustes · Quorb` /
 `Settings · Quorb`) ni con el selector de idioma del primer arranque
-(`Idioma / Language · Quorb`). La expresión no es más estricta que «empieza por
-`Quorb`»: Ajustes y el selector quedan fuera porque su título no empieza por
-`Quorb`. Se filtra por título porque las ventanas no exponen `WM_WINDOW_ROLE`.
+(`Idioma / Language · Quorb`). La expresión es la misma de siempre: coincide con
+`Quorb` o con `Quorb · …`. Ajustes y el selector quedan fuera porque su título
+no empieza por `Quorb`. Se filtra por título porque las ventanas no exponen
+`WM_WINDOW_ROLE`.
 El test `documented_kwin_rule_matches_only_strip_detail_and_overlay`
 (`src-tauri/src/lib.rs`) lee la línea `title=` de este bloque y la comprueba
 contra los títulos reales: si cambia la regla o un título, falla.
