@@ -82,11 +82,10 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     if let Some(cookie) = who.secret(secrets::NAN_SESSION) {
         match super::nan_cloud::fetch(http, &cookie).await {
             Ok(u) => {
-                report.meters = u.meters;
+                report.meters = session_meters_with_basis(u.meters);
                 report.daily = u.daily;
-                // La cuota de la sesión es la asignación de la cuenta: el dato viaja en el
-                // informe para que el frente no confunda un cambio de fuente con un reinicio.
-                report.quota_source = session_quota_source(&report.meters);
+                // La cuota de la sesión es la asignación de la cuenta: cada medidor lo
+                // declara, para que el frente no confunda un cambio de base con un reinicio.
                 let mut parts = vec![];
                 if let Some(m) = u.month {
                     parts.push(format!("{} tokens este mes", compact(m)));
@@ -171,7 +170,6 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
             nan_meters(Some(meters), None, &quotas, now, cfg.billing_day);
         report.meters = meters;
         report.message = Some(header);
-        report.quota_source = quota_source_name(source);
         report.status = status_for(source);
     } else {
         // 3. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
@@ -186,7 +184,6 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
                     nan_meters(None, Some((&month, &period)), &quotas, now, cfg.billing_day);
                 report.meters = meters;
                 report.message = Some(header);
-                report.quota_source = quota_source_name(source);
                 report.status = status_for(source);
             }
             Err(e) => {
@@ -523,6 +520,7 @@ pub(crate) fn quota_meters(
                 unit: Some("tokens".into()),
                 resets_at: Some(end.to_rfc3339()),
                 window_seconds: Some((end - start).num_seconds()),
+                quota_source: None,
             })
         })
         .collect();
@@ -551,7 +549,11 @@ pub(crate) fn nan_meters(
     if let Some(meters) = account_meters.filter(|m| !m.is_empty()) {
         let total: f64 = meters.iter().filter_map(|m| m.used).sum();
         let header = usage_message(total, QuotaSource::Account);
-        return (meters, QuotaSource::Account, header);
+        return (
+            declare_basis(meters, QuotaSource::Account),
+            QuotaSource::Account,
+            header,
+        );
     }
     let Some((month, period)) = usage else {
         // Sin lectura de `/v1/usage` no hay nada que medir; el error lo arma quien lo sabe.
@@ -563,7 +565,11 @@ pub(crate) fn nan_meters(
         (Vec::new(), QuotaSource::None, header)
     } else {
         let header = usage_message(month.total(), QuotaSource::Published);
-        (meters, QuotaSource::Published, header)
+        (
+            declare_basis(meters, QuotaSource::Published),
+            QuotaSource::Published,
+            header,
+        )
     }
 }
 
@@ -586,9 +592,8 @@ fn usage_message(total: f64, source: QuotaSource) -> String {
     }
 }
 
-/// La fuente de la cuota viaja como dato del informe (no en el id del medidor): el id no
-/// cambia cuando cambia la fuente, así que el frente necesita el dato para no confundir
-/// un cambio de regla con un reinicio de la cuota.
+/// La base de medición viaja en cada medidor de cuota: el proveedor la declara y el
+/// frente la trata como texto opaco (no sabe qué significa, solo si cambió).
 fn quota_source_name(source: QuotaSource) -> Option<&'static str> {
     match source {
         QuotaSource::Account => Some("account"),
@@ -597,14 +602,20 @@ fn quota_source_name(source: QuotaSource) -> Option<&'static str> {
     }
 }
 
-/// La fuente de la cuota de la sesión: la asignación de la cuenta. Sin medidores no hay
-/// cuota que nombrar, así que el informe no la declara.
-fn session_quota_source(meters: &[Meter]) -> Option<&'static str> {
-    if meters.is_empty() {
-        None
-    } else {
-        quota_source_name(QuotaSource::Account)
+/// Declara en cada medidor la base contra la que se midió.
+fn declare_basis(mut meters: Vec<Meter>, source: QuotaSource) -> Vec<Meter> {
+    let basis = quota_source_name(source);
+    for m in &mut meters {
+        m.quota_source = basis;
     }
+    meters
+}
+
+/// La cuota de la sesión es la asignación de la cuenta: sus medidores declaran esa base.
+/// Los medidores que no son de cuota (el propio, las cabeceras de rate limit) no la
+/// declaran: sin base, el frente los compara siempre.
+fn session_meters_with_basis(meters: Vec<Meter>) -> Vec<Meter> {
+    declare_basis(meters, QuotaSource::Account)
 }
 
 /// Estado del informe según de dónde salió la cuota: la de la cuenta va en `ok`; una cuota
@@ -677,6 +688,7 @@ pub(crate) fn rate_limit_meters(h: &reqwest::header::HeaderMap) -> Vec<Meter> {
             unit: Some(unit.into()),
             resets_at: None,
             window_seconds: None,
+            quota_source: None,
         });
     }
     out
@@ -716,6 +728,7 @@ pub(crate) fn pointer_meter(body: &Value, cfg: &NanConfig) -> Option<Meter> {
         unit: Some("tokens".into()),
         resets_at: None,
         window_seconds: None,
+        quota_source: None,
     })
 }
 
@@ -959,13 +972,80 @@ mod tests {
     }
 
     #[test]
-    fn the_quota_source_travels_in_the_report() {
+    fn the_quota_source_names_are_the_providers_own_words() {
         assert_eq!(quota_source_name(QuotaSource::Account), Some("account"));
         assert_eq!(quota_source_name(QuotaSource::Published), Some("published"));
         assert_eq!(quota_source_name(QuotaSource::None), None);
-        // La sesión también usa la cuota de la cuenta, pero sin medidores no hay cuota.
-        assert_eq!(session_quota_source(&[]), None);
-        assert_eq!(session_quota_source(&[Meter::default()]), Some("account"));
+    }
+
+    #[test]
+    fn the_quota_meters_declare_the_basis_they_were_measured_against() {
+        // La base viaja en cada medidor: la de la cuenta y la publicada son bases
+        // distintas, y el frente solo las compara como texto.
+        let payload = crate::providers::nan_cloud::real_account_payload();
+        let (account, source, _header) = nan_meters(
+            Some(crate::providers::nan_cloud::parse_quota(&payload)),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(source, QuotaSource::Account);
+        assert!(!account.is_empty());
+        assert!(
+            account.iter().all(|m| m.quota_source == Some("account")),
+            "los medidores de la cuenta declaran su base: {:?}",
+            account.iter().map(|m| m.quota_source).collect::<Vec<_>>()
+        );
+
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let (published, source, _header) = nan_meters(
+            None,
+            Some((&month, &UsageSummary::default())),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(source, QuotaSource::Published);
+        assert!(
+            published
+                .iter()
+                .all(|m| m.quota_source == Some("published")),
+            "los medidores de la cuota publicada declaran su base: {:?}",
+            published.iter().map(|m| m.quota_source).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_session_meters_declare_the_account_basis() {
+        // La cuota de la sesión es la asignación de la cuenta: sus medidores lo dicen.
+        let meters = session_meters_with_basis(vec![Meter::default()]);
+        assert_eq!(meters[0].quota_source, Some("account"));
+        // Sin medidores no hay cuota que nombrar.
+        assert!(session_meters_with_basis(vec![]).is_empty());
+    }
+
+    #[test]
+    fn the_meters_without_a_quota_declare_no_basis() {
+        // El medidor propio y los de las cabeceras de rate limit no se miden contra
+        // una cuota: no declaran base, así que el frente los compara como siempre.
+        let cfg = NanConfig {
+            used_pointer: Some("/u".into()),
+            ..Default::default()
+        };
+        let custom = pointer_meter(&json!({"u": 1}), &cfg).unwrap();
+        assert_eq!(custom.quota_source, None);
+        let mut h = HeaderMap::new();
+        h.insert("x-ratelimit-limit-requests", HeaderValue::from_static("60"));
+        h.insert(
+            "x-ratelimit-remaining-requests",
+            HeaderValue::from_static("45"),
+        );
+        let rate = rate_limit_meters(&h);
+        assert_eq!(rate[0].quota_source, None);
     }
 
     #[test]

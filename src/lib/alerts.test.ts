@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { detectAlerts, effectFor, nativeAlertsEnabled, notificationText, windowKey } from './alerts';
+import type { AlertEvent } from './alerts';
 import { meterPace, paceOf, spendPace } from './pace';
-import type { UsageReport } from './types';
+import type { Meter, UsageReport } from './types';
 
 const cfg = { threshold: 90, onReset: true };
 const rep = (pct: number, resetsAt = '2026-10-06T15:00:00Z', extra: Partial<UsageReport> = {}): UsageReport => ({
@@ -18,6 +19,38 @@ const rep = (pct: number, resetsAt = '2026-10-06T15:00:00Z', extra: Partial<Usag
   ...extra,
 });
 const NOW = Date.parse('2026-10-06T12:00:00Z');
+
+/** Informe con los medidores que se le pasan (sin fuente de cuota a nivel de informe). */
+const reportWith = (meters: Meter[]): UsageReport => ({ ...rep(0), meters });
+
+/** Medidor de cuota: declara la base contra la que se midió (opaca para el frente). */
+const quotaMeter = (pct: number, basis?: string): Meter => ({
+  id: 'model:deepseek-v4-flash',
+  label: 'deepseek-v4-flash',
+  percent: pct,
+  used: 955_581_032,
+  limit: 1_000_000_000,
+  unit: 'tokens',
+  resetsAt: '2026-12-05T22:15:31Z',
+  windowSeconds: 2592000,
+  quotaSource: basis,
+});
+
+/** Medidor sin base declarada (el propio de NaN, las cabeceras de rate limit…). */
+const plainMeter = (id: string, label: string, pct: number): Meter => ({
+  id,
+  label,
+  percent: pct,
+  used: 100,
+  limit: 500,
+  unit: 'tokens',
+  resetsAt: null,
+  windowSeconds: null,
+});
+
+/** Los cuatro datos con los que se identifica cada aviso. */
+const eventsOf = (r: { events: AlertEvent[] }) =>
+  r.events.map((e) => ({ kind: e.kind, providerId: e.providerId, label: e.label, percent: e.percent }));
 
 describe('alerts', () => {
   it('warns once per window when the limit is exceeded', () => {
@@ -43,27 +76,54 @@ describe('alerts', () => {
     expect(detectAlerts([rep(95)], [rep(3, '2026-10-06T20:00:00Z')], {}, { ...cfg, onReset: false }, NOW).events).toHaveLength(0);
   });
 
-  it('does not report a reset when the quota source changed', () => {
+  it('does not report a reset for the meter that changed its quota basis', () => {
     // Mismo id de medidor, mismo consumo y misma fecha de reinicio: solo cambia el
     // denominador (la cuota de la cuenta da paso a la publicada), así que la bajada
     // del porcentaje no es un reinicio de la cuota.
-    const meter = (pct: number, limit: number) => ({
-      id: 'model:deepseek-v4-flash',
-      label: 'deepseek-v4-flash',
-      percent: pct,
-      used: 955_581_032,
-      limit,
-      unit: 'tokens',
-      resetsAt: '2026-12-05T22:15:31Z',
-      windowSeconds: 2592000,
-    });
-    const prev: UsageReport = { ...rep(0), quotaSource: 'account', meters: [meter(95.558, 1_000_000_000)] };
-    const next: UsageReport = { ...rep(0), quotaSource: 'published', meters: [meter(31.853, 3_000_000_000)] };
-    const r = detectAlerts([prev], [next], {}, cfg, NOW);
-    expect(r.events.map((e) => e.kind)).toEqual([]);
-    // Un reinicio de verdad con la misma fuente sigue avisando.
-    const sameSource = detectAlerts([prev], [{ ...next, quotaSource: 'account' }], {}, cfg, NOW);
-    expect(sameSource.events.map((e) => e.kind)).toEqual(['reset']);
+    const prev = reportWith([quotaMeter(95.558, 'account')]);
+    const next = reportWith([quotaMeter(31.853, 'published')]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('reports the reset of the custom meter when the quota meter changes its basis', () => {
+    // El medidor de cuota cambia de base y el personalizado baja de 95 % a 2 %:
+    // el reinicio es del personalizado, que es independiente de la cuota.
+    const prev = reportWith([quotaMeter(95.558, 'account'), plainMeter('custom', 'Consumo', 95)]);
+    const next = reportWith([quotaMeter(31.853, 'published'), plainMeter('custom', 'Consumo', 2)]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'Consumo', percent: 2 },
+    ]);
+  });
+
+  it('reports the reset of a rate limit meter without a declared basis', () => {
+    // Las cabeceras de rate limit no declaran base: se comparan como siempre.
+    const prev = reportWith([quotaMeter(95.558, 'account'), plainMeter('rate_requests', 'Peticiones (ventana)', 95)]);
+    const next = reportWith([quotaMeter(31.853, 'published'), plainMeter('rate_requests', 'Peticiones (ventana)', 2)]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'Peticiones (ventana)', percent: 2 },
+    ]);
+  });
+
+  it('reports the reset of a quota meter that kept its basis', () => {
+    const prev = reportWith([quotaMeter(95.558, 'account')]);
+    const next = reportWith([quotaMeter(3, 'account')]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 },
+    ]);
+  });
+
+  it('compares a meter as always when one of the readings has no basis', () => {
+    // Sin base en una de las dos lecturas no hay cambio de base: el reinicio se avisa.
+    const older = reportWith([quotaMeter(95.558)]);
+    const newer = reportWith([quotaMeter(3, 'account')]);
+    expect(eventsOf(detectAlerts([older], [newer], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 },
+    ]);
+    const olderWith = reportWith([quotaMeter(95.558, 'account')]);
+    const newerWithout = reportWith([quotaMeter(3)]);
+    expect(eventsOf(detectAlerts([olderWith], [newerWithout], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 },
+    ]);
   });
 
   it('ignores stale or failed reports', () => {

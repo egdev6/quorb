@@ -260,6 +260,7 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
                     (Some(s), Some(e)) if e > s => Some((e - s).num_seconds()),
                     _ => None,
                 },
+                quota_source: None,
             })
         })
         .collect();

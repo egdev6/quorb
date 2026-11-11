@@ -23,6 +23,7 @@ fn budget_meter(total: f64, budget: f64, currency: String, reset: String, window
         unit: Some(currency),
         resets_at: Some(reset),
         window_seconds: Some(window),
+        quota_source: None,
     }
 }
 

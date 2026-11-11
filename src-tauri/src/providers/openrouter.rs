@@ -117,6 +117,7 @@ pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
             unit: Some("USD".into()),
             resets_at,
             window_seconds,
+            quota_source: None,
         });
     }
 
@@ -136,6 +137,7 @@ pub(crate) fn parse(key: &Value, credits: Option<&Value>) -> Parsed {
                 unit: Some("USD".into()),
                 resets_at: None,
                 window_seconds: None,
+                quota_source: None,
             });
         }
     }

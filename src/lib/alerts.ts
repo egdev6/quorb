@@ -3,7 +3,7 @@
 //   2. «reset»: ese límite, que se había superado, se reinicia (nueva ventana o baja de golpe).
 // Se recuerda qué se ha avisado por ventana para no repetir (la memoria se guarda en el widget).
 
-import type { AlertMoment, AlertsConfig, Effect, UsageReport } from './types';
+import type { AlertMoment, AlertsConfig, Effect, Meter, UsageReport } from './types';
 
 /**
  * ¿Debe el widget lanzar avisos nativos? Requiere el interruptor maestro
@@ -78,9 +78,10 @@ export function detectAlerts(
       const prevReport = prevById.get(r.id);
       const old = prevReport?.meters.find((x) => meterKey(x) === meterKey(m));
       if (!old || old.percent == null || old.percent < cfg.threshold) continue;
-      // Un cambio de la fuente de la cuota no es un reinicio: el porcentaje bajó porque
-      // cambió el denominador (la regla que se aplica), no porque la cuota se reiniciara.
-      if (quotaSourceChanged(prevReport, r)) continue;
+      // Un cambio de la base de medición no es un reinicio: el porcentaje bajó porque
+      // cambió el denominador (la cuota que el proveedor declara como base), no porque
+      // la cuota se reiniciara. Solo se salta el medidor cuya base cambió.
+      if (quotaBasisChanged(old, m)) continue;
       const newWindow = old.resetsAt != null && windowKey(old.resetsAt) !== windowKey(m.resetsAt);
       const dropped = old.percent - pct >= 30;
       if (pct < cfg.threshold && (newWindow || dropped)) events.push({ kind: 'reset', ...ev });
@@ -90,11 +91,13 @@ export function detectAlerts(
 }
 
 /**
- * ¿Cambió la fuente de la cuota entre las dos lecturas? El frente no sabe de qué
- * proveedor viene el informe: compara el dato de la fuente, no valores concretos.
+ * ¿Cambió la base de medición declarada entre las dos lecturas del mismo medidor? El
+ * frente no sabe qué bases usa cada proveedor: compara el dato declarado, sin
+ * interpretarlo. Sin base en una de las dos lecturas no hay cambio, así que el medidor se
+ * compara como siempre.
  */
-function quotaSourceChanged(prev: UsageReport | undefined, next: UsageReport): boolean {
-  return !!prev?.quotaSource && !!next.quotaSource && prev.quotaSource !== next.quotaSource;
+function quotaBasisChanged(old: Meter, next: Meter): boolean {
+  return !!old.quotaSource && !!next.quotaSource && old.quotaSource !== next.quotaSource;
 }
 
 /** El efecto de pantalla se lanza una vez por ciclo: si hay algún límite superado, ese manda. */

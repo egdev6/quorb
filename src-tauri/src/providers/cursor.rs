@@ -207,6 +207,7 @@ pub(crate) fn parse(v: &Value) -> Parsed {
                 unit: None,
                 resets_at: resets_at.clone(),
                 window_seconds: window,
+                quota_source: None,
             });
         }
         for (key, id, label) in [
@@ -223,6 +224,7 @@ pub(crate) fn parse(v: &Value) -> Parsed {
                     unit: None,
                     resets_at: resets_at.clone(),
                     window_seconds: window,
+                    quota_source: None,
                 });
             }
         }

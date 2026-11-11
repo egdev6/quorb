@@ -42,6 +42,13 @@ pub struct Meter {
     pub resets_at: Option<String>,
     /// Duración de la ventana en segundos (5 h, 7 días, mes…), para calcular el ritmo de consumo.
     pub window_seconds: Option<i64>,
+    /// Base contra la que se midió **este** medidor: la declara el proveedor (la cuota
+    /// de la cuenta, la cuota publicada…) y el frente la trata como texto opaco, sin
+    /// saber qué significa. Un medidor sin base se compara siempre; si la base cambia
+    /// entre dos lecturas, el porcentaje bajó porque cambió el denominador y no es un
+    /// reinicio de la cuota.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_source: Option<&'static str>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -88,11 +95,6 @@ pub struct UsageReport {
     pub validity: Option<Validity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_resets: Option<u32>,
-    /// De dónde salió la cuota del informe: `account` (la asignación de la cuenta) o
-    /// `published` (la cuota publicada, un fallback). Viaja como dato del informe, no
-    /// en el id del medidor: el id no cambia cuando cambia la fuente.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quota_source: Option<&'static str>,
     pub meters: Vec<Meter>,
     pub spend: Option<Spend>,
     pub message: Option<String>,
@@ -113,7 +115,6 @@ impl UsageReport {
             plan: None,
             validity: None,
             available_resets: None,
-            quota_source: None,
             meters: vec![],
             spend: None,
             message: None,
@@ -164,6 +165,34 @@ mod tests {
         assert_eq!(v["id"], "weekly");
         assert_eq!(v["label"], "Semana");
         assert_eq!(serde_json::to_value(Meter::default()).unwrap()["id"], "");
+    }
+
+    #[test]
+    fn the_meter_declares_its_measurement_basis() {
+        // La base se declara en el medidor: sin base no hay clave en el JSON.
+        let plain = Meter::default();
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("quotaSource")
+            .is_none());
+        let with_basis = Meter {
+            quota_source: Some("account"),
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&with_basis).unwrap()["quotaSource"],
+            "account"
+        );
+    }
+
+    #[test]
+    fn the_report_does_not_carry_the_quota_source() {
+        // La base es de cada medidor, no del informe: el informe no la lleva.
+        let report = UsageReport::new("nan", "NaN", Kind::Subscription);
+        assert!(serde_json::to_value(&report)
+            .unwrap()
+            .get("quotaSource")
+            .is_none());
     }
 
     #[test]
