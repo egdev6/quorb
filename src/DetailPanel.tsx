@@ -139,6 +139,28 @@ export function DetailPanel() {
         // Only the confirmed (read-back) geometry reaches the cache; the requested
         // one never does (S3/D2).
         const cache = (confirmed: PhysicalBounds) => { lastAppliedRef.current = confirmed; lastAppliedReadBackRef.current = true; };
+        /**
+         * Cierre seguro uniforme (#250/S22): el panel deja de estar colocado,
+         * se oculta y la tira se entera con un aviso. Lo usan las dos ramas
+         * que pueden agotar `read_failed`: el presupuesto de reintentos de
+         * una colocación (la primera apertura y el reajuste de un panel
+         * abierto comparten esa rama, se distinguen por `positionedRef`) y el
+         * reintento posterior al `show` (camino mixto, #250/S23).
+         */
+        const failSafe = async () => {
+          positionedRef.current = false;
+          setPositioned(false);
+          try {
+            await getCurrentWindow().hide();
+          } finally {
+            // El aviso a la tira no se pierde aunque la ocultación nativa
+            // falle: sin él la tira seguiría creyendo que el panel está
+            // abierto (#250/S22). Tras el `await` el trabajo puede haberse
+            // superado: el aviso sólo vale si el job sigue vigente (si no,
+            // otro job ya colocó el panel).
+            if (current() && !disposed) interact('placement-failed');
+          }
+        };
         const report = await api.setDetailBounds(physical);
         if (!current() || disposed) return;
         let retry = confirmDetailPlacement(report, cache);
@@ -154,10 +176,10 @@ export function DetailPanel() {
           if (!current() || disposed || !retried) return;
           retry = confirmDetailPlacement(retried, cache);
           if (detailPlacementFailed(retried)) {
-            if (!positionedRef.current) return;
-            positionedRef.current = false;
-            setPositioned(false);
-            await getCurrentWindow().hide();
+            // El presupuesto se agotó: el panel no se queda visible con la
+            // geometría anterior (ni se muestra con la de fábrica) y la tira
+            // se entera (#250/S22).
+            await failSafe();
             return;
           }
         }
@@ -177,6 +199,14 @@ export function DetailPanel() {
           const confirmed = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
           if (!current() || disposed || !confirmed) return;
           confirmDetailPlacement(confirmed, cache);
+          // Camino mixto (#250/S23): la ventana se mostró (el informe blando
+          // `not_viewable` no es un fallo), pero los reintentos posteriores se
+          // agotaron con `read_failed`: el cierre seguro es el mismo que en
+          // las otras dos ramas.
+          if (detailPlacementFailed(confirmed)) {
+            await failSafe();
+            return;
+          }
         }
       }).catch(console.warn);
     };
