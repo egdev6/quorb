@@ -4,6 +4,7 @@ mod codex_setup;
 mod config;
 mod config_transaction;
 mod detail_geometry;
+mod email;
 mod history;
 mod i18n;
 mod login;
@@ -251,6 +252,8 @@ struct AppState {
     config_path: PathBuf,
     http: reqwest::Client,
     history: history::History,
+    /// Solo el resultado sanitizado más reciente; sin historial de eventos.
+    email_status: Mutex<email::EmailStatus>,
     /// Home del default user de cada distro WSL, resuelto una sola vez
     /// (el proceso de sesión se consulta cada 15 s y `resolve_home` lanza
     /// dos procesos wsl.exe). Se invalida solo al cambiar la distro
@@ -509,6 +512,31 @@ fn patch_config(
         config,
         native_error,
     })
+}
+
+#[tauri::command]
+fn email_status(state: State<'_, AppState>) -> email::EmailStatus {
+    *state.email_status.lock().unwrap()
+}
+
+/// `None` es una prueba explícita; `Some` requiere también ambos interruptores.
+#[tauri::command]
+async fn send_email_alert(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    event: Option<email::EmailEvent>,
+) -> Result<email::EmailStatus, String> {
+    let (cfg, locale) = {
+        let config = state.config.lock().unwrap();
+        (
+            config.alerts.clone(),
+            crate::i18n::locale_from_config(&config.locale),
+        )
+    };
+    let result = email::send(&cfg, locale, event).await;
+    *state.email_status.lock().unwrap() = result;
+    let _ = app.emit("email-status", result);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1300,6 +1328,7 @@ pub fn run() {
                 config_path,
                 http,
                 history,
+                email_status: Mutex::new(email::EmailStatus::Idle),
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
                 wsl_homes: wsl::WslHomeCache::default(),
             });
@@ -1357,6 +1386,8 @@ pub fn run() {
             patch_config,
             secret_status,
             set_secret,
+            email_status,
+            send_email_alert,
             fetch_usage,
             open_login,
             codex_setup_status,

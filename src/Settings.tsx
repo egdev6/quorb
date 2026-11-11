@@ -1,4 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { emailDefaults, emailReady, patchEmail, persistEmailTestAlerts, sendEmailTest } from './lib/email';
+import { osFromUA } from './lib/os-detect';
+import type { EmailStatus } from './lib/types';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
@@ -1606,17 +1610,103 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
   );
 }
 
+/** Tono del aviso de resultado por estado: verde para aceptación, amarillo
+ *  para requisitos o incertidumbre y rojo para fallos del envío; neutros
+ *  cuando aún no hay intento ni envío automático. */
+const EMAIL_STATUS_TONE: Record<EmailStatus, '' | 'warning' | 'success' | 'danger'> = {
+  idle: '',
+  disabled: '',
+  accepted: 'success',
+  consentRequired: 'warning',
+  configurationMissing: 'warning',
+  keyMissing: 'warning',
+  keyringError: 'danger',
+  authenticationError: 'danger',
+  senderRejected: 'danger',
+  requestRejected: 'danger',
+  rateLimited: 'danger',
+  serviceError: 'danger',
+  acceptanceUnknown: 'warning',
+};
+
+/** Resultado visible de la última acción de email, con el patrón
+ *  «eg-notice» del resto de Ajustes. Extraída para poder renderizarla en
+ *  pruebas sin montar la ventana completa. */
+export function EmailStatusLine({ locale, status }: { locale: Locale; status: EmailStatus }) {
+  const tone = EMAIL_STATUS_TONE[status];
+  return (
+    <p className={tone ? `eg-notice eg-notice--sm eg-notice--${tone}` : 'eg-notice eg-notice--sm'} role="status">
+      {t(locale, `settings.alerts.email.status.${status}`)}
+    </p>
+  );
+}
+
+function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }: {
+  locale: Locale; alerts: AlertsConfig; onAlerts: (patch: Partial<AlertsConfig>) => void;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>; secrets: SecretStatus; onSecrets: () => void;
+}) {
+  const email = alerts.email ?? emailDefaults;
+  const [status, setStatus] = useState<EmailStatus>('idle');
+  const [busy, setBusy] = useState(false);
+  const update = (patch: Partial<typeof email>) => onAlerts({ email: patchEmail(email, patch) });
+  useEffect(() => {
+    let alive = true; let updated = false;
+    const off = listen<EmailStatus>('email-status', ({ payload }) => {
+      if (alive) { updated = true; setStatus(payload); }
+    }).catch(() => () => {});
+    api.emailStatus().then((value) => { if (alive && !updated) setStatus(value); }).catch(() => { if (alive) setStatus('serviceError'); });
+    return () => { alive = false; void off.then((stop) => stop()).catch(() => {}); };
+  }, []);
+  const test = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      setStatus(await sendEmailTest(email, () => onPersist(alerts, { emailTest: true }), () => api.sendEmailAlert(null)));
+    } finally { setBusy(false); }
+  };
+  return (
+    <Section title={t(locale, 'settings.alerts.email.title')}>
+      <p className="q-note">{t(locale, 'settings.alerts.email.availability')}</p>
+      <p className="q-note">{t(locale, 'settings.alerts.email.privacy')}</p>
+      <p className="q-note">{t(locale, 'settings.alerts.email.attempts')}</p>
+      <Rows>
+        <Toggle label={t(locale, 'settings.alerts.email.consent')} checked={email.consent} onChange={(consent) => update({ consent })} />
+        {email.consent && <Toggle label={t(locale, 'settings.alerts.email.enable')} checked={email.enabled} onChange={(enabled) => update({ enabled })} />}
+      </Rows>
+      <p className="q-note">{t(locale, 'settings.alerts.email.switches')}</p>
+      <Field label={t(locale, 'settings.alerts.email.sender')} hint={t(locale, 'settings.alerts.email.senderHint')}>
+        <input type="email" autoComplete="off" value={email.sender} onChange={(e) => update({ sender: e.target.value.trim() })} />
+      </Field>
+      <Field label={t(locale, 'settings.alerts.email.recipient')}>
+        <input type="email" autoComplete="off" value={email.recipient} onChange={(e) => update({ recipient: e.target.value.trim() })} />
+      </Field>
+      <SecretInput locale={locale} id="resend_api_key" label={t(locale, 'settings.alerts.email.key')} configured={!!secrets.resend_api_key} onSaved={onSecrets} />
+      {typeof navigator !== 'undefined' && osFromUA(navigator.userAgent) === 'linux' && (
+        <p className="q-note">{t(locale, 'settings.alerts.email.linux')}</p>
+      )}
+      <p className="q-note">{t(locale, 'settings.alerts.email.testHint')}</p>
+      <button type="button" className="eg-btn eg-btn--ghost" disabled={busy || !emailReady(email) || !secrets.resend_api_key} onClick={() => void test()}>
+        {t(locale, busy ? 'settings.alerts.email.testing' : 'settings.alerts.email.test')}
+      </button>
+      <EmailStatusLine locale={locale} status={status} />
+    </Section>
+  );
+}
+
 /** Sección «Alertas»: cuándo avisar (dos momentos) y el efecto propio. Extraída
  *  por el mismo motivo que LookSection. */
-export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError }: {
+export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, secrets = {}, onSecrets = () => {} }: {
   locale: Locale;
   alerts: AlertsConfig;
   onAlerts: (patch: Partial<AlertsConfig>) => void;
-  onPersist: (alerts: AlertsConfig) => Promise<void>;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>;
   onError: (msg: string) => void;
+  secrets?: SecretStatus;
+  onSecrets?: () => void;
 }) {
   return (
     <>
+      <EmailAlerts locale={locale} alerts={alerts} onAlerts={onAlerts} onPersist={onPersist} secrets={secrets} onSecrets={onSecrets} />
       <Section title={t(locale, 'settings.alerts.when')}>
         <Rows>
           <Toggle label={t(locale, 'settings.alerts.enable')} checked={alerts.enabled} onChange={(v) => onAlerts({ enabled: v })} />
@@ -2285,8 +2375,10 @@ export function Settings() {
 
   // La prueba de un efecto guarda antes los avisos del formulario: pasa por la
   // misma cola para que la base canónica no quede desincronizada del backend.
-  const persistAlerts = (alerts: AppConfig['alerts']) =>
-    enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
+  const persistAlerts = (alerts: AppConfig['alerts'], options?: { emailTest: boolean }) =>
+    options?.emailTest
+      ? persistEmailTestAlerts(alerts, enqueueSave)
+      : enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
 
   // El selector de Idioma guarda por la misma cola que el resto de Ajustes y
   // también lo adopta en el borrador (ver `changeLocale` en i18n/use-locale).
@@ -2873,7 +2965,7 @@ export function Settings() {
 
           {section === 'alerts' && (
             <div className="q-grid-2">
-              <AlertsSection locale={locale} alerts={cfg.alerts} onAlerts={(patch) => set('alerts', patch)} onPersist={persistAlerts} onError={setSaved} />
+              <AlertsSection locale={locale} alerts={cfg.alerts} onAlerts={(patch) => set('alerts', patch)} onPersist={persistAlerts} onError={setSaved} secrets={secrets} onSecrets={loadSecrets} />
             </div>
           )}
 
