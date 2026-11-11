@@ -1454,7 +1454,10 @@ mod tests {
         let channel = channel::STABLE.name;
         assert!(rule.is_match(strip), "tira: {strip}");
         for locale in [i18n::Locale::Es, i18n::Locale::En] {
-            for title in [i18n::detail_title(locale, channel), i18n::overlay_title(locale, channel)] {
+            for title in [
+                i18n::detail_title(locale, channel),
+                i18n::overlay_title(locale, channel),
+            ] {
                 assert!(rule.is_match(&title), "debe coincidir: {title}");
             }
             let settings = i18n::settings_title(locale, channel);
