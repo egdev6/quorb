@@ -13,9 +13,9 @@ KWin 6.7.5 en Wayland ignora las peticiones de "todos los escritorios" de los cl
 
 ## Tasks
 
-- T1 | S1, S3, S4, S5 | inline, test-first | título del selector + test contra la regla documentada + sección de `docs/build-linux.md` | commit: pendiente
-- T2 | S1 | inline | regenerar `docs/i18n-inventory.md` tras el commit de T1 | commit: pendiente
-- T3 | S6 | inline + manual | build de host, medición con la regla temporal y configuración aislada, capturas | evidencia: pendiente
+- T1 | S1, S3, S4, S5 | inline, test-first | título del selector + test contra la regla documentada + sección de `docs/build-linux.md` | commit: 6fcb1d0
+- T2 | S1 | inline | regenerar `docs/i18n-inventory.md` tras el commit de T1 | commit: 3c0956d
+- T3 | S6 | inline + manual | build de host, medición con la regla temporal y configuración aislada, capturas | evidencia: build 3c0956d (sha 60d00f73), runs-227/50-53, capturas publish4
 - T4 | S1-S6 | inline | revalidar alcance y `main`, borrador de PR con evidencia; abrirla requiere OK de Rafael | PR: pendiente
 
 ## Log
@@ -24,3 +24,4 @@ KWin 6.7.5 en Wayland ignora las peticiones de "todos los escritorios" de los cl
 - L2: egdev6 asigna #227 a @Rafaeldelinares (2026-11-11T13:40:31Z) con los ajustes recogidos en S1-S4 y S6.
 - L3: egdev6 (2026-11-11T08:07:09Z) eligió la opción 2 y fijó el contenido de la documentación (S5).
 - L4: Mediciones previas en #227 (issuecomment-6777782892 y 6782467853): la regla alcanza a la tira, el detalle, el overlay y el selector; Ajustes queda fuera; la clase de KWin distingue mayúsculas (`[Qq]uorb`); las ventanas no exponen `WM_WINDOW_ROLE`.
+- L5: Medición T3 (2026-11-11, build de host `3c0956d`, regla copiada del bloque `ini` de `docs/build-linux.md` §6.2, configuración de Quorb aislada con `XDG_*_HOME` temporales y `kwinrulesrc` restaurado al terminar): selector `Idioma / Language · Quorb` con `onAllDesktops: false`, se queda en el escritorio 1 al pasar al 2; tira `Quorb` con `onAllDesktops: true`; detalle transitorio acompaña del 1 al 2; Ajustes se queda en el escritorio 1 con `onAllDesktops: false`. Durante la prueba de Ajustes apareció una ventana sin título de Quorb de 147×121 con `onAllDesktops: true` que ya no estaba en el escritorio 2 (probablemente un menú o tooltip transitorio de la tira; no investigado).
