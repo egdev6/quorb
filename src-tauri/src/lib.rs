@@ -908,7 +908,7 @@ async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool,
                 // `credentials_path` > ruta por defecto del guest.
                 let path: Result<Option<String>, String> =
                     if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
-                        crate::providers::account_session_path_in(a, Some(&r))
+                        crate::providers::account_session_path(a, Some(&r))
                     } else {
                         let kind = match id.as_str() {
                             "claude" => Some(crate::providers::CliSessionKind::Claude),

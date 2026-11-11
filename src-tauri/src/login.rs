@@ -274,7 +274,11 @@ fn account_session_dir_linux(a: &Account, wsl: &WslLogin<'_>) -> Result<PathBuf,
             // guest `mkdir -p -- ""` falla (revisión PR #92, menor). La raíz
             // se queda como raíz.
             let trimmed = d.trim_end_matches('/');
-            Ok(PathBuf::from(if trimmed.is_empty() { "/" } else { trimmed }))
+            Ok(PathBuf::from(if trimmed.is_empty() {
+                "/"
+            } else {
+                trimmed
+            }))
         }
         None => {
             // La MISMA carpeta por defecto que el host (revisión del
