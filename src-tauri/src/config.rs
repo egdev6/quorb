@@ -485,6 +485,17 @@ pub struct AlertsConfig {
     /// Tamaño del efecto propio: small | medium | full
     pub media_size: String,
     pub media_sound: bool,
+    pub email: EmailAlertsConfig,
+}
+
+/// Solo configuración no secreta. Guardar direcciones no concede consentimiento.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EmailAlertsConfig {
+    pub enabled: bool,
+    pub consent: bool,
+    pub sender: String,
+    pub recipient: String,
 }
 
 impl Default for AlertsConfig {
@@ -500,6 +511,7 @@ impl Default for AlertsConfig {
             reset_media: None,
             media_size: "medium".into(),
             media_sound: false,
+            email: EmailAlertsConfig::default(),
         }
     }
 }
