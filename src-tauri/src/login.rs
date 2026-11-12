@@ -1170,18 +1170,6 @@ mod tests {
         assert!(env.is_none());
     }
 
-    /// En modo WSL, un comando que ya incluye `wsl` no se envuelve: se pide el
-    /// comando del CLI con un mensaje accionable (PR #253).
-    #[test]
-    fn wsl_login_rejects_a_command_that_already_launches_wsl() {
-        let mock = MockWslAdapter::new();
-        let w = wsl_of(&mock);
-        let err = prepare_wsl_login(&w, "codex", "wsl codex login", &None).unwrap_err();
-        assert!(err.contains("ya incluye `wsl`"), "{err}");
-        // Sin tocar el adaptador: el rechazo es de configuración.
-        assert!(mock.calls().is_empty(), "{:?}", mock.calls());
-    }
-
     #[test]
     fn program_of_keeps_quoted_paths_with_spaces() {
         assert_eq!(program_of("codex login"), "codex");
@@ -1573,6 +1561,18 @@ mod wsl_login_tests {
             adapter: mock,
             distro: "Ubuntu-22.04",
         }
+    }
+
+    /// En modo WSL, un comando que ya incluye `wsl` no se envuelve: se pide el
+    /// comando del CLI con un mensaje accionable (PR #253).
+    #[test]
+    fn wsl_login_rejects_a_command_that_already_launches_wsl() {
+        let mock = MockWslAdapter::new();
+        let w = wsl_of(&mock);
+        let err = prepare_wsl_login(&w, "codex", "wsl codex login", &None).unwrap_err();
+        assert!(err.contains("ya incluye `wsl`"), "{err}");
+        // Sin tocar el adaptador: el rechazo es de configuración.
+        assert!(mock.calls().is_empty(), "{:?}", mock.calls());
     }
 
     /// #92: la CLI se detecta DENTRO de la distro (Running) con `command -v`.
