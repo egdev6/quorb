@@ -135,18 +135,28 @@ pub(crate) fn cli_status(
                     // Detección en el GUEST: mismo tokenizador POSIX que la
                     // ejecución (revisión PR #92, punto 5) — `program_of` es
                     // la heurística del HOST (punto 8) y aquí no aplica.
-                    let status = match &shell {
-                        Some(shell) => {
-                            let program =
-                                split_login_command(c).map(|(p, _)| p).unwrap_or_default();
-                            match w.adapter.program_available(w.distro, *shell, &program) {
-                                Ok(true) => CliStatus::Ready,
-                                Ok(false) => CliStatus::Missing,
-                                // Falla el subsistema a media sonda.
-                                Err(_) => CliStatus::Error,
+                    //
+                    // Un comando que ya lanza `wsl` por su cuenta no se busca
+                    // dentro del guest (allí no existe `wsl`) ni se envuelve
+                    // (revisión PR #253): se informa como error de
+                    // configuración, que no propone instalar ni bloquea el
+                    // login (el mensaje accionable lo da `open`).
+                    let status = if is_wsl_command(c) {
+                        CliStatus::Error
+                    } else {
+                        match &shell {
+                            Some(shell) => {
+                                let program =
+                                    split_login_command(c).map(|(p, _)| p).unwrap_or_default();
+                                match w.adapter.program_available(w.distro, *shell, &program) {
+                                    Ok(true) => CliStatus::Ready,
+                                    Ok(false) => CliStatus::Missing,
+                                    // Falla el subsistema a media sonda.
+                                    Err(_) => CliStatus::Error,
+                                }
                             }
+                            None => CliStatus::Error,
                         }
-                        None => CliStatus::Error,
                     };
                     (p.to_string(), status)
                 })
@@ -229,22 +239,95 @@ fn account_env(
     cfg: &AppConfig,
     wsl: Option<&WslLogin<'_>>,
 ) -> Result<(String, SessionEnv), String> {
-    let Some(a) = cfg.accounts.iter().find(|a| a.id == id) else {
+    if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
+        let var = a
+            .session_env()
+            .ok_or_else(|| format!("La cuenta «{}» no tiene login por CLI", a.label))?;
+        let dir = match wsl {
+            Some(w) => account_session_dir_linux(a, w)?,
+            None => {
+                let d = a.session_dir(&crate::providers::home());
+                std::fs::create_dir_all(&d)
+                    .map_err(|e| format!("No pude crear {}: {e}", d.display()))?;
+                d
+            }
+        };
+        return Ok((a.provider.to_string(), Some((var, dir))));
+    }
+    // Cuenta PRINCIPAL con `credentials_path` personalizado (revisión PR
+    // #253): el login debe escribir en la carpeta de ESA ruta, la misma que
+    // lee `account_session`/el fetch; si no, el CLI guarda en su carpeta por
+    // defecto y Quorb busca en otro sitio (nunca hay sesión tras el login).
+    let Some(var) = main_session_var(id) else {
         return Ok((id.to_string(), None));
     };
-    let var = a
-        .session_env()
-        .ok_or_else(|| format!("La cuenta «{}» no tiene login por CLI", a.label))?;
-    let dir = match wsl {
-        Some(w) => account_session_dir_linux(a, w)?,
-        None => {
-            let d = a.session_dir(&crate::providers::home());
-            std::fs::create_dir_all(&d)
-                .map_err(|e| format!("No pude crear {}: {e}", d.display()))?;
-            d
-        }
+    let Some(sub) = main_subscription(cfg, id) else {
+        return Ok((id.to_string(), None));
     };
-    Ok((a.provider.to_string(), Some((var, dir))))
+    let path = sub.credentials_path.as_deref().map(str::trim).unwrap_or("");
+    if path.is_empty() {
+        return Ok((id.to_string(), None));
+    }
+    if wsl.is_some() {
+        if let Some(problem) = wsl::guest_path_problem(path) {
+            return Err(format!(
+                "La ruta de credenciales de {id} no es válida en modo WSL: {problem}"
+            ));
+        }
+    }
+    let dir = main_session_dir(id, path).ok_or_else(|| {
+        format!(
+            "La ruta de credenciales de {id} debe terminar en el fichero del CLI ({}): así el login escribe donde Quorb lee",
+            crate::config::credentials_file_name(id).unwrap_or("…")
+        )
+    })?;
+    if wsl.is_none() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("No pude crear {}: {e}", dir.display()))?;
+    }
+    Ok((id.to_string(), Some((var, dir))))
+}
+
+/// Config de suscripción de una cuenta principal, por proveedor.
+fn main_subscription<'a>(
+    cfg: &'a AppConfig,
+    provider: &str,
+) -> Option<&'a crate::config::SubscriptionConfig> {
+    match provider {
+        "claude" => Some(&cfg.claude),
+        "codex" => Some(&cfg.codex),
+        "gemini" => Some(&cfg.gemini),
+        "grok" => Some(&cfg.grok),
+        _ => None,
+    }
+}
+
+/// Variable de entorno de la carpeta de sesión de una cuenta principal.
+fn main_session_var(provider: &str) -> Option<&'static str> {
+    match provider {
+        "claude" => Some("CLAUDE_CONFIG_DIR"),
+        "codex" => Some("CODEX_HOME"),
+        "gemini" => Some("GEMINI_CLI_HOME"),
+        "grok" => Some("GROK_HOME"),
+        _ => None,
+    }
+}
+
+/// Carpeta de la variable de sesión a partir de la ruta de credenciales
+/// personalizada: la base que, unida al fichero estándar del CLI, da
+/// exactamente esa ruta (`CLAUDE_CONFIG_DIR/<.credentials.json>`, o
+/// `GEMINI_CLI_HOME/.gemini/oauth_creds.json`). Una ruta que no termina en el
+/// fichero del CLI no permite derivarla: se rechaza con un mensaje accionable
+/// en vez de escribir en un sitio distinto del que se lee.
+fn main_session_dir(provider: &str, credentials_path: &str) -> Option<PathBuf> {
+    let file = crate::config::credentials_file_name(provider)?;
+    let normalized = credentials_path.trim().replace('\\', "/");
+    let suffix = format!("/{}", file.replace('\\', "/"));
+    let base = normalized.strip_suffix(&suffix)?;
+    if base.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(base))
 }
 
 /// Carpeta de sesión LINUX de una cuenta adicional (#92): la misma regla de
@@ -296,6 +379,22 @@ fn account_session_dir_linux(a: &Account, wsl: &WslLogin<'_>) -> Result<PathBuf,
     }
 }
 
+/// ¿El comando ya lanza WSL por su cuenta (`wsl …` / `wsl.exe …`)?
+///
+/// En modo WSL Quorb ya ejecuta el login dentro de la distro elegida:
+/// envolver un comando que empieza por `wsl` lo lanzaría dos veces (un
+/// segundo `wsl.exe` dentro del guest, que no existe), y buscarlo en el
+/// guest da un falso «no instalado» (revisión PR #253).
+fn is_wsl_command(command: &str) -> bool {
+    let program = program_of(command);
+    let file = program
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(&program)
+        .to_ascii_lowercase();
+    file == "wsl" || file == "wsl.exe"
+}
+
 /// Mensaje de CLI ausente DENTRO de la distro (#92): sin ofrecer el
 /// instalador de Windows como solución.
 fn not_installed_wsl(provider: &str, program: &str, distro: &str) -> String {
@@ -317,6 +416,16 @@ fn prepare_wsl_login(
     command: &str,
     env: &SessionEnv,
 ) -> Result<Vec<std::ffi::OsString>, String> {
+    // El comando ya lanza `wsl`: envolverlo lo ejecutaría dos veces (otro
+    // `wsl.exe` dentro del guest) y la sonda buscaría `wsl`, que no existe
+    // allí (revisión PR #253). Se pide el comando del CLI, sin `wsl`.
+    if is_wsl_command(command) {
+        return Err(format!(
+            "El comando de login de {provider} ya incluye `wsl`: en modo WSL escribe \
+             el comando del CLI dentro de la distro (por ejemplo `codex login`) y \
+             elige la distro en Ajustes; Quorb lo ejecuta dentro de ella."
+        ));
+    }
     // El MISMO tokenizador que la ejecución decide el programa de la sonda
     // (revisión PR #92): una ruta entre comillas o con escapes se ejecuta
     // bien, pero `program_of` la daría por ausente.
@@ -996,6 +1105,81 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// Revisión PR #253: un comando que ya lanza `wsl` se reconoce (y no se
+    /// envuelve ni se busca dentro del guest).
+    #[test]
+    fn is_wsl_command_detects_wsl_prefixes() {
+        assert!(is_wsl_command("wsl codex login"));
+        assert!(is_wsl_command("  WSL.EXE  codex login"));
+        assert!(is_wsl_command(
+            r#""C:\Windows\System32\wsl.exe" codex login"#
+        ));
+        assert!(!is_wsl_command("codex login"));
+        assert!(!is_wsl_command("wslx codex login"));
+        assert!(!is_wsl_command(""));
+    }
+
+    /// Revisión PR #253, punto 2: la carpeta de la variable de sesión sale de
+    /// la ruta de credenciales personalizada de la cuenta principal, de modo
+    /// que el login escribe exactamente donde se lee.
+    #[test]
+    fn main_session_dir_is_derived_from_the_credentials_path() {
+        assert_eq!(
+            main_session_dir("claude", "D:\\trabajo\\.credentials.json"),
+            Some(PathBuf::from("D:/trabajo"))
+        );
+        assert_eq!(
+            main_session_dir("codex", "/home/user/.codex/auth.json"),
+            Some(PathBuf::from("/home/user/.codex"))
+        );
+        // Gemini guarda el fichero en una subcarpeta de su home: la base no es
+        // el padre del fichero, sino el home que lo contiene.
+        assert_eq!(
+            main_session_dir("gemini", "/home/user/.gemini/oauth_creds.json"),
+            Some(PathBuf::from("/home/user"))
+        );
+        // Una ruta que no termina en el fichero del CLI no permite derivar la
+        // carpeta: error accionable, no un login que escribe en otro sitio.
+        assert_eq!(main_session_dir("claude", "D:\\trabajo\\otra.json"), None);
+        assert_eq!(main_session_dir("cursor", "/tmp/x"), None);
+    }
+
+    /// La cuenta principal con `credentials_path` personalizado exporta la
+    /// variable de sesión apuntando a la carpeta de esa ruta (PR #253).
+    #[test]
+    fn main_account_with_custom_credentials_path_passes_the_session_dir() {
+        let tmp = TempDir::new("principal-custom");
+        let custom = tmp.path().join(".credentials.json");
+        let mut cfg = AppConfig::default();
+        cfg.claude.credentials_path = Some(custom.to_string_lossy().into_owned());
+        let (provider, env) = account_env("claude", &cfg, None).expect("env");
+        assert_eq!(provider, "claude");
+        let (var, dir) = env.expect("la cuenta principal usa la carpeta personalizada");
+        assert_eq!(var, "CLAUDE_CONFIG_DIR");
+        assert_eq!(dir.as_path(), tmp.path());
+    }
+
+    /// Sin ruta personalizada, la principal no exporta nada: el CLI usa su
+    /// carpeta por defecto (comportamiento de siempre).
+    #[test]
+    fn main_account_without_custom_path_passes_nothing() {
+        let cfg = AppConfig::default();
+        let (_, env) = account_env("claude", &cfg, None).expect("env");
+        assert!(env.is_none());
+    }
+
+    /// En modo WSL, un comando que ya incluye `wsl` no se envuelve: se pide el
+    /// comando del CLI con un mensaje accionable (PR #253).
+    #[test]
+    fn wsl_login_rejects_a_command_that_already_launches_wsl() {
+        let mock = MockWslAdapter::new();
+        let w = wsl_of(&mock);
+        let err = prepare_wsl_login(&w, "codex", "wsl codex login", &None).unwrap_err();
+        assert!(err.contains("ya incluye `wsl`"), "{err}");
+        // Sin tocar el adaptador: el rechazo es de configuración.
+        assert!(mock.calls().is_empty(), "{:?}", mock.calls());
     }
 
     #[test]

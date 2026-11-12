@@ -574,14 +574,44 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
 /// vez por distro (`homes`) y se reutiliza en los ticks de `session_stamp`
 /// (cada 15 s), para no mantener la VM de WSL activa (revisión del
 /// mantenedor, 2026-11-02).
+/// ¿Está la distro elegida disponible SIN despertarla (revisión PR #253)?
+///
+/// `list_distributions` (F4) solo enumera: no lanza procesos dentro del
+/// guest. Una distro Stopped o en transición (o una WSL rota) se reporta
+/// como entorno inaccesible y el SONDEO no la despierta: los sondeos
+/// (`fetch_usage`, `session_stamp`) devuelven ese estado en vez de arrancar
+/// la VM. La acción explícita del usuario (login WSL) es quien la activa.
+fn distro_available(adapter: &dyn wsl::WslAdapter, distro: &str) -> Result<(), String> {
+    let distros = adapter
+        .list_distributions()
+        .map_err(|e| format!("WSL: {e:?}"))?;
+    match distros
+        .iter()
+        .find(|d| wsl::distro_name_matches(distro, &d.name))
+    {
+        Some(d) if matches!(d.state, wsl::DistroState::Running) => Ok(()),
+        Some(_) => Err(format!(
+            "La distro «{distro}» no está en marcha: arráncala (o haz login) para leer sus sesiones"
+        )),
+        None => Err(format!("La distro «{distro}» no está instalada en WSL")),
+    }
+}
+
+/// `adapter` es `Arc<dyn WslAdapter>` (no el tipo concreto) para poder probar
+/// el guard de distro con `MockWslAdapter`; en runtime llega el real.
 async fn session_resolver(
     cfg: &AppConfig,
-    adapter: std::sync::Arc<wsl::RealWslAdapter>,
+    adapter: std::sync::Arc<dyn wsl::WslAdapter>,
     homes: &wsl::WslHomeCache,
 ) -> Result<Option<wsl::SessionResolver>, String> {
     match cfg.session_env() {
         wsl::SessionEnv::Host => Ok(None),
         wsl::SessionEnv::Wsl { distro } => {
+            // No despertar la distro en un sondeo (revisión PR #253): si no
+            // está Running, el entorno está inaccesible y NO se lanzan
+            // procesos del guest. `resolve_home` (SÍ despierta) solo se
+            // alcanza con la distro en marcha.
+            distro_available(adapter.as_ref(), &distro)?;
             let home = match homes.home_for(&distro) {
                 Some(h) => h,
                 None => {
@@ -1936,6 +1966,80 @@ mod tests {
         // OpenRouter no usa sesión de CLI: ni con ficheros en la carpeta hay presencia.
         std::fs::write(dir.join("auth.json"), b"{}").unwrap();
         assert!(!account_session_file_found(&cfg, "openrouter:w1", &home));
+    }
+
+    /// Revisión PR #253: el SONDEO no despierta una distro detenida. Con la
+    /// distro Stopped, `session_resolver` devuelve error ANTES de `resolve_home`
+    /// (que es quien lanzaría procesos del guest): la única llamada al
+    /// adaptador es la enumeración (F4), que no despierta.
+    #[test]
+    fn session_resolver_does_not_wake_a_stopped_distro() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // `SessionResolver` no implementa `Debug`: `expect_err` no aplica.
+        let err = match rt.block_on(session_resolver(&cfg, adapter.clone(), &homes)) {
+            Err(e) => e,
+            Ok(_) => panic!("distro detenida: el entorno no debe estar accesible"),
+        };
+        assert!(err.contains("no está en marcha"), "{err}");
+        let calls = mock.calls();
+        assert!(
+            calls
+                .iter()
+                .all(|c| matches!(c, crate::wsl::WslCall::ListDistributions)),
+            "sin procesos del guest: {calls:?}"
+        );
+    }
+
+    /// Con la distro Running, el resolvedor se construye y su home se cachea
+    /// (revisión PR #253: la transición detenida → en marcha vuelve a leer).
+    #[test]
+    fn session_resolver_resolves_when_the_distro_is_running() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_home("Ubuntu-22.04", std::path::PathBuf::from("/home/user"));
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .expect("distro en marcha: resolvedor disponible");
+        assert_eq!(resolver.unwrap().home(), std::path::Path::new("/home/user"));
+        // El home queda cacheado: una segunda resolución no relanza
+        // `resolve_home` (sí vuelve a comprobar la distro con el guard, que no
+        // despierta; por eso se cuenta `ResolveHome`, no el total de llamadas).
+        let resolve_homes = |calls: &[crate::wsl::WslCall]| {
+            calls
+                .iter()
+                .filter(|c| matches!(c, crate::wsl::WslCall::ResolveHome(_)))
+                .count()
+        };
+        let before = mock.calls();
+        assert_eq!(resolve_homes(&before), 1, "la primera resolución lo pidió");
+        rt.block_on(session_resolver(&cfg, adapter, &homes))
+            .expect("cacheado");
+        assert_eq!(
+            resolve_homes(&mock.calls()),
+            resolve_homes(&before),
+            "home resuelto una sola vez"
+        );
     }
 
     #[test]

@@ -815,13 +815,18 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
 /** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta.
  *  Los sondeos fallidos se degradan a "no hay fichero confirmado" (revisión PR
  *  #92, punto 11): jamás se muestra conectada por omisión. */
-function useCliSession(id: string, active: boolean): boolean {
+function useCliSession(id: string, active: boolean, envKey: string): boolean {
   const [connected, setConnected] = useState<boolean | null>(false);
   useEffect(() => {
     if (!active) {
       setConnected(false);
       return;
     }
+    // Entorno nuevo (host ↔ WSL o distro distinta): el resultado del sondeo
+    // anterior ya no vale. Se olvida el estado y se arranca un poller NUEVO,
+    // cuya generación descarta las respuestas en vuelo del anterior
+    // (revisión PR #253: dos sondeos solapados no comparten generación).
+    setConnected(null);
     // Presencia del fichero, no validez: al desmontar se para el sondeo y las
     // respuestas en vuelo se descartan (no marca conectada otra cuenta).
     const poller = createPresencePoller({
@@ -832,9 +837,10 @@ function useCliSession(id: string, active: boolean): boolean {
     });
     poller.start();
     return () => poller.stop();
-  }, [id, active]);
-  // `null` (sondeo fallido) se degrada a "no hay fichero confirmado": la UI
-  // nunca muestra el botón "conectada" sin una prueba vigente.
+  }, [id, active, envKey]);
+  // `null` (sondeo fallido o entorno recién cambiado) se degrada a "no hay
+  // fichero confirmado": la UI nunca muestra el botón "conectada" sin una
+  // prueba vigente del entorno actual.
   return connected === true;
 }
 
@@ -876,7 +882,9 @@ function CliConnect({
   /** Distro WSL elegida (informativa). */
   wslDistro: string;
 }) {
-  const connected = useCliSession(id, persisted);
+  // El entorno del BORRADOR forma parte de la identidad del sondeo: al
+  // cambiarlo, el poller se reinicia con una generación nueva (PR #253).
+  const connected = useCliSession(id, persisted, `${sessionEnv}\u0000${wslDistro}`);
   const [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const connect = async () => {
@@ -2368,39 +2376,44 @@ export function Settings() {
   // entorno VIGENTE, no el de entonces.
   const cliEnvRef = useRef(cliEnv);
   cliEnvRef.current = cliEnv;
+  // UNA secuencia para TODAS las lecturas de `cli_status` — intervalo, foco y
+  // `cliRecheck` (revisión PR #253): solo la última petición lanzada escribe
+  // el estado, así una respuesta tardía no pisa la del entorno nuevo ni
+  // deshabilita «Guardar»/el login con un `missing` viejo.
+  const cliSeqRef = useRef(0);
+  const requestCliStatus = useCallback(() => {
+    const n = ++cliSeqRef.current;
+    return api
+      .cliStatus(cliEnvRef.current)
+      .then((st) => {
+        if (n === cliSeqRef.current) setCli(st);
+      })
+      .catch(() => {});
+  }, []);
   // Relectura puntual del CLI fuera del intervalo: la usa la instalación asistida
   // al terminar para habilitar el login sin depender de que la ventana siga abierta.
   const cliRecheck = useCallback(() => {
-    api
-      .cliStatus(cliEnvRef.current)
-      .then(setCli)
-      .catch(() => {});
-  }, []);
+    void requestCliStatus();
+  }, [requestCliStatus]);
   useEffect(() => {
     let alive = true;
-    // Control de orden de los sondeos superpuestos (revisión PR #92, punto
-    // 10): si uno tarda más que el siguiente, solo gana la última petición
-    // lanzada — una respuesta vieja no pisa el estado del entorno actual.
-    let seq = 0;
+    // Entorno nuevo: el estado anterior es de otro sitio; no se muestra hasta
+    // que llegue la lectura vigente (y no puede bloquear el login entremedias).
+    setCli({});
     const check = () => {
-      const n = ++seq;
-      api
-        .cliStatus(cliEnv)
-        .then((st) => {
-          if (alive && n === seq) setCli(st);
-        })
-        .catch(() => {});
+      if (alive) void requestCliStatus();
     };
     check();
     const t = window.setInterval(check, 5000);
     window.addEventListener('focus', check);
     return () => {
       alive = false;
-      seq += 1;
+      // Descarta lo que esté en vuelo: solo la secuencia nueva escribe.
+      cliSeqRef.current += 1;
       window.clearInterval(t);
       window.removeEventListener('focus', check);
     };
-  }, [cliEnv]);
+  }, [cliEnv, requestCliStatus]);
   // Controlador de la instalación asistida de Codex: vive en la raíz de Ajustes
   // para seguir vivo si el aviso del CLI desaparece (o se desmonta) antes de que
   // resuelva la instalación. Nunca instala por sí solo: solo lee estado pasivo.
