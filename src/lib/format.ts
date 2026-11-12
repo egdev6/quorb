@@ -1,5 +1,6 @@
 import type { Locale, Meter, UsageReport } from './types';
 import { t, type MessageKey } from '../i18n';
+import { meterKey } from './alerts';
 
 /** «en 2 h 13 min», «en 3 d 4 h», «ahora» */
 export function formatResetIn(iso: string | null, now: Date = new Date(), locale: Locale = 'es'): string | null {
@@ -99,6 +100,24 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     const failed = r.status === 'error' || r.status === 'warning';
     if (failed && r.meters.length === 0 && !r.spend && old && (old.meters.length > 0 || old.spend)) {
       return { ...old, status: 'warning', message: r.message, stale: true };
+    }
+    // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
+    // de rate limit vinieron. Los medidores que el informe nuevo NO trae se conservan del
+    // anterior, marcados como desactualizados, para que los datos de cuota no desaparezcan
+    // en silencio. El informe mergeado manda; lo que no trae se conserva del anterior.
+    if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
+      const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)));
+      // Si no se conserva ningún medidor, el informe no queda desactualizado: `stale`
+      // hace que los avisos salten el informe entero, y no hay nada viejo que avisar.
+      if (!missing.length) return r;
+      return {
+        ...r,
+        meters: [...r.meters, ...missing],
+        plan: r.plan ?? old.plan,
+        daily: r.daily?.length ? r.daily : old.daily,
+        spend: r.spend ?? old.spend,
+        stale: true,
+      };
     }
     // Sesión caducada: se conservan los últimos datos (atenuados) con la acción
     // de renovar, en vez de dejar el círculo vacío hasta volver a entrar.

@@ -30,9 +30,10 @@ export interface AlertEvent {
 export type AlertMemory = Record<string, 'exceeded'>;
 
 const TEN_MIN = 10 * 60_000;
+const DAY_MS = 86_400_000;
 
 /** Identidad estable del medidor: su id, o la etiqueta en datos antiguos sin id. */
-const meterKey = (m: { id: string; label: string }) => m.id || m.label;
+export const meterKey = (m: { id: string; label: string }) => m.id || m.label;
 
 /** Identifica la ventana por su reinicio, redondeado a 10 min (el endpoint lo devuelve con algo de baile). */
 export function windowKey(resetsAt: string | null): string {
@@ -78,13 +79,7 @@ export function detectAlerts(
       const prevReport = prevById.get(r.id);
       const old = prevReport?.meters.find((x) => meterKey(x) === meterKey(m));
       if (!old || old.percent == null || old.percent < cfg.threshold) continue;
-      // Un cambio de la base de medición no es un reinicio: el porcentaje bajó porque
-      // cambió el denominador (la cuota que el proveedor declara como base), no porque
-      // la cuota se reiniciara. Solo se salta el medidor cuya base cambió.
-      if (quotaBasisChanged(old, m)) continue;
-      const newWindow = old.resetsAt != null && windowKey(old.resetsAt) !== windowKey(m.resetsAt);
-      const dropped = old.percent - pct >= 30;
-      if (pct < cfg.threshold && (newWindow || dropped)) events.push({ kind: 'reset', ...ev });
+      if (isReset(old, m, pct, cfg.threshold)) events.push({ kind: 'reset', ...ev });
     }
   }
   return { events, memory: mem };
@@ -99,6 +94,51 @@ export function detectAlerts(
 function quotaBasisChanged(old: Meter, next: Meter): boolean {
   return !!old.quotaSource && !!next.quotaSource && old.quotaSource !== next.quotaSource;
 }
+
+/**
+ * ¿Es un reinicio del límite que ya estaba superado? Regla única, compartida por los dos
+ * casos: con la misma base de medición se aplica la de siempre; con bases distintas sólo
+ * se afirma el reinicio si además la ventana avanzó y el consumo absoluto bajó.
+ */
+function isReset(old: Meter, next: Meter, pct: number, threshold: number): boolean {
+  if (pct >= threshold) return false;
+  if (quotaBasisChanged(old, next)) return resetAcrossBasis(old, next);
+  const newWindow = old.resetsAt != null && windowKey(old.resetsAt) !== windowKey(next.resetsAt);
+  const dropped = (old.percent ?? 0) - pct >= 30;
+  return newWindow || dropped;
+}
+
+/**
+ * Cambio de base de medición: el porcentaje bajó porque cambió el denominador (la cuota
+ * que el proveedor declara como base), así que el reinicio sólo se afirma si la ventana
+ * nueva empieza en un día posterior al de la vieja y el consumo absoluto bajó. Las
+ * ventanas se comparan POR DÍA UTC: las dos bases describen el mismo periodo con horas
+ * distintas (medianoche contra 22:15:31) y comparar instantes daría falsos positivos.
+ * Sin unidades comparables o sin los datos de la ventana y del consumo, no se afirma nada.
+ */
+function resetAcrossBasis(old: Meter, next: Meter): boolean {
+  if (old.unit !== next.unit) return false;
+  const oldStart = windowStart(old);
+  const newStart = windowStart(next);
+  if (oldStart == null || newStart == null) return false;
+  if (old.used == null || next.used == null) return false;
+  if (utcDay(newStart) <= utcDay(oldStart)) return false;
+  return next.used < old.used;
+}
+
+/**
+ * Inicio de la ventana de una lectura: `resetsAt` es el FIN de la ventana y
+ * `windowSeconds` su duración. Sin los dos datos, el inicio no se puede saber.
+ */
+function windowStart(m: Meter): number | null {
+  if (!m.resetsAt || m.windowSeconds == null) return null;
+  const end = Date.parse(m.resetsAt);
+  if (Number.isNaN(end)) return null;
+  return end - m.windowSeconds * 1000;
+}
+
+/** Día UTC (índice) de un instante: las ventanas se comparan por día, nunca por instante. */
+const utcDay = (ms: number) => Math.floor(ms / DAY_MS);
 
 /** El efecto de pantalla se lanza una vez por ciclo: si hay algún límite superado, ese manda. */
 export function effectFor(

@@ -36,6 +36,23 @@ const quotaMeter = (pct: number, basis?: string): Meter => ({
   quotaSource: basis,
 });
 
+/**
+ * Medidor de cuota con los datos reales de la cuenta de NaN (plan Gentle): la ventana
+ * acaba el 5-dic a las 22:15:31 y dura 30 días, así que empezó el 5-nov.
+ */
+const quotaMeterOf = ({ pct, ...rest }: Partial<Meter> & { pct: number }): Meter => ({
+  id: 'model:deepseek-v4-flash',
+  label: 'deepseek-v4-flash',
+  percent: pct,
+  used: 955_581_032,
+  limit: 1_000_000_000,
+  unit: 'tokens',
+  resetsAt: '2026-12-05T22:15:31Z',
+  windowSeconds: 2_592_000,
+  quotaSource: 'account',
+  ...rest,
+});
+
 /** Medidor sin base declarada (el propio de NaN, las cabeceras de rate limit…). */
 const plainMeter = (id: string, label: string, pct: number): Meter => ({
   id,
@@ -51,6 +68,9 @@ const plainMeter = (id: string, label: string, pct: number): Meter => ({
 /** Los cuatro datos con los que se identifica cada aviso. */
 const eventsOf = (r: { events: AlertEvent[] }) =>
   r.events.map((e) => ({ kind: e.kind, providerId: e.providerId, label: e.label, percent: e.percent }));
+
+/** Sólo los avisos de reinicio (un cambio de base puede disparar además el de «superado»). */
+const resetsOf = (r: { events: AlertEvent[] }) => eventsOf(r).filter((e) => e.kind === 'reset');
 
 describe('alerts', () => {
   it('warns once per window when the limit is exceeded', () => {
@@ -83,6 +103,68 @@ describe('alerts', () => {
     const prev = reportWith([quotaMeter(95.558, 'account')]);
     const next = reportWith([quotaMeter(31.853, 'published')]);
     expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('reports the reset of a quota meter whose basis changed', () => {
+    // La base pasa de «published» a «account»: el porcentaje bajó porque cambió el
+    // denominador, pero la ventana avanzó (1-nov → 6-dic) y el consumo absoluto bajó
+    // (950 M → 60 M): el reinicio es real y hay que avisar.
+    const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 2 },
+    ]);
+  });
+
+  it('does not report a reset when the basis changed but the window did not advance', () => {
+    // Cuenta (ventana del 5-nov) → publicada (ventana del 1-nov): el consumo bajó, pero
+    // la ventana nueva no empieza en un día posterior, así que no hay reinicio que afirme.
+    const prev = reportWith([quotaMeterOf({ pct: 95.558, quotaSource: 'account' })]);
+    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    expect(resetsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+    // Los mismos datos de la cuenta contra la cuota publicada: tampoco hay reinicio.
+    const sameConsumption = reportWith([quotaMeterOf({ pct: 31.853, limit: 3_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    expect(resetsOf(detectAlerts([reportWith([quotaMeterOf({ pct: 95.558, quotaSource: 'account' })])], [sameConsumption], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('does not report a reset when the window advanced but the consumption did not drop', () => {
+    // La ventana avanzó (1-nov → 6-dic) y el porcentaje bajó por el cambio de
+    // denominador, pero el consumo absoluto es el mismo: no se puede afirmar el reinicio.
+    const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    const next = reportWith([quotaMeterOf({ pct: 31.667, used: 950_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
+    expect(resetsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+    // Con los datos de la cuenta (mismo consumo, base publicada → cuenta) tampoco.
+    const account = reportWith([quotaMeterOf({ pct: 95.558, quotaSource: 'account' })]);
+    const published = reportWith([quotaMeterOf({ pct: 31.853, limit: 3_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    expect(resetsOf(detectAlerts([published], [account], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('does not report a reset when both readings describe the same period with different hours', () => {
+    // Las dos bases describen el mismo periodo (5-nov → 5-dic) con horas distintas:
+    // la ventana no avanzó de día, así que no hay reinicio aunque el consumo bajara.
+    const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-05T00:00:00Z' })]);
+    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2026-12-05T22:15:31Z' })]);
+    expect(resetsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('does not report a reset when the units differ between the readings', () => {
+    // Tokens contra créditos: el frente no sabe qué son las unidades, sólo las compara.
+    const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, unit: 'credits', quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
+    expect(resetsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('does not report a reset when a reading lacks the consumption or the window', () => {
+    const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    // Sin consumo en la lectura nueva.
+    const withoutUsed = reportWith([quotaMeterOf({ pct: 2, used: null, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
+    expect(resetsOf(detectAlerts([prev], [withoutUsed], {}, cfg, NOW))).toEqual([]);
+    // Sin ventana en la lectura nueva.
+    const withoutWindow = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: null, windowSeconds: null })]);
+    expect(resetsOf(detectAlerts([prev], [withoutWindow], {}, cfg, NOW))).toEqual([]);
+    // Sin ventana en la lectura vieja.
+    const oldWithoutWindow = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: null, windowSeconds: null })]);
+    expect(resetsOf(detectAlerts([oldWithoutWindow], [reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })])], {}, cfg, NOW))).toEqual([]);
   });
 
   it('reports the reset of the custom meter when the quota meter changes its basis', () => {

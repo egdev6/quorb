@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { detectAlerts } from './alerts';
 import { formatCompact, formatResetIn, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
-import type { UsageReport } from './types';
+import type { Meter, UsageReport } from './types';
 
 const base: UsageReport = {
   id: 'claude',
@@ -81,6 +82,72 @@ describe('format', () => {
     expect(merged.stale).toBe(true);
     expect(merged.meters).toHaveLength(2);
     expect(merged.message).toBe('429');
+  });
+
+  it('keeps the whole previous report when the failed one brings no meter', () => {
+    const previous: UsageReport = { ...base, plan: 'Gentle', spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 } };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters).toEqual(previous.meters);
+    expect(merged.plan).toBe('Gentle');
+    expect(merged.spend).toEqual(previous.spend);
+  });
+
+  it('keeps the meters that a failed report does not bring', () => {
+    // La cuota de la cuenta falló, pero las cabeceras de rate limit vinieron: el informe
+    // llega MIXTO y el medidor de cuota no puede desaparecer sin más.
+    const quota: Meter = {
+      id: 'model:deepseek-v4-flash',
+      label: 'deepseek-v4-flash',
+      percent: 95.558,
+      used: 955_581_032,
+      limit: 1_000_000_000,
+      unit: 'tokens',
+      resetsAt: '2026-12-05T22:15:31Z',
+      windowSeconds: 2_592_000,
+      quotaSource: 'account',
+    };
+    const previous: UsageReport = {
+      ...base,
+      status: 'ok',
+      meters: [quota],
+      plan: 'Gentle',
+      spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 },
+    };
+    const failed: UsageReport = {
+      ...base,
+      status: 'warning',
+      message: 'cuota no disponible',
+      plan: null,
+      spend: null,
+      meters: [
+        { id: 'custom', label: 'Consumo', percent: 10, used: 10, limit: 100, unit: 'tokens', resetsAt: null, windowSeconds: null },
+        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
+      ],
+    };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['custom', 'rate_requests', 'model:deepseek-v4-flash']);
+    expect(merged.message).toBe('cuota no disponible');
+    // El informe nuevo manda; lo que no trae se conserva del anterior.
+    expect(merged.plan).toBe('Gentle');
+    expect(merged.spend).toEqual(previous.spend);
+    // Un informe marcado como desactualizado no dispara avisos.
+    expect(detectAlerts([previous], [merged], {}, { threshold: 90, onReset: true }).events).toHaveLength(0);
+  });
+
+  it('does not mark a report stale when the failed one keeps every meter', () => {
+    // El informe nuevo trae todos sus medidores: no hay nada viejo que conservar, así que
+    // el informe NO queda desactualizado (un `stale` haría que los avisos lo saltaran
+    // entero, y ese ciclo perdería su aviso de límite superado).
+    const failed: UsageReport = { ...base, status: 'warning', message: '429' };
+    const [merged] = mergeReports([base], [failed]);
+    expect(merged.stale).toBeUndefined();
+    expect(merged.meters).toHaveLength(2);
+    // Y ese ciclo sigue avisando con normalidad.
+    const exceeded = detectAlerts([base], [{ ...failed, meters: [{ ...base.meters[0], percent: 95 }] }], {}, { threshold: 90, onReset: true });
+    expect(exceeded.events.map((e) => e.kind)).toContain('exceeded');
   });
 
   it('keeps the last data when the session expires', () => {
