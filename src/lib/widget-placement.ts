@@ -175,6 +175,13 @@ export const PLACEMENT_READ_ATTEMPTS = 5;
 export const PLACEMENT_READ_DELAY_MS = 100;
 
 /**
+ * Motivos que el lazo de reintento vuelve a pedir por omisión: sólo
+ * `not_viewable`, el informe blando de una ventana que todavía no es legible.
+ * Es la política de la tira (#179) y no cambia.
+ */
+export const DEFAULT_RETRY_REASONS: readonly WidgetPlacementReason[] = ['not_viewable'];
+
+/**
  * Lee la colocación reintentando **en silencio** mientras el backend diga que
  * la ventana todavía no es visible.
  *
@@ -183,6 +190,11 @@ export const PLACEMENT_READ_DELAY_MS = 100;
  * el llamante decide si lo agotado es un fallo (y entonces lo muestra) o si
  * la ventana ya se pudo leer. `read` devuelve `null` para abandonar la
  * lectura (la ventana ya no está en pie), y una excepción se propaga.
+ *
+ * Los motivos que se reintentan los dice el llamante (`retryReasons`): la
+ * tira reintenta sólo `not_viewable` (la política de siempre) y el detalle
+ * también `read_failed`, porque su llamada nativa puede fallar sin que la
+ * geometría llegue a aplicarse (#250/S17).
  */
 export const readPlacementWithRetries = async (
   read: () => Promise<WidgetPlacementReport | null>,
@@ -195,6 +207,8 @@ export const readPlacementWithRetries = async (
     sleep?: (ms: number) => Promise<void>;
     /** Aborta antes o después de la espera si la condición se cumple (p. ej. tira ocultada). */
     shouldAbort?: () => boolean;
+    /** Motivos que se reintentan; por defecto, los de la tira. */
+    retryReasons?: readonly WidgetPlacementReason[];
   } = {},
 ): Promise<WidgetPlacementReport | null> => {
   const attempts = Math.max(1, opts.attempts ?? PLACEMENT_READ_ATTEMPTS);
@@ -202,11 +216,13 @@ export const readPlacementWithRetries = async (
   const sleep =
     opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms)));
   const shouldAbort = opts.shouldAbort ?? (() => false);
+  const retryReasons = opts.retryReasons ?? DEFAULT_RETRY_REASONS;
   if (shouldAbort()) return null;
   let report = await read();
   if (shouldAbort()) return null;
   for (let attempt = 1; attempt < attempts; attempt++) {
-    if (!report || report.reason !== 'not_viewable') break;
+    const reason = report?.reason;
+    if (!report || !reason || !retryReasons.includes(reason)) break;
     await sleep(delayMs);
     if (shouldAbort()) return null;
     report = await read();

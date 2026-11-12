@@ -106,6 +106,26 @@ jobs:
         working-directory: src-tauri
         run: cargo test --locked
 
+      # ---- Tier vivo del ajuste de ventana (#250) ----
+      # Los tests `window_fit_gtk_test` (el ajuste de la ventana por compositor)
+      # están `#[ignore]` porque necesitan un display: construyen una ventana
+      # GTK real y leen lo que llegó de verdad a ella (la petición de tamaño y
+      # el tipo de ventana antes del map).
+      # Un CI que corre en cada PR no puede hacer eso: no hay forma de correr
+      # una ventana, ni real ni simulada, que sirva para comprobar el efecto.
+      # Por eso el paso vive en ESTE workflow, que es manual (`workflow_dispatch`)
+      # y ya trae xvfb: se corre a pedido, sin agregar tiempo a cada PR.
+      # Con xvfb no hay gestor de ventanas, así que lo que se comprueba es el
+      # estado a nivel GTK; lo que decide el compositor (que la ventana flote y
+      # respete el `min == max`) sigue siendo la validación manual en Hyprland.
+      # El timeout acota el paso: si el tier vivo se colgara, el job termina
+      # con un error visible en vez de quedarse esperando.
+      - name: Window fit live tier (GTK, xvfb)
+        working-directory: src-tauri
+        env:
+          GDK_BACKEND: x11
+        run: timeout -k 10 600 xvfb-run -a cargo test --locked window_fit -- --ignored --nocapture
+
       # ---- W3 #106: Secret Service smoke (Linux real) ----
       # Los smokes `linux_secret_service_round_trip` y
       # `linux_legacy_migrate_once_then_legacy_is_gone` (secrets.rs) están
