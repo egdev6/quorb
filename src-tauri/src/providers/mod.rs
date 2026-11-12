@@ -81,7 +81,8 @@ impl<'a> Who<'a> {
 /// cuatro CLIs y las cuentas adicionales) reportan el fallo, y los
 /// independientes (Copilot, APIs, 9Router…) se consultan igual: un problema
 /// de WSL no debe vaciar la tira completa.
-#[derive(Debug, Clone, Copy)]
+// `SessionResolver` no implementa `Debug` (no hace falta aquí): sin derive.
+#[derive(Clone, Copy)]
 pub enum SessionAccess<'a> {
     /// Credenciales del host (Windows/macOS), el comportamiento de siempre.
     Host,

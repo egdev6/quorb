@@ -52,7 +52,6 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 /// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
@@ -613,7 +612,7 @@ async fn session_resolver(
             // está Running, el entorno está inaccesible y NO se lanzan
             // procesos del guest. `resolve_home` (SÍ despierta) solo se
             // alcanza con la distro en marcha.
-            distro_available(&adapter, &distro)?;
+            distro_available(adapter.as_ref(), &distro)?;
             let home = match homes.home_for(&distro) {
                 Some(h) => h,
                 None => {
