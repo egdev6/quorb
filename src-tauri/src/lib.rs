@@ -52,7 +52,6 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 /// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
@@ -559,6 +558,30 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
     Ok(())
 }
 
+/// ¿Está la distro elegida disponible SIN despertarla (revisión PR #248)?
+///
+/// `list_distributions` (F4) solo enumera: no lanza procesos dentro del
+/// guest. Una distro Stopped o en transición (o una WSL rota) se reporta
+/// como entorno inaccesible y el SONDEO no la despierta: los sondeos
+/// (`fetch_usage`, `session_stamp`) devuelven ese estado en vez de arrancar
+/// la VM. La acción explícita del usuario (login WSL futuro, #92) es quien
+/// la activa.
+fn distro_available(adapter: &dyn wsl::WslAdapter, distro: &str) -> Result<(), String> {
+    let distros = adapter
+        .list_distributions()
+        .map_err(|e| format!("WSL: {e:?}"))?;
+    match distros
+        .iter()
+        .find(|d| wsl::distro_name_matches(distro, &d.name))
+    {
+        Some(d) if matches!(d.state, wsl::DistroState::Running) => Ok(()),
+        Some(_) => Err(format!(
+            "La distro «{distro}» no está en marcha: arráncala (o haz login) para leer sus sesiones"
+        )),
+        None => Err(format!("La distro «{distro}» no está instalada en WSL")),
+    }
+}
+
 /// Resolvedor de sesiones del entorno configurado (#91): `None` en host (el
 /// comportamiento de siempre, incluido el respaldo del Keychain de macOS), y
 /// en WSL el resolvedor de la distro elegida, con el home de su default user
@@ -574,14 +597,22 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
 /// vez por distro (`homes`) y se reutiliza en los ticks de `session_stamp`
 /// (cada 15 s), para no mantener la VM de WSL activa (revisión del
 /// mantenedor, 2026-11-02).
+///
+/// `adapter` es `Arc<dyn WslAdapter>` (no el tipo concreto) para poder probar
+/// el guard de distro con `MockWslAdapter`; en runtime llega el real.
 async fn session_resolver(
     cfg: &AppConfig,
-    adapter: std::sync::Arc<wsl::RealWslAdapter>,
+    adapter: std::sync::Arc<dyn wsl::WslAdapter>,
     homes: &wsl::WslHomeCache,
 ) -> Result<Option<wsl::SessionResolver>, String> {
     match cfg.session_env() {
         wsl::SessionEnv::Host => Ok(None),
         wsl::SessionEnv::Wsl { distro } => {
+            // No despertar la distro en un sondeo (revisión PR #248): si no
+            // está Running, el entorno está inaccesible y NO se lanzan
+            // procesos del guest. `resolve_home` (SÍ despierta) solo se
+            // alcanza con la distro en marcha.
+            distro_available(adapter.as_ref(), &distro)?;
             let home = match homes.home_for(&distro) {
                 Some(h) => h,
                 None => {
@@ -604,17 +635,22 @@ async fn session_resolver(
 async fn fetch_usage(state: State<'_, AppState>) -> Result<Vec<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    let reports =
-        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
-            // Host: el comportamiento de siempre (sin resolvedor).
-            Ok(None) => providers::fetch_all(&cfg, &state.http, None).await,
-            // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
-            Ok(Some(resolver)) => providers::fetch_all(&cfg, &state.http, Some(&resolver)).await,
-            // El entorno configurado no se puede resolver: fallo explícito en el
-            // orbe, nunca una lectura silenciosa del otro entorno (#91).
-            Err(e) => vec![UsageReport::new("wsl", "WSL", model::Kind::Subscription)
-                .fail(model::Status::Error, e)],
-        };
+    let reports = match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+        // Host: el comportamiento de siempre (sin resolvedor).
+        Ok(None) => providers::fetch_all(&cfg, &state.http, providers::SessionAccess::Host).await,
+        // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
+        Ok(Some(resolver)) => {
+            providers::fetch_all(&cfg, &state.http, providers::SessionAccess::Wsl(&resolver)).await
+        }
+        // El entorno configurado no se puede resolver (distro detenida,
+        // inexistente o WSL roto): SOLO los proveedores cuya sesión vive
+        // en ese entorno reportan el fallo; los independientes (Copilot,
+        // APIs, 9Router…) se consultan igual. Nunca una lectura silenciosa
+        // del otro entorno (#91, revisión PR #248).
+        Err(e) => {
+            providers::fetch_all(&cfg, &state.http, providers::SessionAccess::Unavailable(&e)).await
+        }
+    };
     state
         .history
         .record(&reports, chrono::Utc::now().timestamp());
@@ -825,15 +861,16 @@ fn overlay_done(app: AppHandle) {
 async fn session_stamp(state: State<'_, AppState>) -> Result<u64, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    Ok(
-        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
-            // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
-            Ok(resolver) => providers::session_stamp(&cfg, resolver.as_ref()).await,
-            // El entorno no se puede resolver: sin sello (0), el widget espera al
-            // próximo refresco en vez de observar cuentas de otro entorno (#91).
-            Err(_) => 0,
-        },
-    )
+    match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+        // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
+        Ok(resolver) => Ok(providers::session_stamp(&cfg, resolver.as_ref()).await),
+        // El entorno no se puede resolver (distro detenida, inexistente o WSL
+        // roto): ERROR, no 0. El sello 0 significa «sin sesiones» (legítimo);
+        // confundirlo con «distro inaccesible» haría que el widget viera una
+        // ausencia de sesiones cuando en realidad no pudo comprobar nada — y
+        // con la distro detenida el sondeo NO la despierta (revisión PR #248).
+        Err(e) => Err(e),
+    }
 }
 
 /// Comprueba la conexión de una cuenta (principal o adicional) con la config guardada,
@@ -845,8 +882,26 @@ async fn check_provider(
 ) -> Result<Option<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    let resolver = session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await?;
-    Ok(providers::fetch_one(&cfg, &id, &state.http, resolver.as_ref()).await)
+    // La referencia al resolvedor (o al motivo del fallo) no puede salir del
+    // brazo del `match`: el fetch se hace DENTRO de cada rama.
+    let report = match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+        Ok(None) => {
+            providers::fetch_one(&cfg, &id, &state.http, providers::SessionAccess::Host).await
+        }
+        Ok(Some(r)) => {
+            providers::fetch_one(&cfg, &id, &state.http, providers::SessionAccess::Wsl(&r)).await
+        }
+        Err(e) => {
+            providers::fetch_one(
+                &cfg,
+                &id,
+                &state.http,
+                providers::SessionAccess::Unavailable(&e),
+            )
+            .await
+        }
+    };
+    Ok(report)
 }
 
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
@@ -868,6 +923,13 @@ fn account_session_file_found(cfg: &AppConfig, id: &str, home: &std::path::Path)
 #[tauri::command]
 fn account_session(state: State<'_, AppState>, id: String) -> bool {
     let cfg = state.config.lock().unwrap().clone();
+    // En modo WSL este sondeo sigue mirando el HOST (hasta #92): devolver su
+    // resultado mostraría como «conectada» una sesión de Windows que no tiene
+    // relación con la distro (revisión PR #248). Sin la integración del guest
+    // no se confirma nada, y no se despierta la distro.
+    if matches!(cfg.session_env(), wsl::SessionEnv::Wsl { .. }) {
+        return false;
+    }
     account_session_file_found(&cfg, &id, &providers::home())
 }
 
@@ -1799,6 +1861,152 @@ mod tests {
         // OpenRouter no usa sesión de CLI: ni con ficheros en la carpeta hay presencia.
         std::fs::write(dir.join("auth.json"), b"{}").unwrap();
         assert!(!account_session_file_found(&cfg, "openrouter:w1", &home));
+    }
+
+    /// Revisión PR #248: el SONDEO no despierta una distro detenida. Con la
+    /// distro Stopped, `session_resolver` devuelve error ANTES de `resolve_home`
+    /// (que es quien lanzaría procesos del guest): la única llamada al
+    /// adaptador es la enumeración (F4), que no despierta.
+    #[test]
+    fn session_resolver_does_not_wake_a_stopped_distro() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // `SessionResolver` no implementa `Debug`: `expect_err` no aplica.
+        let err = match rt.block_on(session_resolver(&cfg, adapter.clone(), &homes)) {
+            Err(e) => e,
+            Ok(_) => panic!("distro detenida: el entorno no debe estar accesible"),
+        };
+        assert!(err.contains("no está en marcha"), "{err}");
+        let calls = mock.calls();
+        assert!(
+            calls
+                .iter()
+                .all(|c| matches!(c, crate::wsl::WslCall::ListDistributions)),
+            "sin procesos del guest: {calls:?}"
+        );
+    }
+
+    /// Con la distro Running, el resolvedor se construye y su home se cachea
+    /// (revisión PR #248: la transición detenida → en marcha vuelve a leer).
+    #[test]
+    fn session_resolver_resolves_when_the_distro_is_running() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_home("Ubuntu-22.04", std::path::PathBuf::from("/home/user"));
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .expect("distro en marcha: resolvedor disponible");
+        assert!(resolver.is_some());
+        assert_eq!(resolver.unwrap().home(), std::path::Path::new("/home/user"));
+        // El home queda cacheado: una segunda resolución no relanza
+        // `resolve_home` (sí vuelve a comprobar la distro con el guard, que no
+        // despierta; por eso se cuenta `ResolveHome`, no el total de llamadas).
+        let resolve_homes = |calls: &[crate::wsl::WslCall]| {
+            calls
+                .iter()
+                .filter(|c| matches!(c, crate::wsl::WslCall::ResolveHome(_)))
+                .count()
+        };
+        let before = mock.calls();
+        assert_eq!(resolve_homes(&before), 1, "la primera resolución lo pidió");
+        rt.block_on(session_resolver(&cfg, adapter, &homes))
+            .expect("cacheado");
+        assert_eq!(
+            resolve_homes(&mock.calls()),
+            resolve_homes(&before),
+            "home resuelto una sola vez"
+        );
+    }
+
+    /// Una distro detenida sigue siendo inaccesible con el home cacheado;
+    /// al volver a arrancar, se reutiliza el mismo home sin despertar el guest.
+    #[test]
+    fn session_resolver_rechecks_distro_state_without_waking_it() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter, WslCall};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let expected_home = std::path::Path::new("/home/user");
+        mock.set_home("Ubuntu-22.04", expected_home.to_path_buf());
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .expect("distro en marcha: resolvedor disponible")
+            .expect("modo WSL: resolvedor presente");
+        assert_eq!(resolver.home(), expected_home);
+        let before_stopped = mock.calls();
+        assert_eq!(
+            before_stopped,
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ResolveHome("Ubuntu-22.04".into()),
+            ]
+        );
+
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        let err = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .err()
+            .expect("distro detenida: el entorno no debe estar accesible");
+        assert_eq!(
+            err,
+            "La distro «Ubuntu-22.04» no está en marcha: arráncala (o haz login) para leer sus sesiones"
+        );
+        let after_stopped = mock.calls();
+        assert_eq!(
+            &after_stopped[..before_stopped.len()],
+            before_stopped.as_slice()
+        );
+        assert_eq!(
+            &after_stopped[before_stopped.len()..],
+            &[WslCall::ListDistributions],
+            "sondear una distro detenida no debe ejecutar operaciones del guest"
+        );
+
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter, &homes))
+            .expect("distro en marcha de nuevo: resolvedor disponible")
+            .expect("modo WSL: resolvedor presente");
+        assert_eq!(resolver.home(), expected_home);
+        assert_eq!(
+            mock.calls(),
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ResolveHome("Ubuntu-22.04".into()),
+                WslCall::ListDistributions,
+                WslCall::ListDistributions,
+            ],
+            "comprobar cada estado y reutilizar el home cacheado"
+        );
     }
 
     #[test]

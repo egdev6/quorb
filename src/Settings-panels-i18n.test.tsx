@@ -88,7 +88,7 @@ describe('Subscription provider panels (SSR, i18n)', () => {
         'aria-label="Cómo conectar la cuenta"',
         'Avanzado · fichero de sesión y comando de login',
         'Fichero de credenciales',
-        String.raw`Vacío = <code>%USERPROFILE%\.claude\.credentials.json</code>. Para WSL: <code>\\wsl.localhost\Ubuntu\home\TU_USUARIO\.claude\.credentials.json</code>`,
+        String.raw`Vacío = <code>%USERPROFILE%\.claude\.credentials.json</code>. Para WSL: <code>/home/TU_USUARIO/.claude/.credentials.json</code>`,
         'Comando de login',
         // pasos de CliConnect (C1a), pintados dentro del panel
         '<b>Inicia sesión</b>',
@@ -144,7 +144,7 @@ describe('Subscription provider panels (SSR, i18n)', () => {
         'aria-label="How to connect the account"',
         'Advanced · session file and login command',
         'Credentials file',
-        String.raw`Empty = <code>%USERPROFILE%\.claude\.credentials.json</code>. For WSL: <code>\\wsl.localhost\Ubuntu\home\YOUR_USER\.claude\.credentials.json</code>`,
+        String.raw`Empty = <code>%USERPROFILE%\.claude\.credentials.json</code>. For WSL: <code>/home/YOUR_USER/.claude/.credentials.json</code>`,
         'Login command',
         '<b>Sign in</b>',
         'Checking the connection…',
@@ -206,6 +206,27 @@ describe('Subscription provider panels (SSR, i18n)', () => {
       ],
       'en claude/codex/gemini/grok',
     );
+  });
+
+  it('warns in WSL mode that the CLI detection and login are still the Windows ones (PR #248)', () => {
+    // Hasta #92, la detección del CLI y el login abren el CLI de HOST: el paso
+    // de conexión lo declara en vez de presentarse como si corriera en la distro.
+    const wslCfg = { ...cfg, sessionEnv: 'wsl' } as AppConfig;
+    const html = renderToStaticMarkup(
+      <SubscriptionPanel
+        {...common('es')}
+        cfg={wslCfg}
+        p="claude"
+        cli={{}}
+        codexInstall={codexInstall}
+        onCodexRecheck={noop}
+      />,
+    );
+    expect(html).toContain('Modo WSL');
+    expect(html).toContain('usan el CLI de Windows');
+    // En host no aparece el aviso.
+    const hostHtml = subscription('es', 'claude');
+    expect(hostHtml).not.toContain('Modo WSL');
   });
 
   it('renders the Spanish literals of Cursor copied verbatim from the current code', () => {

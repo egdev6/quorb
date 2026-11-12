@@ -15,7 +15,7 @@ import { checkForUpdate, emitUpdateAvailable, installUpdate, shouldNotifyUpdate,
 import { useUpdaterMode } from './lib/useUpdater';
 import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
-import { needsRefresh } from './lib/widget-refresh';
+import { envKey, needsRefresh } from './lib/widget-refresh';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
 import { placementOutcome, readPlacementWithRetries, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 import {
@@ -222,6 +222,14 @@ export function Widget() {
   const geoRef = useRef<Geo | null>(null);
   const inFlight = useRef(false);
   const refreshAbort = useRef<AbortController | null>(null);
+  /**
+   * Entorno (host/WSL + distro) con el que se lanzó el refresco en vuelo
+   * (revisión PR #248). Si cambia antes de que responda, la respuesta ya no es
+   * válida: se aborta y se descarta (`refreshSeq`), y se vuelve a pedir con el
+   * entorno nuevo.
+   */
+  const refreshSeq = useRef(0);
+  const refreshEnv = useRef<string>('');
   const closeTimer = useRef<number | undefined>(undefined);
   const openTimer = useRef<number | undefined>(undefined);
   /**
@@ -292,7 +300,14 @@ export function Widget() {
 
   // ───── datos ─────
   const refresh = useCallback(async (): Promise<boolean> => {
-    if (inFlight.current) return false;
+    // Un refresco en vuelo pertenece a un entorno que puede haber cambiado:
+    // su respuesta ya no vale (revisión PR #248). Se aborta y su resultado se
+    // descarta; esta llamada sigue con el entorno VIGENTE.
+    const env = envKey(configRef.current);
+    if (inFlight.current && refreshEnv.current === env) return false;
+    if (inFlight.current) refreshAbort.current?.abort();
+    const seq = ++refreshSeq.current;
+    refreshEnv.current = env;
     inFlight.current = true;
     const controller = new AbortController();
     refreshAbort.current = controller;
@@ -302,7 +317,7 @@ export function Widget() {
       // fallo transitorio no obliga a esperar al siguiente ciclo. Si se agota,
       // el error se muestra (no se oculta el fallo).
       const next = await retryWithBackoff(() => api.fetchUsage(), { ...USAGE_RETRY, signal: controller.signal });
-      if (controller.signal.aborted) return false;
+      if (controller.signal.aborted || seq !== refreshSeq.current) return false;
       const prev = reportsRef.current;
       const merged = mergeReports(prev, next);
       reportsRef.current = merged;
@@ -319,15 +334,26 @@ export function Widget() {
       setError(null);
       return true;
     } catch (e) {
-      if (!controller.signal.aborted) setError(String(e));
+      if (!controller.signal.aborted && seq === refreshSeq.current) setError(String(e));
       return false;
     } finally {
-      inFlight.current = false;
-      if (!controller.signal.aborted) setLoading(false);
+      // Solo la lectura vigente libera el bloqueo y apaga el indicador.
+      if (seq === refreshSeq.current) {
+        inFlight.current = false;
+        if (!controller.signal.aborted) setLoading(false);
+      }
     }
   }, [runAlerts]);
 
   const applyConfig = useCallback((c: AppConfig) => {
+    const prev = configRef.current;
+    // Cambio de entorno (host ↔ WSL, o de distro): los informes actuales son
+    // del otro entorno y no valen (revisión PR #248). Se vacían para que no se
+    // muestren datos del host como si fueran de la distro (y al revés).
+    if (prev && envKey(prev) !== envKey(c)) {
+      reportsRef.current = [];
+      setReports([]);
+    }
     configRef.current = c;
     setConfig(c);
   }, []);
