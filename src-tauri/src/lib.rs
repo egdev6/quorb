@@ -1910,6 +1910,77 @@ mod tests {
         );
     }
 
+    /// Una distro detenida sigue siendo inaccesible con el home cacheado;
+    /// al volver a arrancar, se reutiliza el mismo home sin despertar el guest.
+    #[test]
+    fn session_resolver_rechecks_distro_state_without_waking_it() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter, WslCall};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let expected_home = std::path::Path::new("/home/user");
+        mock.set_home("Ubuntu-22.04", expected_home.to_path_buf());
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .expect("distro en marcha: resolvedor disponible")
+            .expect("modo WSL: resolvedor presente");
+        assert_eq!(resolver.home(), expected_home);
+        let before_stopped = mock.calls();
+        assert_eq!(
+            before_stopped,
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ResolveHome("Ubuntu-22.04".into()),
+            ]
+        );
+
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        let err = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .err()
+            .expect("distro detenida: el entorno no debe estar accesible");
+        assert_eq!(
+            err,
+            "La distro «Ubuntu-22.04» no está en marcha: arráncala (o haz login) para leer sus sesiones"
+        );
+        let after_stopped = mock.calls();
+        assert_eq!(
+            &after_stopped[..before_stopped.len()],
+            before_stopped.as_slice()
+        );
+        assert_eq!(
+            &after_stopped[before_stopped.len()..],
+            &[WslCall::ListDistributions],
+            "sondear una distro detenida no debe ejecutar operaciones del guest"
+        );
+
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter, &homes))
+            .expect("distro en marcha de nuevo: resolvedor disponible")
+            .expect("modo WSL: resolvedor presente");
+        assert_eq!(resolver.home(), expected_home);
+        assert_eq!(
+            mock.calls(),
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ResolveHome("Ubuntu-22.04".into()),
+                WslCall::ListDistributions,
+                WslCall::ListDistributions,
+            ],
+            "comprobar cada estado y reutilizar el home cacheado"
+        );
+    }
+
     #[test]
     fn patch_touches_always_on_top_by_presence_not_change() {
         // Mismo valor que la base: el reintento debe re-aplicar el efecto igual.
