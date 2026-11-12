@@ -40,11 +40,8 @@ pub async fn fetch(
     // comportamiento de siempre (disco local).
     let creds: Value = match resolver {
         Some(r) => {
-            let default = r.default_path(
-                super::provider_session_relative("gemini")
-                    .expect("proveedor CLI")
-                    .as_path(),
-            );
+            let default =
+                r.default_path(super::session_relative(super::CliSessionKind::Gemini).as_path());
             let path = match r.resolve(cfg.credentials_path.as_deref(), &default) {
                 Ok(p) => p,
                 Err(e) => return report.fail(Status::Error, e.to_string()),

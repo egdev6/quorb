@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dataKey, needsRefresh } from './widget-refresh';
+import { dataKey, envKey, needsRefresh } from './widget-refresh';
 import type { AppConfig } from './types';
 
 // Config mínima con todos los proveedores; cada test cambia uno y comprueba si
@@ -41,6 +41,29 @@ describe('widget refresh discriminator', () => {
     expect(needsRefresh(base, cfg())).toBe(false);
     // Cambios cosméticos (fuera de dataKey) no cuentan.
     expect(needsRefresh(base, cfg({ accentColor: '#ff0000' } as Partial<AppConfig>))).toBe(false);
+  });
+
+  it('invalidates reports when the SESSION ENVIRONMENT changes (host ↔ WSL, distro)', () => {
+    // Revisión PR #248: los datos de un entorno no valen para el otro. Antes
+    // dataKey omitía sessionEnv/wslDistro y el widget seguía mostrando la
+    // lectura del entorno anterior.
+    const base = cfg();
+    expect(needsRefresh(base, cfg({ sessionEnv: 'wsl' } as Partial<AppConfig>))).toBe(true);
+    expect(
+      needsRefresh(base, cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>)),
+    ).toBe(true);
+    const wsl = cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>);
+    expect(
+      needsRefresh(wsl, cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-24.04' } as Partial<AppConfig>)),
+    ).toBe(true);
+  });
+
+  it('envKey identifies the session environment and changes with it', () => {
+    const host = cfg();
+    const wsl = cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>);
+    expect(envKey(host)).not.toBe(envKey(wsl));
+    expect(envKey(wsl)).toBe(envKey(cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>)));
+    expect(envKey(null)).toBe('');
   });
 
   it('handles a null previous config', () => {

@@ -73,11 +73,8 @@ pub async fn fetch(
     // comportamiento de siempre (disco local).
     let auth_json: Value = match resolver {
         Some(r) => {
-            let default = r.default_path(
-                super::provider_session_relative("grok")
-                    .expect("proveedor CLI")
-                    .as_path(),
-            );
+            let default =
+                r.default_path(super::session_relative(super::CliSessionKind::Grok).as_path());
             let path = match r.resolve(cfg.credentials_path.as_deref(), &default) {
                 Ok(p) => p,
                 Err(e) => return report.fail(Status::Error, e.to_string()),

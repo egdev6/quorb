@@ -162,6 +162,10 @@ export interface AppConfig {
   /** El usuario ya eligió idioma en el selector de primer arranque (#235). */
   localeSelected: boolean;
   refreshMinutes: number;
+  /** Entorno donde viven los CLIs y sus sesiones: `host` o `wsl` (#91/#92) */
+  sessionEnv: 'host' | 'wsl';
+  /** Distro WSL elegida cuando `sessionEnv` es `wsl` (vacía = sin elegir) */
+  wslDistro: string;
   opacity: number;
   compact: boolean;
   /** Mostrar el saldo de resets en los círculos; el popup lo conserva siempre. */
