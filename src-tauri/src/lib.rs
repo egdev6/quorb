@@ -1071,9 +1071,14 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-/// El selector de primer arranque solo existe en Linux y solo antes de elegir (S3).
-fn locale_picker_needed(linux: bool, cfg: &AppConfig) -> bool {
-    linux && !cfg.locale_selected
+/// Linux y macOS piden idioma antes de crear la UI principal; Windows no cambia.
+fn locale_picker_needed_on(os: &str, cfg: &AppConfig) -> bool {
+    matches!(os, "linux" | "macos") && !cfg.locale_selected
+}
+
+/// Gate de producción, compartido por setup y la prueba del target compilado.
+fn locale_picker_needed(cfg: &AppConfig) -> bool {
+    locale_picker_needed_on(std::env::consts::OS, cfg)
 }
 
 /// Destino de una segunda instancia: el selector abierto tiene prioridad (S14).
@@ -1341,10 +1346,7 @@ pub fn run() {
                 wsl_homes: wsl::WslHomeCache::default(),
             });
             // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
-            let picker = locale_picker_needed(
-                cfg!(target_os = "linux"),
-                &app.state::<AppState>().config.lock().unwrap(),
-            );
+            let picker = locale_picker_needed(&app.state::<AppState>().config.lock().unwrap());
             if picker {
                 open_locale_picker(app.handle())?;
             } else {
@@ -1467,17 +1469,43 @@ mod tests {
     }
 
     #[test]
-    fn locale_picker_is_linux_only_and_only_before_a_choice() {
-        // S3: el selector no aparece en Windows/macOS ni tras una elección previa.
+    fn locale_picker_is_required_on_fresh_macos() {
+        assert!(
+            locale_picker_needed_on("macos", &AppConfig::default()),
+            "fresh macOS must show the locale picker before the main UI"
+        );
+    }
+
+    #[test]
+    fn locale_picker_platform_policy_preserves_existing_choices() {
         let fresh = AppConfig::default();
         let chosen = AppConfig {
             locale_selected: true,
             ..AppConfig::default()
         };
-        assert!(locale_picker_needed(true, &fresh));
-        assert!(!locale_picker_needed(true, &chosen));
-        assert!(!locale_picker_needed(false, &fresh));
-        assert!(!locale_picker_needed(false, &chosen));
+        for (os, needs_picker) in [
+            ("macos", true),
+            ("linux", true),
+            ("windows", false),
+            ("freebsd", false),
+        ] {
+            assert_eq!(locale_picker_needed_on(os, &fresh), needs_picker, "{os}");
+            assert!(!locale_picker_needed_on(os, &chosen), "{os}");
+        }
+    }
+
+    #[test]
+    fn locale_picker_production_gate_matches_compiled_target() {
+        // Se ejercita el mismo gate que setup, no solo la tabla de plataformas.
+        assert_eq!(
+            locale_picker_needed(&AppConfig::default()),
+            cfg!(any(target_os = "linux", target_os = "macos"))
+        );
+        let chosen = AppConfig {
+            locale_selected: true,
+            ..AppConfig::default()
+        };
+        assert!(!locale_picker_needed(&chosen));
     }
 
     /// #227: la regla de KWin documentada en docs/build-linux.md §6.2 solo debe
