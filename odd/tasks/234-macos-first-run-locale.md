@@ -1,5 +1,5 @@
 # #234 — macOS first-run locale selection
-Branch: `feat/234-macos-first-run-locale`; baseline: `2da297d1e32e7c60f28fcbf7b151ce2eefed9d3f`; delivery: `ask-on-risk`, one cohesive unit, currently 79 authored source/docs diff lines.
+Branch: `feat/234-macos-first-run-locale`; baseline: `2da297d1e32e7c60f28fcbf7b151ce2eefed9d3f`; delivery: `ask-on-risk`, one cohesive unit, implementation unit: 180 authored changed lines, including tracking.
 Checks: Cargo unit tests, Vitest/Node, TypeScript, formatting, i18n inventory; native macOS acceptance is separate.
 
 ## Specs
@@ -13,12 +13,12 @@ Checks: Cargo unit tests, Vitest/Node, TypeScript, formatting, i18n inventory; n
 
 ## Tasks
 
-- **T1 [S1, S3, S6] — done — parent:** Reconcile scope, feature branch and support agreement; create truthful ODD tracking and Engram mirror. Commit: none.
-- **T2 [S2] — done — writer `mwdp1m9u-2-6xuh`, parent integration:** Extend locale eligibility to macOS, preserve Linux/Windows policy, tests and macOS documentation. Evidence: RED/GREEN and 66 additions / 13 deletions across two files, detailed in L4. Commit: uncommitted; human visual acceptance confirmed in L8.
-- **T3 [S2, S4] — done — independent verifier `mwdpp1ev-5-pegr`, parent spot-check:** Verify isolated automated behavior. Evidence: 16 tests passed and typecheck passed; previous preparation failure remains recorded in L5. Commit: uncommitted.
-- **T4 [S2, S4] — done — human visual acceptance:** Initial picker, persistence, close-without-choice, surface order and Settings language changes confirmed by the human in L6/L8. No reinstall was performed. Commit: uncommitted.
-- **T5 [S2] — in_progress — parent:** Regenerate and check `docs/i18n-inventory.md` against the definitive source candidate without claiming that HEAD-only checks cover uncommitted changes. Must respect S4. Commit: none.
-- **T6 [S5] — pending — parent:** After finishing #234, check duplicates and prepare/create the separate Claude error i18n issue according to repository policy; do not mix its fix into this feature. Commit: not applicable.
+- **T1 [S1, S3, S6] — done — parent:** Reconcile scope, feature branch and support agreement; create truthful ODD tracking and Engram mirror. Commit: `bd3af49`.
+- **T2 [S2] — done — writer `mwdp1m9u-2-6xuh`, parent integration:** Extend locale eligibility to macOS, preserve Linux/Windows policy, tests and macOS documentation. Evidence: RED/GREEN and 66 additions / 13 deletions across two files, detailed in L4. Commit: `bd3af49`; human visual acceptance confirmed in L8.
+- **T3 [S2, S4] — done — independent verifier `mwdpp1ev-5-pegr`, parent spot-check:** Verify isolated automated behavior. Evidence: 16 tests passed and typecheck passed; previous preparation failure remains recorded in L5. Commit: `bd3af49`.
+- **T4 [S2, S4] — done — human visual acceptance:** Initial picker, persistence, close-without-choice, surface order and Settings language changes confirmed by the human in L6/L8. No reinstall was performed. Commit: `bd3af49`.
+- **T5 [S2] — done — parent:** Inventory generated with the canonical scanner/renderer from the staged source blobs, then CLI-checked against the committed candidate, exit 0. Header-only hash refresh; texts unchanged. Commit: `bd3af49`.
+- **T6 [S5] — blocked — parent:** Await explicit confirmation to discover duplicates and publish the separate Claude error i18n issue to `github.com/egdev6/quorb` as `ludevdot`, per issue-creation policy. Do not mix its fix into this feature. Commit: not applicable.
 
 ## Log
 
@@ -36,7 +36,7 @@ Support session `01a1d049-109d-7252-bc0d-7c7caf8c9b1a` explicitly accepted a rea
 
 ### L3 — Work unit and branch
 
-The parent owns integration, and the bounded writer owns the implementation unit. Work is held on `feat/234-macos-first-run-locale`; no commit has been created. Current source edits are restricted to `src-tauri/src/lib.rs` and `docs/build-macos.md`.
+The parent owns integration, and the bounded writer owns the implementation unit. Implementation is committed on `feat/234-macos-first-run-locale` as `bd3af49`. The work unit includes `src-tauri/src/lib.rs`, `docs/build-macos.md`, `docs/i18n-inventory.md` and this feature document. No remote delivery has occurred.
 
 ### L4 — Implementation and writer evidence
 
@@ -96,4 +96,12 @@ User confirmation, verbatim:
 > 1. Que antes de elegir no aparece la tira, el panel ni la bandeja. (confirmado)
 > 2. Que desde Ajustes puedes cambiar entre Español e English y se conserva al reiniciar.(confirmado)
 
-Together with L6, this completes the requested development-run visual acceptance. It does not claim a DMG reinstall or upgrade exercise. The restriction against committing before visual testing is satisfied. Inventory refresh and the local work-unit commit follow on the feature branch; no remote delivery is inferred.
+Together with L6, this completes the requested development-run visual acceptance. It does not claim a DMG reinstall or upgrade exercise. The restriction against committing before visual testing is satisfied. Inventory refresh and local work-unit commit completed on the feature branch; no remote delivery is inferred.
+
+### L9 — Local delivery and inventory evidence
+
+Commit `bd3af4999d7bf1fa95a7810694c5cf18ec028c15` — `feat(macos): choose language before first-run interface` — contains the four expected paths, 166 additions / 14 deletions. Staging guards confirmed the exact feature branch and paths; whitespace checks passed. The canonical inventory scanner/renderer consumed the staged Rust blob and actual staged source-tree hashes without a temporary commit. Only the generated hash header changed; texts and totals did not. After commit, `node scripts/i18n-inventory.mjs --check` passed against HEAD.
+
+Source trees: `src/` = `c74ee76d4442caa2381254aa550cd15dbeb9254e`; `src-tauri/src/` = `2a94ec7b848fea1770c301516b7bc8b88daefdc7`.
+
+Committed-range native assessment against baseline: native medium, high verification tier from item-3 escalation, independent verification already completed for this unchanged source candidate, `reviewDue: false` (`under_budget`). No native review was started; no review approval or consumed authority is claimed. No DMG build/install, Linux/Windows GUI exercise, push, PR or merge was performed. The follow-up translation issue remains separate and awaits destination/session confirmation.
