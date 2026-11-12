@@ -8,7 +8,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Account, AppConfig, Locale, UsageReport } from './lib/types';
 import type { WindowManagerInfo } from './lib/wm-detect';
-import type { Os } from './lib/os-detect';
 import {
   AccountsBar,
   AutostartNotice,
@@ -64,7 +63,7 @@ const enabledOnly = (...ids: string[]) => {
 // claude: activo con 1 cuenta extra · copilot: activo sin token (falta conectar) · resto desactivados.
 const cfg = enabledOnly('claude', 'copilot');
 
-const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true, platform: Os = 'windows') =>
+const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true, platform: 'windows' | 'macos' | 'linux' = 'windows') =>
   renderToStaticMarkup(
     <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform={platform} />,
   );
@@ -106,6 +105,38 @@ describe('Providers list: tab descriptions and badges (SSR, i18n)', () => {
       [...descriptions.map(([es]) => es), 'ChatGPT y Codex', 'Activo', 'Falta conectar', 'Desactivado', 'Conectar', 'Configurar', 'cuentas'],
       'en',
     );
+  });
+});
+
+describe('ProvidersCard: session-environment selector is Windows-only (PR #248)', () => {
+  it('renders the WSL selector on Windows', () => {
+    const html = card('es', 'claude', true, 'windows');
+    // Solo cuando el entorno ofrece WSL de verdad: el widget de la distro.
+    expect(html).toContain('Sesión de los CLIs');
+    expect(html).toContain('>WSL<');
+  });
+
+  it('does NOT offer WSL on macOS or Linux (the widget would show wsl.exe errors)', () => {
+    for (const platform of ['macos', 'linux'] as const) {
+      const html = card('es', 'claude', true, platform);
+      expect(html, `windows-only: ${platform}`).not.toContain('Sesión de los CLIs');
+      expect(html, `windows-only: ${platform}`).not.toContain('Distro WSL');
+      expect(html, `windows-only: ${platform}`).not.toContain('>WSL<');
+    }
+  });
+
+  it('warns that WSL without a distro reads the host session (PR #248)', () => {
+    const wslCfg = { ...cfg, sessionEnv: 'wsl', wslDistro: '  ' } as AppConfig;
+    const empty = renderToStaticMarkup(
+      <ProvidersCard locale="es" cfg={wslCfg} secrets={{}} tab="claude" drawerOpen onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform="windows" />,
+    );
+    expect(empty).toContain('Sin distro, WSL no está completo');
+    // Con distro escrita, la ayuda normal (sin el aviso).
+    const named = renderToStaticMarkup(
+      <ProvidersCard locale="es" cfg={{ ...wslCfg, wslDistro: 'Ubuntu-22.04' } as AppConfig} secrets={{}} tab="claude" drawerOpen onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform="windows" />,
+    );
+    expect(named).toContain('Distro donde viven los CLIs');
+    expect(named).not.toContain('Sin distro, WSL no está completo');
   });
 });
 

@@ -52,7 +52,6 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 /// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
@@ -559,28 +558,14 @@ fn set_secret(app: AppHandle, key: String, value: String) -> Result<(), String> 
     Ok(())
 }
 
-/// Resolvedor de sesiones del entorno configurado (#91): `None` en host (el
-/// comportamiento de siempre, incluido el respaldo del Keychain de macOS), y
-/// en WSL el resolvedor de la distro elegida, con el home de su default user
-/// resuelto por el adaptador (`resolve_home`, F7).
-///
-/// `Err` cuando el adaptador no puede resolver el home (WSL sin instalar,
-/// distro ausente): el llamador decide cómo reflejarlo; nunca se cae a una
-/// cuenta de otro entorno.
-///
-/// `resolve_home` lanza dos procesos WSL y va en un hilo propio
-/// (`spawn_blocking`), igual que las lecturas del resolvedor: nada de esto
-/// bloquea el executor async (revisión PR #220). El home se resuelve UNA
-/// vez por distro (`homes`) y se reutiliza en los ticks de `session_stamp`
-/// (cada 15 s), para no mantener la VM de WSL activa (revisión del
-/// mantenedor, 2026-11-02).
-/// ¿Está la distro elegida disponible SIN despertarla (revisión PR #253)?
+/// ¿Está la distro elegida disponible SIN despertarla (revisión PR #248)?
 ///
 /// `list_distributions` (F4) solo enumera: no lanza procesos dentro del
 /// guest. Una distro Stopped o en transición (o una WSL rota) se reporta
 /// como entorno inaccesible y el SONDEO no la despierta: los sondeos
 /// (`fetch_usage`, `session_stamp`) devuelven ese estado en vez de arrancar
-/// la VM. La acción explícita del usuario (login WSL) es quien la activa.
+/// la VM. La acción explícita del usuario (login WSL futuro, #92) es quien
+/// la activa.
 fn distro_available(adapter: &dyn wsl::WslAdapter, distro: &str) -> Result<(), String> {
     let distros = adapter
         .list_distributions()
@@ -597,6 +582,22 @@ fn distro_available(adapter: &dyn wsl::WslAdapter, distro: &str) -> Result<(), S
     }
 }
 
+/// Resolvedor de sesiones del entorno configurado (#91): `None` en host (el
+/// comportamiento de siempre, incluido el respaldo del Keychain de macOS), y
+/// en WSL el resolvedor de la distro elegida, con el home de su default user
+/// resuelto por el adaptador (`resolve_home`, F7).
+///
+/// `Err` cuando el adaptador no puede resolver el home (WSL sin instalar,
+/// distro ausente): el llamador decide cómo reflejarlo; nunca se cae a una
+/// cuenta de otro entorno.
+///
+/// `resolve_home` lanza dos procesos WSL y va en un hilo propio
+/// (`spawn_blocking`), igual que las lecturas del resolvedor: nada de esto
+/// bloquea el executor async (revisión PR #220). El home se resuelve UNA
+/// vez por distro (`homes`) y se reutiliza en los ticks de `session_stamp`
+/// (cada 15 s), para no mantener la VM de WSL activa (revisión del
+/// mantenedor, 2026-11-02).
+///
 /// `adapter` es `Arc<dyn WslAdapter>` (no el tipo concreto) para poder probar
 /// el guard de distro con `MockWslAdapter`; en runtime llega el real.
 async fn session_resolver(
@@ -607,7 +608,7 @@ async fn session_resolver(
     match cfg.session_env() {
         wsl::SessionEnv::Host => Ok(None),
         wsl::SessionEnv::Wsl { distro } => {
-            // No despertar la distro en un sondeo (revisión PR #253): si no
+            // No despertar la distro en un sondeo (revisiones PR #248/#253): si no
             // está Running, el entorno está inaccesible y NO se lanzan
             // procesos del guest. `resolve_home` (SÍ despierta) solo se
             // alcanza con la distro en marcha.
@@ -634,17 +635,22 @@ async fn session_resolver(
 async fn fetch_usage(state: State<'_, AppState>) -> Result<Vec<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    let reports =
-        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
-            // Host: el comportamiento de siempre (sin resolvedor).
-            Ok(None) => providers::fetch_all(&cfg, &state.http, None).await,
-            // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
-            Ok(Some(resolver)) => providers::fetch_all(&cfg, &state.http, Some(&resolver)).await,
-            // El entorno configurado no se puede resolver: fallo explícito en el
-            // orbe, nunca una lectura silenciosa del otro entorno (#91).
-            Err(e) => vec![UsageReport::new("wsl", "WSL", model::Kind::Subscription)
-                .fail(model::Status::Error, e)],
-        };
+    let reports = match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+        // Host: el comportamiento de siempre (sin resolvedor).
+        Ok(None) => providers::fetch_all(&cfg, &state.http, providers::SessionAccess::Host).await,
+        // WSL: las sesiones de los CLIs se resuelven y se leen dentro de la distro.
+        Ok(Some(resolver)) => {
+            providers::fetch_all(&cfg, &state.http, providers::SessionAccess::Wsl(&resolver)).await
+        }
+        // El entorno configurado no se puede resolver (distro detenida,
+        // inexistente o WSL roto): SOLO los proveedores cuya sesión vive
+        // en ese entorno reportan el fallo; los independientes (Copilot,
+        // APIs, 9Router…) se consultan igual. Nunca una lectura silenciosa
+        // del otro entorno (#91, revisión PR #248).
+        Err(e) => {
+            providers::fetch_all(&cfg, &state.http, providers::SessionAccess::Unavailable(&e)).await
+        }
+    };
     state
         .history
         .record(&reports, chrono::Utc::now().timestamp());
@@ -855,15 +861,16 @@ fn overlay_done(app: AppHandle) {
 async fn session_stamp(state: State<'_, AppState>) -> Result<u64, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    Ok(
-        match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
-            // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
-            Ok(resolver) => providers::session_stamp(&cfg, resolver.as_ref()).await,
-            // El entorno no se puede resolver: sin sello (0), el widget espera al
-            // próximo refresco en vez de observar cuentas de otro entorno (#91).
-            Err(_) => 0,
-        },
-    )
+    match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+        // WSL: la huella se lee dentro de la distro (misma fuente que los fetch).
+        Ok(resolver) => Ok(providers::session_stamp(&cfg, resolver.as_ref()).await),
+        // El entorno no se puede resolver (distro detenida, inexistente o WSL
+        // roto): ERROR, no 0. El sello 0 significa «sin sesiones» (legítimo);
+        // confundirlo con «distro inaccesible» haría que el widget viera una
+        // ausencia de sesiones cuando en realidad no pudo comprobar nada — y
+        // con la distro detenida el sondeo NO la despierta (revisión PR #248).
+        Err(e) => Err(e),
+    }
 }
 
 /// Comprueba la conexión de una cuenta (principal o adicional) con la config guardada,
@@ -875,8 +882,26 @@ async fn check_provider(
 ) -> Result<Option<UsageReport>, String> {
     let cfg = state.config.lock().unwrap().clone();
     let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
-    let resolver = session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await?;
-    Ok(providers::fetch_one(&cfg, &id, &state.http, resolver.as_ref()).await)
+    // La referencia al resolvedor (o al motivo del fallo) no puede salir del
+    // brazo del `match`: el fetch se hace DENTRO de cada rama.
+    let report = match session_resolver(&cfg, adapter.clone(), &state.wsl_homes).await {
+        Ok(None) => {
+            providers::fetch_one(&cfg, &id, &state.http, providers::SessionAccess::Host).await
+        }
+        Ok(Some(r)) => {
+            providers::fetch_one(&cfg, &id, &state.http, providers::SessionAccess::Wsl(&r)).await
+        }
+        Err(e) => {
+            providers::fetch_one(
+                &cfg,
+                &id,
+                &state.http,
+                providers::SessionAccess::Unavailable(&e),
+            )
+            .await
+        }
+    };
+    Ok(report)
 }
 
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
@@ -1266,9 +1291,14 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-/// El selector de primer arranque solo existe en Linux y solo antes de elegir (S3).
-fn locale_picker_needed(linux: bool, cfg: &AppConfig) -> bool {
-    linux && !cfg.locale_selected
+/// Linux y macOS piden idioma antes de crear la UI principal; Windows no cambia.
+fn locale_picker_needed_on(os: &str, cfg: &AppConfig) -> bool {
+    matches!(os, "linux" | "macos") && !cfg.locale_selected
+}
+
+/// Gate de producción, compartido por setup y la prueba del target compilado.
+fn locale_picker_needed(cfg: &AppConfig) -> bool {
+    locale_picker_needed_on(std::env::consts::OS, cfg)
 }
 
 /// Destino de una segunda instancia: el selector abierto tiene prioridad (S14).
@@ -1536,10 +1566,7 @@ pub fn run() {
                 wsl_homes: wsl::WslHomeCache::default(),
             });
             // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
-            let picker = locale_picker_needed(
-                cfg!(target_os = "linux"),
-                &app.state::<AppState>().config.lock().unwrap(),
-            );
+            let picker = locale_picker_needed(&app.state::<AppState>().config.lock().unwrap());
             if picker {
                 open_locale_picker(app.handle())?;
             } else {
@@ -1662,17 +1689,43 @@ mod tests {
     }
 
     #[test]
-    fn locale_picker_is_linux_only_and_only_before_a_choice() {
-        // S3: el selector no aparece en Windows/macOS ni tras una elección previa.
+    fn locale_picker_is_required_on_fresh_macos() {
+        assert!(
+            locale_picker_needed_on("macos", &AppConfig::default()),
+            "fresh macOS must show the locale picker before the main UI"
+        );
+    }
+
+    #[test]
+    fn locale_picker_platform_policy_preserves_existing_choices() {
         let fresh = AppConfig::default();
         let chosen = AppConfig {
             locale_selected: true,
             ..AppConfig::default()
         };
-        assert!(locale_picker_needed(true, &fresh));
-        assert!(!locale_picker_needed(true, &chosen));
-        assert!(!locale_picker_needed(false, &fresh));
-        assert!(!locale_picker_needed(false, &chosen));
+        for (os, needs_picker) in [
+            ("macos", true),
+            ("linux", true),
+            ("windows", false),
+            ("freebsd", false),
+        ] {
+            assert_eq!(locale_picker_needed_on(os, &fresh), needs_picker, "{os}");
+            assert!(!locale_picker_needed_on(os, &chosen), "{os}");
+        }
+    }
+
+    #[test]
+    fn locale_picker_production_gate_matches_compiled_target() {
+        // Se ejercita el mismo gate que setup, no solo la tabla de plataformas.
+        assert_eq!(
+            locale_picker_needed(&AppConfig::default()),
+            cfg!(any(target_os = "linux", target_os = "macos"))
+        );
+        let chosen = AppConfig {
+            locale_selected: true,
+            ..AppConfig::default()
+        };
+        assert!(!locale_picker_needed(&chosen));
     }
 
     /// #227: la regla de KWin documentada en docs/build-linux.md §6.2 solo debe
@@ -1968,7 +2021,7 @@ mod tests {
         assert!(!account_session_file_found(&cfg, "openrouter:w1", &home));
     }
 
-    /// Revisión PR #253: el SONDEO no despierta una distro detenida. Con la
+    /// Revisiones PR #248/#253: el SONDEO no despierta una distro detenida. Con la
     /// distro Stopped, `session_resolver` devuelve error ANTES de `resolve_home`
     /// (que es quien lanzaría procesos del guest): la única llamada al
     /// adaptador es la enumeración (F4), que no despierta.
@@ -2002,7 +2055,7 @@ mod tests {
     }
 
     /// Con la distro Running, el resolvedor se construye y su home se cachea
-    /// (revisión PR #253: la transición detenida → en marcha vuelve a leer).
+    /// (revisiones PR #248/#253: la transición detenida → en marcha vuelve a leer).
     #[test]
     fn session_resolver_resolves_when_the_distro_is_running() {
         use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter};
@@ -2021,6 +2074,7 @@ mod tests {
         let resolver = rt
             .block_on(session_resolver(&cfg, adapter.clone(), &homes))
             .expect("distro en marcha: resolvedor disponible");
+        assert!(resolver.is_some());
         assert_eq!(resolver.unwrap().home(), std::path::Path::new("/home/user"));
         // El home queda cacheado: una segunda resolución no relanza
         // `resolve_home` (sí vuelve a comprobar la distro con el guard, que no
@@ -2039,6 +2093,77 @@ mod tests {
             resolve_homes(&mock.calls()),
             resolve_homes(&before),
             "home resuelto una sola vez"
+        );
+    }
+
+    /// Una distro detenida sigue siendo inaccesible con el home cacheado;
+    /// al volver a arrancar, se reutiliza el mismo home sin despertar el guest.
+    #[test]
+    fn session_resolver_rechecks_distro_state_without_waking_it() {
+        use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter, WslCall};
+        let mock = std::sync::Arc::new(MockWslAdapter::new());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let expected_home = std::path::Path::new("/home/user");
+        mock.set_home("Ubuntu-22.04", expected_home.to_path_buf());
+        let mut cfg = AppConfig::default();
+        cfg.session_env = crate::config::SessionEnvConfig::Wsl;
+        cfg.wsl_distro = "Ubuntu-22.04".into();
+        let homes = wsl::WslHomeCache::default();
+        let adapter: std::sync::Arc<dyn WslAdapter> = mock.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .expect("distro en marcha: resolvedor disponible")
+            .expect("modo WSL: resolvedor presente");
+        assert_eq!(resolver.home(), expected_home);
+        let before_stopped = mock.calls();
+        assert_eq!(
+            before_stopped,
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ResolveHome("Ubuntu-22.04".into()),
+            ]
+        );
+
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Stopped)]);
+        let err = rt
+            .block_on(session_resolver(&cfg, adapter.clone(), &homes))
+            .err()
+            .expect("distro detenida: el entorno no debe estar accesible");
+        assert_eq!(
+            err,
+            "La distro «Ubuntu-22.04» no está en marcha: arráncala (o haz login) para leer sus sesiones"
+        );
+        let after_stopped = mock.calls();
+        assert_eq!(
+            &after_stopped[..before_stopped.len()],
+            before_stopped.as_slice()
+        );
+        assert_eq!(
+            &after_stopped[before_stopped.len()..],
+            &[WslCall::ListDistributions],
+            "sondear una distro detenida no debe ejecutar operaciones del guest"
+        );
+
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        let resolver = rt
+            .block_on(session_resolver(&cfg, adapter, &homes))
+            .expect("distro en marcha de nuevo: resolvedor disponible")
+            .expect("modo WSL: resolvedor presente");
+        assert_eq!(resolver.home(), expected_home);
+        assert_eq!(
+            mock.calls(),
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ResolveHome("Ubuntu-22.04".into()),
+                WslCall::ListDistributions,
+                WslCall::ListDistributions,
+            ],
+            "comprobar cada estado y reutilizar el home cacheado"
         );
     }
 

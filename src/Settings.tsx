@@ -24,8 +24,8 @@ import { createCodexInstallController, type CodexInstallController } from './lib
 import { keyringErrorHint } from './lib/keyring-message';
 import { comboFromEvent, prettyCombo } from './lib/shortcuts';
 import { detectWindowManager, type WindowManagerInfo } from './lib/wm-detect';
-import { desktopCompatRows, showDesktopCompat } from './lib/desktop-compat';
 import { osFromUA, type Os } from './lib/os-detect';
+import { desktopCompatRows, showDesktopCompat } from './lib/desktop-compat';
 import { ProviderLogo } from './components/ProviderLogo';
 import { CodexInstall } from './components/CodexInstall';
 import quorbLogo from './assets/quorb-logo.png';
@@ -859,8 +859,8 @@ function CliConnect({
   health,
   codexInstall,
   onCodexRecheck,
-  sessionEnv,
-  wslDistro,
+  sessionEnv = 'host',
+  wslDistro = '',
 }: {
   /** Idioma de los pasos. */
   locale: Locale;
@@ -877,10 +877,12 @@ function CliConnect({
   codexInstall: CodexInstallController;
   /** Relectura del CLI compartida con la raíz tras una instalación. */
   onCodexRecheck: () => void;
-  /** Entorno elegido: en WSL no se ofrecen los instaladores de Windows. */
-  sessionEnv: 'host' | 'wsl';
-  /** Distro WSL elegida (informativa). */
-  wslDistro: string;
+  /** Entorno elegido (revisiones PR #248/#253): en WSL, detección y login
+   *  siguen siendo los de Windows hasta que aterrice #92; el sondeo de
+   *  presencia se reinicia al cambiar de entorno. */
+  sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
   // El entorno del BORRADOR forma parte de la identidad del sondeo: al
   // cambiarlo, el poller se reinicia con una generación nueva (PR #253).
@@ -944,8 +946,8 @@ export function CliConnectView({
   busy,
   loginError,
   onConnect,
-  sessionEnv,
-  wslDistro,
+  sessionEnv = 'host',
+  wslDistro = '',
 }: {
   locale: Locale;
   id: string;
@@ -964,7 +966,9 @@ export function CliConnectView({
   /** Diagnóstico del último intento de login que falló. */
   loginError: string | null;
   onConnect: () => void;
-  /** Entorno elegido: en WSL no se ofrecen los instaladores de Windows (revisión PR #92). */
+  /** Entorno elegido (revisiones PR #92/#248): en WSL no se ofrecen los
+   *  instaladores de Windows y se avisa de que detección/login son los de
+   *  Windows hasta #92. */
   sessionEnv?: 'host' | 'wsl';
   /** Distro WSL elegida (informativa en las instrucciones del guest). */
   wslDistro?: string;
@@ -972,6 +976,16 @@ export function CliConnectView({
   const wsl = sessionEnv === 'wsl';
   return (
     <>
+      {sessionEnv === 'wsl' && (
+        <li>
+          {/* Hasta #92 la detección del CLI y el login abren el CLI de HOST:
+              no deben presentarse como si ya corrieran dentro de la distro
+              (revisión PR #248). */}
+          <span className="eg-notice eg-notice--sm eg-notice--warning q-steps__notice" role="status">
+            <span className="eg-notice__text">{t(locale, 'settings.providers.cliConnect.wslHostOnly')}</span>
+          </span>
+        </li>
+      )}
       {cliMissing && (
         <li>
           {wsl ? (
@@ -1041,8 +1055,8 @@ export function AccountEditor({
   health,
   codexInstall,
   onCodexRecheck,
-  sessionEnv,
-  wslDistro,
+  sessionEnv = 'host',
+  wslDistro = '',
 }: {
   /** Idioma del editor. */
   locale: Locale;
@@ -1056,10 +1070,6 @@ export function AccountEditor({
   /** El CLI de login no está instalado: se avisa con la orden para instalarlo. */
   cliMissing: boolean;
   health: HealthProps;
-  /** Entorno elegido: en WSL no se ofrecen los instaladores de Windows. */
-  sessionEnv: 'host' | 'wsl';
-  /** Distro WSL elegida (informativa). */
-  wslDistro: string;
   secrets: SecretStatus;
   onChange: (patch: Partial<Account>) => void;
   onRemove: () => void;
@@ -1067,6 +1077,12 @@ export function AccountEditor({
   /** Instalación asistida de Codex, compartida por la raíz y todas las cuentas. */
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
+  /** Entorno elegido (revisiones PR #248/#253): en WSL, detección y login
+   *  son los de Windows hasta #92; el sondeo de presencia se reinicia al
+   *  cambiar de entorno. */
+  sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
   const appName = useAppName();
   const key = (k: SecretKey) => secretKey(k, a.id);
@@ -1387,7 +1403,7 @@ function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect
 
 /** Tarjeta de la página «Proveedores»: intervalo de consulta y las dos listas
  *  (suscripciones y APIs). Extraída para poder renderizarla en pruebas de i18n. */
-export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro, platform }: {
+export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro, platform = 'windows' }: {
   locale: Locale;
   cfg: AppConfig;
   secrets: SecretStatus;
@@ -1397,8 +1413,10 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
   onRefreshMinutes: (minutes: number) => void;
   onSessionEnv: (env: 'host' | 'wsl') => void;
   onWslDistro: (distro: string) => void;
-  /** Plataforma que sirve esta webview — el selector WSL solo existe en Windows (revisión PR #92). */
-  platform: Os;
+  /** Plataforma del proceso (UA): el modo WSL solo existe en Windows
+   *  (revisiones PR #92/#248). Fuera de Windows no se ofrece guardar WSL, que
+   *  el widget convertiría en un error de `wsl.exe` en cada refresco. */
+  platform?: Os;
 }) {
   const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
     <ProviderCard
@@ -1433,12 +1451,13 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
               <small className="eg-field__hint">{t(locale, 'settings.providers.sessionEnvHint')}</small>
             </label>
             {cfg.sessionEnv === 'wsl' && (
-              <label className="q-section__aside">
+              <label className="q-section__aside q-section__aside--distro">
                 {t(locale, 'settings.providers.wslDistro')}
                 <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
                 <small className="eg-field__hint">
-                  {/* WSL sin distro resuelve como host (config.rs; revisión PR
-                      #92, punto 5): que no parezca que sigue en WSL. */}
+                  {/* WSL sin distro se resuelve como HOST (config.rs;
+                      revisiones PR #92/#248): el campo lo dice hasta que se
+                      escribe una distro. */}
                   {cfg.wslDistro.trim() === ''
                     ? t(locale, 'settings.providers.wslDistroMissing')
                     : t(locale, 'settings.providers.wslDistroHint')}
@@ -2100,7 +2119,9 @@ export function SubscriptionPanel({
       title: 'Claude (Pro / Max)',
       note: t(locale, 'settings.providers.panels.claude.note'),
       file: t(locale, 'settings.providers.panels.credentialsFile'),
-      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>\\wsl.localhost\Ubuntu\home\{t(locale, 'settings.providers.panels.claude.wslUser')}\.claude\.credentials.json</code></>,
+      // En WSL la ruta es POSIX del GUEST: `\\wsl.localhost\...` (UNC) o
+      // `C:\...` se rechazan en modo WSL (revisión PR #248).
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>/home/{t(locale, 'settings.providers.panels.claude.wslUser')}/.claude/.credentials.json</code></>,
     },
     codex: {
       kicker: t(locale, 'settings.providers.panels.kickerOAuth'),

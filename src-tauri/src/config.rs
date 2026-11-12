@@ -456,7 +456,11 @@ pub struct AntigravityConfig {
 pub struct SubscriptionConfig {
     pub enabled: bool,
     /// Ruta explícita al fichero de credenciales. `None` = autodetectar.
-    /// Útil para WSL: `\\wsl.localhost\Ubuntu\home\<user>\.claude\.credentials.json`
+    ///
+    /// En modo WSL debe ser la ruta **POSIX del guest**
+    /// (`/home/<user>/.claude/.credentials.json`): el `cat` de la distro no
+    /// lee `\\wsl.localhost\…` (UNC) ni `C:\…`, y el modo WSL los rechaza con
+    /// un error de configuración (revisión PR #248).
     pub credentials_path: Option<String>,
     /// Comando que abre el login oficial (OAuth) en una terminal nueva.
     pub login_command: String,

@@ -221,16 +221,22 @@ html[data-window='settings'] body { background: var(--color-bg-canvas); color: v
 .q-head__desc { margin: 0; color: var(--color-fg-muted); font-size: 14px; }
 
 /* Secciones de Ajustes: ModuleCard --banded (Grafito): cabecera un tono por encima del cuerpo. */
-.q-section > .eg-module-card__head { gap: 16px; }
+/* La cabecera lleva varios controles (intervalo, entorno, distro): en ventanas
+   estrechas se envuelven en vez de desbordarse, y el campo de distro no se
+   recorta (revisión PR #248). */
+.q-section > .eg-module-card__head { gap: 16px; flex-wrap: wrap; }
 .q-section__titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .q-section h2 { margin: 0; font: 800 20px/1.1 var(--font-display); text-transform: uppercase; color: var(--color-fg-default); }
 .q-section > .eg-module-card__body { color: var(--color-fg-default); font-size: 15px; }
-.q-section__aside { display: inline-flex; align-items: center; gap: 8px; color: var(--color-fg-secondary); font-size: 13px; white-space: nowrap; }
+.q-section__aside { display: inline-flex; align-items: center; gap: 8px; color: var(--color-fg-secondary); font-size: 13px; white-space: nowrap; min-width: 0; max-width: 100%; }
 .q-section__aside input {
   width: 64px; min-height: 34px; padding: 4px 8px; border-radius: var(--radius-md);
   border: 1px solid var(--color-border-control); background: var(--color-surface-0); box-shadow: var(--shadow-well);
   font: 600 14px/1 var(--font-sans); color: var(--color-fg-default); text-align: center;
 }
+/* La distro es un nombre, no un número: más ancho que el resto de campos
+   (después de la regla base para ganar el empate de especificidad). */
+.q-section__aside--distro input { width: 150px; min-width: 0; text-align: start; }
 .q-section__aside input:focus { outline: none; border-color: var(--color-border-brand-strong); box-shadow: var(--shadow-well), var(--shadow-ring-brand); }
 .q-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 24px; align-items: start; }
 .q-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
