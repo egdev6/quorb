@@ -106,21 +106,63 @@ impl EmailEvent {
             && self.percent.is_finite()
             && (0.0..=10000.0).contains(&self.percent)
     }
-    fn text(&self, locale: crate::i18n::Locale) -> String {
-        let (labels, kinds) = crate::i18n::email_event_words(locale);
-        let kind = match self.kind {
-            EventKind::Exceeded => kinds.0,
-            EventKind::Reset => kinds.1,
+    fn content(&self, locale: crate::i18n::Locale) -> (String, String) {
+        use crate::i18n::{email_meter, text, Msg};
+        let provider = match self.provider.as_str() {
+            "claude" => "Claude",
+            "codex" => "Codex",
+            "gemini" => "Gemini",
+            "cursor" => "Cursor",
+            "grok" => "Grok",
+            "copilot" => "GitHub Copilot",
+            "openrouter" => "OpenRouter",
+            "anthropic_api" => "Anthropic API",
+            "openai_api" => "OpenAI API",
+            "zai" => "z.ai",
+            "nan" => "NaN Builders",
+            "minimax" => "MiniMax",
+            "nine_router" => "9Router",
+            "opencode_go" => "OpenCode Go",
+            "antigravity" => "Antigravity",
+            _ => unreachable!("content is built only after event validation"),
         };
-        [
-            (labels.0, self.provider.as_str()),
-            (labels.1, self.meter.as_str()),
-            (labels.2, self.window.as_str()),
-            (labels.3, self.percent.to_string().as_str()),
-            (labels.4, kind),
-        ]
-        .map(|(label, value)| format!("{label}: {value}"))
-        .join("\n")
+        let percent = format_percent(self.percent, locale);
+        let meter = email_meter(locale, &self.provider, &self.meter);
+        let (subject, body) = match (self.kind, meter.is_some()) {
+            (EventKind::Exceeded, false) => (Msg::EmailUsageSubject, Msg::EmailUsageBody),
+            (EventKind::Exceeded, true) => (Msg::EmailUsageSubject, Msg::EmailUsageMeterBody),
+            (EventKind::Reset, false) => (Msg::EmailDropSubject, Msg::EmailDropBody),
+            (EventKind::Reset, true) => (Msg::EmailDropSubject, Msg::EmailDropMeterBody),
+        };
+        let render = |msg| {
+            text(locale, msg)
+                .replace("{provider}", provider)
+                .replace("{percent}", &percent)
+                .replace("{meter}", meter.unwrap_or(""))
+        };
+        (render(subject), render(body))
+    }
+}
+
+// Work on the shortest decimal representation, not percent * 100: binary
+// multiplication can turn an exact displayed decimal such as 1.13 into 1.12.
+// Events have already been validated as finite and in 0..=10000.
+fn format_percent(percent: f64, locale: crate::i18n::Locale) -> String {
+    let decimal = percent.to_string();
+    let (whole, fraction) = decimal.split_once('.').unwrap_or((&decimal, ""));
+    let fraction = &fraction[..fraction.len().min(2)];
+    let fraction = fraction.trim_end_matches('0');
+    let mut value = if fraction.is_empty() {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction}")
+    };
+    if percent > 100.0 && value == "100" {
+        value = "100.01".into();
+    }
+    match locale {
+        crate::i18n::Locale::Es => format!("{} %", value.replace('.', ",")),
+        crate::i18n::Locale::En => format!("{value}%"),
     }
 }
 
@@ -192,15 +234,18 @@ async fn send_with(
         Ok(client) => client,
         Err(_) => return EmailStatus::ServiceError,
     };
-    let text = event
-        .map(|e| e.text(locale))
-        .unwrap_or_else(|| crate::i18n::email_test_body(locale).into());
+    let (subject, text) = event.map(|e| e.content(locale)).unwrap_or_else(|| {
+        (
+            crate::i18n::email_subject(locale).into(),
+            crate::i18n::email_test_body(locale).into(),
+        )
+    });
     let response = client
         .post(endpoint)
         .bearer_auth(key)
         .json(&serde_json::json!({
             "from": cfg.email.sender, "to": [cfg.email.recipient],
-            "subject": crate::i18n::email_subject(locale), "text": text,
+            "subject": subject, "text": text,
         }))
         .send()
         .await;
@@ -497,45 +542,244 @@ mod tests {
             serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
         assert_eq!(
             body,
-            serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject":"Quorb: usage alert", "text":"Provider: claude\nMeter: five_hour\nWindow: 12345\nPercent: 95\nEvent: exceeded"})
+            serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject":"Quorb · Claude: usage at 95%", "text":"Observed usage in Claude has reached 95% of the limit.\n\nThe alert threshold configured in Quorb has been reached."})
         );
         assert!(!body.to_string().contains("synthetic-key"));
     }
 
-    /// S21 (#245): asunto y cuerpo siguen el locale de la config; el inglés
-    /// conserva los literales originales byte a byte.
-    #[test]
-    fn email_texts_follow_configured_locale() {
-        for (locale, subject, text) in [
-            (
-                Locale::Es,
-                "Quorb: alerta de consumo",
-                "Proveedor: claude\nMedidor: five_hour\nVentana: 12345\nPorcentaje: 95\nEvento: superado",
-            ),
-            (
-                Locale::En,
-                "Quorb: usage alert",
-                "Provider: claude\nMeter: five_hour\nWindow: 12345\nPercent: 95\nEvent: exceeded",
-            ),
-        ] {
-            let (url, requests, handle) = server(200, Duration::ZERO);
-            let result = run(send_with(
-                &config(),
+    fn assert_content(locale: Locale, event: EmailEvent, subject: &str, text: &str) {
+        let (url, requests, handle) = server(200, Duration::ZERO);
+        let cfg = config();
+        let before = cfg.clone();
+        assert_eq!(
+            run(send_with(
+                &cfg,
                 locale,
-                Some(event()),
+                Some(event),
                 || Ok(Some("synthetic-key".into())),
                 &url,
-                Duration::from_secs(5),
-            ));
-            handle.join().unwrap();
-            assert_eq!(result, EmailStatus::Accepted);
-            let req = requests.lock().unwrap();
-            let body: serde_json::Value =
-                serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
-            assert_eq!(
-                body,
-                serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject": subject, "text": text})
-            );
+                Duration::from_secs(5)
+            )),
+            EmailStatus::Accepted
+        );
+        handle.join().unwrap();
+        assert_eq!(cfg, before);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value =
+            serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"from":"sender@example.test",
+            "to":["recipient@example.test"], "subject":subject, "text":text})
+        );
+    }
+
+    // Complete expected templates, independent of the production catalog.
+    fn expected(
+        locale: Locale,
+        kind: EventKind,
+        provider: &str,
+        pct: &str,
+        limit: &str,
+    ) -> (String, String) {
+        match (locale, kind) {
+            (Locale::Es, EventKind::Exceeded) => (
+                format!("Quorb · {provider}: consumo al {pct}"),
+                format!("El consumo observado en {provider} ha alcanzado el {pct} del {limit}.\n\nSe ha alcanzado el umbral de aviso configurado en Quorb.")),
+            (Locale::En, EventKind::Exceeded) => (
+                format!("Quorb · {provider}: usage at {pct}"),
+                format!("Observed usage in {provider} has reached {pct} of the {limit}.\n\nThe alert threshold configured in Quorb has been reached.")),
+            (Locale::Es, EventKind::Reset) => (
+                format!("Quorb · {provider}: consumo por debajo del umbral de aviso"),
+                if limit == "límite" { format!("El consumo observado en {provider} ha bajado por debajo del umbral de aviso configurado en Quorb.\n\nConsumo actual: {pct}.") }
+                else { format!("El consumo observado en {provider} ({limit}) ha bajado por debajo del umbral de aviso configurado en Quorb.\n\nConsumo actual: {pct}.") }),
+            (Locale::En, EventKind::Reset) => (
+                format!("Quorb · {provider}: usage below the alert threshold"),
+                if limit == "limit" { format!("Observed usage in {provider} has dropped below the alert threshold configured in Quorb.\n\nCurrent usage: {pct}.") }
+                else { format!("Observed usage in {provider} ({limit}) has dropped below the alert threshold configured in Quorb.\n\nCurrent usage: {pct}.") }),
+        }
+    }
+
+    #[test]
+    fn automatic_generic_templates_and_percentages_over_http() {
+        for (value, es, en) in [
+            (89.996, "89,99 %", "89.99%"),
+            (12.345, "12,34 %", "12.34%"),
+            (95.0, "95 %", "95%"),
+            (99.96, "99,96 %", "99.96%"),
+            (99.994, "99,99 %", "99.99%"),
+            (99.999, "99,99 %", "99.99%"),
+            (100.0, "100 %", "100%"),
+            (100.001, "100,01 %", "100.01%"),
+            (100.004, "100,01 %", "100.01%"),
+            (100.006, "100,01 %", "100.01%"),
+            (104.0, "104 %", "104%"),
+            (1.13, "1,13 %", "1.13%"),
+            (2.5, "2,5 %", "2.5%"),
+            (0.0, "0 %", "0%"),
+            (10000.0, "10000 %", "10000%"),
+        ] {
+            for (locale, pct, limit) in [(Locale::Es, es, "límite"), (Locale::En, en, "limit")] {
+                for kind in [EventKind::Exceeded, EventKind::Reset] {
+                    let mut e = event();
+                    e.meter = "session".into();
+                    e.percent = value;
+                    e.kind = kind;
+                    // Default threshold is 90: 89.996 must remain below it in reset copy.
+                    assert_eq!(config().threshold, 90.0);
+                    let (subject, text) = expected(locale, kind, "Claude", pct, limit);
+                    assert_content(locale, e, &subject, &text);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_meters_and_readable_providers_over_http() {
+        for (provider, name, meters) in [
+            (
+                "claude",
+                "Claude",
+                vec!["session", "usage", "unknown", "five_hour"],
+            ),
+            (
+                "codex",
+                "Codex",
+                vec!["session", "window_days", "weekly_secondary"],
+            ),
+            ("gemini", "Gemini", vec!["usage"]),
+            ("grok", "Grok", vec!["weekly"]),
+            ("cursor", "Cursor", vec!["usage"]),
+            ("copilot", "GitHub Copilot", vec!["usage"]),
+            ("openrouter", "OpenRouter", vec!["usage"]),
+            ("anthropic_api", "Anthropic API", vec!["usage"]),
+            ("openai_api", "OpenAI API", vec!["usage"]),
+            ("zai", "z.ai", vec!["five_hour"]),
+            ("nan", "NaN Builders", vec!["custom", "usage"]),
+            ("minimax", "MiniMax", vec!["usage"]),
+            ("nine_router", "9Router", vec!["spend_period"]),
+            ("opencode_go", "OpenCode Go", vec!["usage"]),
+            ("antigravity", "Antigravity", vec!["usage"]),
+        ] {
+            for meter in meters {
+                for (locale, pct, limit) in
+                    [(Locale::Es, "95 %", "límite"), (Locale::En, "95%", "limit")]
+                {
+                    for kind in [EventKind::Exceeded, EventKind::Reset] {
+                        let mut e = event();
+                        e.provider = provider.into();
+                        e.meter = meter.into();
+                        e.kind = kind;
+                        let (subject, text) = expected(locale, kind, name, pct, limit);
+                        assert_content(locale, e, &subject, &text);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_unambiguous_meter_allowlist_over_http() {
+        // Enumerate provider + meter, never infer a period from an ID alone.
+        for (provider, name, meter, es, en) in [
+            (
+                "claude",
+                "Claude",
+                "weekly",
+                "límite semanal",
+                "weekly limit",
+            ),
+            (
+                "claude",
+                "Claude",
+                "weekly_opus",
+                "límite semanal de Opus",
+                "weekly Opus limit",
+            ),
+            (
+                "claude",
+                "Claude",
+                "weekly_sonnet",
+                "límite semanal de Sonnet",
+                "weekly Sonnet limit",
+            ),
+            (
+                "claude",
+                "Claude",
+                "weekly_apps",
+                "límite semanal de aplicaciones",
+                "weekly apps limit",
+            ),
+            ("codex", "Codex", "weekly", "límite semanal", "weekly limit"),
+            ("zai", "z.ai", "weekly", "límite semanal", "weekly limit"),
+            (
+                "openrouter",
+                "OpenRouter",
+                "key_limit_daily",
+                "límite diario",
+                "daily limit",
+            ),
+            (
+                "openrouter",
+                "OpenRouter",
+                "key_limit_weekly",
+                "límite semanal",
+                "weekly limit",
+            ),
+            (
+                "openrouter",
+                "OpenRouter",
+                "key_limit_monthly",
+                "límite mensual",
+                "monthly limit",
+            ),
+            (
+                "anthropic_api",
+                "Anthropic API",
+                "budget_monthly",
+                "presupuesto mensual",
+                "monthly budget",
+            ),
+            (
+                "openai_api",
+                "OpenAI API",
+                "budget_monthly",
+                "presupuesto mensual",
+                "monthly budget",
+            ),
+            (
+                "opencode_go",
+                "OpenCode Go",
+                "five_hour",
+                "límite de 5 horas",
+                "5-hour limit",
+            ),
+            (
+                "opencode_go",
+                "OpenCode Go",
+                "weekly",
+                "límite semanal",
+                "weekly limit",
+            ),
+            (
+                "opencode_go",
+                "OpenCode Go",
+                "monthly",
+                "límite del ciclo de facturación",
+                "billing-cycle limit",
+            ),
+        ] {
+            for (locale, pct, limit) in [(Locale::Es, "95 %", es), (Locale::En, "95%", en)] {
+                for kind in [EventKind::Exceeded, EventKind::Reset] {
+                    let mut e = event();
+                    e.provider = provider.into();
+                    e.meter = meter.into();
+                    e.kind = kind;
+                    let (subject, text) = expected(locale, kind, name, pct, limit);
+                    assert_content(locale, e, &subject, &text);
+                }
+            }
         }
     }
 
@@ -563,7 +807,16 @@ mod tests {
             let req = requests.lock().unwrap();
             let body: serde_json::Value =
                 serde_json::from_str(req[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
-            assert_eq!(body["text"], text);
+            assert_eq!(req.len(), 1);
+            let subject = if locale == Locale::Es {
+                "Quorb: alerta de consumo"
+            } else {
+                "Quorb: usage alert"
+            };
+            assert_eq!(
+                body,
+                serde_json::json!({"from":"sender@example.test", "to":["recipient@example.test"], "subject":subject, "text":text})
+            );
         }
     }
 

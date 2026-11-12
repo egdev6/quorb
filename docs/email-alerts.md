@@ -71,12 +71,45 @@ de fallback a texto plano y el seguimiento en #106 se conservan en esta
 documentación, no en la ayuda del formulario.
 
 El payload incluye únicamente el sobre (remitente/destinatario), asunto y
-texto de proveedor, medidor, ventana, porcentaje y tipo de evento según el
-idioma configurado (es/en; el inglés conserva los literales originales). No incluye
+texto plano en el idioma configurado (es/en). Los avisos automáticos muestran
+el nombre legible del proveedor y el porcentaje observado, nunca la clave interna
+`window` ni los identificadores técnicos del medidor. El evento interno conserva
+su contrato e identidad, sin cambiar detección ni deduplicación. No incluye
 nombres/identificadores de cuentas, etiquetas configurables, informes completos,
 prompts, código ni sesiones. Resend procesa también las direcciones personales.
-La prueba no incluye datos de consumo. El último estado vive solo en memoria;
-no se guardan eventos ni payloads. La API no devuelve claves ni respuestas crudas.
+La prueba conserva su asunto y cuerpo, sin datos de consumo. El último estado
+vive solo en memoria; no se guardan eventos ni payloads. La API no devuelve
+claves ni respuestas crudas.
+
+### Contenido de los avisos automáticos (#263)
+
+Cada evento tiene su propio asunto y cuerpo completos en los recursos nativos
+ES/EN. El aviso de consumo explica que se ha alcanzado el umbral configurado,
+no que se haya agotado el límite. El aviso de bajada describe lo observado por
+debajo del umbral; no demuestra un reinicio del periodo ni disponibilidad del
+servicio. El porcentaje es el observado, no el umbral de configuración.
+
+Se trunca a dos decimales, sin redondear ni conservar ceros finales: `12.345`
+se muestra como `12,34 %` / `12.34%` y `89.996` como `89,99 %` / `89.99%`,
+también al bajar del umbral 90. `99.999` permanece en `99,99 %` / `99.99%`;
+solo el 100 exacto se muestra como `100 %` / `100%`. Si un valor superior a 100
+se truncaría a 100 (por ejemplo, `100.001`), se muestra `100,01 %` / `100.01%`.
+
+La descripción se decide por proveedor y medidor juntos mediante una lista
+conservadora y explícita, enumerada también en los tests HTTP:
+
+- Claude: `weekly`, `weekly_opus`, `weekly_sonnet`, `weekly_apps` (límites semanales).
+- Codex y Z.ai: `weekly` (límite semanal).
+- OpenRouter: `key_limit_daily`, `key_limit_weekly`, `key_limit_monthly` (diario,
+  semanal, mensual).
+- Anthropic API y OpenAI API: `budget_monthly` (presupuesto mensual).
+- OpenCode Go: `five_hour`, `weekly`, `monthly` (5 horas, semana, ciclo de facturación).
+
+El resto usa las variantes genéricas completas, incluso `session`, los modelos
+proyectados a `usage`, `weekly` de Grok y `five_hour` de Z.ai; no se reconstruyen
+periodos, modelos ni etiquetas a partir de información que el evento no contiene.
+Los tests simulan HTTP local y comprueban asuntos y cuerpos completos en ambos
+idiomas, no entrega real. Las comprobaciones manuales de #245 quedan fuera.
 
 El estado aceptado significa **Solicitud aceptada por Resend**, no entrega en
 la bandeja de entrada. Los errores se presentan mediante estados sanitizados:
