@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antes y después — la misma cuenta, dos formas de hablar del consumo</title>
+<style>
+:root{
+  /* Superficies y texto */
+  --color-bg-canvas:#141518;
+  --color-surface-0:#141518;
+  --color-surface-1:#1B1C20;
+  --color-surface-2:#232428;
+  --color-surface-3:#2D2E33;
+  --color-fg-default:#FFFFFF;
+  --color-fg-secondary:#CCCCCC;
+  --color-fg-muted:#A1A2A8;
+  --color-border-default:#2A2B30;
+  --color-border-subtle:rgba(255,255,255,.07);
+  --color-border-hairline:rgba(255,255,255,.08);
+  --color-border-hairline-strong:rgba(255,255,255,.14);
+  /* Marca y estado */
+  --color-fg-brand-default:#FF0036;
+  --ring-1:#FF0036;
+  --ring-2:#FFFFFF;
+  --ring-3:#FF8FA6;
+  --color-status-success:#2DE2C4;
+  --color-status-warning:#FFB224;
+  --color-status-info:#8AB4FF;
+  --color-status-danger:#FF6680;
+  --color-focus-ring:#FF0036;
+  /* Espaciado */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px;
+  --space-6:24px; --space-7:28px; --space-8:32px; --space-10:40px; --space-12:48px;
+  /* Radios */
+  --radius-sm:4px; --radius-md:12px; --radius-lg:16px; --radius-xl:22px;
+  --radius-2xl:24px; --radius-full:9999px;
+  /* Sombras */
+  --shadow-elev-1:0 1px 2px rgba(0,0,0,.7), 0 4px 14px -2px rgba(0,0,0,.55);
+  --shadow-elev-2:0 2px 4px rgba(0,0,0,.7), 0 14px 36px -6px rgba(0,0,0,.75);
+  --shadow-elev-3:0 4px 10px rgba(0,0,0,.7), 0 28px 70px -10px rgba(0,0,0,.9);
+  --shadow-well:inset 0 1px 2px rgba(0,0,0,.55), inset 0 0 0 1px rgba(0,0,0,.28);
+  --shadow-focus:0 0 0 2px #141518, 0 0 0 4px #FF0036;
+  --shadow-edge:inset 0 1px 0 rgba(255,255,255,.07);
+  --shadow-edge-strong:inset 0 1px 0 rgba(255,255,255,.13);
+  --shadow-ring-brand:0 0 0 3px rgba(255,0,54,.22);
+  /* Tipografía */
+  --font-display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --font-sans:"Barlow",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--color-bg-canvas);
+  color:var(--color-fg-default);
+  font:400 14px/1.5 var(--font-sans);
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:none;box-shadow:var(--shadow-focus)}
+
+.artboard{width:1440px;min-height:1200px;margin:0 auto;padding:40px;display:flex;flex-direction:column;gap:var(--space-7)}
+.art-head{display:flex;flex-direction:column;gap:var(--space-2)}
+.kicker{margin:0;font:700 12px/1 var(--font-display);letter-spacing:.16em;text-transform:uppercase;color:var(--color-fg-muted)}
+.kicker::before{content:"◆ ";color:var(--color-fg-brand-default)}
+h1{margin:0;font:800 36px/1.05 var(--font-display);letter-spacing:.01em}
+.lead{margin:0;max-width:1000px;color:var(--color-fg-secondary);font-size:15px;line-height:1.5}
+
+/* ───────── columnas ───────── */
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-6);align-items:start}
+.col{display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-5);border-radius:var(--radius-lg);background:var(--color-surface-1);border:1px solid var(--color-border-hairline);box-shadow:var(--shadow-edge),var(--shadow-elev-1)}
+.col__head{display:flex;flex-direction:column;gap:2px}
+.col__kicker{margin:0;font:700 11px/1 var(--font-display);letter-spacing:.16em;text-transform:uppercase;color:var(--color-fg-muted)}
+.col__title{margin:0;font:800 19px/1.15 var(--font-display);letter-spacing:.02em}
+.col__orb{display:flex;align-items:center;gap:var(--space-3)}
+.orb{
+  --size:88px; --w:6px; --gap:3px;
+  position:relative;flex:none;width:var(--size);height:var(--size);
+  border-radius:var(--radius-full);background:var(--color-bg-canvas);
+  transition:box-shadow 300ms cubic-bezier(.2,.8,.2,1),opacity 300ms cubic-bezier(.2,.8,.2,1);
+}
+.orb__ring{
+  --p:0; --c:var(--ring-1);
+  position:absolute;inset:0;border-radius:var(--radius-full);
+  background:conic-gradient(var(--c) calc(var(--p) * 1turn),rgba(255,255,255,.1) 0);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--w)),#000 calc(100% - var(--w) + .5px));
+  mask:radial-gradient(farthest-side,transparent calc(100% - var(--w)),#000 calc(100% - var(--w) + .5px));
+}
+.orb__ring--2{--c:var(--ring-2);inset:calc(var(--w) + var(--gap))}
+.orb__logo{position:absolute;inset:28%;display:grid;place-items:center;color:var(--color-fg-default)}
+.orb__logo svg{width:100%;height:100%;display:block}
+.orb.is-warning{box-shadow:0 0 0 2px color-mix(in srgb,var(--color-status-warning) 55%,transparent),0 0 18px color-mix(in srgb,var(--color-status-warning) 35%,transparent)}
+@media (prefers-reduced-motion:reduce){.orb{transition:none}}
+.col__orbtext{margin:0;font-size:12.5px;line-height:1.4;color:var(--color-fg-muted)}
+
+/* ───────── tarjeta ───────── */
+.q-card{
+  display:flex;flex-direction:column;
+  border-radius:var(--radius-xl);overflow:hidden;
+  background:var(--color-surface-1);
+  border:1px solid var(--color-border-hairline-strong);
+  box-shadow:var(--shadow-edge-strong),var(--shadow-elev-2);
+}
+.q-card__head{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 16px;background:var(--color-surface-3);
+  border-bottom:1px solid var(--color-border-hairline);
+  box-shadow:var(--shadow-edge-strong);
+}
+.q-card__logo{width:26px;height:26px;flex:none;display:grid;place-items:center;color:var(--color-fg-default)}
+.q-card__logo svg{width:100%;height:100%;display:block}
+.q-card__name{margin:0;flex:1;font:800 18px/1 var(--font-display);text-transform:uppercase;letter-spacing:.01em}
+.eg-status{
+  --status:var(--color-fg-secondary);
+  display:inline-flex;align-items:center;gap:6px;padding:5px 10px;
+  border-radius:var(--radius-full);
+  border:1px solid color-mix(in srgb,var(--status) 30%,transparent);
+  background:color-mix(in srgb,var(--status) 8%,transparent);
+  font:600 13px/1 var(--font-sans);color:var(--status);white-space:nowrap;
+  box-shadow:var(--shadow-edge);
+}
+.q-card__body{display:flex;flex-direction:column;gap:var(--space-4);padding:16px}
+.report-header{
+  margin:0;padding-bottom:var(--space-3);border-bottom:1px solid var(--color-border-hairline);
+  font-size:12.5px;line-height:1.45;color:var(--color-fg-muted);font-variant-numeric:tabular-nums;
+}
+.q-card__meters{display:flex;flex-direction:column;gap:14px}
+.q-meter{display:flex;flex-direction:column;gap:6px}
+.q-meter__row{display:flex;align-items:center;gap:var(--space-2);font-size:13.5px}
+.eg-gauge__key{display:inline-block;flex:none;width:8px;height:8px;border-radius:var(--radius-full);background:var(--ring-1)}
+.eg-gauge__key--2{background:var(--ring-2)}
+.eg-gauge__key--3{background:var(--ring-3)}
+.q-meter__label{flex:1;min-width:0;color:var(--color-fg-default)}
+.q-meter__value{font-variant-numeric:tabular-nums;font-weight:700}
+.q-meter__meta{font-size:12px;color:var(--color-fg-muted);font-variant-numeric:tabular-nums}
+.eg-progress{
+  --p:0;position:relative;display:block;width:100%;height:10px;overflow:hidden;
+  border-radius:var(--radius-full);background:var(--color-surface-0);box-shadow:var(--shadow-well);
+}
+.eg-progress__bar{
+  display:block;width:100%;height:100%;background:var(--meter-color,var(--ring-1));
+  transform-origin:left;transform:scaleX(var(--p));
+  transition:transform 300ms cubic-bezier(.2,.8,.2,1);
+}
+@media (prefers-reduced-motion:reduce){.eg-progress__bar{transition:none}}
+
+.details__sec{display:flex;flex-direction:column;gap:var(--space-2);padding-top:var(--space-3);border-top:1px solid var(--color-border-subtle)}
+.details__title{margin:0;font:700 13px/1.3 var(--font-display);letter-spacing:.08em;color:var(--color-fg-secondary)}
+.details__note{margin:0;font-size:11.5px;line-height:1.45;color:var(--color-fg-muted)}
+.breakdown{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.breakdown li{display:flex;align-items:baseline;gap:var(--space-2);padding:6px 0;border-bottom:1px solid var(--color-border-subtle);font-size:13px}
+.breakdown li:last-child{border-bottom:0}
+.breakdown__model{font-family:var(--font-mono);font-size:12px;color:var(--color-fg-secondary)}
+.breakdown__dash{color:var(--color-fg-muted)}
+.breakdown__amount{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--color-fg-default);font-weight:600}
+
+.pace{display:flex;flex-direction:column;gap:3px}
+.pace__row{display:flex;justify-content:space-between;gap:var(--space-2);font-size:12.5px}
+.pace__label{color:var(--color-fg-secondary)}
+.pace__txt{color:var(--color-fg-muted);text-align:right}
+.pace[data-status="fast"] .pace__txt{color:var(--color-status-warning)}
+.pace[data-status="over"] .pace__txt{color:var(--color-status-danger)}
+.pace__track{position:relative;display:block;height:6px;border-radius:var(--radius-full);background:var(--color-surface-0);box-shadow:var(--shadow-well)}
+.pace__fill{position:absolute;inset:0 auto 0 0;border-radius:inherit}
+.pace__now{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;border-radius:1px;background:var(--color-fg-default);box-shadow:0 0 0 1px rgba(0,0,0,.6)}
+
+.eg-notice{
+  --notice:var(--color-status-warning);
+  display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-2);
+  padding:8px 12px;border-radius:var(--radius-md);
+  border:1px solid color-mix(in srgb,var(--notice) 30%,transparent);
+  background:color-mix(in srgb,var(--notice) 11%,var(--color-surface-1));
+  font:500 13px/1.45 var(--font-sans);color:var(--color-fg-default);
+}
+.eg-notice>.eg-icon{flex:none;width:16px;height:16px;color:var(--notice);fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.eg-notice__text{flex:1 1 240px;min-width:0}
+.eg-notice__text b{font-weight:700}
+
+/* ───────── tabla ───────── */
+.compare{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+.compare caption{
+  text-align:left;padding:0 0 var(--space-3);font:700 12px/1 var(--font-display);
+  letter-spacing:.14em;text-transform:uppercase;color:var(--color-fg-muted);
+}
+.compare th,.compare td{
+  vertical-align:top;text-align:left;padding:12px 16px;
+  border-top:1px solid var(--color-border-hairline);font-size:13.5px;line-height:1.5;
+}
+.compare thead th{
+  border-top:0;background:var(--color-surface-3);color:var(--color-fg-default);
+  font:700 14px/1.3 var(--font-display);letter-spacing:.06em;
+}
+.compare thead th:first-child{border-top-left-radius:var(--radius-md)}
+.compare thead th:last-child{border-top-right-radius:var(--radius-md)}
+.compare tbody td{color:var(--color-fg-secondary);background:var(--color-surface-1)}
+.compare tbody td:first-child{border-right:1px solid var(--color-border-hairline)}
+.compare tbody td b{color:var(--color-fg-default);font-weight:600}
+.compare tbody tr:last-child td:first-child{border-bottom-left-radius:var(--radius-md)}
+.compare tbody tr:last-child td:last-child{border-bottom-right-radius:var(--radius-md)}
+.compare tbody tr:last-child td{border-bottom:1px solid var(--color-border-hairline)}
+</style>
+</head>
+<body>
+<main class="artboard" aria-labelledby="titulo">
+
+  <header class="art-head">
+    <p class="kicker">NaN Builders · el mismo lenguaje visual en las dos formas</p>
+    <h1 id="titulo">Antes y después — la misma cuenta, dos formas de hablar del consumo</h1>
+    <p class="lead">Hoy NaN Builders muestra un anillo y un medidor por modelo, con tope de tokens. Con la facturación en créditos, la cuenta tiene un único fondo: el orbe lleva un anillo y el panel un solo medidor.</p>
+  </header>
+
+  <section class="cols" aria-label="Comparación de la presentación actual y las dos propuestas">
+
+    <!-- ───────── Columna 1 · hoy ───────── -->
+    <div class="col">
+      <header class="col__head">
+        <p class="col__kicker">Columna 1</p>
+        <h2 class="col__title">Hoy (cuenta con tope por modelo)</h2>
+      </header>
+
+      <div class="col__orb">
+        <div class="orb is-warning" role="img" aria-label="NaN Builders: dos anillos, deepseek-v4-flash al 95 % y glm5.3-flash al 99 %">
+          <span class="orb__ring" style="--p:.95"></span>
+          <span class="orb__ring orb__ring--2" style="--p:.99"></span>
+          <span class="orb__logo">
+            <svg viewBox="0 0 84 33" aria-hidden="true"><path fill="currentColor" d="M33.7896 21.6821V11.3621H43.2171C53.4443 11.3621 53.5294 11.3518 54.6592 9.9151C55.0409 9.4276 55.1983 8.85756 55.1983 7.94962C55.1983 6.8405 55.0822 6.55161 54.3368 5.80618C53.8622 5.33158 53.1503 4.86213 52.7505 4.76154C52.2836 4.64547 48.933 5.13812 43.2249 6.16729C38.3834 7.03653 34.2797 7.75101 34.1069 7.75101C33.8696 7.75101 33.7896 6.79149 33.7896 4.00063V0.24766L43.7846 0.325041C53.4056 0.397263 53.826 0.420477 54.9893 0.959563C56.3977 1.60956 57.8266 2.99726 58.6288 4.49844C59.1911 5.55082 59.1963 5.65142 59.1963 18.7133V31.868L46.4929 31.9351L33.7896 32.0021V21.6821ZM53.6403 27.8055C55.4562 26.8744 55.7141 26.1135 55.7141 21.6796C55.7141 17.2431 55.4588 16.4899 53.6326 15.5433C52.5209 14.9681 52.3249 14.9526 46.2995 15.0274C39.41 15.1099 38.8632 15.2312 37.9914 16.8484C37.4368 17.8802 37.1918 23.8153 37.638 25.4712C38.3422 28.0918 39.1805 28.3601 46.6967 28.3756C52.2294 28.3859 52.5647 28.3575 53.6403 27.8055ZM0.108333 31.5017C0.0490073 31.4424 0 24.3337 0 15.7032V0.0129386H6.01506C13.1779 0.0129386 13.8537 0.162541 15.8811 2.18734C17.9678 4.27662 18.0555 4.72801 18.0555 13.4669V20.898L18.7958 21.7286C19.7605 22.8042 21.1327 22.8454 22.1515 21.8266L22.8273 21.1534L22.8995 10.5754L22.9718 4.19617e-05L26.6396 0.0696848L30.3075 0.141906V11.749C30.3075 24.7619 30.2688 25.0895 28.4761 27.5089C26.5003 30.1811 23.8797 31.5224 20.6091 31.5353C16.0952 31.5559 12.6801 28.5226 11.9837 23.872C11.8831 23.2143 12.1617 20.8671 12.7498 17.3798C13.7841 11.2538 13.8537 10.075 13.2476 9.05101C12.3164 7.47502 10.0647 6.96947 8.44224 7.97284C6.8353 8.96589 6.8482 8.87561 6.70633 20.7561L6.57736 31.5714L3.39701 31.5894C1.64821 31.6023 0.167658 31.5611 0.108333 31.5017ZM62.2244 15.9405L62.2915 0.141906L66.5474 0.0800014L70.8034 0.0206763L75.423 5.56114C77.9663 8.60994 80.1381 11.1042 80.2542 11.1042C80.3702 11.1042 80.4966 8.63831 80.5353 5.62304L80.6049 0.141906H82.1293H83.6512L83.6073 15.876L83.5661 31.6101L79.3617 31.6797L75.1573 31.7519L71.1645 26.9079C68.9695 24.246 66.9447 21.7518 66.6661 21.3649C66.3875 20.9805 66.0728 20.6607 65.9671 20.6555C65.8613 20.6504 65.7736 23.1446 65.7736 26.1934V31.739H63.9655H62.1574L62.2244 15.9405Z"/></svg>
+          </span>
+        </div>
+        <p class="col__orbtext">Dos anillos: un tope por modelo (deepseek-v4-flash 95 %, glm5.3-flash 99 %).</p>
+      </div>
+
+      <article class="q-card" aria-label="Tarjeta del panel de detalle de NaN Builders con cuotas por modelo">
+        <header class="q-card__head">
+          <span class="q-card__logo">
+            <svg viewBox="0 0 84 33" aria-hidden="true"><path fill="currentColor" d="M33.7896 21.6821V11.3621H43.2171C53.4443 11.3621 53.5294 11.3518 54.6592 9.9151C55.0409 9.4276 55.1983 8.85756 55.1983 7.94962C55.1983 6.8405 55.0822 6.55161 54.3368 5.80618C53.8622 5.33158 53.1503 4.86213 52.7505 4.76154C52.2836 4.64547 48.933 5.13812 43.2249 6.16729C38.3834 7.03653 34.2797 7.75101 34.1069 7.75101C33.8696 7.75101 33.7896 6.79149 33.7896 4.00063V0.24766L43.7846 0.325041C53.4056 0.397263 53.826 0.420477 54.9893 0.959563C56.3977 1.60956 57.8266 2.99726 58.6288 4.49844C59.1911 5.55082 59.1963 5.65142 59.1963 18.7133V31.868L46.4929 31.9351L33.7896 32.0021V21.6821ZM53.6403 27.8055C55.4562 26.8744 55.7141 26.1135 55.7141 21.6796C55.7141 17.2431 55.4588 16.4899 53.6326 15.5433C52.5209 14.9681 52.3249 14.9526 46.2995 15.0274C39.41 15.1099 38.8632 15.2312 37.9914 16.8484C37.4368 17.8802 37.1918 23.8153 37.638 25.4712C38.3422 28.0918 39.1805 28.3601 46.6967 28.3756C52.2294 28.3859 52.5647 28.3575 53.6403 27.8055ZM0.108333 31.5017C0.0490073 31.4424 0 24.3337 0 15.7032V0.0129386H6.01506C13.1779 0.0129386 13.8537 0.162541 15.8811 2.18734C17.9678 4.27662 18.0555 4.72801 18.0555 13.4669V20.898L18.7958 21.7286C19.7605 22.8042 21.1327 22.8454 22.1515 21.8266L22.8273 21.1534L22.8995 10.5754L22.9718 4.19617e-05L26.6396 0.0696848L30.3075 0.141906V11.749C30.3075 24.7619 30.2688 25.0895 28.4761 27.5089C26.5003 30.1811 23.8797 31.5224 20.6091 31.5353C16.0952 31.5559 12.6801 28.5226 11.9837 23.872C11.8831 23.2143 12.1617 20.8671 12.7498 17.3798C13.7841 11.2538 13.8537 10.075 13.2476 9.05101C12.3164 7.47502 10.0647 6.96947 8.44224 7.97284C6.8353 8.96589 6.8482 8.87561 6.70633 20.7561L6.57736 31.5714L3.39701 31.5894C1.64821 31.6023 0.167658 31.5611 0.108333 31.5017ZM62.2244 15.9405L62.2915 0.141906L66.5474 0.0800014L70.8034 0.0206763L75.423 5.56114C77.9663 8.60994 80.1381 11.1042 80.2542 11.1042C80.3702 11.1042 80.4966 8.63831 80.5353 5.62304L80.6049 0.141906H82.1293H83.6512L83.6073 15.876L83.5661 31.6101L79.3617 31.6797L75.1573 31.7519L71.1645 26.9079C68.9695 24.246 66.9447 21.7518 66.6661 21.3649C66.3875 20.9805 66.0728 20.6607 65.9671 20.6555C65.8613 20.6504 65.7736 23.1446 65.7736 26.1934V31.739H63.9655H62.1574L62.2244 15.9405Z"/></svg>
+          </span>
+          <h3 class="q-card__name">NaN Builders</h3>
+          <span class="eg-status">nan_member</span>
+        </header>
+
+        <div class="q-card__body">
+          <p class="report-header">955,6M tokens del periodo de la cuenta · cuotas por modelo</p>
+
+          <div class="q-card__meters">
+            <div class="q-meter" style="--meter-color:var(--ring-1)">
+              <div class="q-meter__row">
+                <span class="eg-gauge__key" aria-hidden="true"></span>
+                <span class="q-meter__label">deepseek-v4-flash</span>
+                <b class="q-meter__value">95 %</b>
+              </div>
+              <span class="eg-progress" role="progressbar" aria-label="deepseek-v4-flash" aria-valuenow="95" aria-valuemin="0" aria-valuemax="100" style="--p:.95">
+                <span class="eg-progress__bar"></span>
+              </span>
+              <span class="q-meter__meta">955,6M / 1.000M tokens · Se reinicia en 9 d</span>
+            </div>
+
+            <div class="q-meter" style="--meter-color:var(--ring-2)">
+              <div class="q-meter__row">
+                <span class="eg-gauge__key eg-gauge__key--2" aria-hidden="true"></span>
+                <span class="q-meter__label">glm5.3-flash</span>
+                <b class="q-meter__value">99 %</b>
+              </div>
+              <span class="eg-progress" role="progressbar" aria-label="glm5.3-flash" aria-valuenow="99" aria-valuemin="0" aria-valuemax="100" style="--p:.99">
+                <span class="eg-progress__bar"></span>
+              </span>
+              <span class="q-meter__meta">496,6M / 500M tokens · Se reinicia en 9 d</span>
+            </div>
+          </div>
+
+          <section class="details__sec">
+            <h4 class="details__title">Ritmo de consumo</h4>
+            <div class="eg-notice" role="status">
+              <svg class="eg-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path>
+                <path d="M12 9v4"></path>
+                <path d="M12 17h.01"></path>
+              </svg>
+              <span class="eg-notice__text"><b>A este ritmo</b> deepseek-v4-flash se agota en 1 d, antes del reinicio.</span>
+            </div>
+            <div class="pace" data-status="over">
+              <span class="pace__row">
+                <span class="pace__label">deepseek-v4-flash</span>
+                <span class="pace__txt">Ritmo 1,4× · se agota en 1 d</span>
+              </span>
+              <span class="pace__track">
+                <span class="pace__fill" style="width:95.6%;background:var(--ring-1)"></span>
+                <span class="pace__now" style="left:70%"></span>
+              </span>
+            </div>
+            <div class="pace" data-status="over">
+              <span class="pace__row">
+                <span class="pace__label">glm5.3-flash</span>
+                <span class="pace__txt">Ritmo 1,4× · se agota en 1 d</span>
+              </span>
+              <span class="pace__track">
+                <span class="pace__fill" style="width:99.3%;background:var(--ring-2)"></span>
+                <span class="pace__now" style="left:70%"></span>
+              </span>
+            </div>
+          </section>
+        </div>
+      </article>
+    </div>
+
+    <!-- ───────── Columna 2 · propuesta B ───────── -->
+    <div class="col">
+      <header class="col__head">
+        <p class="col__kicker">Columna 2</p>
+        <h2 class="col__title">Propuesta B (cuenta con créditos)</h2>
+      </header>
+
+      <div class="col__orb">
+        <div class="orb" role="img" aria-label="NaN Builders: un anillo, 24,3 de 7.000 créditos (0,3 %)">
+          <span class="orb__ring" style="--p:.003"></span>
+          <span class="orb__logo">
+            <svg viewBox="0 0 84 33" aria-hidden="true"><path fill="currentColor" d="M33.7896 21.6821V11.3621H43.2171C53.4443 11.3621 53.5294 11.3518 54.6592 9.9151C55.0409 9.4276 55.1983 8.85756 55.1983 7.94962C55.1983 6.8405 55.0822 6.55161 54.3368 5.80618C53.8622 5.33158 53.1503 4.86213 52.7505 4.76154C52.2836 4.64547 48.933 5.13812 43.2249 6.16729C38.3834 7.03653 34.2797 7.75101 34.1069 7.75101C33.8696 7.75101 33.7896 6.79149 33.7896 4.00063V0.24766L43.7846 0.325041C53.4056 0.397263 53.826 0.420477 54.9893 0.959563C56.3977 1.60956 57.8266 2.99726 58.6288 4.49844C59.1911 5.55082 59.1963 5.65142 59.1963 18.7133V31.868L46.4929 31.9351L33.7896 32.0021V21.6821ZM53.6403 27.8055C55.4562 26.8744 55.7141 26.1135 55.7141 21.6796C55.7141 17.2431 55.4588 16.4899 53.6326 15.5433C52.5209 14.9681 52.3249 14.9526 46.2995 15.0274C39.41 15.1099 38.8632 15.2312 37.9914 16.8484C37.4368 17.8802 37.1918 23.8153 37.638 25.4712C38.3422 28.0918 39.1805 28.3601 46.6967 28.3756C52.2294 28.3859 52.5647 28.3575 53.6403 27.8055ZM0.108333 31.5017C0.0490073 31.4424 0 24.3337 0 15.7032V0.0129386H6.01506C13.1779 0.0129386 13.8537 0.162541 15.8811 2.18734C17.9678 4.27662 18.0555 4.72801 18.0555 13.4669V20.898L18.7958 21.7286C19.7605 22.8042 21.1327 22.8454 22.1515 21.8266L22.8273 21.1534L22.8995 10.5754L22.9718 4.19617e-05L26.6396 0.0696848L30.3075 0.141906V11.749C30.3075 24.7619 30.2688 25.0895 28.4761 27.5089C26.5003 30.1811 23.8797 31.5224 20.6091 31.5353C16.0952 31.5559 12.6801 28.5226 11.9837 23.872C11.8831 23.2143 12.1617 20.8671 12.7498 17.3798C13.7841 11.2538 13.8537 10.075 13.2476 9.05101C12.3164 7.47502 10.0647 6.96947 8.44224 7.97284C6.8353 8.96589 6.8482 8.87561 6.70633 20.7561L6.57736 31.5714L3.39701 31.5894C1.64821 31.6023 0.167658 31.5611 0.108333 31.5017ZM62.2244 15.9405L62.2915 0.141906L66.5474 0.0800014L70.8034 0.0206763L75.423 5.56114C77.9663 8.60994 80.1381 11.1042 80.2542 11.1042C80.3702 11.1042 80.4966 8.63831 80.5353 5.62304L80.6049 0.141906H82.1293H83.6512L83.6073 15.876L83.5661 31.6101L79.3617 31.6797L75.1573 31.7519L71.1645 26.9079C68.9695 24.246 66.9447 21.7518 66.6661 21.3649C66.3875 20.9805 66.0728 20.6607 65.9671 20.6555C65.8613 20.6504 65.7736 23.1446 65.7736 26.1934V31.739H63.9655H62.1574L62.2244 15.9405Z"/></svg>
+          </span>
+        </div>
+        <p class="col__orbtext">Un anillo: el fondo de créditos es único por cuenta (0,3 %).</p>
+      </div>
+
+      <article class="q-card" aria-label="Tarjeta del panel de detalle de NaN Builders con créditos">
+        <header class="q-card__head">
+          <span class="q-card__logo">
+            <svg viewBox="0 0 84 33" aria-hidden="true"><path fill="currentColor" d="M33.7896 21.6821V11.3621H43.2171C53.4443 11.3621 53.5294 11.3518 54.6592 9.9151C55.0409 9.4276 55.1983 8.85756 55.1983 7.94962C55.1983 6.8405 55.0822 6.55161 54.3368 5.80618C53.8622 5.33158 53.1503 4.86213 52.7505 4.76154C52.2836 4.64547 48.933 5.13812 43.2249 6.16729C38.3834 7.03653 34.2797 7.75101 34.1069 7.75101C33.8696 7.75101 33.7896 6.79149 33.7896 4.00063V0.24766L43.7846 0.325041C53.4056 0.397263 53.826 0.420477 54.9893 0.959563C56.3977 1.60956 57.8266 2.99726 58.6288 4.49844C59.1911 5.55082 59.1963 5.65142 59.1963 18.7133V31.868L46.4929 31.9351L33.7896 32.0021V21.6821ZM53.6403 27.8055C55.4562 26.8744 55.7141 26.1135 55.7141 21.6796C55.7141 17.2431 55.4588 16.4899 53.6326 15.5433C52.5209 14.9681 52.3249 14.9526 46.2995 15.0274C39.41 15.1099 38.8632 15.2312 37.9914 16.8484C37.4368 17.8802 37.1918 23.8153 37.638 25.4712C38.3422 28.0918 39.1805 28.3601 46.6967 28.3756C52.2294 28.3859 52.5647 28.3575 53.6403 27.8055ZM0.108333 31.5017C0.0490073 31.4424 0 24.3337 0 15.7032V0.0129386H6.01506C13.1779 0.0129386 13.8537 0.162541 15.8811 2.18734C17.9678 4.27662 18.0555 4.72801 18.0555 13.4669V20.898L18.7958 21.7286C19.7605 22.8042 21.1327 22.8454 22.1515 21.8266L22.8273 21.1534L22.8995 10.5754L22.9718 4.19617e-05L26.6396 0.0696848L30.3075 0.141906V11.749C30.3075 24.7619 30.2688 25.0895 28.4761 27.5089C26.5003 30.1811 23.8797 31.5224 20.6091 31.5353C16.0952 31.5559 12.6801 28.5226 11.9837 23.872C11.8831 23.2143 12.1617 20.8671 12.7498 17.3798C13.7841 11.2538 13.8537 10.075 13.2476 9.05101C12.3164 7.47502 10.0647 6.96947 8.44224 7.97284C6.8353 8.96589 6.8482 8.87561 6.70633 20.7561L6.57736 31.5714L3.39701 31.5894C1.64821 31.6023 0.167658 31.5611 0.108333 31.5017ZM62.2244 15.9405L62.2915 0.141906L66.5474 0.0800014L70.8034 0.0206763L75.423 5.56114C77.9663 8.60994 80.1381 11.1042 80.2542 11.1042C80.3702 11.1042 80.4966 8.63831 80.5353 5.62304L80.6049 0.141906H82.1293H83.6512L83.6073 15.876L83.5661 31.6101L79.3617 31.6797L75.1573 31.7519L71.1645 26.9079C68.9695 24.246 66.9447 21.7518 66.6661 21.3649C66.3875 20.9805 66.0728 20.6607 65.9671 20.6555C65.8613 20.6504 65.7736 23.1446 65.7736 26.1934V31.739H63.9655H62.1574L62.2244 15.9405Z"/></svg>
+          </span>
+          <h3 class="q-card__name">NaN Builders</h3>
+          <span class="eg-status">Inference</span>
+        </header>
+
+        <div class="q-card__body">
+          <p class="report-header">24,3 de 7.000 créditos del periodo</p>
+
+          <div class="q-card__meters">
+            <div class="q-meter" style="--meter-color:var(--ring-1)">
+              <div class="q-meter__row">
+                <span class="eg-gauge__key" aria-hidden="true"></span>
+                <span class="q-meter__label">Créditos del periodo</span>
+                <b class="q-meter__value">0,3 %</b>
+              </div>
+              <span class="eg-progress" role="progressbar" aria-label="Créditos del periodo" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="--p:.003">
+                <span class="eg-progress__bar"></span>
+              </span>
+              <span class="q-meter__meta">24,3 / 7.000 créditos · Se reinicia el 5 de diciembre</span>
+            </div>
+
+            <div class="q-meter">
+              <div class="q-meter__row">
+                <span class="q-meter__label">Saldo de packs · caduca el 12-may</span>
+                <b class="q-meter__value">240 créditos</b>
+              </div>
+            </div>
+          </div>
+
+          <section class="details__sec">
+            <h4 class="details__title">Consumo por modelo</h4>
+            <ul class="breakdown">
+              <li>
+                <span class="breakdown__model">deepseek-v4-flash</span>
+                <span class="breakdown__dash">—</span>
+                <span class="breakdown__amount">12,4 créditos</span>
+              </li>
+              <li>
+                <span class="breakdown__model">glm5.3-flash</span>
+                <span class="breakdown__dash">—</span>
+                <span class="breakdown__amount">11,9 créditos</span>
+              </li>
+            </ul>
+            <p class="details__note">Sin porcentaje: en créditos no hay tope por modelo.</p>
+          </section>
+        </div>
+      </article>
+    </div>
+
+    <!-- ───────── Columna 3 · alternativa A ───────── -->
+    <div class="col">
+      <header class="col__head">
+        <p class="col__kicker">Columna 3</p>
+        <h2 class="col__title">Alternativa A (la más simple)</h2>
+      </header>
+
+      <div class="col__orb">
+        <div class="orb" role="img" aria-label="NaN Builders: un anillo, 24,3 de 7.000 créditos (0,3 %)">
+          <span class="orb__ring" style="--p:.003"></span>
+          <span class="orb__logo">
+            <svg viewBox="0 0 84 33" aria-hidden="true"><path fill="currentColor" d="M33.7896 21.6821V11.3621H43.2171C53.4443 11.3621 53.5294 11.3518 54.6592 9.9151C55.0409 9.4276 55.1983 8.85756 55.1983 7.94962C55.1983 6.8405 55.0822 6.55161 54.3368 5.80618C53.8622 5.33158 53.1503 4.86213 52.7505 4.76154C52.2836 4.64547 48.933 5.13812 43.2249 6.16729C38.3834 7.03653 34.2797 7.75101 34.1069 7.75101C33.8696 7.75101 33.7896 6.79149 33.7896 4.00063V0.24766L43.7846 0.325041C53.4056 0.397263 53.826 0.420477 54.9893 0.959563C56.3977 1.60956 57.8266 2.99726 58.6288 4.49844C59.1911 5.55082 59.1963 5.65142 59.1963 18.7133V31.868L46.4929 31.9351L33.7896 32.0021V21.6821ZM53.6403 27.8055C55.4562 26.8744 55.7141 26.1135 55.7141 21.6796C55.7141 17.2431 55.4588 16.4899 53.6326 15.5433C52.5209 14.9681 52.3249 14.9526 46.2995 15.0274C39.41 15.1099 38.8632 15.2312 37.9914 16.8484C37.4368 17.8802 37.1918 23.8153 37.638 25.4712C38.3422 28.0918 39.1805 28.3601 46.6967 28.3756C52.2294 28.3859 52.5647 28.3575 53.6403 27.8055ZM0.108333 31.5017C0.0490073 31.4424 0 24.3337 0 15.7032V0.0129386H6.01506C13.1779 0.0129386 13.8537 0.162541 15.8811 2.18734C17.9678 4.27662 18.0555 4.72801 18.0555 13.4669V20.898L18.7958 21.7286C19.7605 22.8042 21.1327 22.8454 22.1515 21.8266L22.8273 21.1534L22.8995 10.5754L22.9718 4.19617e-05L26.6396 0.0696848L30.3075 0.141906V11.749C30.3075 24.7619 30.2688 25.0895 28.4761 27.5089C26.5003 30.1811 23.8797 31.5224 20.6091 31.5353C16.0952 31.5559 12.6801 28.5226 11.9837 23.872C11.8831 23.2143 12.1617 20.8671 12.7498 17.3798C13.7841 11.2538 13.8537 10.075 13.2476 9.05101C12.3164 7.47502 10.0647 6.96947 8.44224 7.97284C6.8353 8.96589 6.8482 8.87561 6.70633 20.7561L6.57736 31.5714L3.39701 31.5894C1.64821 31.6023 0.167658 31.5611 0.108333 31.5017ZM62.2244 15.9405L62.2915 0.141906L66.5474 0.0800014L70.8034 0.0206763L75.423 5.56114C77.9663 8.60994 80.1381 11.1042 80.2542 11.1042C80.3702 11.1042 80.4966 8.63831 80.5353 5.62304L80.6049 0.141906H82.1293H83.6512L83.6073 15.876L83.5661 31.6101L79.3617 31.6797L75.1573 31.7519L71.1645 26.9079C68.9695 24.246 66.9447 21.7518 66.6661 21.3649C66.3875 20.9805 66.0728 20.6607 65.9671 20.6555C65.8613 20.6504 65.7736 23.1446 65.7736 26.1934V31.739H63.9655H62.1574L62.2244 15.9405Z"/></svg>
+          </span>
+        </div>
+        <p class="col__orbtext">Un anillo, igual que en la propuesta B: el orbe no cambia.</p>
+      </div>
+
+      <article class="q-card" aria-label="Tarjeta del panel de detalle de NaN Builders, alternativa A">
+        <header class="q-card__head">
+          <span class="q-card__logo">
+            <svg viewBox="0 0 84 33" aria-hidden="true"><path fill="currentColor" d="M33.7896 21.6821V11.3621H43.2171C53.4443 11.3621 53.5294 11.3518 54.6592 9.9151C55.0409 9.4276 55.1983 8.85756 55.1983 7.94962C55.1983 6.8405 55.0822 6.55161 54.3368 5.80618C53.8622 5.33158 53.1503 4.86213 52.7505 4.76154C52.2836 4.64547 48.933 5.13812 43.2249 6.16729C38.3834 7.03653 34.2797 7.75101 34.1069 7.75101C33.8696 7.75101 33.7896 6.79149 33.7896 4.00063V0.24766L43.7846 0.325041C53.4056 0.397263 53.826 0.420477 54.9893 0.959563C56.3977 1.60956 57.8266 2.99726 58.6288 4.49844C59.1911 5.55082 59.1963 5.65142 59.1963 18.7133V31.868L46.4929 31.9351L33.7896 32.0021V21.6821ZM53.6403 27.8055C55.4562 26.8744 55.7141 26.1135 55.7141 21.6796C55.7141 17.2431 55.4588 16.4899 53.6326 15.5433C52.5209 14.9681 52.3249 14.9526 46.2995 15.0274C39.41 15.1099 38.8632 15.2312 37.9914 16.8484C37.4368 17.8802 37.1918 23.8153 37.638 25.4712C38.3422 28.0918 39.1805 28.3601 46.6967 28.3756C52.2294 28.3859 52.5647 28.3575 53.6403 27.8055ZM0.108333 31.5017C0.0490073 31.4424 0 24.3337 0 15.7032V0.0129386H6.01506C13.1779 0.0129386 13.8537 0.162541 15.8811 2.18734C17.9678 4.27662 18.0555 4.72801 18.0555 13.4669V20.898L18.7958 21.7286C19.7605 22.8042 21.1327 22.8454 22.1515 21.8266L22.8273 21.1534L22.8995 10.5754L22.9718 4.19617e-05L26.6396 0.0696848L30.3075 0.141906V11.749C30.3075 24.7619 30.2688 25.0895 28.4761 27.5089C26.5003 30.1811 23.8797 31.5224 20.6091 31.5353C16.0952 31.5559 12.6801 28.5226 11.9837 23.872C11.8831 23.2143 12.1617 20.8671 12.7498 17.3798C13.7841 11.2538 13.8537 10.075 13.2476 9.05101C12.3164 7.47502 10.0647 6.96947 8.44224 7.97284C6.8353 8.96589 6.8482 8.87561 6.70633 20.7561L6.57736 31.5714L3.39701 31.5894C1.64821 31.6023 0.167658 31.5611 0.108333 31.5017ZM62.2244 15.9405L62.2915 0.141906L66.5474 0.0800014L70.8034 0.0206763L75.423 5.56114C77.9663 8.60994 80.1381 11.1042 80.2542 11.1042C80.3702 11.1042 80.4966 8.63831 80.5353 5.62304L80.6049 0.141906H82.1293H83.6512L83.6073 15.876L83.5661 31.6101L79.3617 31.6797L75.1573 31.7519L71.1645 26.9079C68.9695 24.246 66.9447 21.7518 66.6661 21.3649C66.3875 20.9805 66.0728 20.6607 65.9671 20.6555C65.8613 20.6504 65.7736 23.1446 65.7736 26.1934V31.739H63.9655H62.1574L62.2244 15.9405Z"/></svg>
+          </span>
+          <h3 class="q-card__name">NaN Builders</h3>
+          <span class="eg-status">Plan</span>
+        </header>
+
+        <div class="q-card__body">
+          <p class="report-header">Consumo del periodo de la cuenta</p>
+
+          <div class="q-card__meters">
+            <div class="q-meter" style="--meter-color:var(--ring-1)">
+              <div class="q-meter__row">
+                <span class="eg-gauge__key" aria-hidden="true"></span>
+                <span class="q-meter__label">Créditos del periodo</span>
+                <b class="q-meter__value">0,3 %</b>
+              </div>
+              <span class="eg-progress" role="progressbar" aria-label="Créditos del periodo" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="--p:.003">
+                <span class="eg-progress__bar"></span>
+              </span>
+              <span class="q-meter__meta">24,3 / 7.000 créditos · Se reinicia el 5 de diciembre</span>
+            </div>
+
+            <div class="q-meter">
+              <div class="q-meter__row">
+                <span class="q-meter__label">Saldo de packs · caduca el 12-may</span>
+                <b class="q-meter__value">240 créditos</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ───────── qué cambia / qué no cambia ───────── -->
+  <section aria-labelledby="tabla">
+    <table class="compare">
+      <caption id="tabla">Antes y después, en una tabla</caption>
+      <thead>
+        <tr>
+          <th scope="col">Qué cambia</th>
+          <th scope="col">Qué no cambia</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>El <b>orbe</b> pasa de dos anillos (uno por modelo) a uno solo: el fondo de créditos es único por cuenta.</td>
+          <td>El <b>ritmo de consumo</b> y el historial: los mismos componentes y las mismas reglas.</td>
+        </tr>
+        <tr>
+          <td>El panel muestra <b>un medidor de créditos del periodo</b> en lugar de dos cuotas por modelo con su porcentaje y su barra.</td>
+          <td>El <b>color de cada anillo</b> y los umbrales: 90 % avisa, 100 % agota con el halo rojo de exceso.</td>
+        </tr>
+        <tr>
+          <td>Aparecen una <b>línea de saldo de packs</b> (sin barra: es un saldo, no un límite) y un <b>desglose informativo por modelo</b>, sin porcentajes.</td>
+          <td>El <b>front sigue sin saber nada del proveedor</b>: el backend declara los medidores y el front los dibuja con los mismos componentes, con el mismo contrato y sin un bloque especial de NaN.</td>
+        </tr>
+        <tr>
+          <td>El <b>gráfico diario</b> no cambia: aparece sólo cuando el proveedor declara una serie diaria, y en esta ruta no la hay, así que el panel no lo muestra. Esta propuesta <b>no lo agrega</b>.</td>
+          <td>Los <b>estados de la tira</b> (normal, aviso, agotado, suscripción inactiva y sin datos) son los mismos para cualquier proveedor.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+</body>
+</html>
