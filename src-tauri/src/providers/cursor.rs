@@ -8,6 +8,7 @@
 
 use super::{net_error, Who};
 use crate::config::SubscriptionConfig;
+use crate::i18n::{text, Locale, Msg};
 use crate::model::{Kind, Meter, Spend, Status, UsageReport, Validity, ValidityKind};
 use crate::secrets;
 use base64::Engine;
@@ -15,7 +16,12 @@ use chrono::DateTime;
 use serde_json::Value;
 use std::path::PathBuf;
 
-pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+pub async fn fetch(
+    cfg: &SubscriptionConfig,
+    locale: Locale,
+    who: Who<'_>,
+    http: &reqwest::Client,
+) -> UsageReport {
     let report = who.report("Cursor", Kind::Subscription);
 
     // Token: el pegado a mano en Ajustes manda; si no, el de la app de Cursor.
@@ -28,7 +34,7 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
                 "Pega el token de esta cuenta de Cursor en Ajustes.",
             );
         }
-        None => match read_app_token(cfg.credentials_path.as_deref()) {
+        None => match read_app_token(locale, cfg.credentials_path.as_deref()) {
             Ok(t) => t,
             Err(e) => return report.fail(Status::NeedsLogin, e),
         },
@@ -55,10 +61,7 @@ pub async fn fetch(cfg: &SubscriptionConfig, who: Who<'_>, http: &reqwest::Clien
     match res.status().as_u16() {
         200 => {}
         401 | 403 => {
-            return report.fail(
-                Status::NeedsLogin,
-                "Sesión de Cursor caducada. Abre Cursor para renovarla.",
-            )
+            return report.fail(Status::NeedsLogin, text(locale, Msg::CursorSessionExpired))
         }
         code => return report.fail(Status::Error, format!("HTTP {code} en usage-summary")),
     }
@@ -90,12 +93,12 @@ fn default_db() -> PathBuf {
 }
 
 /// Lee `cursorAuth/accessToken` de la base de datos de Cursor en modo solo lectura.
-fn read_app_token(explicit: Option<&str>) -> Result<String, String> {
+fn read_app_token(locale: Locale, explicit: Option<&str>) -> Result<String, String> {
     let path = explicit.map(PathBuf::from).unwrap_or_else(default_db);
     if !path.is_file() {
-        return Err(format!(
-            "No encuentro la sesión de Cursor en {}. Inicia sesión en Cursor.",
-            path.display()
+        return Err(crate::i18n::cursor_session_not_found(
+            locale,
+            &path.display().to_string(),
         ));
     }
     // `immutable=1`: no toca los bloqueos de Cursor aunque esté abierto.

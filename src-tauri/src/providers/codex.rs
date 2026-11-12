@@ -7,6 +7,7 @@
 
 use super::{home, net_error, read_json, resolve_path, unix_to_rfc3339, Who};
 use crate::config::SubscriptionConfig;
+use crate::i18n::{text, Locale, Msg};
 use crate::model::{Kind, Meter, Status, UsageReport, Validity, ValidityKind};
 use crate::wsl::{SessionError, SessionResolver};
 use base64::Engine;
@@ -32,16 +33,21 @@ pub(crate) fn auth_candidates(codex_home: Option<&Path>, home: &Path) -> Vec<Pat
 /// Ruta efectiva de `auth.json`: respeta `credentials_path` explícito y, si no,
 /// el primer candidato existente.
 pub(crate) fn auth_path(
+    locale: Locale,
     credentials_path: Option<&str>,
     codex_home: Option<&Path>,
     home: &Path,
 ) -> Result<PathBuf, String> {
-    resolve_path(credentials_path, &auth_candidates(codex_home, home))
+    resolve_path(locale, credentials_path, &auth_candidates(codex_home, home))
 }
 
 /// `auth_path` leyendo `CODEX_HOME` del entorno (uso real; los tests inyectan).
-pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolved_auth_path(
+    locale: Locale,
+    credentials_path: Option<&str>,
+) -> Result<PathBuf, String> {
     auth_path(
+        locale,
         credentials_path,
         std::env::var_os("CODEX_HOME").map(PathBuf::from).as_deref(),
         &home(),
@@ -50,6 +56,7 @@ pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathB
 
 pub async fn fetch(
     cfg: &SubscriptionConfig,
+    locale: Locale,
     who: Who<'_>,
     http: &reqwest::Client,
     resolver: Option<&SessionResolver>,
@@ -73,13 +80,19 @@ pub async fn fetch(
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => v,
                     Err(e) => {
-                        return report.fail(Status::Error, format!("{e}. Ejecuta «codex login»."))
+                        return report.fail(
+                            Status::Error,
+                            format!("{}. {}", e, text(locale, Msg::SignInCodex)),
+                        )
                     }
                 },
                 // Sin credenciales en el entorno elegido: hace falta login
                 // AQUÍ (no en otro entorno).
                 Err(SessionError::Absent(m)) => {
-                    return report.fail(Status::NeedsLogin, format!("{m}. Ejecuta «codex login»."))
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{}. {}", m, text(locale, Msg::SignInCodex)),
+                    )
                 }
                 // El fallo es del subsistema o de la distro: la acción
                 // correcta no es "inicia sesión".
@@ -90,13 +103,16 @@ pub async fn fetch(
             }
         }
         None => {
-            let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
+            let path = match resolved_auth_path(locale, cfg.credentials_path.as_deref()) {
                 Ok(p) => p,
                 Err(e) => {
-                    return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «codex login»."))
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{}. {}", e, text(locale, Msg::SignInCodex)),
+                    )
                 }
             };
-            match read_json(&path) {
+            match read_json(locale, &path) {
                 Ok(v) => v,
                 Err(e) => return report.fail(Status::NeedsLogin, e),
             }
@@ -398,7 +414,7 @@ mod tests {
         let codex_auth = codex_home.file("auth.json");
         home.file(".codex/auth.json");
         assert_eq!(
-            auth_path(None, Some(codex_home.path()), home.path()).unwrap(),
+            auth_path(Locale::Es, None, Some(codex_home.path()), home.path()).unwrap(),
             codex_auth
         );
     }
@@ -410,7 +426,7 @@ mod tests {
         let codex_home = TempDir::new("codexhome-empty");
         let home_auth = home.file(".codex/auth.json");
         assert_eq!(
-            auth_path(None, Some(codex_home.path()), home.path()).unwrap(),
+            auth_path(Locale::Es, None, Some(codex_home.path()), home.path()).unwrap(),
             home_auth
         );
     }
@@ -423,7 +439,13 @@ mod tests {
         let custom = home.file("custom/auth.json");
         let explicit = custom.to_string_lossy().into_owned();
         assert_eq!(
-            auth_path(Some(&explicit), Some(codex_home.path()), home.path()).unwrap(),
+            auth_path(
+                Locale::Es,
+                Some(&explicit),
+                Some(codex_home.path()),
+                home.path()
+            )
+            .unwrap(),
             custom
         );
     }
@@ -432,9 +454,15 @@ mod tests {
     fn auth_path_errors_when_nothing_exists() {
         let home = TempDir::new("home-empty");
         let codex_home = TempDir::new("codexhome-none");
-        assert!(auth_path(None, Some(codex_home.path()), home.path()).is_err());
+        assert!(auth_path(Locale::Es, None, Some(codex_home.path()), home.path()).is_err());
         let missing = home.path().join("missing.json");
-        assert!(auth_path(Some(missing.to_string_lossy().as_ref()), None, home.path()).is_err());
+        assert!(auth_path(
+            Locale::Es,
+            Some(missing.to_string_lossy().as_ref()),
+            None,
+            home.path()
+        )
+        .is_err());
     }
 
     #[test]

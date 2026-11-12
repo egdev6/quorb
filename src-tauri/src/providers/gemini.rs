@@ -12,6 +12,7 @@
 
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
+use crate::i18n::{text, Locale, Msg};
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use serde_json::{json, Value};
@@ -28,6 +29,7 @@ static CACHED: Mutex<BTreeMap<String, (String, i64)>> = Mutex::new(BTreeMap::new
 
 pub async fn fetch(
     cfg: &SubscriptionConfig,
+    locale: Locale,
     who: Who<'_>,
     http: &reqwest::Client,
     resolver: Option<&SessionResolver>,
@@ -52,7 +54,7 @@ pub async fn fetch(
                     Err(e) => {
                         return report.fail(
                             Status::Error,
-                            format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+                            format!("{}. {}", e, text(locale, Msg::SignInGemini)),
                         )
                     }
                 },
@@ -61,7 +63,7 @@ pub async fn fetch(
                 Err(SessionError::Absent(m)) => {
                     return report.fail(
                         Status::NeedsLogin,
-                        format!("{m}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+                        format!("{}. {}", m, text(locale, Msg::SignInGemini)),
                     )
                 }
                 // El fallo es del subsistema o de la distro: la acción
@@ -74,16 +76,16 @@ pub async fn fetch(
         }
         None => {
             let candidates = vec![home().join(".gemini").join("oauth_creds.json")];
-            let path = match resolve_path(cfg.credentials_path.as_deref(), &candidates) {
+            let path = match resolve_path(locale, cfg.credentials_path.as_deref(), &candidates) {
                 Ok(p) => p,
                 Err(e) => {
                     return report.fail(
                         Status::NeedsLogin,
-                        format!("{e}. Inicia sesión en Gemini CLI con tu cuenta de Google."),
+                        format!("{}. {}", e, text(locale, Msg::SignInGemini)),
                     )
                 }
             };
-            match read_json(&path) {
+            match read_json(locale, &path) {
                 Ok(v) => v,
                 Err(e) => return report.fail(Status::Error, e),
             }

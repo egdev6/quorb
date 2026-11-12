@@ -10,6 +10,7 @@
 
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
+use crate::i18n::{text, Locale, Msg};
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use serde_json::Value;
@@ -176,6 +177,7 @@ fn parse_keychain_secret(raw: &str) -> Option<Credentials> {
 
 pub async fn fetch(
     cfg: &SubscriptionConfig,
+    locale: Locale,
     who: Who<'_>,
     http: &reqwest::Client,
     resolver: Option<&SessionResolver>,
@@ -202,13 +204,17 @@ pub async fn fetch(
                     Ok(v) => match Credentials::parse(&v) {
                         Ok(c) => c,
                         Err(e) => {
-                            return report
-                                .fail(Status::Error, format!("{e}. Inicia sesión en Claude Code."))
+                            return report.fail(
+                                Status::Error,
+                                format!("{}. {}", e, text(locale, Msg::SignInClaude)),
+                            )
                         }
                     },
                     Err(e) => {
-                        return report
-                            .fail(Status::Error, format!("{e}. Inicia sesión en Claude Code."))
+                        return report.fail(
+                            Status::Error,
+                            format!("{}. {}", e, text(locale, Msg::SignInClaude)),
+                        )
                     }
                 },
                 // Sin credenciales en el entorno elegido: hace falta login
@@ -216,7 +222,7 @@ pub async fn fetch(
                 Err(SessionError::Absent(m)) => {
                     return report.fail(
                         Status::NeedsLogin,
-                        format!("{m}. Inicia sesión en Claude Code."),
+                        format!("{}. {}", m, text(locale, Msg::SignInClaude)),
                     )
                 }
                 // El fallo es del subsistema o de la distro: la acción
@@ -227,8 +233,8 @@ pub async fn fetch(
                 Err(e) => return report.fail(Status::Error, e.to_string()),
             }
         }
-        None => match resolve_path(cfg.credentials_path.as_deref(), &[default_path]) {
-            Ok(p) => match read_json(&p).and_then(|v| Credentials::parse(&v)) {
+        None => match resolve_path(locale, cfg.credentials_path.as_deref(), &[default_path]) {
+            Ok(p) => match read_json(locale, &p).and_then(|v| Credentials::parse(&v)) {
                 Ok(c) => c,
                 Err(e) => return report.fail(Status::Error, e),
             },
@@ -239,7 +245,7 @@ pub async fn fetch(
                 if !should_fallback_keychain(cfg.credentials_path.as_deref()) {
                     return report.fail(
                         Status::NeedsLogin,
-                        format!("{e}. Inicia sesión en Claude Code."),
+                        format!("{}. {}", e, text(locale, Msg::SignInClaude)),
                     );
                 }
                 match keychain_fallback().await {
@@ -247,15 +253,12 @@ pub async fn fetch(
                     KeychainOutcome::Session(c) => c,
                     #[cfg(target_os = "macos")]
                     KeychainOutcome::TimedOut => {
-                        return report.fail(
-                            Status::Warning,
-                            "La autorización del Keychain no se completó a tiempo. Concede el acceso a «Claude Code-credentials» y espera al próximo refresco.",
-                        )
+                        return report.fail(Status::Warning, text(locale, Msg::KeychainTimedOut))
                     }
                     KeychainOutcome::NoSession => {
                         return report.fail(
                             Status::NeedsLogin,
-                            format!("{e}. Inicia sesión en Claude Code."),
+                            format!("{}. {}", e, text(locale, Msg::SignInClaude)),
                         )
                     }
                 }

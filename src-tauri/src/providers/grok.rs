@@ -13,6 +13,7 @@
 
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
+use crate::i18n::{text, Locale, Msg};
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use chrono::{DateTime, Utc};
@@ -42,16 +43,21 @@ pub(crate) fn auth_candidates(grok_home: Option<&Path>, home: &Path) -> Vec<Path
 /// Ruta efectiva de `auth.json`: respeta `credentials_path` explícito y, si no,
 /// el primer candidato existente.
 pub(crate) fn auth_path(
+    locale: Locale,
     credentials_path: Option<&str>,
     grok_home: Option<&Path>,
     home: &Path,
 ) -> Result<PathBuf, String> {
-    resolve_path(credentials_path, &auth_candidates(grok_home, home))
+    resolve_path(locale, credentials_path, &auth_candidates(grok_home, home))
 }
 
 /// `auth_path` leyendo `GROK_HOME` del entorno (uso real; los tests inyectan).
-pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolved_auth_path(
+    locale: Locale,
+    credentials_path: Option<&str>,
+) -> Result<PathBuf, String> {
     auth_path(
+        locale,
         credentials_path,
         std::env::var_os("GROK_HOME").map(PathBuf::from).as_deref(),
         &home(),
@@ -60,6 +66,7 @@ pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathB
 
 pub async fn fetch(
     cfg: &SubscriptionConfig,
+    locale: Locale,
     who: Who<'_>,
     http: &reqwest::Client,
     resolver: Option<&SessionResolver>,
@@ -83,13 +90,19 @@ pub async fn fetch(
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => v,
                     Err(e) => {
-                        return report.fail(Status::Error, format!("{e}. Ejecuta «grok login»."))
+                        return report.fail(
+                            Status::Error,
+                            format!("{}. {}", e, text(locale, Msg::SignInGrok)),
+                        )
                     }
                 },
                 // Sin credenciales en el entorno elegido: hace falta login
                 // AQUÍ (no en otro entorno).
                 Err(SessionError::Absent(m)) => {
-                    return report.fail(Status::NeedsLogin, format!("{m}. Ejecuta «grok login»."))
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{}. {}", m, text(locale, Msg::SignInGrok)),
+                    )
                 }
                 // El fallo es del subsistema o de la distro: la acción
                 // correcta no es "inicia sesión".
@@ -100,13 +113,16 @@ pub async fn fetch(
             }
         }
         None => {
-            let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
+            let path = match resolved_auth_path(locale, cfg.credentials_path.as_deref()) {
                 Ok(p) => p,
                 Err(e) => {
-                    return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «grok login»."))
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{}. {}", e, text(locale, Msg::SignInGrok)),
+                    )
                 }
             };
-            match read_json(&path) {
+            match read_json(locale, &path) {
                 Ok(v) => v,
                 Err(e) => return report.fail(Status::NeedsLogin, e),
             }
