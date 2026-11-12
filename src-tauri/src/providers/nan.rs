@@ -162,13 +162,16 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         .filter(|m| !m.is_empty());
 
     let now = Utc::now();
+    // Los medidores de CUOTA del informe: vacíos si el periodo no se pudo leer (el caso
+    // mixto: el informe lleva los medidores extra, sin los de cuota).
+    let mut quota = Vec::new();
     if let Some(meters) = account_meters {
         // 2. La cuota de la cuenta manda: cuota, consumo y fechas salen del mismo payload, así
         // que no se lee `/v1/usage` (mide el consumo de esta key, de otro periodo) ni se usa
         // `billing_day` (el periodo es el del payload).
         let (meters, source, header) =
             nan_meters(Some(meters), None, &quotas, now, cfg.billing_day);
-        report.meters = meters;
+        quota = meters;
         report.message = Some(header);
         report.status = status_for(source);
     } else {
@@ -182,7 +185,7 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
                 let period = summarize(&pages, Some(period_start));
                 let (meters, source, header) =
                     nan_meters(None, Some((&month, &period)), &quotas, now, cfg.billing_day);
-                report.meters = meters;
+                quota = meters;
                 report.message = Some(header);
                 report.status = status_for(source);
             }
@@ -197,10 +200,8 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     }
 
     // 4. Endpoint propio opcional (avanzado) + cabeceras de rate limit
-    if let Some(m) = custom_usage(cfg, http, &key).await {
-        report.meters.insert(0, m);
-    }
-    report.meters.extend(rate_meters);
+    let own = custom_usage(cfg, http, &key).await;
+    report.meters = compose_meters(quota, own, rate_meters);
     if let Some(n) = note {
         report.status = Status::Warning;
         report.message = Some(match report.message.take() {
@@ -209,6 +210,22 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         });
     }
     report
+}
+
+/// Compone los medidores del informe en un solo sitio: primero el propio, después los de
+/// cuota y al final los de rate limit. Es el único camino de verdad del orden, para que el
+/// frente siempre reciba la misma lista (aunque el informe salga MIXTO, sin medidores de
+/// cuota, cuando el periodo no se pudo leer).
+pub(crate) fn compose_meters(
+    quota: Vec<Meter>,
+    own: Option<Meter>,
+    rate: Vec<Meter>,
+) -> Vec<Meter> {
+    let mut out = Vec::with_capacity(quota.len() + rate.len() + usize::from(own.is_some()));
+    out.extend(own);
+    out.extend(quota);
+    out.extend(rate);
+    out
 }
 
 /// Llama a `/v1/usage` siguiendo `next_cursor` (máx. 10 páginas).
@@ -870,10 +887,7 @@ mod tests {
             meters[0].resets_at.as_deref(),
             Some("2026-12-05T22:15:31+00:00")
         );
-        assert_eq!(
-            meters[0].window_seconds,
-            Some(30 * 86400 + 22 * 3600 + 15 * 60 + 31)
-        );
+        assert_eq!(meters[0].window_seconds, Some(30 * 86400));
         assert!(header.contains("periodo de la cuenta"), "{header}");
         assert!(!header.contains("este mes"), "{header}");
     }
@@ -1136,6 +1150,75 @@ mod tests {
         assert_eq!(m.percent, Some(25.0));
         assert!(pointer_meter(&json!({}), &cfg).is_none());
         assert_eq!((m.id.as_str(), m.label.as_str()), ("custom", "Consumo"));
+    }
+
+    #[test]
+    fn the_report_composes_the_own_meter_first_and_then_the_quota_and_the_rate_ones() {
+        // El informe se arma siempre igual: primero el medidor propio, después los de
+        // cuota y al final los de rate limit.
+        let quota = vec![
+            Meter {
+                id: "model:glm5.3".into(),
+                ..Default::default()
+            },
+            Meter {
+                id: "model:deepseek-v4-flash".into(),
+                ..Default::default()
+            },
+        ];
+        let own = Meter {
+            id: "custom".into(),
+            ..Default::default()
+        };
+        let rate = vec![Meter {
+            id: "rate_requests".into(),
+            ..Default::default()
+        }];
+        let meters = compose_meters(quota, Some(own), rate);
+        assert_eq!(
+            meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec![
+                "custom",
+                "model:glm5.3",
+                "model:deepseek-v4-flash",
+                "rate_requests"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_quota_meters_the_report_keeps_the_own_and_the_rate_ones() {
+        // El caso MIXTO: sin medidores de cuota (el periodo no se pudo leer) el informe
+        // lleva solo los medidores extra. El frente tiene que saber distinguirlos.
+        let own = Meter {
+            id: "custom".into(),
+            ..Default::default()
+        };
+        let rate = vec![Meter {
+            id: "rate_tokens".into(),
+            ..Default::default()
+        }];
+        let meters = compose_meters(Vec::new(), Some(own), rate);
+        assert_eq!(
+            meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["custom", "rate_tokens"]
+        );
+        // Y sin medidor propio tampoco: los de cuota y los de rate limit, en ese orden.
+        let meters = compose_meters(
+            vec![Meter {
+                id: "model:glm5.3".into(),
+                ..Default::default()
+            }],
+            None,
+            vec![Meter {
+                id: "rate_requests".into(),
+                ..Default::default()
+            }],
+        );
+        assert_eq!(
+            meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["model:glm5.3", "rate_requests"]
+        );
     }
 
     #[test]

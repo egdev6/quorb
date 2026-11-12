@@ -2785,7 +2785,7 @@ export function Settings() {
             <Field label="Base URL">
               <input type="text" spellCheck={false} value={cfg.nan.baseUrl} onChange={(e) => set('nan', { baseUrl: e.target.value })} />
             </Field>
-            <Field label="Día de inicio de facturación" hint="Solo para GLM 5.3 (cuenta por periodo de Stripe) cuando usas la API key.">
+            <Field label="Día de inicio de facturación" hint="El día del mes en que empieza tu periodo de facturación. Solo se usa si el panel de NaN no responde: para el periodo de GLM 5.3 y para cortar el consumo agregado.">
               <input type="number" min={1} max={28} value={cfg.nan.billingDay} onChange={(e) => set('nan', { billingDay: Number(e.target.value) || 1 })} />
             </Field>
             <NanProbe />

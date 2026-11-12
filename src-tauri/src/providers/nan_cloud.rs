@@ -219,9 +219,7 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
     let period_start = v
         .get("periodStart")
         .and_then(Value::as_str)
-        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .map(|d| d.and_utc());
+        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
     let mut out: Vec<Meter> = v
         .get("models")
         .and_then(Value::as_array)
@@ -243,8 +241,13 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc));
             // Mensual: desde periodStart. Periodo de facturación (glm5.3): un mes antes del fin.
+            // `periodStart` es una FECHA (el día del inicio del periodo) y `periodEnd` es un
+            // INSTANTE con hora: el inicio real del periodo es ese día a la MISMA hora del
+            // fin de ese modelo (la cuenta de verdad factura del 5 al 5 a las 22:15:31).
             let start = match (end, period_start) {
-                (Some(e), Some(s)) if m.get("windowHours").is_none() => Some(s.min(e)),
+                (Some(e), Some(d)) if m.get("windowHours").is_none() => {
+                    Some(d.and_time(e.time()).and_utc().min(e))
+                }
                 (Some(e), _) => e.checked_sub_months(Months::new(1)),
                 _ => None,
             };
@@ -322,10 +325,56 @@ mod tests {
         assert!((m[0].percent.unwrap() - 99.325).abs() < 0.01);
         assert!((m[1].percent.unwrap() - 95.558).abs() < 0.01);
         assert_eq!(m[0].resets_at.as_deref(), Some("2026-12-05T22:15:31+00:00"));
+        assert_eq!(m[0].window_seconds, Some(30 * 86400));
+    }
+
+    #[test]
+    fn the_account_period_starts_at_the_hour_of_its_own_end() {
+        // The real account payload: `periodStart` is a DATE (the 5th) and `periodEnd` is
+        // an INSTANT (the 5th of the next month at 22:15:31). The real start of the period
+        // is that day at the same hour, so the window is exactly 30 days, not 30 days
+        // plus the hours of the day it starts at.
+        let m = parse_quota(&real_account_payload());
+        let deepseek = m
+            .iter()
+            .find(|x| x.id == "model:deepseek-v4-flash")
+            .expect("deepseek meter");
+        let resets = deepseek
+            .resets_at
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&Utc))
+            .expect("the meter resets at an instant");
         assert_eq!(
-            m[0].window_seconds,
-            Some(30 * 86400 + 22 * 3600 + 15 * 60 + 31)
+            resets,
+            DateTime::parse_from_rfc3339("2026-12-05T22:15:31Z")
+                .unwrap()
+                .with_timezone(&Utc)
         );
+        assert_eq!(deepseek.window_seconds, Some(2_592_000));
+        assert_eq!(deepseek.window_seconds, Some(30 * 86400));
+    }
+
+    #[test]
+    fn a_period_that_ends_at_midnight_starts_at_midnight() {
+        // The trivial case of the same rule: when the period ends at midnight, the start
+        // is midnight too and the window is exactly the 30 days of the period.
+        let v = json!({"periodStart": "2026-11-05", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-12-05T00:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m[0].window_seconds, Some(2_592_000));
+    }
+
+    #[test]
+    fn the_canonical_fixture_keeps_the_dates_of_the_real_account() {
+        // The fixture is the contract of the provider: the dates it carries are the ones
+        // the account returns, unchanged by the parsing rules.
+        let v = real_account_payload();
+        assert_eq!(v["periodStart"].as_str(), Some("2026-11-05"));
+        for model in v["models"].as_array().expect("the fixture has models") {
+            assert_eq!(model["periodEnd"].as_str(), Some("2026-12-05T22:15:31Z"));
+        }
     }
 
     #[test]
