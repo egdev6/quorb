@@ -7,6 +7,7 @@ import { api, type WidgetPatch } from './lib/api';
 import { mergeReports, peakMeter, sessionsLost, trayTooltip } from './lib/format';
 import { derivePalette } from './lib/palette';
 import { detectAlerts, effectFor, nativeAlertsEnabled, notificationText, type AlertMemory } from './lib/alerts';
+import { dispatchEmailAlerts } from './lib/email';
 import { applyOrder, dropIndex, moveTo, officialUsageUrl } from './lib/order';
 import { contains, isEdge, isVertical, nearestEdge, panelHeightLimit, stripRect, type Edge, type Rect } from './lib/dock';
 import { ORB_SIZE, type AppConfig, type UsageReport } from './lib/types';
@@ -292,6 +293,9 @@ export function Widget() {
       const g = geoRef.current ? Promise.resolve(geoRef.current) : resolveGeo(configRef.current?.dockMonitor ?? null);
       g.then((geo) => geo && api.playEffect(effect, moment, geo.screen)).catch(() => {});
     }
+    // La memoria local ya se actualizó: un fallo remoto no se reintenta ni
+    // altera efectos/notificaciones. No pasa por retryWithBackoff del sondeo.
+    void dispatchEmailAlerts(res.events, a, api.sendEmailAlert);
   }, []);
 
   // ───── datos ─────
@@ -776,6 +780,22 @@ export function Widget() {
     window.clearTimeout(openTimer.current);
   };
 
+  /**
+   * Cierre del panel pedido por el detalle (#250/S22): el backend cerró la
+   * ventana (`dismiss`) o el detalle declaró que no pudo colocarse
+   * (`placement-failed`). Una sola rutina para las dos entradas, idéntica al
+   * cierre normal que ya hacía `dismiss`: cancela los timers pendientes, baja
+   * la presencia del detalle y cierra el panel.
+   *
+   * Sólo usa refs y el setter estable de `panel`, así que no necesita entrar
+   * en las dependencias del efecto que la usa.
+   */
+  const closeFromDetail = () => {
+    cancelTimers();
+    detailInsideRef.current = false;
+    setPanel(closePanel());
+  };
+
   useEffect(() => {
     let disposed = false;
     const unlisteners: (() => void)[] = [];
@@ -792,7 +812,15 @@ export function Widget() {
       await add(listen<DetailInteraction>(DETAIL_EVENTS.interaction, ({ payload }) => {
         if (disposed) return;
         const state = detailStateRef.current;
+        // Un aviso de una sesión vieja se ignora: sólo cuenta la sesión
+        // vigente, sea el que sea el tipo de aviso.
         if (!isCurrentDetailInteraction(state, payload)) return;
+        if (payload.kind === 'placement-failed') {
+          // El detalle declara que no pudo colocarse (#250/S22): la tira
+          // decide y lo cierra como en un cierre normal.
+          closeFromDetail();
+          return;
+        }
         if (payload.kind === 'enter') {
           detailInsideRef.current = true;
           window.clearTimeout(closeTimer.current);
@@ -815,9 +843,7 @@ export function Widget() {
         setPanel(closePanel());
       }));
       await add(listen(DETAIL_EVENTS.dismiss, () => {
-        cancelTimers();
-        detailInsideRef.current = false;
-        setPanel(closePanel());
+        closeFromDetail();
       }));
       // `Escape` desde el panel (#170): con el foco dentro del detalle, la
       // tecla la atiende esa ventana, no la tira. Cancela aperturas pendientes

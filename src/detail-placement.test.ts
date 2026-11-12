@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   confirmDetailPlacement,
   decideDetailPlacement,
+  detailPlacementFailed,
   retryDetailPlacement,
   type DetailPlacementReport,
 } from './detail-placement';
@@ -29,6 +30,14 @@ const report = (over: Partial<DetailPlacementReport> = {}): DetailPlacementRepor
 /** X11 con la ventana aún oculta: blando, sin geometría, reintento tras `show()`. */
 const notViewable = (): DetailPlacementReport => ({
   status: 'unverified', bounds: null, reason: 'not_viewable', read_back: false,
+});
+
+/**
+ * La llamada nativa no se pudo confirmar (#250/S17): la geometría no llegó a
+ * aplicarse, así que no se cachea nada y la colocación se vuelve a pedir.
+ */
+const readFailed = (): DetailPlacementReport => ({
+  status: 'unverified', bounds: null, reason: 'read_failed', read_back: false,
 });
 
 /** No Linux / Wayland nativo: la petición se aplicó y no hay read-back (S1). */
@@ -56,9 +65,11 @@ describe('decideDetailPlacement', () => {
     expect(decision).toEqual({ bounds: null, retry: false });
   });
 
-  it('a failed read caches nothing and does not retry', () => {
-    const decision = decideDetailPlacement({ status: 'unverified', bounds: null, reason: 'read_failed', read_back: false });
-    expect(decision).toEqual({ bounds: null, retry: false });
+  it('a failed read caches nothing and asks for a retry: the native call did not confirm the geometry', () => {
+    // #250/S17: la llamada nativa falló o expiró, así que la geometría no se
+    // aplicó. Nada se cachea como confirmado y la colocación se pide de nuevo.
+    const decision = decideDetailPlacement(readFailed());
+    expect(decision).toEqual({ bounds: null, retry: true });
   });
 
   it('a superseded placement caches nothing (the geometry was left half-done)', () => {
@@ -105,15 +116,32 @@ describe('confirmDetailPlacement', () => {
     expect(cached).toEqual([]);
   });
 
-  it('superseded and read_failed cache nothing: soft, always readable open', () => {
-    for (const soft of [
-      { status: 'superseded', bounds: null, reason: 'superseded', read_back: false },
-      { status: 'unverified', bounds: null, reason: 'read_failed', read_back: false },
-    ] as DetailPlacementReport[]) {
-      const cached: PhysicalBounds[] = [];
-      expect(confirmDetailPlacement(soft, (b) => { cached.push(b); })).toBe(false);
-      expect(cached).toEqual([]);
-    }
+  it('a superseded placement caches nothing and does not ask for a retry', () => {
+    const cached: PhysicalBounds[] = [];
+    expect(confirmDetailPlacement({ status: 'superseded', bounds: null, reason: 'superseded', read_back: false }, (b) => { cached.push(b); })).toBe(false);
+    expect(cached).toEqual([]);
+  });
+
+  it('a failed read caches nothing and asks for a retry', () => {
+    // #250/S17: la geometría no se aplicó, así que no hay nada que cachear y
+    // la colocación se vuelve a pedir dentro del presupuesto.
+    const cached: PhysicalBounds[] = [];
+    expect(confirmDetailPlacement(readFailed(), (b) => { cached.push(b); })).toBe(true);
+    expect(cached).toEqual([]);
+  });
+});
+
+describe('detailPlacementFailed', () => {
+  it('is true only when the native call could not be confirmed', () => {
+    // #250/S17: la geometría no llegó a aplicarse, así que el panel no puede
+    // mostrarse con la anterior ni con la de fábrica.
+    expect(detailPlacementFailed(readFailed())).toBe(true);
+    // `not_viewable` es blando: la ventana todavía no era legible, la
+    // geometría sí se pidió.
+    expect(detailPlacementFailed(notViewable())).toBe(false);
+    expect(detailPlacementFailed(report())).toBe(false);
+    // Una colocación cancelada la resuelve la colocación que la sustituye.
+    expect(detailPlacementFailed({ status: 'superseded', bounds: null, reason: 'superseded', read_back: false })).toBe(false);
   });
 });
 
@@ -149,6 +177,25 @@ describe('retryDetailPlacement (#221 pattern)', () => {
     const result = await retryDetailPlacement(requested, io(place, { attempts: 4 }));
     expect(place).toHaveBeenCalledTimes(4);
     expect(result).toEqual(notViewable());
+  });
+
+  it('re-asks the placement when the native call failed to confirm the geometry', async () => {
+    // #250/S17: `read_failed` no es un motivo blando — la geometría no se
+    // aplicó — así que la colocación se vuelve a pedir como en `not_viewable`.
+    const { place, bounds } = placeFor([readFailed(), readFailed(), report()]);
+    const result = await retryDetailPlacement(requested, io(place));
+    expect(place).toHaveBeenCalledTimes(3);
+    expect(bounds).toEqual([requested, requested, requested]);
+    expect(result).toEqual(report({ reason: undefined }));
+  });
+
+  it('gives up after the bounded budget when the native call keeps failing', async () => {
+    const { place } = placeFor([readFailed()]);
+    const result = await retryDetailPlacement(requested, io(place, { attempts: 4 }));
+    expect(place).toHaveBeenCalledTimes(4);
+    // Agotado el presupuesto, el llamante recibe el `read_failed` y decide
+    // que la colocación no quedó confirmada.
+    expect(result).toEqual(readFailed());
   });
 
   it('returns null without asking when the detail already closed or changed', async () => {

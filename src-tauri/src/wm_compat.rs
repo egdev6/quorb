@@ -91,9 +91,12 @@ pub struct DesktopSurfaces {
     pub window_positioning: SurfaceStatus,
 }
 
-/// Las 5 env vars que miramos, normalizadas: `None` si ausentes o vacías.
+/// Las 6 env vars que miramos, normalizadas: `None` si ausentes o vacías.
 /// `gdk_backend` es `GDK_BACKEND` (issue #180): GTK lo acepta como lista
 /// separada por comas (p. ej. `"x11,*"`) y decide el backend GDK efectivo.
+/// `hyprland_instance_signature` es `HYPRLAND_INSTANCE_SIGNATURE` (issue
+/// #250): la firma de la instancia de Hyprland, que sobrevive a lanzadores y
+/// servicios que limpian `XDG_CURRENT_DESKTOP` y `DESKTOP_SESSION`.
 #[derive(Debug, Default, Clone)]
 pub struct Env {
     pub wayland_display: Option<String>,
@@ -101,6 +104,7 @@ pub struct Env {
     pub desktop_session: Option<String>,
     pub xdg_current_desktop: Option<String>,
     pub gdk_backend: Option<String>,
+    pub hyprland_instance_signature: Option<String>,
 }
 
 impl Env {
@@ -120,6 +124,9 @@ impl Env {
                 .ok()
                 .filter(|s| !s.is_empty()),
             gdk_backend: std::env::var("GDK_BACKEND").ok().filter(|s| !s.is_empty()),
+            hyprland_instance_signature: std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 }
@@ -200,7 +207,7 @@ pub fn detect_wm_info_from_env(env: &Env, tray: TrayDiagnostics) -> WindowManage
 /// Normaliza strings vacíos como "ausente" en TODOS los campos, igual que
 /// `Env::from_process`: si el caller construye el `Env` a mano y le pasa
 /// `Some("")` (los tests lo hacen), un string vacío no debe contar como señal.
-fn normalize_env(env: &Env) -> Env {
+pub(crate) fn normalize_env(env: &Env) -> Env {
     let non_empty = |opt: &Option<String>| opt.clone().filter(|s| !s.is_empty());
     Env {
         wayland_display: non_empty(&env.wayland_display),
@@ -208,18 +215,26 @@ fn normalize_env(env: &Env) -> Env {
         desktop_session: non_empty(&env.desktop_session),
         xdg_current_desktop: non_empty(&env.xdg_current_desktop),
         gdk_backend: non_empty(&env.gdk_backend),
+        hyprland_instance_signature: non_empty(&env.hyprland_instance_signature),
     }
 }
 
-/// Señal Hyprland (`DESKTOP_SESSION=hyprland` o token `Hyprland` en
-/// `XDG_CURRENT_DESKTOP`). Extraída de `detect_wm_info_from_env` para que el
-/// fallback del backend efectivo la reutilice sin duplicar los matches.
-fn is_hyprland_signal(env_n: &Env) -> bool {
-    env_n
-        .desktop_session
-        .as_deref()
-        .map(|s| s.eq_ignore_ascii_case("hyprland"))
-        .unwrap_or(false)
+/// Señal Hyprland (`DESKTOP_SESSION=hyprland`, token `Hyprland` en
+/// `XDG_CURRENT_DESKTOP` o `HYPRLAND_INSTANCE_SIGNATURE` presente). Extraída
+/// de `detect_wm_info_from_env` para que el fallback del backend efectivo y
+/// el perfil de ajuste de ventana (#250) la reutilicen sin duplicar los
+/// matches.
+///
+/// La firma de la instancia (#250) está porque un lanzador o un servicio de
+/// systemd puede limpiar las otras dos variables: sin ella el arreglo se
+/// desactiva sin avisar. Su presencia (no vacía) ya dice Hyprland.
+pub(crate) fn is_hyprland_signal(env_n: &Env) -> bool {
+    env_n.hyprland_instance_signature.is_some()
+        || env_n
+            .desktop_session
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("hyprland"))
+            .unwrap_or(false)
         || env_n
             .xdg_current_desktop
             .as_deref()
@@ -313,6 +328,7 @@ pub fn with_display_backend(
         desktop_session: info.desktop_session.clone(),
         xdg_current_desktop: info.xdg_current_desktop.clone(),
         gdk_backend: None,
+        hyprland_instance_signature: None,
     };
     info.surfaces.window_positioning =
         window_positioning_status(backend, is_gnome_signal(&desktop_env));
@@ -766,6 +782,7 @@ mod tests {
             desktop_session: desktop_session.map(str::to_string),
             xdg_current_desktop: xdg_current_desktop.map(str::to_string),
             gdk_backend: None,
+            hyprland_instance_signature: None,
         }
     }
 
@@ -773,6 +790,42 @@ mod tests {
     /// (ramas X11/Hyprland/KDE/Wayland genérico): host y extensión desconocidos.
     fn tray() -> TrayDiagnostics {
         TrayDiagnostics::default()
+    }
+
+    /// #250: la firma de la instancia de Hyprland es una señal más: un
+    /// lanzador o un servicio de systemd puede limpiar `XDG_CURRENT_DESKTOP` y
+    /// `DESKTOP_SESSION`, pero la firma sigue ahí.
+    #[test]
+    fn the_hyprland_instance_signature_signals_hyprland() {
+        let env = Env {
+            hyprland_instance_signature: Some("1234abcd-0000-0000-0000-000000000000".to_string()),
+            ..Env::default()
+        };
+        assert!(
+            is_hyprland_signal(&normalize_env(&env)),
+            "la firma por sí sola señala Hyprland"
+        );
+        let info = detect_wm_info_from_env(&env, tray());
+        assert!(info.is_hyprland, "el resumen lo reconoce como Hyprland");
+        // Hyprland es compositor solo-Wayland: la firma también lo dice.
+        assert!(info.is_wayland, "Hyprland es solo-Wayland");
+    }
+
+    /// Sin firma, o con una vacía, la señal no aparece: el string vacío es
+    /// «ausente», igual que en los demás campos.
+    #[test]
+    fn an_absent_or_empty_hyprland_instance_signature_is_not_a_signal() {
+        assert!(!is_hyprland_signal(&normalize_env(&Env::default())));
+        let empty = Env {
+            hyprland_instance_signature: Some(String::new()),
+            ..Env::default()
+        };
+        assert!(
+            !is_hyprland_signal(&normalize_env(&empty)),
+            "una firma vacía no señala Hyprland"
+        );
+        let info = detect_wm_info_from_env(&empty, tray());
+        assert!(!info.is_hyprland, "el resumen no lo toma por Hyprland");
     }
 
     #[test]

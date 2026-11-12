@@ -4,6 +4,7 @@ mod codex_setup;
 mod config;
 mod config_transaction;
 mod detail_geometry;
+mod email;
 mod history;
 mod i18n;
 mod login;
@@ -22,6 +23,15 @@ mod widget_placement;
 #[cfg(test)]
 mod widget_placement_test;
 mod window_clip;
+// Las decisiones puras del perfil por compositor (#250) se compilan en todos los
+// sistemas, pero solo Linux las consume: sin avisos de código muerto en el resto.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod window_fit;
+#[cfg(test)]
+mod window_fit_test;
+// El tier en vivo del ajuste de ventana: hace falta GTK (sólo Linux).
+#[cfg(all(test, target_os = "linux"))]
+mod window_fit_gtk_test;
 #[cfg(target_os = "windows")]
 mod windows_backdrop;
 mod wm_compat;
@@ -54,6 +64,14 @@ const SETTINGS_ZOOM: f64 = 0.85;
 const SETTINGS_HEIGHT: f64 = 920.0;
 const OVERLAY: &str = "overlay";
 const DETAIL: &str = "detail";
+/// Las ventanas que declaran su tipo de ventana antes de su primer `show`
+/// (#250): la tira y el detalle.
+///
+/// El compositor lee el tipo de ventana al mapear, así que declararlo al
+/// **crear** la ventana lo deja antes de cualquier `show`, sin depender del
+/// orden entre dos colas (#250, S19).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const TYPE_HINT_WINDOWS: &[&str] = &[WIDGET, DETAIL];
 /// El canal por el que el frontend recibe el foco de nuestras ventanas
 /// (`src/lib/anchor-focus.ts`): el payload es `(etiqueta, tiene_foco)`.
 const FOCUS_EVENT: &str = "window-focus";
@@ -234,6 +252,8 @@ struct AppState {
     config_path: PathBuf,
     http: reqwest::Client,
     history: history::History,
+    /// Solo el resultado sanitizado más reciente; sin historial de eventos.
+    email_status: Mutex<email::EmailStatus>,
     /// Home del default user de cada distro WSL, resuelto una sola vez
     /// (el proceso de sesión se consulta cada 15 s y `resolve_home` lanza
     /// dos procesos wsl.exe). Se invalida solo al cambiar la distro
@@ -492,6 +512,31 @@ fn patch_config(
         config,
         native_error,
     })
+}
+
+#[tauri::command]
+fn email_status(state: State<'_, AppState>) -> email::EmailStatus {
+    *state.email_status.lock().unwrap()
+}
+
+/// `None` es una prueba explícita; `Some` requiere también ambos interruptores.
+#[tauri::command]
+async fn send_email_alert(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    event: Option<email::EmailEvent>,
+) -> Result<email::EmailStatus, String> {
+    let (cfg, locale) = {
+        let config = state.config.lock().unwrap();
+        (
+            config.alerts.clone(),
+            crate::i18n::locale_from_config(&config.locale),
+        )
+    };
+    let result = email::send(&cfg, locale, event).await;
+    *state.email_status.lock().unwrap() = result;
+    let _ = app.emit("email-status", result);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -990,8 +1035,22 @@ fn show_detail(app: AppHandle) -> Result<bool, String> {
     let detail = app
         .get_webview_window(DETAIL)
         .ok_or("No existe el panel de detalle")?;
-    detail.show().map_err(|e| e.to_string())?;
+    show_detail_window(&detail).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// Muestra la ventana de detalle.
+///
+/// El `show` va por la **cola de Tao**, como la ocultación y la geometría: un
+/// `show` directo (GTK en el hilo de UI) se ejecutaría sin esperar a las
+/// operaciones pendientes de la cola y la ventana podría quedar escondida o
+/// con la geometría vieja (#250, S19).
+///
+/// El tipo de ventana (`Utility` en XWayland) no se declara aquí: se declara
+/// al **crear** la ventana (`start_main_ui`), antes de cualquier `show`,
+/// porque el compositor lo lee al mapear.
+fn show_detail_window(detail: &tauri::WebviewWindow) -> tauri::Result<()> {
+    detail.show()
 }
 
 #[tauri::command]
@@ -1089,11 +1148,19 @@ fn second_instance_target(picker_open: bool) -> &'static str {
     }
 }
 
+/// Título del selector de primer arranque (#227). Fijo y bilingüe: se muestra
+/// antes de elegir idioma, así que no pasa por la traducción. No empieza por el
+/// nombre de la app, como Ajustes, para que la regla de KWin documentada en
+/// docs/build-linux.md §6.2 no lo alcance.
+fn locale_picker_title(channel: &str) -> String {
+    format!("Idioma / Language · {channel}")
+}
+
 /// Pantalla de primer arranque (S8, P1): ventana aparte, con decoraciones y sin
 /// transparencia ni «siempre encima».
 fn open_locale_picker(app: &AppHandle) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, LOCALE_PICKER, WebviewUrl::App("index.html".into()))
-        .title("Quorb")
+        .title(locale_picker_title(channel::current().name))
         .inner_size(420.0, 240.0)
         .min_inner_size(420.0, 240.0)
         .center()
@@ -1196,6 +1263,31 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
         if let Some(w) = app.get_webview_window(label) {
             if let Err(e) = w.set_visible_on_all_workspaces(true) {
                 eprintln!("No pude marcar «{label}» visible en todos los escritorios: {e}");
+            }
+        }
+    }
+
+    // XWayland (#250): los compositores que colocan la tira en mosaico
+    // (Hyprland, medido: floating=false y SizeRefused) la flotan y respetan
+    // las pistas del ciclo X11 si la ventana declara su tipo antes del primer
+    // `show`. Ambas ventanas (la tira y el detalle) lo declaran aquí, al
+    // crearlas: el compositor lee el tipo al mapear, así que declararlo al
+    // crear deja el orden garantizado (el `show` va por la cola de Tao y no
+    // lo adelanta, S19).
+    #[cfg(target_os = "linux")]
+    if window_fit::fit_profile().x11_float_hint {
+        for label in TYPE_HINT_WINDOWS {
+            if let Some(w) = app.get_webview_window(label) {
+                let ui_window = w.clone();
+                let _ = w.run_on_main_thread(move || {
+                    // El transporte se lee aquí: GDK sólo se puede tocar en el
+                    // hilo de UI.
+                    let plan = window_fit::fit_plan_now();
+                    if let Ok(gtk_window) = ui_window.gtk_window() {
+                        let mut surface = window_fit::GtkFitSurface(&gtk_window);
+                        window_fit::apply_type_hint(&mut surface, &plan);
+                    }
+                });
             }
         }
     }
@@ -1307,6 +1399,7 @@ pub fn run() {
                 config_path,
                 http,
                 history,
+                email_status: Mutex::new(email::EmailStatus::Idle),
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
                 wsl_homes: wsl::WslHomeCache::default(),
             });
@@ -1364,6 +1457,8 @@ pub fn run() {
             patch_config,
             secret_status,
             set_secret,
+            email_status,
+            send_email_alert,
             fetch_usage,
             open_login,
             codex_setup_status,
@@ -1446,6 +1541,49 @@ mod tests {
         assert!(!locale_picker_needed(true, &chosen));
         assert!(!locale_picker_needed(false, &fresh));
         assert!(!locale_picker_needed(false, &chosen));
+    }
+
+    /// #227: la regla de KWin documentada en docs/build-linux.md §6.2 solo debe
+    /// alcanzar a la tira, el detalle y el overlay; ni a Ajustes ni al selector.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn documented_kwin_rule_matches_only_strip_detail_and_overlay() {
+        // Solo el bloque `ini` de §6.2: un `title=` en otra sección no es la regla.
+        let doc = include_str!("../../docs/build-linux.md");
+        let section = doc.split_once("### 6.2 ").expect("sección 6.2").1;
+        let block = section
+            .split_once("```ini\n")
+            .and_then(|(_, rest)| rest.split_once("```"))
+            .expect("bloque ini de la regla en §6.2")
+            .0;
+        let mut rules = block.lines().filter_map(|l| l.strip_prefix("title="));
+        let pattern = rules.next().expect("regla de KWin documentada (title=)");
+        assert!(rules.next().is_none(), "una sola línea title= en la regla");
+        let rule = regex::Regex::new(pattern).expect("expresión válida");
+
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let strip = conf["app"]["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["label"] == WIDGET)
+            .and_then(|w| w["title"].as_str())
+            .expect("título de la tira");
+        let channel = channel::STABLE.name;
+        assert!(rule.is_match(strip), "tira: {strip}");
+        for locale in [i18n::Locale::Es, i18n::Locale::En] {
+            for title in [
+                i18n::detail_title(locale, channel),
+                i18n::overlay_title(locale, channel),
+            ] {
+                assert!(rule.is_match(&title), "debe coincidir: {title}");
+            }
+            let settings = i18n::settings_title(locale, channel);
+            assert!(!rule.is_match(&settings), "no debe coincidir: {settings}");
+        }
+        let picker = locale_picker_title(channel);
+        assert!(!rule.is_match(&picker), "no debe coincidir: {picker}");
     }
 
     #[test]
