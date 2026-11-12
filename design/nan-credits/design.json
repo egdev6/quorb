@@ -1,0 +1,21 @@
+{
+  "title": "NaN con créditos — cómo se vería",
+  "brief": "Maqueta de la propuesta de presentación para las cuentas de NaN Builders facturadas en créditos (Inference: 7.000 créditos por periodo). Muestra los cinco estados de la tira (normal, aviso, agotado, suscripción inactiva y sin datos), el panel de detalle con medidor de créditos, saldo de packs, desglose por modelo, ritmo e historial, y la comparación antes/después frente a la presentación actual por topes de tokens por modelo.",
+  "feature": "odd/tasks/252-nan-tier-quota.md",
+  "artboards": [
+    {
+      "file": "01-estados-cuenta-creditos.html",
+      "title": "NaN con créditos — cómo se vería",
+      "tradeoff": "Máxima fidelidad al panel real y cobertura de los cinco estados de la tira; a cambio ocupa dos páginas-equivalentes de altura y mete dos secciones nuevas (desglose por modelo y saldo de packs) que hay que explicar aparte.",
+      "width": 1440,
+      "height": 1600
+    },
+    {
+      "file": "02-antes-despues.html",
+      "title": "Antes y después — la misma cuenta, dos formas de hablar del consumo",
+      "tradeoff": "Compara en una sola pantalla la lectura de hoy y las dos propuestas, con una tabla que fija qué cambia y qué no; a cambio mezcla dos momentos distintos de la cuenta y no cabe el historial ni el gráfico diario.",
+      "width": 1440,
+      "height": 1200
+    }
+  ]
+}
