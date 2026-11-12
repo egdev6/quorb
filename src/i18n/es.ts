@@ -489,6 +489,10 @@ export const es = {
       rateRequests: 'Peticiones',
       rateTokens: 'Tokens',
       extraUsage: 'Extra',
+      // Medidores que declara el proveedor (asignación del periodo y saldo): el
+      // frente los traduce por id, sin saber de qué proveedor son.
+      allocation: 'Asignación',
+      balance: 'Saldo',
     },
     validity: {
       periodLabel: 'Periodo hasta',

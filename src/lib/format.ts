@@ -1,4 +1,4 @@
-import type { Locale, Meter, UsageReport } from './types';
+import type { BreakdownItem, Locale, Meter, UsageReport } from './types';
 import { t, type MessageKey } from '../i18n';
 import { meterKey } from './alerts';
 
@@ -51,6 +51,10 @@ const KEY_BY_ID = new Map<string, MessageKey>([
   ['rate_requests', 'details.meters.rateRequests'],
   ['rate_tokens', 'details.meters.rateTokens'],
   ['extra_usage', 'details.meters.extraUsage'],
+  // Medidores que declara el proveedor cuando su cuenta tiene una asignación y un
+  // saldo: el frente los traduce por id, sin saber de qué proveedor son.
+  ['allocation', 'details.meters.allocation'],
+  ['balance', 'details.meters.balance'],
 ]);
 
 const KEY_BY_LABEL = new Map<string, MessageKey>([
@@ -151,6 +155,11 @@ export function trayTooltip(reports: UsageReport[]): string {
   return (parts.join('\n') || 'Quorb').slice(0, 127);
 }
 
+/** Importe de un elemento del desglose: la cifra y su unidad, tal y como las declara el proveedor. */
+export function formatBreakdownAmount(item: BreakdownItem): string {
+  return `${formatCompact(item.amount)}${item.unit ? ` ${item.unit}` : ''}`;
+}
+
 /** Resumen en texto plano para copiar al portapapeles. */
 export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Locale = 'es'): string {
   const lines = [r.plan ? `${r.name} (${r.plan})` : r.name];
@@ -163,6 +172,10 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
           ? `${formatCompact(m.used)}${m.unit ? ` ${m.unit}` : ''}`
           : '—';
     lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}`);
+  }
+  // El desglose que declara el proveedor: rótulo + importe + unidad, sin saber qué son.
+  for (const b of r.breakdown ?? []) {
+    lines.push(`· ${b.label}: ${formatBreakdownAmount(b)}`);
   }
   if (r.spend) lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`);
   if (r.message && r.status !== 'ok') lines.push(`· ${r.message}`);

@@ -464,6 +464,10 @@ export const en = {
       rateRequests: 'Requests',
       rateTokens: 'Tokens',
       extraUsage: 'Extra',
+      // Meters declared by the provider (period allocation and balance): the front
+      // translates them by id, without knowing which provider they come from.
+      allocation: 'Allowance',
+      balance: 'Balance',
     },
     validity: {
       periodLabel: 'Period through',

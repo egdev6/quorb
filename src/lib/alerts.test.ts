@@ -219,6 +219,25 @@ describe('alerts', () => {
     ]);
   });
 
+  it('never warns about a meter without a percentage', () => {
+    // Un medidor sin porcentaje no es un tope: puede ser un saldo. El frente no
+    // sabe qué es, sólo que no trae porcentaje, así que no avisa de nada con él.
+    const balance: Meter = {
+      id: 'balance',
+      label: 'Saldo de packs',
+      percent: null,
+      used: 500,
+      limit: null,
+      unit: 'credits',
+      resetsAt: null,
+      windowSeconds: null,
+    };
+    const prev = reportWith([balance]);
+    const next = reportWith([{ ...balance, used: 0 }]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+    expect(detectAlerts([], [next], {}, cfg, NOW).events).toHaveLength(0);
+  });
+
   it('ignores stale or failed reports', () => {
     expect(detectAlerts([], [rep(99, undefined, { stale: true })], {}, cfg, NOW).events).toHaveLength(0);
     expect(detectAlerts([], [rep(99, undefined, { status: 'error' })], {}, cfg, NOW).events).toHaveLength(0);

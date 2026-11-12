@@ -52,6 +52,25 @@ describe('localized meter shorts, reset times and summary (T2c-S1)', () => {
 });
 
 describe('format', () => {
+  it('shortLabel translates the meters that the backend declares', () => {
+    // Los medidores que declara el proveedor llegan con id estable: el frente los
+    // traduce por id, sin saber de qué proveedor ni de qué régimen se trata.
+    expect(shortLabel('Asignación del periodo', 'allocation', 'es')).toBe('Asignación');
+    expect(shortLabel('Asignación del periodo', 'allocation', 'en')).toBe('Allowance');
+    expect(shortLabel('Saldo de packs', 'balance', 'es')).toBe('Saldo');
+    expect(shortLabel('Saldo de packs', 'balance', 'en')).toBe('Balance');
+  });
+
+  it('summarizes the breakdown that the provider declares', () => {
+    // El desglose es una lista genérica de rótulo + importe + unidad: el frente no
+    // sabe qué son esos rótulos, sólo los muestra.
+    const r: UsageReport = {
+      ...base,
+      breakdown: [{ label: 'deepseek-v4-flash', amount: 24.3, unit: 'credits' }],
+    };
+    expect(reportSummary(r)).toContain('· deepseek-v4-flash: 24,3 credits');
+  });
+
   it('formats reset distance', () => {
     const now = new Date('2026-10-06T10:00:00Z');
     expect(formatResetIn('2026-10-06T10:45:00Z', now)).toBe('en 45 min');
