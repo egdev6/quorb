@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderDetails } from './ProviderDetails';
 import { ProviderCard } from './ProviderCard';
+import { MeterBar } from './MeterBar';
 import type { UsageReport } from '../lib/types';
 
 const report: UsageReport = {
@@ -77,5 +78,33 @@ describe('provider detail sections', () => {
     }] }} />);
     expect(html).toContain('A este ritmo');
     expect(html.indexOf('role="status"')).toBeLessThan(html.indexOf('<details'));
+  });
+});
+
+describe('stale meters (per-meter mark)', () => {
+  const meter = (stale?: boolean) => ({
+    id: 'weekly', label: 'Semana · todos', percent: 95, used: null, limit: null, unit: null,
+    resetsAt: null, windowSeconds: null, stale,
+  });
+
+  it('shows the cached chip on the stale meter only', () => {
+    const stale = renderToStaticMarkup(<MeterBar meter={meter(true)} ring={null} />);
+    const fresh = renderToStaticMarkup(<MeterBar meter={meter()} ring={null} />);
+    // El medidor viejo lleva la pastilla de «caché» (misma marca y title que la del informe).
+    expect(stale).toContain('caché');
+    expect(stale).toContain('Datos del último ciclo correcto');
+    // El fresco no lleva ninguna marca.
+    expect(fresh).not.toContain('caché');
+    expect(fresh).not.toContain('Datos del último ciclo correcto');
+  });
+
+  it('dims the progress bar of the stale meter', () => {
+    const stale = renderToStaticMarkup(<MeterBar meter={meter(true)} ring={null} />);
+    const fresh = renderToStaticMarkup(<MeterBar meter={meter()} ring={null} />);
+    // La atenuación va por clase (el tema la define), no por estilo en línea.
+    expect(stale).toContain('q-meter--stale');
+    expect(stale).toContain('q-meter__stale');
+    expect(fresh).not.toContain('q-meter--stale');
+    expect(fresh).not.toContain('q-meter__stale');
   });
 });

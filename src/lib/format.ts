@@ -103,20 +103,23 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
     // de rate limit vinieron. Los medidores que el informe nuevo NO trae se conservan del
-    // anterior, marcados como desactualizados, para que los datos de cuota no desaparezcan
-    // en silencio. El informe mergeado manda; lo que no trae se conserva del anterior.
+    // anterior, marcados UNO POR UNO como desactualizados, para que los datos de cuota no
+    // desaparezcan en silencio. El informe mergeado manda; lo que no trae se conserva del
+    // anterior. El informe NO queda desactualizado entero: trae datos frescos, y marcarlo
+    // saltaría los avisos del ciclo entero (con el fresco incluido).
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
       const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)));
-      // Si no se conserva ningún medidor, el informe no queda desactualizado: `stale`
-      // hace que los avisos salten el informe entero, y no hay nada viejo que avisar.
+      // Si no se conserva ningún medidor, no hay nada viejo que avisar: el informe
+      // nuevo se queda tal cual (sus medidores son todos frescos).
       if (!missing.length) return r;
+      // Se conservan SÓLO los medidores: la serie diaria y el gasto son lecturas
+      // también, y arrastrarlas mostraría datos viejos sin marcar (la base no lo
+      // hacía). Si este ciclo no los trae, no se muestran. El plan no es una
+      // lectura —nome la cuenta— y sí se conserva.
       return {
         ...r,
-        meters: [...r.meters, ...missing],
+        meters: [...r.meters, ...missing.map((m) => ({ ...m, stale: true }))],
         plan: r.plan ?? old.plan,
-        daily: r.daily?.length ? r.daily : old.daily,
-        spend: r.spend ?? old.spend,
-        stale: true,
       };
     }
     // Sesión caducada: se conservan los últimos datos (atenuados) con la acción

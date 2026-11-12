@@ -127,14 +127,102 @@ describe('format', () => {
       ],
     };
     const [merged] = mergeReports([previous], [failed]);
-    expect(merged.stale).toBe(true);
+    // El informe MIXTO no queda desactualizado entero: trae datos frescos.
+    expect(merged.stale).toBeUndefined();
     expect(merged.meters.map((m) => m.id)).toEqual(['custom', 'rate_requests', 'model:deepseek-v4-flash']);
     expect(merged.message).toBe('cuota no disponible');
     // El informe nuevo manda; lo que no trae se conserva del anterior.
     expect(merged.plan).toBe('Gentle');
-    expect(merged.spend).toEqual(previous.spend);
-    // Un informe marcado como desactualizado no dispara avisos.
+    // El gasto NO se conserva: es una lectura, y arrastrarlo mostraría datos viejos
+    // sin marcar (la base no lo arrastraba).
+    expect(merged.spend).toBeNull();
+    // Los medidores frescos están por debajo del umbral y el conservado va marcado
+    // como viejo: este ciclo no tiene nada que avisar.
     expect(detectAlerts([previous], [merged], {}, { threshold: 90, onReset: true }).events).toHaveLength(0);
+  });
+
+  it('marks each kept meter as stale, not the whole mixed report', () => {
+    // Ciclo MIXTO: la cuota de la cuenta no se pudo actualizar, pero llegaron las
+    // cabeceras de rate limit. Lo viejo se conserva MARCADO MEDIDOR A MEDIDOR: el
+    // informe no queda desactualizado entero, porque tiene datos frescos.
+    const quota: Meter = {
+      id: 'model:deepseek-v4-flash',
+      label: 'deepseek-v4-flash',
+      percent: 95.558,
+      used: 955_581_032,
+      limit: 1_000_000_000,
+      unit: 'tokens',
+      resetsAt: '2026-12-05T22:15:31Z',
+      windowSeconds: 2_592_000,
+      quotaSource: 'account',
+    };
+    const previous: UsageReport = { ...base, status: 'ok', meters: [quota] };
+    const failed: UsageReport = {
+      ...base,
+      status: 'warning',
+      message: 'cuota no disponible',
+      meters: [
+        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 95, used: 95, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
+      ],
+    };
+    const [merged] = mergeReports([previous], [failed]);
+    // El informe NO queda desactualizado: si lo quedara, los avisos lo saltarían entero.
+    expect(merged.stale).toBeUndefined();
+    const kept = merged.meters.find((m) => m.id === 'model:deepseek-v4-flash')!;
+    const fresh = merged.meters.find((m) => m.id === 'rate_requests')!;
+    // El medidor conservado es el viejo: va marcado.
+    expect(kept.stale).toBe(true);
+    // El medidor fresco no lleva marca: sus datos son de este ciclo.
+    expect(fresh.stale).toBeUndefined();
+    // Y el fresco sigue avisando aunque su compañero sea viejo.
+    const { events } = detectAlerts([previous], [merged], {}, { threshold: 90, onReset: true });
+    expect(events.map((e) => e.kind)).toEqual(['exceeded']);
+    expect(events[0].meterId).toBe('rate_requests');
+  });
+
+  it('does not carry the previous daily series nor the spend into a mixed report', () => {
+    // La serie diaria y el gasto son lecturas: si este ciclo no los trae, no se
+    // muestran. Arrastrarlos del ciclo anterior mostraría datos viejos sin marcar,
+    // que es justo lo que se pidió evitar con la cuota.
+    const quota: Meter = {
+      id: 'model:deepseek-v4-flash',
+      label: 'deepseek-v4-flash',
+      percent: 95.558,
+      used: 955_581_032,
+      limit: 1_000_000_000,
+      unit: 'tokens',
+      resetsAt: '2026-12-05T22:15:31Z',
+      windowSeconds: 2_592_000,
+      quotaSource: 'account',
+    };
+    const previous: UsageReport = {
+      ...base,
+      status: 'ok',
+      meters: [quota],
+      daily: [{ date: '2026-10-05', value: 5 }],
+      spend: { amount: 12, currency: 'USD', periodLabel: 'Octubre', budget: 100 },
+    };
+    const failed: UsageReport = {
+      ...base,
+      status: 'warning',
+      message: 'cuota no disponible',
+      meters: [{ id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null }],
+    };
+    const [merged] = mergeReports([previous], [failed]);
+    // El medidor de cuota sí se conserva (marcado como viejo)...
+    expect(merged.meters.find((m) => m.id === quota.id)?.stale).toBe(true);
+    // ...pero la serie diaria y el gasto no: si este ciclo no los trae, no se muestran.
+    expect(merged.daily).toBeUndefined();
+    expect(merged.spend).toBeNull();
+  });
+
+  it('keeps the whole report stale when the failed cycle brings no meter', () => {    // Aquí no hay nada fresco: todo lo que se ve es viejo, así que el informe entero
+    // sigue marcado como desactualizado y los avisos lo saltan entero.
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
+    const [merged] = mergeReports([base], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters).toEqual(base.meters);
+    expect(merged.meters.every((m) => m.stale !== true)).toBe(true);
   });
 
   it('does not mark a report stale when the failed one keeps every meter', () => {

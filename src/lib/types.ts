@@ -21,6 +21,12 @@ export interface Meter {
    * medidor se compara siempre.
    */
   quotaSource?: string;
+  /**
+   * Marcado por el propio front (el backend no lo declara): este medidor no se
+   * pudo actualizar en el último ciclo y se conserva del anterior, así que lo que
+   * se ve es viejo. Un informe entero puede traer medidores frescos y otros viejos.
+   */
+  stale?: boolean;
 }
 
 export interface Spend {

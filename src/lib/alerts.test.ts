@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { detectAlerts, effectFor, nativeAlertsEnabled, notificationText, windowKey } from './alerts';
 import type { AlertEvent } from './alerts';
+import { dispatchEmailAlerts } from './email';
 import { meterPace, paceOf, spendPace } from './pace';
-import type { Meter, UsageReport } from './types';
+import type { AlertsConfig, Meter, UsageReport } from './types';
 
 const cfg = { threshold: 90, onReset: true };
 const rep = (pct: number, resetsAt = '2026-10-06T15:00:00Z', extra: Partial<UsageReport> = {}): UsageReport => ({
@@ -19,6 +20,13 @@ const rep = (pct: number, resetsAt = '2026-10-06T15:00:00Z', extra: Partial<Usag
   ...extra,
 });
 const NOW = Date.parse('2026-10-06T12:00:00Z');
+
+/** Configuración de avisos con el email listo (consentimiento y direcciones válidas). */
+const emailCfg: AlertsConfig = {
+  enabled: true, native: true, threshold: 90, onReset: true,
+  exceededEffect: 'glow', resetEffect: 'confetti', exceededMedia: null, resetMedia: null, mediaSize: 'small', mediaSound: false,
+  email: { enabled: true, consent: true, sender: 'sender@example.test', recipient: 'recipient@example.test' },
+};
 
 /** Informe con los medidores que se le pasan (sin fuente de cuota a nivel de informe). */
 const reportWith = (meters: Meter[]): UsageReport => ({ ...rep(0), meters });
@@ -214,6 +222,55 @@ describe('alerts', () => {
   it('ignores stale or failed reports', () => {
     expect(detectAlerts([], [rep(99, undefined, { stale: true })], {}, cfg, NOW).events).toHaveLength(0);
     expect(detectAlerts([], [rep(99, undefined, { status: 'error' })], {}, cfg, NOW).events).toHaveLength(0);
+  });
+
+  it('skips a whole stale report even when its meters are over the threshold', () => {
+    // Informe entero desactualizado (todo viejo): no hay nada fresco que avisar.
+    const next = reportWith([plainMeter('rate_requests', 'Peticiones (ventana)', 95)]);
+    expect(detectAlerts([], [{ ...next, stale: true }], {}, cfg, NOW).events).toHaveLength(0);
+  });
+
+  it('alerts on the fresh meter of a mixed report and skips the stale one', () => {
+    // El informe llega MIXTO: la cuota no se pudo actualizar (medidor viejo, marcado
+    // uno por uno) pero las cabeceras de rate limit son de este ciclo. Sólo el
+    // fresco avisa; el viejo no puede disparar nada porque sus datos son viejos.
+    const next = reportWith([
+      { ...quotaMeter(95), stale: true },
+      plainMeter('rate_requests', 'Peticiones (ventana)', 95),
+    ]);
+    const { events } = detectAlerts([], [next], {}, cfg, NOW);
+    expect(events.map((e) => e.kind)).toEqual(['exceeded']);
+    expect(events[0].meterId).toBe('rate_requests');
+    expect(events.map((e) => e.meterId)).not.toContain('model:deepseek-v4-flash');
+  });
+
+  it('does not report a reset for a stale meter', () => {
+    // El medidor viejo bajó de 95 % a 2 %, pero su dato es de un ciclo anterior:
+    // no se puede afirmar ningún reinicio con él.
+    const prev = reportWith([plainMeter('rate_requests', 'Peticiones (ventana)', 95)]);
+    const next = reportWith([{ ...plainMeter('rate_requests', 'Peticiones (ventana)', 2), stale: true }]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('does not report a reset against a stale previous reading', () => {
+    // Ciclo degradado y después ciclo sano: la lectura anterior quedó vieja (no se
+    // pudo actualizar), así que la caída del 95 % al 40 % NO es un reinicio. Sin este
+    // guardia, un ciclo fallido seguido de uno sano anunciaría un reinicio falso.
+    const prev = reportWith([{ ...plainMeter('rate_requests', 'Peticiones (ventana)', 95), stale: true }]);
+    const next = reportWith([plainMeter('rate_requests', 'Peticiones (ventana)', 40)]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
+  });
+
+  it('emails the fresh meter of a mixed report only', async () => {
+    // El email se calcula con los mismos eventos: sale el fresco, no el viejo.
+    const next = reportWith([
+      { ...quotaMeter(95), stale: true },
+      plainMeter('rate_requests', 'Peticiones (ventana)', 95),
+    ]);
+    const { events } = detectAlerts([], [next], {}, cfg, NOW);
+    const send = vi.fn().mockResolvedValue('accepted');
+    await dispatchEmailAlerts(events, emailCfg, send);
+    expect(send).toHaveBeenCalledExactlyOnceWith({ provider: 'claude', meter: 'rate_requests', window: 'none', percent: 95, kind: 'exceeded' });
   });
 
   it('keys alerts by meter id: a relabelled meter neither re-alerts nor loses its reset', () => {

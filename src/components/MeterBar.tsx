@@ -21,7 +21,7 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
 
   return (
     <div
-      className="q-meter"
+      className={`q-meter${meter.stale ? ' q-meter--stale' : ''}`}
       data-ring={ring ?? undefined}
       data-level={levelFor(pct)}
       data-colored={color ? true : undefined}
@@ -34,7 +34,17 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
             aria-hidden="true"
           />
         )}
-        <span className="q-meter__label">{meter.label}</span>
+        <span className="q-meter__label">
+          {meter.label}
+          {meter.stale && (
+            <span
+              className="eg-status eg-status--neutral q-meter__stale"
+              title={t(locale, 'details.staleChipTitle')}
+            >
+              {t(locale, 'details.staleChip')}
+            </span>
+          )}
+        </span>
         <b className="q-meter__value">{pct != null ? formatPercent(pct) : amount}</b>
       </div>
       {pct != null && (

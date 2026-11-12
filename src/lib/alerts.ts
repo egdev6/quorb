@@ -59,8 +59,13 @@ export function detectAlerts(
   const prevById = new Map(prev.map((r) => [r.id, r]));
 
   for (const r of next) {
+    // Un informe entero desactualizado no avisa de nada: todo lo que muestra es viejo.
     if (r.stale || (r.status !== 'ok' && r.status !== 'warning')) continue;
     for (const m of r.meters) {
+      // Medidor marcado como viejo (conservado del ciclo anterior): sus datos no son
+      // de este ciclo, así que no generan ni «superado» ni «reinicio». Los medidores
+      // frescos del mismo informe sí avisan con normalidad.
+      if (m.stale) continue;
       if (m.percent == null) continue;
       const pct = m.percent;
       const ev = { providerId: r.id, providerName: r.name, meterId: meterKey(m), realMeterId: m.id, window: windowKey(m.resetsAt), label: m.label, percent: pct };
@@ -79,6 +84,10 @@ export function detectAlerts(
       const prevReport = prevById.get(r.id);
       const old = prevReport?.meters.find((x) => meterKey(x) === meterKey(m));
       if (!old || old.percent == null || old.percent < cfg.threshold) continue;
+      // La lectura anterior era vieja (no se pudo actualizar en su ciclo): no sabemos
+      // cuál era el valor real, así que no se afirma ningún reinicio. Un ciclo degradado
+      // seguido de uno sano no puede anunciar un reinicio que nadie vio.
+      if (old.stale) continue;
       if (isReset(old, m, pct, cfg.threshold)) events.push({ kind: 'reset', ...ev });
     }
   }
