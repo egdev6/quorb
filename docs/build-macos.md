@@ -19,6 +19,31 @@ completó verificación, stapling, staging final y publicación. Gatekeeper pas�
 el runner CI; no equivale a descarga por navegador, cuarentena, instalación ni GUI
 en un Mac real, pendientes en [#118](https://github.com/egdev6/quorb/issues/118).
 
+## Primer arranque: idioma antes de la interfaz (#234)
+
+El formato de instalación sigue siendo **DMG**. En un primer arranque sin elección
+previa, la primera UI propia de Quorb es el selector explícito **Español / English**:
+la tira, el panel, la bandeja, Ajustes y los asistentes esperan a que se elija.
+Los diálogos del sistema operativo quedan fuera de este orden.
+
+La elección se guarda y se aplica con el mismo flujo de selector que en Linux,
+antes de abrir la interfaz principal. Cerrar sin elegir termina Quorb sin guardar
+la elección; el selector reaparece al volver a abrir. Una actualización o
+reinstalación que conserve la configuración con una elección guardada no vuelve a
+preguntar. El idioma se puede cambiar después en **Ajustes**.
+
+**Comprobaciones automatizadas:** los tests de Rust cubren el gate de arranque
+para macOS/Linux/Windows, la elección previa, la prioridad del selector ante una
+segunda instancia y la creación diferida de la tira; los tests de frontend cubren
+el selector reutilizado. No acreditan ejecución de la GUI de macOS.
+
+**Comprobación manual en macOS (modo de desarrollo, configuración aislada):**
+confirmados el selector inicial sin tira, panel ni bandeja previos; persistencia
+al reabrir con la misma configuración; cierre sin elegir y nueva aparición del
+selector; cambio Español / English desde Ajustes conservado al reiniciar.
+Esta evidencia no equivale a instalar un DMG ni a realizar una actualización o
+reinstalación. No se ha ejecutado esa comprobación de distribución.
+
 ## Actualizaciones en macOS
 
 Todos los builds actuales de macOS usan actualización manual: Ajustes muestra la
