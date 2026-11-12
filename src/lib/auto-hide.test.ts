@@ -30,6 +30,20 @@ function findGrip(node: ReactNode): GripHandlers | undefined {
   return findGrip(node.props.children);
 }
 
+/** The hover handler of the first orb of the strip (real props of the tree). */
+function findOrbHover(node: ReactNode): ((el: HTMLElement) => void) | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hover = findOrbHover(child);
+      if (hover) return hover;
+    }
+    return;
+  }
+  if (!isValidElement<{ onPointerEnter?: (el: HTMLElement) => void; children?: ReactNode }>(node)) return;
+  if (node.props.onPointerEnter) return node.props.onPointerEnter;
+  return findOrbHover(node.props.children);
+}
+
 // Capture the real Widget effect callbacks while SSR supplies its hook scope.
 // No DOM renderer, Tauri runtime, or native-order assumptions are involved.
 const widgetEffects = vi.hoisted(() => ({
@@ -39,7 +53,7 @@ const widgetEffects = vi.hoisted(() => ({
   bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
   cancel: vi.fn(async () => {}),
-  listeners: new Map<string, (() => void)[]>(),
+  listeners: new Map<string, ((event?: { payload?: unknown }) => void)[]>(),
   // Hook results isolated from the useState slots: text scale (#228) and reveal phase.
   textScale: undefined as number | undefined,
   phase: undefined as RevealPhase | undefined,
@@ -92,7 +106,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   availableMonitors: widgetEffects.monitors,
 }));
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async (name: string, handler: () => void) => {
+  listen: vi.fn(async (name: string, handler: (event?: { payload?: unknown }) => void) => {
     const list = widgetEffects.listeners.get(name) ?? [];
     list.push(handler);
     widgetEffects.listeners.set(name, list);
@@ -947,6 +961,129 @@ describe('Widget effect mutation ordering', () => {
       .toEqual([[400, 80], [400, 80]]);
     expect(widgetEffects.clip.mock.calls.map(call => call[1])).toEqual([true, !autoHide]);
     if (typeof cleanupDrag === 'function') cleanupDrag();
+  });
+
+  // #250/S22: el detalle declara que no pudo colocarse (`placement-failed`) y
+  // la tira decide qué hacer con el aviso (cerrar el panel, como en un cierre
+  // normal). Un aviso de una sesión vieja se ignora.
+  const renderStrip = (autoHide: boolean) => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.states[0] = { autoHide, accounts: [], nineRouter: { baseUrl: '' }, alerts: { threshold: 90 } };
+    widgetEffects.states[5] = geo;
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[9] = false;
+    let tree: ReactNode = null;
+    function CaptureStrip() { tree = Widget(); return tree; }
+    renderToStaticMarkup(createElement(CaptureStrip));
+    // La sesión de detalle vigente: revisión 5, proveedor 'a'.
+    widgetEffects.refs[7].current = { revision: 5, report: { id: 'a' } };
+    // Cada prueba usa sus propios listeners.
+    widgetEffects.listeners.delete('detail-interaction');
+    widgetEffects.listeners.delete('detail-dismiss');
+    const listener = widgetEffects.effects.find((e) => e.run.toString().includes('DETAIL_EVENTS.interaction'));
+    const autoHideEffect = widgetEffects.effects.find((e) => e.run.toString().includes('const busy ='));
+    expect(listener).toBeDefined();
+    expect(autoHideEffect).toBeDefined();
+    return { listener: listener!, autoHideEffect: autoHideEffect!, tree };
+  };
+
+  it('closes the panel and frees the strip when the detail declares a placement failure (#250/S22)', async () => {
+    const setTimeoutSpy = vi.fn();
+    vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: setTimeoutSpy });
+    widgetEffects.states[7] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
+    widgetEffects.states[12] = true; // `collapsed`: la tira está replegada.
+    const { listener, autoHideEffect } = renderStrip(true);
+    // El puntero está dentro del detalle.
+    widgetEffects.refs[10].current = true;
+    // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
+    // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
+    listener.run();
+    await flush();
+    const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
+    expect(handlers.length).toBeGreaterThan(0);
+    // Con el panel abierto, la tira está ocupada: el auto-ocultar la mantiene
+    // visible y no programa el repliegue.
+    autoHideEffect.run();
+    expect(widgetEffects.states[12]).toBe(false);
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    // El detalle declara que no pudo colocarse...
+    for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
+    // ...la tira cierra el panel...
+    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    // ...y baja la presencia del detalle.
+    expect(widgetEffects.refs[10].current).toBe(false);
+    // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
+    // a replegarla (la tira se repinta con el panel ya cerrado).
+    const after = renderStrip(true);
+    after.autoHideEffect.run();
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a placement failure notice from a stale detail session (#250/S22)', async () => {
+    vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
+    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    const { listener } = renderStrip(false);
+    widgetEffects.refs[10].current = true;
+    listener.run();
+    await flush();
+    const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
+    expect(handlers.length).toBeGreaterThan(0);
+    // Otra revisión: el aviso es viejo.
+    for (const handler of handlers) handler({ payload: { revision: 4, provider: 'a', kind: 'placement-failed' } });
+    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    // Otro proveedor: la sesión ya no es la vigente.
+    for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
+    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.refs[10].current).toBe(true);
+  });
+
+  it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
+    vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
+    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    const { listener } = renderStrip(false);
+    widgetEffects.refs[10].current = true;
+    listener.run();
+    await flush();
+    const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
+    expect(dismiss.length).toBeGreaterThan(0);
+    for (const handler of dismiss) handler();
+    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.refs[10].current).toBe(false);
+  });
+
+  // El cierre pedido por el detalle es idéntico al cierre normal: también
+  // cancela los temporizadores pendientes. Sin eso, una apertura ya agendada
+  // (el puntero sobre otro orbe) reabrió el panel justo después del aviso.
+  it('cancels the pending open timer when the detail declares a placement failure (#250/S22)', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      addEventListener: () => {}, removeEventListener: () => {},
+    });
+    // Un orbe visible: el puntero puede pasar por encima y agendar la apertura.
+    widgetEffects.states[1] = [{
+      id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+      message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+    } as unknown as UsageReport];
+    // El panel está cerrado: la apertura del orbe queda pendiente.
+    widgetEffects.states[7] = { providerId: null, anchored: false };
+    const { listener, tree } = renderStrip(false);
+    const hover = findOrbHover(tree);
+    expect(hover).toBeDefined();
+    listener.run();
+    await flush();
+    const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
+    expect(handlers.length).toBeGreaterThan(0);
+    // El puntero pasa por encima del orbe: la apertura queda agendada...
+    hover!({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 56, height: 56 }) } as HTMLElement);
+    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    // ...y el detalle declara que no pudo colocarse.
+    for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
+    // La apertura pendiente se cancela: el panel no se abre.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
   });
 });
 

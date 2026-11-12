@@ -259,7 +259,7 @@ describe('independent detail window', () => {
 
   it('ignores late enter/leave/actions from a closed or replaced provider session', () => {
     const state = { revision: 42, report: { id: 'claude' as const } };
-    for (const kind of ['enter', 'leave', 'hide'] as const) {
+    for (const kind of ['enter', 'leave', 'hide', 'placement-failed'] as const) {
       expect(isCurrentDetailInteraction(null, { revision: 42, provider: 'claude', kind })).toBe(false);
       expect(isCurrentDetailInteraction(state, { revision: 41, provider: 'claude', kind })).toBe(false);
       expect(isCurrentDetailInteraction(state, { revision: 42, provider: 'codex', kind })).toBe(false);
