@@ -187,6 +187,7 @@ export const es = {
       sessionHost: 'Windows',
       wslDistro: 'Distro WSL',
       wslDistroHint: 'Distro donde viven los CLIs y sus sesiones (p. ej. Ubuntu-22.04).',
+      wslDistroMissing: 'Sin distro, WSL no está completo: hasta que escribas una, la sesión se lee del host (Windows).',
       refreshEvery: 'Consultar cada',
       refreshUnit: 'min',
       subscriptions: 'Suscripciones',
@@ -275,6 +276,7 @@ export const es = {
         signIn: 'Iniciar sesión',
         saveAndSignIn: 'Guardar e iniciar sesión',
         checkAuto: 'Se hace sola en cuanto guardes e inicies sesión.',
+        wslHostOnly: 'Modo WSL: por ahora la detección del CLI y este login usan el CLI de Windows. Leer la sesión dentro de la distro llega con #92.',
       },
       // Editor de una cuenta adicional (`AccountEditor`). Los nombres de plan con
       // cifra (`Pro · 300`), las opciones de producto (`nan_community`, `GLM Premium`)

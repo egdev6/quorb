@@ -175,6 +175,7 @@ export const en = {
       sessionHost: 'Windows',
       wslDistro: 'WSL distro',
       wslDistroHint: 'Distro where the CLIs and their sessions live (e.g. Ubuntu-22.04).',
+      wslDistroMissing: 'Without a distro, WSL is incomplete: until you type one, the session is read from the host (Windows).',
       refreshEvery: 'Check every',
       refreshUnit: 'min',
       subscriptions: 'Subscriptions',
@@ -259,6 +260,7 @@ export const en = {
         signIn: 'Sign in',
         saveAndSignIn: 'Save and sign in',
         checkAuto: 'It runs on its own as soon as you save and sign in.',
+        wslHostOnly: 'WSL mode: for now the CLI detection and this login use the Windows CLI. Reading the session inside the distro arrives with #92.',
       },
       accountEditor: {
         kicker: 'Additional account',
