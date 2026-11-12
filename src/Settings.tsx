@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { emailDefaults, emailReady, patchEmail, persistEmailTestAlerts, sendEmailTest } from './lib/email';
-import { osFromUA } from './lib/os-detect';
 import type { EmailStatus } from './lib/types';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
