@@ -1890,11 +1890,24 @@ mod tests {
             .expect("distro en marcha: resolvedor disponible");
         assert!(resolver.is_some());
         assert_eq!(resolver.unwrap().home(), std::path::Path::new("/home/user"));
-        // El home queda cacheado: una segunda resolución no relanza `resolve_home`.
-        let before = mock.calls().len();
+        // El home queda cacheado: una segunda resolución no relanza
+        // `resolve_home` (sí vuelve a comprobar la distro con el guard, que no
+        // despierta; por eso se cuenta `ResolveHome`, no el total de llamadas).
+        let resolve_homes = |calls: &[crate::wsl::WslCall]| {
+            calls
+                .iter()
+                .filter(|c| matches!(c, crate::wsl::WslCall::ResolveHome(_)))
+                .count()
+        };
+        let before = mock.calls();
+        assert_eq!(resolve_homes(&before), 1, "la primera resolución lo pidió");
         rt.block_on(session_resolver(&cfg, adapter, &homes))
             .expect("cacheado");
-        assert_eq!(mock.calls().len(), before, "home resuelto una sola vez");
+        assert_eq!(
+            resolve_homes(&mock.calls()),
+            resolve_homes(&before),
+            "home resuelto una sola vez"
+        );
     }
 
     #[test]
