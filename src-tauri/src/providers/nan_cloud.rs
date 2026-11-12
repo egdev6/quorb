@@ -356,24 +356,53 @@ mod tests {
     }
 
     #[test]
-    fn a_period_that_ends_at_midnight_starts_at_midnight() {
-        // The trivial case of the same rule: when the period ends at midnight, the start
-        // is midnight too and the window is exactly the 30 days of the period.
+    fn a_period_starts_at_the_hour_of_its_own_end() {
+        // The rule of the start: `periodStart` is a DATE (the 5th) and `periodEnd` is an
+        // INSTANT, so the period starts on that day at the same hour as its end. The
+        // trivial case: a period that ends at midnight starts at midnight too and its
+        // window is exactly the 30 days of the period.
         let v = json!({"periodStart": "2026-11-05", "models": [
             {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-12-05T00:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m[0].window_seconds, Some(2_592_000));
+
+        // The same rule with an end that is NOT at midnight: the start takes that hour,
+        // so the window is still exactly the 30 days of the period (and not 30 days plus
+        // the hours of the day it starts at).
+        let v = json!({"periodStart": "2026-11-05", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-12-05T03:00:00Z"}
         ]});
         let m = parse_quota(&v);
         assert_eq!(m[0].window_seconds, Some(2_592_000));
     }
 
     #[test]
-    fn the_canonical_fixture_keeps_the_dates_of_the_real_account() {
-        // The fixture is the contract of the provider: the dates it carries are the ones
-        // the account returns, unchanged by the parsing rules.
-        let v = real_account_payload();
-        assert_eq!(v["periodStart"].as_str(), Some("2026-11-05"));
-        for model in v["models"].as_array().expect("the fixture has models") {
-            assert_eq!(model["periodEnd"].as_str(), Some("2026-12-05T22:15:31Z"));
+    fn the_canonical_fixture_yields_the_dates_of_the_real_account() {
+        // The fixture is the contract of the provider, but what has to hold is what the
+        // parsing gives: the real account's period, from the 5th at 22:15:31 to the 5th
+        // of the next month at the same hour.
+        let end = DateTime::parse_from_rfc3339("2026-12-05T22:15:31Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let start = DateTime::parse_from_rfc3339("2026-11-05T22:15:31Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let meters = parse_quota(&real_account_payload());
+        assert_eq!(meters.len(), 2);
+        for meter in &meters {
+            assert_eq!(
+                meter
+                    .resets_at
+                    .as_deref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|d| d.with_timezone(&Utc)),
+                Some(end)
+            );
+            let seconds = meter.window_seconds.expect("the meter has a window");
+            assert_eq!(seconds, 2_592_000);
+            // The window starts on the 5th at the hour of the end, not at midnight.
+            assert_eq!(end.timestamp() - seconds, start.timestamp());
         }
     }
 

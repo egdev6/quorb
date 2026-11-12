@@ -4,6 +4,7 @@
 // Se recuerda qué se ha avisado por ventana para no repetir (la memoria se guarda en el widget).
 
 import type { AlertMoment, AlertsConfig, Effect, Meter, UsageReport } from './types';
+import { utcDay, windowEnd, windowStart } from './window';
 
 /**
  * ¿Debe el widget lanzar avisos nativos? Requiere el interruptor maestro
@@ -30,7 +31,6 @@ export interface AlertEvent {
 export type AlertMemory = Record<string, 'exceeded'>;
 
 const TEN_MIN = 10 * 60_000;
-const DAY_MS = 86_400_000;
 
 /** Identidad estable del medidor: su id, o la etiqueta en datos antiguos sin id. */
 export const meterKey = (m: { id: string; label: string }) => m.id || m.label;
@@ -111,34 +111,22 @@ function isReset(old: Meter, next: Meter, pct: number, threshold: number): boole
 /**
  * Cambio de base de medición: el porcentaje bajó porque cambió el denominador (la cuota
  * que el proveedor declara como base), así que el reinicio sólo se afirma si la ventana
- * nueva empieza en un día posterior al de la vieja y el consumo absoluto bajó. Las
- * ventanas se comparan POR DÍA UTC: las dos bases describen el mismo periodo con horas
- * distintas (medianoche contra 22:15:31) y comparar instantes daría falsos positivos.
- * Sin unidades comparables o sin los datos de la ventana y del consumo, no se afirma nada.
+ * nueva arranca DESPUÉS de que terminara la vieja (la renovación) y el consumo absoluto
+ * bajó. Las ventanas se comparan POR DÍA UTC: las dos bases describen periodos distintos
+ * con horas distintas (el mes calendario contra el periodo de facturación del 5 al 5) y
+ * comparar instantes daría falsos positivos. Sin unidades comparables o sin los datos de
+ * la ventana y del consumo, no se afirma nada.
  */
 function resetAcrossBasis(old: Meter, next: Meter): boolean {
   if (old.unit !== next.unit) return false;
-  const oldStart = windowStart(old);
-  const newStart = windowStart(next);
-  if (oldStart == null || newStart == null) return false;
   if (old.used == null || next.used == null) return false;
-  if (utcDay(newStart) <= utcDay(oldStart)) return false;
+  // Sin la ventana completa en una de las dos lecturas no se afirma nada.
+  const oldEnd = windowEnd(old);
+  const newStart = windowStart(next);
+  if (oldEnd == null || newStart == null || old.windowSeconds == null) return false;
+  if (utcDay(newStart) <= utcDay(oldEnd)) return false;
   return next.used < old.used;
 }
-
-/**
- * Inicio de la ventana de una lectura: `resetsAt` es el FIN de la ventana y
- * `windowSeconds` su duración. Sin los dos datos, el inicio no se puede saber.
- */
-function windowStart(m: Meter): number | null {
-  if (!m.resetsAt || m.windowSeconds == null) return null;
-  const end = Date.parse(m.resetsAt);
-  if (Number.isNaN(end)) return null;
-  return end - m.windowSeconds * 1000;
-}
-
-/** Día UTC (índice) de un instante: las ventanas se comparan por día, nunca por instante. */
-const utcDay = (ms: number) => Math.floor(ms / DAY_MS);
 
 /** El efecto de pantalla se lanza una vez por ciclo: si hay algún límite superado, ese manda. */
 export function effectFor(

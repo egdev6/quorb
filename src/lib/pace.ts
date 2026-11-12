@@ -1,6 +1,7 @@
 // Ritmo de consumo: compara lo gastado con el tiempo transcurrido de la ventana.
 
 import type { Meter, Spend } from './types';
+import { windowEnd, windowStart } from './window';
 
 export interface Pace {
   /** fracción de la ventana transcurrida (0–1) */
@@ -35,10 +36,11 @@ export function paceOf(used: number, start: number, end: number, now: number): P
 
 /** Ritmo de un medidor con % y ventana conocida (sesión 5 h, semana, mes…). */
 export function meterPace(m: Meter, now: number = Date.now()): Pace | null {
-  if (m.percent == null || !m.resetsAt || !m.windowSeconds) return null;
-  const end = Date.parse(m.resetsAt);
-  if (Number.isNaN(end)) return null;
-  return paceOf(m.percent / 100, end - m.windowSeconds * 1000, end, now);
+  if (m.percent == null || !m.windowSeconds) return null;
+  const end = windowEnd(m);
+  const start = windowStart(m);
+  if (end == null || start == null) return null;
+  return paceOf(m.percent / 100, start, end, now);
 }
 
 /** Ritmo del gasto mensual frente al presupuesto (o proyección del mes si no hay presupuesto). */
