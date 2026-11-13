@@ -7,6 +7,7 @@ mod detail_geometry;
 mod email;
 mod history;
 mod i18n;
+mod installer_locale;
 mod login;
 mod model;
 mod providers;
@@ -1399,7 +1400,12 @@ pub fn run() {
             migrate_legacy_dir(&config_dir, "config.json");
             migrate_legacy_dir(&data_dir, "history.json");
             let config_path = config_dir.join("config.json");
-            let (cfg, config_origin) = config::load(&config_path);
+            // On Windows, a fresh install may carry the NSIS language choice (#233).
+            let (cfg, config_origin) = installer_locale::startup_config(
+                std::env::consts::OS,
+                &config_dir,
+                env!("CARGO_PKG_VERSION"),
+            );
             let http = reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .user_agent(concat!("quorb/", env!("CARGO_PKG_VERSION")))
