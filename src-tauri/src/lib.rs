@@ -2247,4 +2247,38 @@ mod tests {
         assert!(errors.is_empty());
         assert!(warnings.is_empty());
     }
+
+    #[test]
+    fn locale_gate_handles_empty_and_non_utf8_existing_files() {
+        let fixture = LocaleStartupFixture::new("independent-invalid");
+        for (name, bytes) in [
+            ("empty", &b""[..]),
+            ("non-utf8", &b"\xff"[..]),
+            ("null", &b"null"[..]),
+        ] {
+            let path = fixture.file(name);
+            std::fs::write(&path, bytes).unwrap();
+            let (cfg, origin) = config::load(&path);
+            assert_eq!(origin, ConfigOrigin::Existing, "{name}");
+            assert_eq!(
+                cfg,
+                AppConfig {
+                    locale_selected: true,
+                    ..AppConfig::default()
+                }
+                .sanitized(),
+                "{name}"
+            );
+            for os in ["windows", "linux", "macos"] {
+                assert!(!locale_picker_needed_on(os, &cfg, origin), "{name}: {os}");
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+
+        let (fresh, origin) = config::load(&fixture.file("absent"));
+        for os in ["windows", "linux", "macos"] {
+            assert!(locale_picker_needed_on(os, &fresh, origin), "{os}");
+        }
+        assert!(!locale_picker_needed_on("freebsd", &fresh, origin));
+    }
 }

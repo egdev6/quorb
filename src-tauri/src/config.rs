@@ -1468,4 +1468,33 @@ mod tests {
         assert!(is_account_id("nine_router:open-code"));
         assert!(!is_account_id("nine_router:Claude")); // mayúsculas no válidas
     }
+
+    #[test]
+    fn mixed_existing_config_preserves_settings_and_rejected_choice_bytes() {
+        let path = temp_config_path("independent-mixed");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let raw = br#"{"locale":" EN ","localeSelected":false,"refreshMinutes":129,"compact":true,"hiddenProviders":["codex","codex"]}"#;
+        std::fs::write(&path, raw).unwrap();
+
+        let (mut cfg, origin) = super::load(&path);
+        let expected = AppConfig {
+            locale: "en".into(),
+            locale_selected: false,
+            refresh_minutes: 120,
+            compact: true,
+            hidden_providers: vec!["codex".into()],
+            ..AppConfig::default()
+        }
+        .sanitized();
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert_eq!(cfg, expected);
+
+        assert_eq!(
+            cfg.choose_locale("fr"),
+            Err("idioma no soportado: fr".into())
+        );
+        assert_eq!(cfg, expected);
+        assert_eq!(std::fs::read(&path).unwrap(), raw.to_vec());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 }
