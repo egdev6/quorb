@@ -2262,10 +2262,15 @@ mod wsl_evidence {
             out.stdout,
             out.stderr
         );
-        // El CLI escribió en la carpeta de la CUENTA (no en la del host).
-        let file = dir.join(".credentials.json");
+        // El CLI escribió en la carpeta de la CUENTA (no en la del host). La
+        // ruta se compone con POSIX: `PathBuf::join` en Windows pondría `\`
+        // y el guest lo leería como parte del nombre (hallazgo del lab).
+        let file = format!(
+            "{}/.credentials.json",
+            dir.to_string_lossy().trim_end_matches('/')
+        );
         let check = std::process::Command::new("wsl.exe")
-            .args(["-d", &d, "-e", "cat", &file.to_string_lossy()])
+            .args(["-d", &d, "-e", "cat", &file])
             .output()
             .expect("wsl.exe cat");
         assert!(
