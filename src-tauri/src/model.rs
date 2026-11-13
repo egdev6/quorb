@@ -51,18 +51,6 @@ pub struct Meter {
     pub quota_source: Option<&'static str>,
 }
 
-/// Un elemento del desglose que declara el proveedor: rótulo + importe + unidad.
-/// El frente no sabe qué son esos rótulos (ni de qué proveedor son): sólo los
-/// muestra, como los medidores.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct BreakdownItem {
-    pub label: String,
-    pub amount: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit: Option<String>,
-}
-
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Spend {
@@ -114,10 +102,6 @@ pub struct UsageReport {
     pub action: Option<String>,
     /// Tokens por día (si el proveedor los da), para el historial del panel.
     pub daily: Vec<Daily>,
-    /// Desglose declarado por el proveedor: una lista genérica de rótulo + importe
-    /// + unidad. El frente no sabe de qué se trata: lo muestra tal cual.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub breakdown: Option<Vec<BreakdownItem>>,
     pub fetched_at: String,
 }
 
@@ -136,7 +120,6 @@ impl UsageReport {
             message: None,
             action: None,
             daily: vec![],
-            breakdown: None,
             fetched_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -210,29 +193,6 @@ mod tests {
             .unwrap()
             .get("quotaSource")
             .is_none());
-    }
-
-    #[test]
-    fn the_report_carries_the_breakdown_only_when_the_provider_declares_it() {
-        // El desglose es una extensión genérica del informe y es opcional: sin él, el
-        // JSON de los demás proveedores no cambia (ni una clave).
-        let report = UsageReport::new("claude", "Claude", Kind::Subscription);
-        assert!(serde_json::to_value(&report)
-            .unwrap()
-            .get("breakdown")
-            .is_none());
-        let with = UsageReport {
-            breakdown: Some(vec![BreakdownItem {
-                label: "modelo".into(),
-                amount: 24.3,
-                unit: Some("credits".into()),
-            }]),
-            ..UsageReport::new("nan", "NaN Builders", Kind::Subscription)
-        };
-        let v = serde_json::to_value(&with).unwrap();
-        assert_eq!(v["breakdown"][0]["label"], "modelo");
-        assert_eq!(v["breakdown"][0]["amount"], 24.3);
-        assert_eq!(v["breakdown"][0]["unit"], "credits");
     }
 
     #[test]
