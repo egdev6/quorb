@@ -2416,7 +2416,8 @@ mod wsl_evidence {
 /// against an absolute, test-owned shim, then pass its synthetic output through
 /// the WSL session resolver and mock adapter. This is not Windows/WSL or login
 /// evidence. No vendor executable, guest resource, or real session is used.
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod synthetic_wsl_login_lab {
     use super::*;
     use crate::wsl::{MockWslAdapter, SessionResolver, WslCall};
