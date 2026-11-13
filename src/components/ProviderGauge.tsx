@@ -13,8 +13,9 @@ export function gaugeState(report: UsageReport, threshold = 90): 'over' | 'warni
   const muted = report.status === 'needsLogin' || report.status === 'unconfigured' || report.status === 'error';
   if (muted) return 'muted';
   // El estado se calcula sobre el pico VIGENTE: lo viejo no se presenta como el
-  // estado de ahora. Sin ninguna lectura vigente el orbe queda atenuado, aunque
-  // el informe avise: un aviso sin lectura detrás no dice nada del consumo.
+  // estado de ahora. Sin ninguna lectura vigente el orbe queda atenuado, pero sólo
+  // si hay algún dato viejo detrás que mostrar: una suscripción inactiva sin
+  // ninguna lectura sigue avisando con el tono de aviso (no hay nada viejo que atenuar).
   const peak = peakMeter(report);
   if (!peak && hasStaleData(report)) return 'muted';
   const percent = peak?.percent ?? 0;

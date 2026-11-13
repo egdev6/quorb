@@ -194,6 +194,26 @@ describe('stale data presentation (T31)', () => {
     expect(theme).toMatch(/\.q-meter--stale \.q-meter__meta \{[^}]*opacity: 0\.75/);
   });
 
+  it('does not project the kept spend and marks it as cached (F1)', () => {
+    // El gasto conservado viene de un informe entero viejo: se puede ver, pero
+    // «a este ritmo» es por definición «ahora», así que no se proyecta.
+    const kept: UsageReport = {
+      ...report,
+      status: 'warning',
+      stale: true,
+      fetchedAt: '2026-11-12T08:00:00Z',
+      spend: { amount: 28.12, currency: 'USD', periodLabel: 'Este mes', budget: 40 },
+    };
+    const html = renderToStaticMarkup(<ProviderDetails report={kept} />);
+    // El importe viejo se ve…
+    expect(html).toContain('28,12');
+    // …pero nunca proyectado.
+    expect(html).not.toContain('a fin de mes');
+    // Y siempre marcado como viejo, con la fecha de su última lectura.
+    expect(html).toContain('caché');
+    expect(html).toContain('12 nov');
+  });
+
   it('keeps the history of the stale meter but gives it no pace (R2, R3)', () => {
     const window = { resetsAt: new Date(Date.now() + 302400000).toISOString(), windowSeconds: 604800 };
     const mixed: UsageReport = {

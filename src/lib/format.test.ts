@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectAlerts } from './alerts';
-import { currentMeters, formatCompact, formatResetIn, hasStaleData, isStaleMeter, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
+import { currentMeters, formatCompact, formatResetIn, hasStaleData, isStaleMeter, isStaleSpend, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
 import { meterPace } from './pace';
 import type { Meter, UsageReport } from './types';
 
@@ -473,12 +473,97 @@ describe('a different billing regime does not bring the old meters back (T31b)',
     expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
   });
 
-  it('keeps the old data when only the new report declares a regime', () => {
-    // Sólo uno de los dos declara régimen: tampoco hay comparación posible.
+  it('does not keep the old data when only the new report declares a regime', () => {
+    // El informe nuevo declara el régimen y el anterior NO declara ninguno: los
+    // medidores del anterior no se pueden atribuir al régimen vigente, así que no
+    // se conservan (no se resucitan los topes de un régimen que ya no aplica).
     const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
     const failed: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'sin cuota', meters: [] };
     const [merged] = mergeReports([previous], [failed]);
+    expect(merged.meters).toEqual([]);
+    // Y no queda nada viejo que conservar: el informe no se marca desactualizado.
+    expect(merged.stale).toBeUndefined();
+    // El régimen que declara el informe nuevo es el que manda.
+    expect(merged.billingRegime).toBe('credits');
+  });
+
+  it('keeps the old data when only the previous report declares a regime', () => {
+    // Lectura fallida: el informe nuevo NO declara régimen, así que no hay
+    // comparación posible y el último ciclo correcto se sigue guardando.
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', message: 'sin cuota', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
     expect(merged.stale).toBe(true);
     expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+    expect(merged.meters[0].readAt).toBe(previous.fetchedAt);
+  });
+});
+
+// F1: el gasto conservado es un dato viejo. Se puede ver (la información es real),
+// pero nunca se presenta como el estado de ahora y siempre va marcado.
+describe('the kept spend is never presented as the current state (F1)', () => {
+  const spend = { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 };
+  // Un informe MIXTO: el medidor es viejo, el gasto es de este ciclo.
+  const mixed: UsageReport = { ...base, meters: [{ ...base.meters[0], stale: true }], spend };
+
+  it('marks the spend as stale only when the whole report is stale', () => {
+    expect(isStaleSpend({ ...base, stale: true })).toBe(true);
+    expect(isStaleSpend(base)).toBe(false);
+    // Un medidor viejo no vuelve viejo el gasto: el gasto es de este ciclo.
+    expect(isStaleSpend(mixed)).toBe(false);
+  });
+
+  it('shows the fresh spend of a mixed report in the tray tooltip', () => {
+    // El gasto viene del informe nuevo: es fresco y se ve (antes el tooltip lo
+    // escondía de más, porque miraba si el informe tenía ALGÚN medidor viejo).
+    expect(trayTooltip([mixed])).toMatch(/^Claude: 12,00/);
+  });
+
+  it('does not show the kept spend of a stale report in the tray tooltip', () => {
+    const whole: UsageReport = { ...base, stale: true, spend };
+    expect(trayTooltip([whole])).toBe('Claude: —');
+  });
+});
+
+// F3: el resumen que se copia no afirma el estado viejo como vigente.
+describe('the copied summary never claims the old state is current (F3)', () => {
+  const now = new Date('2026-11-13T08:00:00Z');
+
+  it('marks the stale meters with the cached chip and their reading date', () => {
+    const report: UsageReport = {
+      ...base,
+      meters: [
+        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null },
+        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null, stale: true, readAt: '2026-11-12T08:00:00Z' },
+      ],
+    };
+    const lines = reportSummary(report, now, 'es').split('\n');
+    const fresh = lines.find((l) => l.includes('Peticiones'))!;
+    const old = lines.find((l) => l.includes('deepseek-v4-flash'))!;
+    // El medidor viejo va marcado, con la fecha de su última lectura.
+    expect(old).toContain('caché');
+    expect(old).toContain('12 nov');
+    // El vigente, no.
+    expect(fresh).not.toContain('caché');
+  });
+
+  it('marks the meters of a whole kept report as cached', () => {
+    // Informe entero conservado: sus medidores son viejos aunque no lleven la marca.
+    const report: UsageReport = { ...base, stale: true, fetchedAt: '2026-11-12T08:00:00Z' };
+    const summary = reportSummary(report, now, 'es');
+    expect(summary).toContain('caché');
+    expect(summary).toContain('12 nov');
+  });
+
+  it('marks the kept spend as cached', () => {
+    const report: UsageReport = {
+      ...base,
+      stale: true,
+      fetchedAt: '2026-11-12T08:00:00Z',
+      spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 },
+    };
+    const line = reportSummary(report, now, 'es').split('\n').find((l) => l.includes('Diciembre'))!;
+    expect(line).toContain('caché');
+    expect(line).toContain('12 nov');
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { formatCompact, formatMoney, formatResetIn, shortLabel, currentMeters, isStaleMeter } from '../lib/format';
+import { formatCompact, formatMoney, formatResetIn, formatShortDate, shortLabel, currentMeters, isStaleMeter, isStaleSpend } from '../lib/format';
 import { meterPace, spendPace, type Pace } from '../lib/pace';
 import type { Locale, Sample, UsageReport } from '../lib/types';
 import { intlLocale, t } from '../i18n';
@@ -117,7 +117,11 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
   const currentRingMeters = currentMeters(report).filter((m) => m.percent != null);
   const historyMeters = report.meters.filter((m) => m.percent != null);
   const paces = currentRingMeters.map((m, i) => ({ m, color: popupMeterColor(report, m, i), pace: meterPace(report, m) }));
-  const sp = report.spend ? spendPace(report.spend) : null;
+  // El gasto conservado es viejo si el informe entero lo es: se puede ver, pero
+  // nunca proyectado («a este ritmo» es, por definición, «ahora») y siempre marcado.
+  const staleSpend = isStaleSpend(report);
+  const sp = report.spend && !staleSpend ? spendPace(report.spend) : null;
+  const spendReadAt = staleSpend ? formatShortDate(report.fetchedAt, locale) : null;
 
   const series = useMemo(() => {
     if (!samples) return { pct: [], spend: [] as [number, number][] };
@@ -166,7 +170,7 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
       }}>
         <summary className="details__toggle"><h3 className="details__title">{t(locale, 'details.paceTitle')}</h3></summary>
         <div className="details__body">
-          {paces.filter((p) => p.pace).length === 0 && !sp && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
+          {paces.filter((p) => p.pace).length === 0 && !report.spend && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
           {paces.map(
             ({ m, color, pace }) =>
               pace && (
@@ -178,6 +182,21 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
                   <PaceBar pace={pace} color={color} locale={locale} />
                 </div>
               ),
+          )}
+          {staleSpend && report.spend && (
+            <div className="pace" data-status="stale">
+              <span className="pace__row">
+                <span className="pace__label">{t(locale, 'details.spendLabel')}</span>
+                <span className="pace__txt">
+                  {formatMoney(report.spend.amount, report.spend.currency)}
+                  {/* Mismas marcas que los medidores viejos (el CSS no cambia). */}
+                  <span className="eg-status eg-status--neutral q-spend__stale" title={t(locale, 'details.staleChipTitle')}>
+                    {t(locale, 'details.staleChip')}
+                  </span>
+                  {spendReadAt && <span className="q-spend__stale-at">{t(locale, 'details.staleReadAt', { date: spendReadAt })}</span>}
+                </span>
+              </span>
+            </div>
           )}
           {sp && report.spend && (
             <div className="pace" data-status={sp.status}>

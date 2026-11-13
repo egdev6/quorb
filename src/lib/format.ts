@@ -94,6 +94,18 @@ export function currentMeters(report: UsageReport): Meter[] {
   return report.meters.filter((m) => !isStaleMeter(report, m));
 }
 
+/**
+ * ¿El gasto del informe es viejo? Lo es cuando el INFORME ENTERO lo es: un informe
+ * conservado trae el importe del ciclo anterior. Un informe con un medidor viejo y
+ * gasto fresco (el informe mixto) sí trae el gasto de este ciclo: ese gasto se ve.
+ *
+ * La regla es del informe, no de los medidores: un medidor viejo no vuelve viejo el
+ * gasto, y un informe viejo no deja al gasto como si fuera de ahora.
+ */
+export function isStaleSpend(report: UsageReport): boolean {
+  return report.stale === true;
+}
+
 /** ¿El informe muestra algún dato viejo? (Un medidor marcado o el informe entero.) */
 export function hasStaleData(report: UsageReport): boolean {
   return report.stale === true || report.meters.some((m) => m.stale === true);
@@ -124,15 +136,23 @@ export function formatShortDate(iso: string | null, locale: Locale = 'es'): stri
 }
 
 /**
- * ¿El informe nuevo declara un régimen de facturación DISTINTO del que declaraba el
- * anterior? El texto es opaco: el frente no sabe qué significa, sólo si es el mismo.
- * Si alguno de los dos no lo declara no hay comparación posible (y el comportamiento
- * es el de siempre).
+ * ¿El régimen que declara el informe nuevo impide conservar los medidores del anterior?
+ *
+ * El texto del régimen es opaco: el frente no sabe qué significa, sólo si es el mismo.
+ * La comparación es ASIMÉTRICA, porque «no declarar» no es una declaración:
+ * - el informe nuevo declara un régimen DISTINTO al anterior → los medidores del
+ *   anterior son de un régimen que ya no aplica y no se conservan;
+ * - el informe nuevo declara un régimen y el anterior NO declara ninguno → esos
+ *   medidores tampoco se pueden atribuir al régimen vigente, así que no se conservan;
+ * - el informe nuevo NO declara nada (lectura fallida) → no hay comparación posible y
+ *   se conserva todo lo anterior, como siempre: el último ciclo correcto no se borra.
  */
-function regimeChanged(old: UsageReport | undefined, next: UsageReport): boolean {
-  const before = old?.billingRegime;
+function regimeBlocksKeeping(old: UsageReport | undefined, next: UsageReport): boolean {
   const after = next.billingRegime;
-  return before != null && after != null && before !== after;
+  // Sin declaración del informe nuevo no hay comparación posible: no se bloquea nada.
+  if (after == null) return false;
+  const before = old?.billingRegime;
+  return before == null || before !== after;
 }
 
 /**
@@ -145,10 +165,11 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     const old = byId.get(r.id);
     const failed = r.status === 'error' || r.status === 'warning';
     if (failed && r.meters.length === 0 && !r.spend && old && (old.meters.length > 0 || old.spend)) {
-      // Un régimen DISTINTO no es un fallo de lectura: los medidores del informe anterior
-      // (topes por modelo de una cuenta que ya no se factura así) ya no aplican, así que
-      // no se resucitan. El plan no es una lectura —nome la cuenta— y sí se conserva.
-      if (regimeChanged(old, r)) return { ...r, plan: r.plan ?? old.plan };
+      // El régimen que declara el informe nuevo manda: los medidores del informe anterior
+      // (topes por modelo de una cuenta que ya no se factura así) no se pueden atribuir
+      // al régimen vigente, así que no se resucitan. El plan no es una lectura —nome la
+      // cuenta— y sí se conserva.
+      if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
       return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(old.meters, old.fetchedAt) };
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
@@ -159,12 +180,13 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     // saltaría los avisos del ciclo entero (con el fresco incluido).
     // Si el informe declara el régimen de facturación, la regla de no resucitar
     // medidores de otro régimen se aplica aquí (mismo sitio, misma marca): si el
-    // informe nuevo declara un régimen distinto del anterior, los medidores que no
-    // trae no se conservan (arriba, con `regimeChanged`).
+    // informe nuevo declara un régimen, los medidores que no trae no se conservan
+    // (arriba, con `regimeBlocksKeeping`).
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
-      // Con un régimen DISTINTO tampoco se conservan los medidores que el informe nuevo
-      // no trae: son de un régimen que ya no aplica (mismo sitio, misma marca).
-      if (regimeChanged(old, r)) return { ...r, plan: r.plan ?? old.plan };
+      // Con un régimen declarado por el informe nuevo tampoco se conservan los medidores
+      // que el informe nuevo no trae: no se pueden atribuir al régimen vigente (mismo
+      // sitio, misma marca).
+      if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
       const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)));
       // Si no se conserva ningún medidor, no hay nada viejo que avisar: el informe
       // nuevo se queda tal cual (sus medidores son todos frescos).
@@ -207,12 +229,24 @@ export function trayTooltip(reports: UsageReport[]): string {
     const peak = peakMeter(r);
     if (peak?.percent != null) return `${r.name}: ${formatPercent(peak.percent)}`;
     // Sin pico vigente no se presenta el dato viejo como el estado de ahora; el
-    // gasto tampoco, si lo que se ve es el de un ciclo conservado.
-    if (r.spend && !hasStaleData(r)) return `${r.name}: ${formatMoney(r.spend.amount, r.spend.currency)}`;
+    // gasto tampoco, si lo que se ve es el de un ciclo conservado (informe entero
+    // viejo). Un informe mixto trae el gasto de este ciclo: ese se ve.
+    if (r.spend && !isStaleSpend(r)) return `${r.name}: ${formatMoney(r.spend.amount, r.spend.currency)}`;
     return `${r.name}: —`;
   });
   // Windows limita el tooltip de la bandeja a ~127 caracteres
   return (parts.join('\n') || 'Quorb').slice(0, 127);
+}
+
+/**
+ * La marca de lo viejo en texto plano: «caché · última lectura 12 nov». Se usa en el
+ * resumen que se copia, para que lo pegado en otro lado no afirme el estado viejo
+ * como vigente.
+ */
+function staleMark(readAt: string | null, locale: Locale): string {
+  const chip = t(locale, 'details.staleChip');
+  const date = formatShortDate(readAt, locale);
+  return date ? `${chip} · ${t(locale, 'details.staleReadAt', { date })}` : chip;
 }
 
 /** Resumen en texto plano para copiar al portapapeles. */
@@ -226,9 +260,17 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
         : m.used != null
           ? `${formatCompact(m.used)}${m.unit ? ` ${m.unit}` : ''}`
           : '—';
-    lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}`);
+    // Lo viejo va marcado: el resumen no afirma el estado viejo como el de ahora.
+    const notes = [
+      reset ? t(locale, 'details.summaryReset', { when: reset }) : null,
+      isStaleMeter(r, m) ? staleMark(m.readAt ?? r.fetchedAt, locale) : null,
+    ].filter(Boolean);
+    lines.push(`· ${m.label}: ${value}${notes.length ? ` (${notes.join(' · ')})` : ''}`);
   }
-  if (r.spend) lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`);
+  if (r.spend) {
+    const mark = isStaleSpend(r) ? staleMark(r.fetchedAt, locale) : null;
+    lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}${mark ? ` (${mark})` : ''}`);
+  }
   if (r.message && r.status !== 'ok') lines.push(`· ${r.message}`);
   return lines.join('\n');
 }
