@@ -73,3 +73,74 @@
     Delete "$APPDATA\${BUNDLEID}\installer-locale"
   ${EndIf}
 !macroend
+
+; Tauri's NSIS template (CLI 2.12.1) includes MUI2.nsh before these hooks and
+; calls MUI_LANGDLL_DISPLAY in .onInit after parsing /P and /UPDATE. Upstream it
+; only skips the dialog for /S, so the passive updater would ask existing users
+; for a language. This copy of NSIS Contrib/Modern UI 2/Localization.nsh
+; (kichik/nsis@9465c08046f00ccb6eda985abbdbf52c275c6c4d) differs only in the
+; marked mode guard. Re-check it whenever Tauri or NSIS is upgraded.
+!macroundef MUI_LANGDLL_DISPLAY
+!macro MUI_LANGDLL_DISPLAY
+
+  !verbose push
+  !verbose ${MUI_VERBOSE}
+
+  !ifndef MUI_LANGDLL_LANGUAGES
+    !warning "MUI_LANGDLL_DISPLAY should only be used after inserting the MUI_LANGUAGE macro(s)"
+  !endif
+
+  !insertmacro MUI_LANGDLL_VARIABLES
+
+  !insertmacro MUI_DEFAULT MUI_LANGDLL_WINDOWTITLE "Installer Language"
+  !insertmacro MUI_DEFAULT MUI_LANGDLL_INFO "Please select a language."
+
+  !ifdef MUI_LANGDLL_REGISTRY_VARIABLES
+
+    ReadRegStr $mui.LangDLL.RegistryLanguage "${MUI_LANGDLL_REGISTRY_ROOT}" "${MUI_LANGDLL_REGISTRY_KEY}" "${MUI_LANGDLL_REGISTRY_VALUENAME}"
+    
+    ${if} $mui.LangDLL.RegistryLanguage != ""
+      ;Set default language to registry language
+      StrCpy $LANGUAGE $mui.LangDLL.RegistryLanguage
+    ${endif}
+
+  !endif
+
+  ; Quorb: passive (automatic updater) and update runs keep the remembered or
+  ; default language instead of asking (#233).
+  ${If} $PassiveMode <> 1
+  ${AndIf} $UpdateMode <> 1
+  !ifdef NSIS_CONFIG_SILENT_SUPPORT
+  ${AndIfNot} ${Silent}
+  !endif
+
+  !ifndef MUI_LANGDLL_ALWAYSSHOW
+  !ifdef MUI_LANGDLL_REGISTRY_VARIABLES
+    ${if} $mui.LangDLL.RegistryLanguage == ""
+  !endif
+  !endif
+  
+  ;Show language selection dialog
+  !ifdef MUI_LANGDLL_ALLLANGUAGES
+    LangDLL::LangDialog "${MUI_LANGDLL_WINDOWTITLE}" "${MUI_LANGDLL_INFO}" A ${MUI_LANGDLL_LANGUAGES} ""
+  !else
+    LangDLL::LangDialog "${MUI_LANGDLL_WINDOWTITLE}" "${MUI_LANGDLL_INFO}" AC ${MUI_LANGDLL_LANGUAGES_CP} ""
+  !endif
+  
+    Pop $LANGUAGE
+    ${if} $LANGUAGE == "cancel"
+      Abort
+    ${endif}
+  
+  !ifndef MUI_LANGDLL_ALWAYSSHOW
+  !ifdef MUI_LANGDLL_REGISTRY_VARIABLES
+    ${endif}
+  !endif
+  !endif
+
+
+  ${EndIf}
+
+  !verbose pop
+
+!macroend

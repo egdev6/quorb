@@ -36,6 +36,30 @@ test('NSIS enables the English and Spanish language selector', () => {
   assert.equal(nsis.displayLanguageSelector, true);
 });
 
+test('hooks replace the MUI2 language display macro', () => {
+  const hook = read('src-tauri/installer/hooks.nsh').replace(/\r\n/g, '\n');
+  const undef = [...hook.matchAll(/^!macroundef MUI_LANGDLL_DISPLAY[ \t]*$/gm)];
+  assert.equal(undef.length, 1);
+  const definition = hook.indexOf('!macro MUI_LANGDLL_DISPLAY');
+  assert.ok(definition > undef[0].index);
+  macro('MUI_LANGDLL_DISPLAY');
+});
+
+test('the language dialog only shows in interactive, non-passive, non-update runs', () => {
+  const lines = macro('MUI_LANGDLL_DISPLAY');
+  const dialog = lines.findIndex((line) => /^LangDLL::LangDialog\b/.test(line));
+  const guard = lines.indexOf('${If} $PassiveMode <> 1');
+  assert.ok(guard >= 0 && guard < dialog, 'mode guard must precede the dialog');
+  assert.equal(lines[guard + 1], '${AndIf} $UpdateMode <> 1');
+  assert.ok(lines.slice(guard, dialog).includes('${AndIfNot} ${Silent}'), 'silent runs never show the dialog');
+  assert.ok(!lines.some((line) => /^SetSilent\b/.test(line)), 'the silent mode itself is never switched');
+  // The remembered or default language is still loaded before the guard.
+  const registry = lines.findIndex((line) => line.startsWith('ReadRegStr $mui.LangDLL.RegistryLanguage'));
+  assert.ok(registry >= 0 && registry < guard);
+  assert.equal(lines.filter((line) => line === 'LangDLL::LangDialog "${MUI_LANGDLL_WINDOWTITLE}" "${MUI_LANGDLL_INFO}" A ${MUI_LANGDLL_LANGUAGES} ""' || line === 'LangDLL::LangDialog "${MUI_LANGDLL_WINDOWTITLE}" "${MUI_LANGDLL_INFO}" AC ${MUI_LANGDLL_LANGUAGES_CP} ""').length, 2);
+});
+
+
 test('locale configuration keeps per-user hooks and all existing bundle targets', () => {
   const conf = JSON.parse(read('src-tauri/tauri.conf.json'));
   assert.equal(conf.bundle.windows.nsis.installMode, 'currentUser');
