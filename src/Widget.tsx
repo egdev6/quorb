@@ -528,9 +528,21 @@ export function Widget() {
   }, [dockMonitor]);
 
   // ───── círculos visibles y en su orden ─────
-  const order = reorder?.order ?? config?.providerOrder ?? [];
+  // El orden guardado manda en el DOM (#264/L18): durante el arrastre el DOM
+  // no se reordena, porque mover un nodo con `insertBefore` libera la captura
+  // del puntero y el gesto se cortaba a mitad de camino (perdía el
+  // `pointercapture` al arrastrar hacia la derecha). La vista previa del orden
+  // nuevo la cuenta la propiedad CSS `order` de cada orbe (`.strip__orbs` es
+  // flex); al soltar, la config reordena el DOM, cuando la captura ya no
+  // importa.
+  const savedOrder = config?.providerOrder ?? [];
   const hiddenIds = config?.hiddenProviders ?? [];
-  const visible = applyOrder(reports, order).filter((r) => !hiddenIds.includes(r.id));
+  /** Orden visual: el guardado, o la vista previa mientras se arrastra. */
+  const visible = applyOrder(reports, reorder?.order ?? savedOrder).filter((r) => !hiddenIds.includes(r.id));
+  /** Orden del DOM: el guardado, estable durante todo el gesto. */
+  const rendered = applyOrder(reports, savedOrder).filter((r) => !hiddenIds.includes(r.id));
+  /** Posición visual de cada orbe: la de la vista previa durante el arrastre. */
+  const visualPos = new Map(visible.map((r, i) => [r.id, i]));
   const tags = config ? accountTags(config) : {};
   const active = reports.find((r) => r.id === panel.providerId) ?? null;
 
@@ -1330,6 +1342,9 @@ export function Widget() {
       }
       const ids = visible.map((r) => r.id);
       const others = [...(orbsRef.current?.querySelectorAll<HTMLElement>('.orb') ?? [])].filter((el) => el.dataset.id !== id);
+      // Los centros llegan en el orden del DOM, que durante el gesto no es el
+      // visual (la vista previa va con el `order` de CSS): `dropIndex` los
+      // ordena por posición.
       const centers = others.map((el) => {
         const b = el.getBoundingClientRect();
         return vertical ? b.top + b.height / 2 : b.left + b.width / 2;
@@ -1440,7 +1455,7 @@ export function Widget() {
         </span>
 
         <div ref={orbsRef} className="strip__orbs" data-reordering={reorder ? true : undefined}>
-          {visible.map((r) => (
+          {rendered.map((r) => (
             <ProviderGauge
               key={r.id}
               report={r}
@@ -1452,6 +1467,9 @@ export function Widget() {
               showResets={config?.showResets ?? true}
               threshold={config?.alerts.threshold}
               dragging={reorder?.id === r.id}
+              // La vista previa del reordenamiento va con el `order` de CSS:
+              // el DOM conserva el orden guardado y sólo cambia lo que se ve.
+              order={reorder ? visualPos.get(r.id) : undefined}
               onHover={(el) => openFor(r.id, el)}
               onPointerEnter={(el) => {
                 if (!reorderHold.current) openFor(r.id, el);

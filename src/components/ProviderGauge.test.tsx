@@ -128,6 +128,33 @@ describe('ProviderGauge pointer-only enter', () => {
   });
 });
 
+describe('ProviderGauge visual order', () => {
+  // #264/L18: la vista previa del reordenamiento se cuenta con la propiedad
+  // CSS `order`; el DOM no se reordena, así que el orbe necesita su posición
+  // visual sin tocar su contrato (props, foco, puntero).
+  const report: UsageReport = {
+    id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
+    meters: [], spend: null, message: null, action: null, fetchedAt: '',
+  };
+  const gauge = (order?: number) =>
+    renderToStaticMarkup(
+      <ProviderGauge report={report} small={false} size={60} active={false} onHover={() => {}} order={order} />,
+    );
+
+  it('applies the visual position as the CSS order', () => {
+    const html = gauge(2);
+    expect(html).toContain('order:2');
+    // El resto del contrato del orbe no cambia.
+    expect(html).toContain('class="orb eg-gauge"');
+    expect(html).toContain('data-id="claude"');
+  });
+
+  it('omits the CSS order when there is no preview', () => {
+    const style = gauge().match(/style="([^"]*)"/)?.[1] ?? '';
+    expect(style).not.toContain('order:');
+  });
+});
+
 describe('ProviderGauge semantic colors', () => {
   it.each(['nan', 'nan:work', 'gemini', 'cursor', 'copilot', 'openrouter'])('keeps one configured color per ring for %s', (id) => {
     const meters = [meter('Modelo A', 2592000), meter('Modelo B', null), meter('Modelo C', 86400)];

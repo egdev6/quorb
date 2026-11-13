@@ -40,6 +40,7 @@ export function ProviderGauge({
   showResets = true,
   threshold,
   dragging = false,
+  order,
   onHover,
   onPointerEnter,
   onClick,
@@ -71,6 +72,14 @@ export function ProviderGauge({
   onClick?: (el: HTMLElement) => void;
   /** Se está arrastrando para reordenar */
   dragging?: boolean;
+  /**
+   * Posición visual del orbe (#264/L18): sólo afecta al estilo (la propiedad
+   * CSS `order`). La vista previa del reordenamiento se pinta así para que el
+   * DOM no se reordene: mover un nodo libera la captura del puntero y el
+   * arrastre se corta. Fuera del gesto no se pasa y el orbe queda en su sitio
+   * natural.
+   */
+  order?: number;
   /** Manejadores de puntero para reordenar arrastrando */
   pointer?: Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp'>;
 }) {
@@ -107,7 +116,7 @@ export function ProviderGauge({
       aria-label={accessibleTitle}
       title={account || reason || validity || resets ? accessibleTitle : undefined}
       aria-expanded={active}
-      style={{ '--size': `${size}px`, '--w': `${w}px`, '--gap': `${gap}px` } as CSSProperties}
+      style={{ '--size': `${size}px`, '--w': `${w}px`, '--gap': `${gap}px`, order } as CSSProperties}
       onMouseEnter={(e) => (onPointerEnter ?? onHover)(e.currentTarget)}
       onFocus={(e) => {
         // Windows can restore pointer-acquired focus when the popup hides.

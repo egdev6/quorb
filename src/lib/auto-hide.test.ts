@@ -51,6 +51,24 @@ type DockHandlers = {
   onMouseLeave(): void;
 };
 
+type OrbPointer = {
+  id: string;
+  onPointerDown(event: unknown): void;
+  onPointerMove(event: unknown): void;
+  onPointerUp(event: unknown): void;
+};
+
+/** The reorder handlers of every orb of the strip (real props of the tree). */
+function findOrbPointers(node: ReactNode, out: OrbPointer[] = []): OrbPointer[] {
+  if (Array.isArray(node)) {
+    for (const child of node) findOrbPointers(child, out);
+    return out;
+  }
+  if (!isValidElement<{ report?: { id: string }; pointer?: Omit<OrbPointer, 'id'>; children?: ReactNode }>(node)) return out;
+  if (node.props.pointer && node.props.report) out.push({ id: node.props.report.id, ...node.props.pointer });
+  return findOrbPointers(node.props.children, out);
+}
+
 /** The strip's own pointer handlers, taken from the rendered tree. */
 function findDock(node: ReactNode): DockHandlers | undefined {
   if (Array.isArray(node)) {
@@ -1403,5 +1421,107 @@ describe('hover presence wiring', () => {
     // timer se armaría y el panel se cerraría solo.
     await vi.advanceTimersByTimeAsync(280);
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+  });
+});
+
+// #264/L18: arrastrar un orbe hacia la derecha reordenaba el DOM, y mover un
+// nodo con `insertBefore` libera la captura del puntero: el gesto se cortaba
+// a mitad de camino (el `lostpointercapture` llegaba 10-30 ms después del
+// cambio de índice). El DOM no se reordena durante el arrastre; la vista
+// previa del orden nuevo la cuenta la propiedad CSS `order` de cada orbe
+// (`.strip__orbs` es flex).
+describe('the reorder preview keeps the DOM still (#264/L18)', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  const report = (id: string) => ({
+    id, name: id, kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+  } as unknown as UsageReport);
+
+  /** Los orbes del markup: su id y su `order` de CSS, en el orden del DOM. */
+  const orbs = (markup: string) =>
+    [...markup.matchAll(/<button[^>]*class="orb eg-gauge"[^>]*>/g)].map((m) => ({
+      id: m[0].match(/data-id="([^"]*)"/)?.[1],
+      order: m[0].match(/style="([^"]*)"/)?.[1]?.match(/(?:^|;)\s*order:\s*(\d+)/)?.[1],
+    }));
+
+  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above):
+  // 0 config, 1 reports, 5 geo, 6 stripSize, 19 reorder. Ref slots: 6 orbsRef,
+  // 26 orbDrag.
+  const render = (reorder: { id: string; order: string[] } | null) => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.states[0] = {
+      providerOrder: ['a', 'b', 'c'], hiddenProviders: [], accounts: [], nineRouter: { baseUrl: '' },
+      alerts: { threshold: 90 },
+    };
+    widgetEffects.states[1] = [report('a'), report('b'), report('c')];
+    widgetEffects.states[5] = geo;
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[9] = false;
+    widgetEffects.states[19] = reorder;
+    let tree: ReactNode = null;
+    function CaptureWidget() { tree = Widget(); return tree; }
+    const markup = renderToStaticMarkup(createElement(CaptureWidget));
+    return { markup, tree: tree! };
+  };
+  const markup = (reorder: { id: string; order: string[] } | null) => render(reorder).markup;
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the saved DOM order while the preview moves an orb to the right', () => {
+    const list = orbs(markup({ id: 'a', order: ['b', 'a', 'c'] }));
+    // El DOM no se movió: sigue el orden guardado.
+    expect(list.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+    // La vista previa la cuenta el `order` de CSS de cada orbe.
+    expect(list.map((o) => o.order)).toEqual(['1', '0', '2']);
+  });
+
+  it('keeps the saved DOM order while the preview moves an orb to the end', () => {
+    const list = orbs(markup({ id: 'a', order: ['b', 'c', 'a'] }));
+    expect(list.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+    expect(list.map((o) => o.order)).toEqual(['2', '0', '1']);
+  });
+
+  it('renders the saved order with no CSS order outside the gesture', () => {
+    const list = orbs(markup(null));
+    expect(list.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+    // Fuera del arrastre el DOM y el orden visual coinciden: no hay `order`,
+    // y el foco con teclado sigue el orden que se ve.
+    expect(list.map((o) => o.order)).toEqual([undefined, undefined, undefined]);
+  });
+
+  // El índice de destino lo decide la posición visual, no el orden del DOM:
+  // el DOM conserva el orden guardado, así que los centros llegan desordenados.
+  it('drops the dragged orb at its visual position, not at the DOM one', () => {
+    vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });
+    // La vista previa pone a 'b' al final: en pantalla el orden es a, c, b.
+    const { tree } = render({ id: 'a', order: ['a', 'c', 'b'] });
+    const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
+    // El DOM sigue el orden guardado (a, b, c) con las posiciones de la vista
+    // previa: a en la ranura 0, c en la 1 y b en la 2.
+    widgetEffects.refs[6].current = {
+      querySelectorAll: () => [
+        { dataset: { id: 'a' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 60 }) },
+        { dataset: { id: 'b' }, getBoundingClientRect: () => ({ left: 200, top: 0, width: 60, height: 60 }) },
+        { dataset: { id: 'c' }, getBoundingClientRect: () => ({ left: 100, top: 0, width: 60, height: 60 }) },
+      ],
+    };
+    dragged.onPointerDown({
+      button: 0, clientX: 30, clientY: 30, pointerId: 1,
+      currentTarget: { setPointerCapture: () => {} },
+    });
+    // El puntero cae entre 'c' (centro 130) y 'b' (centro 230).
+    dragged.onPointerMove({ clientX: 150, clientY: 30 });
+    expect(widgetEffects.states[19]).toEqual({ id: 'a', order: ['c', 'a', 'b'] });
   });
 });
