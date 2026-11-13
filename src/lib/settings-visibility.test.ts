@@ -1,5 +1,6 @@
 import source from '../Settings.tsx?raw';
 import types from './types.ts?raw';
+import { es } from '../i18n/es';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_KEY, configKeyFor, isAccountVisible, setAccountVisibility } from './settings-visibility';
 import type { AppConfig } from './types';
@@ -16,13 +17,17 @@ describe('obsolete hidden-circles block (#98)', () => {
     expect(source.includes('Ninguno. Para ocultar uno')).toBe(false);
     expect(source.includes('cfg.hiddenProviders.map')).toBe(false);
     expect(types).toContain('hiddenProviders: string[]');
-    expect(source.includes('label="Mostrar en el widget"')).toBe(true);
+    expect(source.includes('label="Mostrar en el widget"')).toBe(false);
+    // El texto vive en el catálogo (patrón destructive-buttons): se exige el
+    // cableado por clave en Settings.tsx y el valor verbatim en el catálogo es.
+    expect(es.settings.providers.showInWidget).toBe('Mostrar en el widget');
+    expect(source.includes("label={t(locale, 'settings.providers.showInWidget')}")).toBe(true);
   });
 
   it('routes every "Mostrar en el widget" toggle through the visibility helpers', () => {
     // Un toggle con `set(...)` directo no saca el id de `hiddenProviders`: un
     // círculo ocultado desde el widget quedaría marcado e irrecuperable (#182).
-    const toggles = [...source.matchAll(/<Toggle\s+label="Mostrar en el widget"[\s\S]*?\/>/g)].map((m) => m[0]);
+    const toggles = [...source.matchAll(/<Toggle\s+label=\{t\(locale,\s*'settings\.providers\.showInWidget'\)\}[\s\S]*?\/>/g)].map((m) => m[0]);
     expect(toggles.length).toBeGreaterThan(0);
     for (const t of toggles) expect(t).toMatch(/onChange=\{(onVisibility|\(v\) => setVisibility\()/);
     expect(source).toContain("checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)}");
