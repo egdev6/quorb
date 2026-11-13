@@ -312,7 +312,6 @@ export const es = {
         signIn: 'Iniciar sesión',
         saveAndSignIn: 'Guardar e iniciar sesión',
         checkAuto: 'Se hace sola en cuanto guardes e inicies sesión.',
-        wslHostOnly: 'Modo WSL: por ahora la detección del CLI y este login usan el CLI de Windows. Leer la sesión dentro de la distro llega con #92.',
       },
       // Editor de una cuenta adicional (`AccountEditor`). Los nombres de plan con
       // cifra (`Pro · 300`), las opciones de producto (`nan_community`, `GLM Premium`)

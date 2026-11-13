@@ -208,9 +208,9 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     );
   });
 
-  it('warns in WSL mode that the CLI detection and login are still the Windows ones (PR #248)', () => {
-    // Hasta #92, la detección del CLI y el login abren el CLI de HOST: el paso
-    // de conexión lo declara en vez de presentarse como si corriera en la distro.
+  it('does not warn that WSL detection/login are Windows-only: #92 already runs them in the distro', () => {
+    // El aviso de seguimiento de #248 («la detección y el login siguen siendo
+    // los de Windows hasta #92») ya no aplica en esta rama: es falsa aquí.
     const wslCfg = { ...cfg, sessionEnv: 'wsl' } as AppConfig;
     const html = renderToStaticMarkup(
       <SubscriptionPanel
@@ -222,11 +222,7 @@ describe('Subscription provider panels (SSR, i18n)', () => {
         onCodexRecheck={noop}
       />,
     );
-    expect(html).toContain('Modo WSL');
-    expect(html).toContain('usan el CLI de Windows');
-    // En host no aparece el aviso.
-    const hostHtml = subscription('es', 'claude');
-    expect(hostHtml).not.toContain('Modo WSL');
+    expect(html).not.toContain('usan el CLI de Windows');
   });
 
   it('renders the Spanish literals of Cursor copied verbatim from the current code', () => {

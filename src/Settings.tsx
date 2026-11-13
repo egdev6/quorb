@@ -976,16 +976,6 @@ export function CliConnectView({
   const wsl = sessionEnv === 'wsl';
   return (
     <>
-      {sessionEnv === 'wsl' && (
-        <li>
-          {/* Hasta #92 la detección del CLI y el login abren el CLI de HOST:
-              no deben presentarse como si ya corrieran dentro de la distro
-              (revisión PR #248). */}
-          <span className="eg-notice eg-notice--sm eg-notice--warning q-steps__notice" role="status">
-            <span className="eg-notice__text">{t(locale, 'settings.providers.cliConnect.wslHostOnly')}</span>
-          </span>
-        </li>
-      )}
       {cliMissing && (
         <li>
           {wsl ? (

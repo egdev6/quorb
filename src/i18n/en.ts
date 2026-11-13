@@ -296,7 +296,6 @@ export const en = {
         signIn: 'Sign in',
         saveAndSignIn: 'Save and sign in',
         checkAuto: 'It runs on its own as soon as you save and sign in.',
-        wslHostOnly: 'WSL mode: for now the CLI detection and this login use the Windows CLI. Reading the session inside the distro arrives with #92.',
       },
       accountEditor: {
         kicker: 'Additional account',
