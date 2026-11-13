@@ -2194,7 +2194,7 @@ mod wsl_evidence {
         let adapter: std::sync::Arc<dyn WslAdapter> = std::sync::Arc::new(RealWslAdapter::new());
         let d = distro();
         let home = adapter.resolve_home(&d).expect("home de la distro");
-        let r = SessionResolver::for_wsl(adapter, d.clone(), home);
+        let r = SessionResolver::for_wsl(adapter, d.clone(), home, crate::i18n::Locale::Es);
         let path = r.default_path(&crate::wsl::guest_relative(&[
             ".quorb",
             "accounts",
@@ -2284,7 +2284,7 @@ mod wsl_evidence {
             "contenido inesperado: {contents}"
         );
         // Y la MISMA ruta que usa la app (resolución de sesiones) la lee.
-        let r = SessionResolver::for_wsl(adapter, d.clone(), home);
+        let r = SessionResolver::for_wsl(adapter, d.clone(), home, crate::i18n::Locale::Es);
         let path = crate::providers::account_session_path(&cfg.accounts[0], Some(&r))
             .expect("ruta de la cuenta")
             .expect("la cuenta tiene sesión");
