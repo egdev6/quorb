@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, CSSProperties } from 'react';
 import type { Locale, Status, UsageReport } from '../lib/types';
 import { t } from '../i18n';
-import { peakMeter } from '../lib/format';
+import { peakMeter, currentMeters, hasStaleData } from '../lib/format';
 import { meterColor } from '../lib/meter-colors';
 import { ProviderLogo } from './ProviderLogo';
 import { ValidityBadge } from './ValidityBadge';
@@ -12,9 +12,14 @@ import { resetCreditsInfo } from '../lib/reset-credits';
 export function gaugeState(report: UsageReport, threshold = 90): 'over' | 'warning' | 'muted' | null {
   const muted = report.status === 'needsLogin' || report.status === 'unconfigured' || report.status === 'error';
   if (muted) return 'muted';
-  const peak = peakMeter(report)?.percent ?? 0;
-  if (peak >= 100) return 'over';
-  if (peak >= threshold || report.status === 'warning') return 'warning';
+  // El estado se calcula sobre el pico VIGENTE: lo viejo no se presenta como el
+  // estado de ahora. Sin ninguna lectura vigente el orbe queda atenuado, aunque
+  // el informe avise: un aviso sin lectura detrás no dice nada del consumo.
+  const peak = peakMeter(report);
+  if (!peak && hasStaleData(report)) return 'muted';
+  const percent = peak?.percent ?? 0;
+  if (percent >= 100) return 'over';
+  if (percent >= threshold || report.status === 'warning') return 'warning';
   return null;
 }
 
@@ -76,12 +81,17 @@ export function ProviderGauge({
 }) {
   const validity = validityInfo(report, locale);
   const resets = showResets ? resetCreditsInfo(report, locale) : null;
+  const state = gaugeState(report, threshold);
   // Motivo del estado atenuado (#214): entra al título accesible entre el nombre y la validez.
-  const reasonKey = STATUS_REASON[report.status];
+  const statusReason = STATUS_REASON[report.status];
+  const reasonKey = statusReason ?? (state === 'muted' ? 'details.status.noCurrentReading' : undefined);
   const reason = reasonKey ? t(locale, reasonKey) : null;
   const accessibleTitle = [report.name, reason, validity?.title, resets?.title].filter(Boolean).join(' · ');
   const peak = peakMeter(report);
-  const all = report.meters.filter((m) => m.percent != null);
+  // Los anillos se dibujan con los medidores VIGENTES: lo viejo no entra en el
+  // estado de ahora. La lista es la misma que usan la tarjeta y el detalle, así
+  // que el índice de anillo (y su color) no se descuadra entre superficies.
+  const all = currentMeters(report).filter((m) => m.percent != null);
   // Pequeños: un único anillo con el límite más cercano. Con círculos muy pequeños, máximo dos.
   const rings = small ? (peak ? [peak] : []) : all.slice(0, size < 40 ? 2 : 3);
   // Claude/Codex share period colors with the card, pace and history.
@@ -90,7 +100,6 @@ export function ProviderGauge({
     percent: meter.percent ?? 0,
     color: meterColor(report, meter, index),
   })) : [{ percent: 0, color: 'var(--ring-1)' }];
-  const state = gaugeState(report, threshold);
   // Grosor y separación de los anillos escalan con el círculo (56 px = 4 px + 2 px, como el DS).
   const w = Math.max(2.5, Math.round(size * (small ? 0.09 : 0.072) * 2) / 2);
   const gap = Math.max(1.5, Math.round(size * 0.036 * 2) / 2);

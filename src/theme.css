@@ -130,10 +130,17 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 .q-meter__value { font-variant-numeric: tabular-nums; }
 .q-meter[data-level='max'] .q-meter__value { color: var(--color-fg-brand-raised); }
 .q-meter__meta { font-size: 12px; color: var(--color-fg-muted); }
-/* Medidor conservado de un ciclo anterior: se marca con la pastilla de "caché" y su
-   barra se atenúa, para que se lea como dato viejo y no como la lectura del momento. */
+/* Medidor conservado de un ciclo anterior: se marca con la pastilla de "caché" y la
+   fecha de su última lectura, y se atenúa ENTERO (valor, barra y meta) para que se
+   lea como dato viejo y no como la lectura del momento. El texto sigue legible:
+   sólo se atenúa la barra y la meta; el número deja de llevar la marca de «tope
+   superado» y pasa al tono apagado. */
 .q-meter__stale { margin-left: 8px; }
+.q-meter__stale-at { margin-left: 8px; font-size: 12px; color: var(--color-fg-muted); }
 .q-meter--stale .eg-progress { opacity: 0.45; }
+.q-meter--stale .q-meter__value { color: var(--color-fg-muted); }
+.q-meter--stale[data-level='max'] .q-meter__value { color: var(--color-fg-muted); }
+.q-meter--stale .q-meter__meta { opacity: 0.75; }
 
 .q-panel .panel__heading {
   border-top-color: var(--color-border-default, rgb(255 255 255 / 0.18));

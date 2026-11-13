@@ -27,6 +27,13 @@ export interface Meter {
    * se ve es viejo. Un informe entero puede traer medidores frescos y otros viejos.
    */
   stale?: boolean;
+  /**
+   * Marcado por el propio front (el backend no lo declara): instante de la última
+   * lectura de este medidor (`fetchedAt` del informe del que viene). Sólo lo
+   * llevan los medidores conservados de un ciclo anterior: dice cuándo se leyó,
+   * para que el dato viejo se pueda leer como tal.
+   */
+  readAt?: string;
 }
 
 export interface Spend {

@@ -79,14 +79,48 @@ export function levelFor(p: number | null): Level {
   return 'low';
 }
 
+/**
+ * ¿Este medidor es viejo? Lo obsoleto se declara por dos vías: el propio medidor
+ * (`Meter.stale`, cuando el ciclo fallido no lo trajo) o el informe entero que lo
+ * contiene (`UsageReport.stale`, cuando no quedó ningún medidor fresco). Las dos
+ * reglas viven aquí; ningún consumidor las copia.
+ */
+export function isStaleMeter(report: UsageReport, meter: Meter): boolean {
+  return meter.stale === true || report.stale === true;
+}
+
+/** Los medidores vigentes del informe: los que sí describen el estado de ahora. */
+export function currentMeters(report: UsageReport): Meter[] {
+  return report.meters.filter((m) => !isStaleMeter(report, m));
+}
+
+/** ¿El informe muestra algún dato viejo? (Un medidor marcado o el informe entero.) */
+export function hasStaleData(report: UsageReport): boolean {
+  return report.stale === true || report.meters.some((m) => m.stale === true);
+}
+
 /** Medidor con el porcentaje más alto (lo que antes te va a bloquear). */
 export function peakMeter(r: UsageReport): Meter | null {
   let best: Meter | null = null;
-  for (const m of r.meters) {
+  for (const m of currentMeters(r)) {
     if (m.percent == null) continue;
     if (!best || (best.percent ?? 0) < m.percent) best = m;
   }
   return best;
+}
+
+/** Fecha corta y legible de una lectura: «12 nov» / «Nov 12». */
+export function formatShortDate(iso: string | null, locale: Locale = 'es'): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // La marca de tiempo del informe es un instante UTC: se muestra en UTC para que
+  // el texto no dependa de la zona horaria de quien mira.
+  return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'es-ES', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(d);
 }
 
 /**
@@ -99,7 +133,7 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     const old = byId.get(r.id);
     const failed = r.status === 'error' || r.status === 'warning';
     if (failed && r.meters.length === 0 && !r.spend && old && (old.meters.length > 0 || old.spend)) {
-      return { ...old, status: 'warning', message: r.message, stale: true };
+      return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(old.meters, old.fetchedAt) };
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
     // de rate limit vinieron. Los medidores que el informe nuevo NO trae se conservan del
@@ -107,6 +141,8 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     // desaparezcan en silencio. El informe mergeado manda; lo que no trae se conserva del
     // anterior. El informe NO queda desactualizado entero: trae datos frescos, y marcarlo
     // saltaría los avisos del ciclo entero (con el fresco incluido).
+    // Si más adelante el informe declara el régimen de facturación, la regla de no
+    // resucitar medidores de otro régimen se aplica aquí (mismo sitio, misma marca).
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
       const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)));
       // Si no se conserva ningún medidor, no hay nada viejo que avisar: el informe
@@ -118,17 +154,22 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
       // lectura —nome la cuenta— y sí se conserva.
       return {
         ...r,
-        meters: [...r.meters, ...missing.map((m) => ({ ...m, stale: true }))],
+        meters: [...r.meters, ...missing.map((m) => ({ ...m, stale: true, readAt: m.readAt ?? old.fetchedAt }))],
         plan: r.plan ?? old.plan,
       };
     }
     // Sesión caducada: se conservan los últimos datos (atenuados) con la acción
     // de renovar, en vez de dejar el círculo vacío hasta volver a entrar.
     if (r.status === 'needsLogin' && r.meters.length === 0 && old && old.meters.length > 0) {
-      return { ...old, status: 'needsLogin', message: r.message, action: r.action, stale: true };
+      return { ...old, status: 'needsLogin', message: r.message, action: r.action, stale: true, meters: stamped(old.meters, old.fetchedAt) };
     }
     return r;
   });
+}
+
+/** Estampa en cada medidor conservado la fecha de la lectura de la que viene. */
+function stamped(meters: Meter[], readAt: string): Meter[] {
+  return meters.map((m) => (m.readAt ? m : { ...m, readAt }));
 }
 
 /** Informes que acaban de perder la sesión (antes tenían datos o estaban bien). */
@@ -144,7 +185,9 @@ export function trayTooltip(reports: UsageReport[]): string {
   const parts = reports.map((r) => {
     const peak = peakMeter(r);
     if (peak?.percent != null) return `${r.name}: ${formatPercent(peak.percent)}`;
-    if (r.spend) return `${r.name}: ${formatMoney(r.spend.amount, r.spend.currency)}`;
+    // Sin pico vigente no se presenta el dato viejo como el estado de ahora; el
+    // gasto tampoco, si lo que se ve es el de un ciclo conservado.
+    if (r.spend && !hasStaleData(r)) return `${r.name}: ${formatMoney(r.spend.amount, r.spend.currency)}`;
     return `${r.name}: —`;
   });
   // Windows limita el tooltip de la bandeja a ~127 caracteres

@@ -517,6 +517,7 @@ export const es = {
       error: 'Error',
       needsLogin: 'Sin sesión',
       unconfigured: 'Sin configurar',
+      noCurrentReading: 'Sin lectura actual',
     },
     action: {
       login: 'Iniciar sesión',
@@ -526,6 +527,7 @@ export const es = {
     },
     staleChip: 'caché',
     staleChipTitle: 'Datos del último ciclo correcto',
+    staleReadAt: 'última lectura {date}',
     budget: 'Presupuesto',
     copy: {
       summary: 'Copiar resumen',
