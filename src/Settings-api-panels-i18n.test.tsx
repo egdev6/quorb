@@ -8,9 +8,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { CodexInstall } from './components/CodexInstall';
 import type { CodexInstallController, CodexInstallState, CodexSetupStatus } from './lib/codex-install';
-import type { AppConfig, Locale } from './lib/types';
+import { secretKey } from './lib/accounts';
+import type { Account, AppConfig, Locale } from './lib/types';
 import {
+  AccountEditor,
   AdminApiPanel,
+  CliConnectView,
   NanConnect,
   NanPanel,
   NineRouterConnect,
@@ -294,6 +297,91 @@ describe('API provider panels (SSR, i18n)', () => {
   });
 });
 
+// Propagación del idioma: los padres reales (CliConnectView, AccountEditor) deben
+// pasar `locale` a CodexInstall y NanConnect; el render directo de los hijos no lo prueba.
+const cliConnect = (locale: Locale, state: CodexInstallState) =>
+  renderToStaticMarkup(
+    <CliConnectView
+      locale={locale}
+      id="codex"
+      provider="codex"
+      loginCommand="codex"
+      cliMissing
+      persisted={false}
+      extra={false}
+      health={healthFor(locale)('codex', false)}
+      codexInstall={controllerFor(state)}
+      onCodexRecheck={noop}
+      connected={false}
+      busy={false}
+      loginError={null}
+      onConnect={noop}
+    />,
+  );
+
+const nanAccount = {
+  id: 'nan:b',
+  provider: 'nan',
+  label: 'Mi cuenta',
+  enabled: true,
+  configDir: null,
+  username: '',
+  plan: '',
+  customAllowance: null,
+  monthlyBudgetUsd: null,
+} as unknown as Account;
+const accountEditor = (locale: Locale, secrets: Record<string, boolean> = {}) =>
+  renderToStaticMarkup(
+    <AccountEditor
+      locale={locale}
+      account={nanAccount}
+      visible
+      onVisibility={noop}
+      persisted={false}
+      secrets={secrets}
+      onChange={noop}
+      onRemove={noop}
+      onSecrets={noop}
+      loginCommand="nan"
+      cliMissing={false}
+      health={healthFor(locale)('nan:b', false)}
+      codexInstall={controllerFor(codexState({}))}
+      onCodexRecheck={noop}
+    />,
+  );
+
+describe('Locale propagation to nested components (SSR, i18n)', () => {
+  it('CliConnectView passes the locale to CodexInstall in Spanish', () => {
+    const html = cliConnect('es', codexState({ status: codexStatus({}) }));
+    expectAll(html, ['<b>Instala Codex CLI</b>', '<b>Falta Codex CLI en este equipo.</b>', 'Instalar Codex', 'Qué instala exactamente'], 'es cli→codex');
+  });
+
+  it('CliConnectView passes the locale to CodexInstall in English with no Spanish left', () => {
+    const html = cliConnect('en', codexState({ status: codexStatus({}) }));
+    expectAll(html, ['<b>Install Codex CLI</b>', '<b>Codex CLI is missing on this machine.</b>', 'Install Codex', 'What exactly it installs'], 'en cli→codex');
+    expectNone(html, ['Falta Codex CLI', 'Instalar Codex', 'Qué instala exactamente', 'Instala Codex'], 'en cli→codex');
+  });
+
+  it('AccountEditor passes the locale to NanConnect in Spanish', () => {
+    const html = accountEditor('es');
+    expectAll(html, ['Conectar tu cuenta (recomendado)', 'placeholder="tu@correo.com"', 'Enviar enlace', 'Igual que «nan auth login --email»'], 'es editor→nan');
+  });
+
+  it('AccountEditor passes the locale to NanConnect in English with no Spanish left', () => {
+    const html = accountEditor('en');
+    expectAll(html, ['Connect your account (recommended)', 'placeholder="you@email.com"', 'Send link', 'Just like «nan auth login --email»'], 'en editor→nan');
+    expectNone(html, ['Conectar tu cuenta', 'tu@correo.com', 'Enviar enlace', 'Igual que'], 'en editor→nan');
+  });
+
+  it('AccountEditor passes the locale to the connected NanConnect', () => {
+    const connected = { [secretKey('nan_session', nanAccount.id)]: true };
+    expectAll(accountEditor('es', connected), ['Cuenta de NaN Cloud conectada', 'Desconectar'], 'es editor→nan conectada');
+    const html = accountEditor('en', connected);
+    expectAll(html, ['NaN Cloud account connected', 'Disconnect'], 'en editor→nan conectada');
+    expectNone(html, ['Cuenta de NaN Cloud conectada', 'Desconectar'], 'en editor→nan conectada');
+  });
+});
+
 describe('CodexInstall notice (SSR, i18n)', () => {
   it('renders every Spanish view copied verbatim from the current code', () => {
     expectAll(codex('es', codexState({})), ['<b>Comprobando Codex CLI…</b>', 'Quorb solo consulta el estado del equipo.'], 'es loading');
@@ -326,6 +414,15 @@ describe('CodexInstall notice (SSR, i18n)', () => {
     expectAll(ready, ['<b>Codex CLI is missing on this machine.</b>', 'Install Codex', 'What exactly it installs'], 'en ready');
     expectNone(ready, ['Falta Codex CLI', 'Instalar Codex<'], 'en ready');
     expectAll(codex('en', codexState({ installing: true })), ['<b>Installing Codex CLI…</b>', 'Installing…'], 'en installing');
+    const fresh = codex('en', codexState({ outcome: 'installed' }));
+    expectAll(fresh, ['<b>Codex CLI installed.</b>', 'The installation does not create the session: use «Sign in» whenever you want.'], 'en installed fresh');
+    expectNone(fresh, ['Codex CLI instalado', 'La instalación no crea la sesión'], 'en installed fresh');
+    const stale = codex('en', codexState({ status: codexStatus({ installed: true }) }));
+    expectAll(stale, ['<b>Codex is installed; check your login command.</b>', 'Quorb already detects the CLI on this machine.'], 'en installed stale');
+    expectNone(stale, ['Codex está instalado', 'Quorb ya detecta el CLI'], 'en installed stale');
+    const busy = codex('en', codexState({ status: codexStatus({ busy: true }) }));
+    expectAll(busy, ['<b>The installer is working in another window.</b>', 'Wait for it to finish; Quorb detects it on its own.'], 'en busy');
+    expectNone(busy, ['El instalador está trabajando', 'Espera a que termine'], 'en busy');
     expectAll(codex('en', codexState({ outcome: 'cancelled' })), ['<b>Installation cancelled.</b>', 'Nothing was changed. You can try again.', 'Retry'], 'en cancelled');
     expectAll(codex('en', codexState({ status: codexStatus({ supported: false }) })), ['<b>This system does not support assisted installation.</b>', 'Check again', 'Copy command'], 'en unsupported');
     expectAll(codex('en', codexState({ status: codexStatus({ nodeAvailable: false }) })), ['<b>Node.js and npm are not detected.</b>'], 'en no-node');
