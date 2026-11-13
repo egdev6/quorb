@@ -2212,4 +2212,80 @@ mod wsl_evidence {
             "contenido inesperado: {contents}"
         );
     }
+
+    /// GAP4 — Login real de una cuenta ADICIONAL dentro de la distro
+    /// (revisión PR #253: evidencia pedida para cerrar #92, sin datos
+    /// personales). El argv lleva la carpeta de la cuenta, el CLI (shim)
+    /// escribe ahí y la MISMA ruta que lee la app encuentra la sesión.
+    #[test]
+    #[ignore = "requiere WSL real (evidencia #92)"]
+    fn gap4_extra_account_login_writes_inside_its_guest_folder() {
+        let adapter: std::sync::Arc<dyn WslAdapter> = std::sync::Arc::new(RealWslAdapter::new());
+        let d = distro();
+        let home = adapter.resolve_home(&d).expect("home de la distro");
+        let wsl = WslLogin {
+            adapter: adapter.as_ref(),
+            distro: &d,
+        };
+        let cfg = AppConfig {
+            accounts: vec![Account {
+                id: "claude:w2".into(),
+                provider: "claude".into(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let (_, env) = account_env("claude:w2", &cfg, Some(&wsl)).expect("entorno de la cuenta");
+        let (var, dir) = env.expect("la cuenta adicional lleva su carpeta");
+        assert_eq!(var, "CLAUDE_CONFIG_DIR");
+        assert!(
+            dir.starts_with("/"),
+            "la carpeta debe ser POSIX del guest: {}",
+            dir.display()
+        );
+        // Mismo argv que compone la app, con la carpeta de la cuenta.
+        let argv = wsl_login_argv(
+            &d,
+            ShellStrategy::BashLogin,
+            "claude",
+            &Some((var, dir.clone())),
+        )
+        .expect("argv del login");
+        let out = std::process::Command::new("wsl.exe")
+            .args(argv.iter().skip(1))
+            .output()
+            .expect("wsl.exe");
+        assert!(
+            out.status.success(),
+            "el login debe ejecutarse en la distro: {:?} {:?}",
+            out.stdout,
+            out.stderr
+        );
+        // El CLI escribió en la carpeta de la CUENTA (no en la del host).
+        let file = dir.join(".credentials.json");
+        let check = std::process::Command::new("wsl.exe")
+            .args(["-d", &d, "-e", "cat", &file.to_string_lossy()])
+            .output()
+            .expect("wsl.exe cat");
+        assert!(
+            check.status.success(),
+            "el fichero de la cuenta debe existir en el guest: {:?}",
+            check.stderr
+        );
+        let contents = String::from_utf8_lossy(&check.stdout);
+        assert!(
+            contents.contains("v-adicional-92"),
+            "contenido inesperado: {contents}"
+        );
+        // Y la MISMA ruta que usa la app (resolución de sesiones) la lee.
+        let r = SessionResolver::for_wsl(adapter, d.clone(), home);
+        let path = crate::providers::account_session_path(&cfg.accounts[0], Some(&r))
+            .expect("ruta de la cuenta")
+            .expect("la cuenta tiene sesión");
+        let read = r
+            .read(std::path::Path::new(&path))
+            .expect("leer la sesión de la cuenta adicional");
+        assert!(read.contains("v-adicional-92"), "{read}");
+    }
 }
