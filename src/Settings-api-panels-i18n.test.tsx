@@ -149,7 +149,7 @@ describe('API provider panels (SSR, i18n)', () => {
         'Avanzado · URL, facturación y endpoint de consumo',
         'Base URL',
         'Día de inicio de facturación',
-        'Solo para GLM 5.3 (cuenta por periodo de Stripe) cuando usas la API key.',
+        'El día del mes en que empieza tu periodo de facturación. Solo se usa si el panel de NaN no responde: para el periodo de GLM 5.3 y para cortar el consumo agregado.',
         'Probar la API de NaN con la key',
         'Ver respuestas de /v1/models y /v1/usage',
         'Endpoint de consumo · URL',
