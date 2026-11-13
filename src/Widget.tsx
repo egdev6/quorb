@@ -31,6 +31,17 @@ import { pointerInsideViewport } from './lib/pointer-viewport';
 import { createFocusTracker, FOCUS_EVENT, type OwnWindow } from './lib/anchor-focus';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
+import {
+  forgetSurface,
+  nextPointerTarget,
+  POINTER_SURFACE_EVENT,
+  pointerInsideWidget,
+  shouldArmClose,
+  type HoverTransition,
+  type PointerPresence,
+  type PointerSurfacePayload,
+  type PointerTarget,
+} from './lib/hover-presence';
 import { openDelayForOs, osFromUA } from './lib/os-detect';
 import { ProviderGauge } from './components/ProviderGauge';
 import { accountTags } from './lib/accounts';
@@ -215,8 +226,36 @@ export function Widget() {
   const detailStateRef = useRef<DetailState | null>(null);
   const detailReadyRef = useRef(false);
   const detailRevision = useRef(Date.now());
-  const detailInsideRef = useRef(false);
-  const insideRef = useRef(false);
+  /**
+   * Pointer presence of the two surfaces (#250): the close decision follows
+   * this model, never a flag that only one of the surfaces owns. A native
+   * compositor can drop the strip's `mouseleave` (Wayland native), so the
+   * detail's own `leave` has to be enough to close the popup.
+   */
+  const hoverRef = useRef<PointerTarget>('outside');
+  /**
+   * The instant of the observation behind `hoverRef` (#264/S13): a `leave`
+   * that arrives long after the evidence of the other surface is authority,
+   * not the remainder of the same gesture.
+   */
+  const hoverAtRef = useRef(0);
+  /**
+   * Whether the native relay has already reported a crossing (#264).
+   *
+   * The native crossings and the DOM `enter`/`leave` describe the same
+   * crossing, and when both arrive the second one re-arms the close and
+   * delays it. The native one is the authority as soon as it exists: from
+   * the first crossing on, the DOM stops deciding the presence of the two
+   * surfaces, for the rest of the session.
+   *
+   * It is a capability detection, not a per-OS branch: on Windows and macOS
+   * no native crossing ever arrives, so the DOM keeps deciding exactly as
+   * before.
+   *
+   * It is declared after `hoverAtRef` so that it does not shift the ref
+   * indexes the test harness reads.
+   */
+  const nativeCrossingsRef = useRef(false);
   const configRef = useRef<AppConfig | null>(null);
   const reportsRef = useRef<UsageReport[]>([]);
   const geoRef = useRef<Geo | null>(null);
@@ -242,8 +281,8 @@ export function Widget() {
     createDetailPresence({
       isOpen: () => detailStateRef.current != null,
       scheduleClose: () => {
-        // Direct close timer: never gated by the DOM-only `detailInsideRef`,
-        // which is exactly what gets stuck on macOS.
+        // Direct close timer: never gated by the DOM-only presence, which is
+        // exactly what gets stuck on macOS.
         window.clearTimeout(closeTimer.current);
         closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
       },
@@ -257,12 +296,46 @@ export function Widget() {
   const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const lastReorderAt = useRef(0);
   // Tras reordenar, el hover no abre hasta que el puntero salga de la tira (#222).
-  // Solo la libera el `mouseleave` de la tira: el `mouseenter` puede llegar
-  // segundos después de soltar. Solo frena la vía del puntero; foco y clic no la consultan.
+  // La libera el modelo de presencia (#264/S19): cuando la presencia pasa de
+  // `widget` a otro estado, el puntero dejó la tira. Solo frena la vía del
+  // puntero; foco y clic no la consultan.
   const reorderHold = useRef<boolean>(false);
   const openPeakRef = useRef<() => void>(() => {});
   const dragWork = useRef<Promise<void>>(Promise.resolve());
   const dragMounted = useRef(true);
+
+  /** The presence of the pointer as the model keeps it. */
+  const hoverPresence = (): PointerPresence => ({ target: hoverRef.current, at: hoverAtRef.current });
+
+  /** Move the pointer's location in the presence model (#250). */
+  const setHoverPresence = (presence: PointerPresence) => {
+    const previous = hoverRef.current;
+    hoverRef.current = presence.target;
+    hoverAtRef.current = presence.at;
+    // The strip's presence follows the model: the pointer cannot be in both
+    // windows, so the detail's `enter` releases the strip's auto-hide.
+    setInside(pointerInsideWidget(presence.target));
+    // #264/S19: the pointer left the strip, so the reorder hold is released.
+    // This is the only writer of the presence, so it is the only place that
+    // knows the pointer left: the DOM exit, the native exit, the detail's
+    // `enter` and the native sample all land here.
+    //
+    // Only a real transition out of `widget` releases it: a write that keeps
+    // the pointer on the strip (`widget` -> `widget`) does not, so the
+    // detail's own closing effect does not reopen the panel right after a
+    // reorder, with the pointer on the orb (#222).
+    if (previous === 'widget' && presence.target !== 'widget') reorderHold.current = false;
+  };
+
+  /** A pointer transition reported by one of the two surfaces. */
+  const applyHover = (event: HoverTransition) => {
+    const at = Date.now();
+    const next = nextPointerTarget(hoverPresence(), { ...event, at });
+    setHoverPresence(next);
+    // The close is armed only while the pointer is outside both surfaces.
+    if (shouldArmClose(next.target)) scheduleClose();
+    else window.clearTimeout(closeTimer.current);
+  };
 
   const edge: Edge = config && isEdge(config.dockEdge) ? config.dockEdge : 'top';
   const offset = config?.dockOffset ?? 0.5;
@@ -467,9 +540,21 @@ export function Widget() {
   }, [dockMonitor]);
 
   // ───── círculos visibles y en su orden ─────
-  const order = reorder?.order ?? config?.providerOrder ?? [];
+  // El orden guardado manda en el DOM (#264/L18): durante el arrastre el DOM
+  // no se reordena, porque mover un nodo con `insertBefore` libera la captura
+  // del puntero y el gesto se cortaba a mitad de camino (perdía el
+  // `pointercapture` al arrastrar hacia la derecha). La vista previa del orden
+  // nuevo la cuenta la propiedad CSS `order` de cada orbe (`.strip__orbs` es
+  // flex); al soltar, la config reordena el DOM, cuando la captura ya no
+  // importa.
+  const savedOrder = config?.providerOrder ?? [];
   const hiddenIds = config?.hiddenProviders ?? [];
-  const visible = applyOrder(reports, order).filter((r) => !hiddenIds.includes(r.id));
+  /** Orden visual: el guardado, o la vista previa mientras se arrastra. */
+  const visible = applyOrder(reports, reorder?.order ?? savedOrder).filter((r) => !hiddenIds.includes(r.id));
+  /** Orden del DOM: el guardado, estable durante todo el gesto. */
+  const rendered = applyOrder(reports, savedOrder).filter((r) => !hiddenIds.includes(r.id));
+  /** Posición visual de cada orbe: la de la vista previa durante el arrastre. */
+  const visualPos = new Map(visible.map((r, i) => [r.id, i]));
   const tags = config ? accountTags(config) : {};
   const active = reports.find((r) => r.id === panel.providerId) ?? null;
 
@@ -770,7 +855,8 @@ export function Widget() {
         usageUrl: officialUsageUrl(active.id, config?.nineRouter.baseUrl),
       } : null;
     detailStateRef.current = state;
-    if (!state) detailInsideRef.current = false;
+    // The detail window is gone: its presence is void, the strip keeps its own.
+    if (!state) setHoverPresence(forgetSurface(hoverPresence(), 'detail'));
     if (detailReadyRef.current) emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, state).catch(console.warn);
   }, [active, geo, stripSize, textScale, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
 
@@ -792,7 +878,8 @@ export function Widget() {
    */
   const closeFromDetail = () => {
     cancelTimers();
-    detailInsideRef.current = false;
+    // The detail is gone: its presence is void, the strip keeps its own.
+    setHoverPresence(forgetSurface(hoverPresence(), 'detail'));
     setPanel(closePanel());
   };
 
@@ -822,11 +909,16 @@ export function Widget() {
           return;
         }
         if (payload.kind === 'enter') {
-          detailInsideRef.current = true;
-          window.clearTimeout(closeTimer.current);
+          // The pointer cannot be in both windows at once: the detail's
+          // presence invalidates the strip's, even if the strip's
+          // `mouseleave` never arrives (Wayland native drops it).
+          // The native crossing wins when it exists (#264).
+          if (!nativeCrossingsRef.current) applyHover({ surface: 'detail', kind: 'enter' });
         } else if (payload.kind === 'leave') {
-          detailInsideRef.current = false;
-          if (!insideRef.current) scheduleClose();
+          // The detail's own `leave` arms the close: it does not depend on a
+          // flag that only the strip owns.
+          // The native crossing wins when it exists (#264).
+          if (!nativeCrossingsRef.current) applyHover({ surface: 'detail', kind: 'leave' });
         } else if (payload.kind === 'hide') {
           cancelTimers();
           setPanel(closePanel());
@@ -834,12 +926,27 @@ export function Widget() {
           patchConfig({ hiddenProviders: [...new Set([...hidden, payload.provider])] }).catch((err) => setError(String(err)));
         }
       }));
+      // El relé nativo del backend (#264/S16): GTK entrega el `enter`/`leave`
+      // de una ventana aunque WebKitGTK no lo traduzca al DOM (Wayland
+      // nativo). Llega como otra fuente de presencia de esa superficie y
+      // alimenta el mismo modelo, sin reglas nuevas.
+      await add(listen<PointerSurfacePayload>(POINTER_SURFACE_EVENT, ({ payload }) => {
+        if (disposed) return;
+        // The native crossing is the authority as soon as it exists (#264):
+        // from here on the DOM stops deciding the presence.
+        nativeCrossingsRef.current = true;
+        applyHover({ surface: payload.surface, kind: payload.kind });
+      }));
       await add(listen(DETAIL_EVENTS.widgetHidden, () => {
         cancelTimers();
-        detailInsideRef.current = false;
-        insideRef.current = false;
+        setHoverPresence({ target: 'outside', at: Date.now() });
+        // #264/S19: this is a total reset (the user hid the strip), not a
+        // presence transition. The transition rule only releases the hold when
+        // the presence was `widget`, and the hold can be set while the model
+        // says `outside` (the DOM `enter` of the strip can be lost, which is
+        // the very case this change fixes). A reset leaves no stale hold, and
+        // it cannot reopen the panel: it closes it.
         reorderHold.current = false;
-        setInside(false);
         setPanel(closePanel());
       }));
       await add(listen(DETAIL_EVENTS.dismiss, () => {
@@ -929,7 +1036,8 @@ export function Widget() {
     cancelTimers();
     const rel = relOf(el);
     const go = () => {
-      detailInsideRef.current = false;
+      // The pointer is on the strip: its presence is already in the model, so
+      // the detail's presence does not need to be cleared here.
       setAnchorRel(rel);
       setPanel((current) => hoverPanel(current, id));
     };
@@ -945,7 +1053,6 @@ export function Widget() {
     // (`lastReorderAt`) cubre el clic que llega después de soltar.
     if (isReorderGesture(lastReorderAt.current, Date.now())) return;
     cancelTimers();
-    detailInsideRef.current = false;
     setAnchorRel(relOf(el));
     setPanel((current) => clickPanel(current, id));
   };
@@ -971,7 +1078,6 @@ export function Widget() {
 
   const scheduleClose = () => {
     cancelTimers();
-    if (detailInsideRef.current) return;
     // Con el panel anclado, el puntero no lo cierra (#170).
     if (panel.anchored) return;
     closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
@@ -1006,8 +1112,18 @@ export function Widget() {
         const [widget, detail] = await Promise.all([boundsOf('widget'), boundsOf(DETAIL_WINDOW)]);
         if (disposed || !widget || !detail) return;
         const { widget: inWidget, detail: inDetail } = presenceFromPoint(point, widget, detail);
-        // Sincroniza el flag DOM-only por si su `mouseleave` nunca llegó.
-        detailInsideRef.current = inDetail;
+        // La verdad nativa sobre el puntero (#154): corrige el `enter` del
+        // detalle que el WebView transparente no entregó. Sólo informa la
+        // presencia del detalle; el resto del modelo lo decide el DOM, y el
+        // cierre lo sigue llevando el tracker nativo.
+        // La presencia del detalle se sincroniza en los dos sentidos, como la
+        // bandera DOM de antes: si la verdad nativa dice que el puntero no
+        // está en el detalle, su presencia es nula (si no, el modelo quedaría
+        // con un 'detail' viejo y cancelaría cierres que ya están armados).
+        // The native sample is a fresh observation of the pointer: it keeps
+        // the evidence of the current target up to date, so a `leave` that
+        // arrives glued to it is still the remainder of the same gesture.
+        setHoverPresence(inDetail ? { target: 'detail', at: Date.now() } : forgetSurface(hoverPresence(), 'detail'));
         presenceRef.sample(inWidget, inDetail);
       } catch {
         // Sin posición de cursor (p. ej. Wayland): no hay conclusión.
@@ -1244,6 +1360,9 @@ export function Widget() {
       }
       const ids = visible.map((r) => r.id);
       const others = [...(orbsRef.current?.querySelectorAll<HTMLElement>('.orb') ?? [])].filter((el) => el.dataset.id !== id);
+      // Los centros llegan en el orden del DOM, que durante el gesto no es el
+      // visual (la vista previa va con el `order` de CSS): `dropIndex` los
+      // ordena por posición.
       const centers = others.map((el) => {
         const b = el.getBoundingClientRect();
         return vertical ? b.top + b.height / 2 : b.left + b.width / 2;
@@ -1265,7 +1384,8 @@ export function Widget() {
       if (od?.moved) {
         lastReorderAt.current = Date.now();
         // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
-        // la captura, `insideRef` queda desactualizado: se usan las coordenadas.
+        // la captura, la presencia del puntero queda desactualizada: se usan
+        // las coordenadas.
         const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
         reorderHold.current = inside;
       }
@@ -1297,15 +1417,18 @@ export function Widget() {
       onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
       style={{ '--panel-alpha': String(opacity), '--ring-1': ring1, '--ring-2': ring2, '--ring-3': ring3 } as CSSProperties}
       onMouseEnter={() => {
-        insideRef.current = true;
-        window.clearTimeout(closeTimer.current);
-        setInside(true);
+        // The native crossing wins when it exists (#264).
+        if (nativeCrossingsRef.current) return;
+        applyHover({ surface: 'widget', kind: 'enter' });
       }}
       onMouseLeave={() => {
-        insideRef.current = false;
-        reorderHold.current = false;
-        setInside(false);
-        scheduleClose();
+        // #264/S19: the release of the reorder hold is not here any more: it
+        // is the presence model's, and it happens when the presence leaves
+        // `widget`. When the native relay is in charge the DOM does not reach
+        // the model (#264/S18), and the native exit of the strip does.
+        // The native crossing wins when it exists (#264).
+        if (nativeCrossingsRef.current) return;
+        applyHover({ surface: 'widget', kind: 'leave' });
       }}
     >
       {showHandle && <button
@@ -1353,7 +1476,7 @@ export function Widget() {
         </span>
 
         <div ref={orbsRef} className="strip__orbs" data-reordering={reorder ? true : undefined}>
-          {visible.map((r) => (
+          {rendered.map((r) => (
             <ProviderGauge
               key={r.id}
               report={r}
@@ -1365,6 +1488,9 @@ export function Widget() {
               showResets={config?.showResets ?? true}
               threshold={config?.alerts.threshold}
               dragging={reorder?.id === r.id}
+              // La vista previa del reordenamiento va con el `order` de CSS:
+              // el DOM conserva el orden guardado y sólo cambia lo que se ve.
+              order={reorder ? visualPos.get(r.id) : undefined}
               onHover={(el) => openFor(r.id, el)}
               onPointerEnter={(el) => {
                 if (!reorderHold.current) openFor(r.id, el);

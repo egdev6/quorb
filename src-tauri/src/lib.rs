@@ -9,6 +9,10 @@ mod history;
 mod i18n;
 mod login;
 mod model;
+// El relé nativo de los cruces del puntero (#264/S16/S17) necesita GTK:
+// sólo existe en Linux.
+#[cfg(target_os = "linux")]
+mod pointer_crossing;
 mod providers;
 mod secrets;
 mod uninstall;
@@ -52,6 +56,9 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+// El relé nativo del puntero (#264/S16/S17) sólo existe en Linux.
+#[cfg(target_os = "linux")]
+use pointer_crossing::forward_pointer_events;
 
 const WIDGET: &str = "widget";
 /// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
@@ -1226,6 +1233,9 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
         .find(|w| w.label == WIDGET)
         .ok_or(tauri::Error::WindowNotFound)?;
     let widget = WebviewWindowBuilder::from_config(app, window_config)?.build()?;
+    // Relé nativo del puntero (#264/S16): GTK entrega el `leave` que el DOM no ve.
+    #[cfg(target_os = "linux")]
+    forward_pointer_events(&widget, WIDGET);
     // El frontend coloca la tira en su borde y la muestra (evita un parpadeo).
     let _ = widget.set_always_on_top(cfg.always_on_top);
 
@@ -1245,7 +1255,13 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
             .visible(false);
     #[cfg(target_os = "windows")]
     let detail_builder = detail_builder.no_redirection_bitmap(true);
-    detail_builder.build()?;
+    // El nombre lleva `_` porque fuera de Linux el relé no existe.
+    let _detail = detail_builder.build()?;
+    // Relé nativo del puntero (#264/S16): la ventana del detalle se
+    // dimensiona a la tarjeta visible, así que el cruce del toplevel es
+    // también el cruce de la tarjeta.
+    #[cfg(target_os = "linux")]
+    forward_pointer_events(&_detail, DETAIL);
 
     // Ventana de efectos: transparente, sin foco, encima de todo y sin capturar el ratón.
     let _overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html".into()))

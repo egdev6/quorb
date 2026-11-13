@@ -3,11 +3,13 @@ import { Widget } from '../Widget';
 import { createElement, isValidElement, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import hook from './useDockReveal.ts?raw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
 import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
-import { physicalPanelBounds } from './detail-panel';
+import { DETAIL_EVENTS, physicalPanelBounds } from './detail-panel';
+import { POINTER_SURFACE_EVENT } from './hover-presence';
+import { NO_PANEL, type PanelState } from './anchor-panel';
 import type { UsageReport } from './types';
 
 type GripHandlers = {
@@ -42,6 +44,43 @@ function findOrbHover(node: ReactNode): ((el: HTMLElement) => void) | undefined 
   if (!isValidElement<{ onPointerEnter?: (el: HTMLElement) => void; children?: ReactNode }>(node)) return;
   if (node.props.onPointerEnter) return node.props.onPointerEnter;
   return findOrbHover(node.props.children);
+}
+
+type DockHandlers = {
+  onMouseEnter(): void;
+  onMouseLeave(): void;
+};
+
+type OrbPointer = {
+  id: string;
+  onPointerDown(event: unknown): void;
+  onPointerMove(event: unknown): void;
+  onPointerUp(event: unknown): void;
+};
+
+/** The reorder handlers of every orb of the strip (real props of the tree). */
+function findOrbPointers(node: ReactNode, out: OrbPointer[] = []): OrbPointer[] {
+  if (Array.isArray(node)) {
+    for (const child of node) findOrbPointers(child, out);
+    return out;
+  }
+  if (!isValidElement<{ report?: { id: string }; pointer?: Omit<OrbPointer, 'id'>; children?: ReactNode }>(node)) return out;
+  if (node.props.pointer && node.props.report) out.push({ id: node.props.report.id, ...node.props.pointer });
+  return findOrbPointers(node.props.children, out);
+}
+
+/** The strip's own pointer handlers, taken from the rendered tree. */
+function findDock(node: ReactNode): DockHandlers | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const dock = findDock(child);
+      if (dock) return dock;
+    }
+    return;
+  }
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(node)) return;
+  if (node.props.className === 'dock') return node.props as unknown as DockHandlers;
+  return findDock(node.props.children);
 }
 
 // Capture the real Widget effect callbacks while SSR supplies its hook scope.
@@ -996,7 +1035,7 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[12] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
     // El puntero está dentro del detalle.
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[10].current = 'detail';
     // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
     // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
     listener.run();
@@ -1012,8 +1051,8 @@ describe('Widget effect mutation ordering', () => {
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
     expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
-    // ...y baja la presencia del detalle.
-    expect(widgetEffects.refs[10].current).toBe(false);
+    // ...y el detalle ya no cuenta como superficie bajo el puntero.
+    expect(widgetEffects.refs[10].current).toBe('outside');
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
     const after = renderStrip(true);
@@ -1025,7 +1064,7 @@ describe('Widget effect mutation ordering', () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[7] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[10].current = 'detail';
     listener.run();
     await flush();
     const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
@@ -1036,21 +1075,21 @@ describe('Widget effect mutation ordering', () => {
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
-    expect(widgetEffects.refs[10].current).toBe(true);
+    expect(widgetEffects.refs[10].current).toBe('detail');
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[7] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[10].current = 'detail';
     listener.run();
     await flush();
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
     expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
-    expect(widgetEffects.refs[10].current).toBe(false);
+    expect(widgetEffects.refs[10].current).toBe('outside');
   });
 
   // El cierre pedido por el detalle es idéntico al cierre normal: también
@@ -1141,5 +1180,448 @@ describe('the localized placement reason', () => {
     const en = markup('en', false);
     expect(en).toContain('aria-label="Show Quorb"');
     expect(en).not.toContain('data-placement-reason');
+  });
+});
+
+// #250 (S16): the close decision follows the pointer presence model, never a
+// flag that only one of the two surfaces owns. On Wayland native the strip's
+// `mouseleave` is dropped, so the detail's own `leave` has to arm the close.
+describe('hover presence wiring', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  const report = {
+    id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+  } as unknown as UsageReport;
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+  /**
+   * The real strip handlers and the real detail interaction listener: the
+   * strip's `mouseenter`/`mouseleave` come from the rendered tree and the
+   * detail's `enter`/`leave` from the listener the Widget registers.
+   */
+  const wire = async (anchored = false, panel: PanelState = { providerId: 'a', anchored }) => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.states[0] = null;
+    widgetEffects.states[1] = [report];
+    widgetEffects.states[5] = geo;
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[7] = panel;
+    widgetEffects.states[9] = false;
+    let dock: DockHandlers | undefined;
+    let hover: ((el: HTMLElement) => void) | undefined;
+    let orbs: OrbPointer[] = [];
+    function CaptureWidget() {
+      const tree = Widget();
+      dock = findDock(tree); // Real handlers from the returned JSX, not copied logic.
+      hover = findOrbHover(tree); // The orb's own `mouseenter`, the one that reads the hold.
+      orbs = findOrbPointers(tree); // The orb's reorder handlers.
+      return tree;
+    }
+    renderToStaticMarkup(createElement(CaptureWidget));
+    // The detail state effect publishes the revision that the interaction carries.
+    // Its deps start with the active report; with no panel there is no active
+    // report and they start with `null`. Either way it is the only effect whose
+    // second dep is the geometry and whose dep list is the long one.
+    const detailState = widgetEffects.effects.find((e) => e.deps?.[0] === report)
+      ?? widgetEffects.effects.find((e) => e.deps?.[1] === geo && e.deps.length > 10)!;
+    detailState.run();
+    const published = widgetEffects.refs
+      .map((r) => r.current)
+      .find((v): v is { revision: number; report: { id: string } } =>
+        !!v && typeof v === 'object' && 'report' in v)!;
+    // The listener that receives the detail window's interaction events.
+    widgetEffects.listeners.delete(DETAIL_EVENTS.interaction);
+    // The listener that receives the native pointer relay (#264/S16).
+    widgetEffects.listeners.delete(POINTER_SURFACE_EVENT);
+    const listener = widgetEffects.effects.find((e) => e.run.toString().includes('DETAIL_EVENTS.interaction'))!;
+    listener.run();
+    await flush();
+    const handlers = (widgetEffects.listeners.get(DETAIL_EVENTS.interaction) ?? []) as ((event: { payload: unknown }) => void)[];
+    const nativeHandlers = (widgetEffects.listeners.get(POINTER_SURFACE_EVENT) ?? []) as ((event: { payload: unknown }) => void)[];
+    return {
+      dock: dock!,
+      /** The orb's `mouseenter`: the only path that reads the reorder hold. */
+      hover: hover!,
+      /** The reorder handlers of the orbs of the strip. */
+      orbs,
+      /** The effect that publishes the detail state (and its presence write). */
+      detailState: () => detailState.run(),
+      detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => (
+        h({ payload: { revision: published.revision, provider: 'a', kind } })
+      )),
+      /** The native relay of the backend: GTK's enter/leave (#264/S16). */
+      native: (surface: 'widget' | 'detail', kind: 'enter' | 'leave') => nativeHandlers.forEach((h) => (
+        h({ payload: { surface, kind } })
+      )),
+    };
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      // The viewport of the strip: the reorder hold needs to know if the
+      // pointer was released inside the window.
+      innerWidth: 1920, innerHeight: 1080,
+    });
+  });
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('closes the detail when it reports leave even if the strip never reported mouseleave', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter(); // The pointer enters the strip.
+    detail('enter'); // The detail window reports the pointer inside it.
+    // The strip's `mouseleave` never arrives: Wayland native drops it.
+    detail('leave'); // The detail window reports the pointer left it.
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  it('closes the detail when the strip reports leave and the pointer is outside both surfaces', async () => {
+    const { dock } = await wire();
+    dock.onMouseEnter();
+    dock.onMouseLeave();
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  it('keeps the detail open while the pointer is inside it', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    dock.onMouseLeave(); // Arms the close.
+    detail('enter'); // The detail cancels it.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  it('keeps the detail open when the pointer returns to the strip', async () => {
+    const { dock, detail } = await wire();
+    detail('enter');
+    detail('leave'); // Arms the close.
+    dock.onMouseEnter(); // The strip cancels it.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  it('releases the strip presence when the detail reports enter', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    expect(widgetEffects.states[11]).toBe(true); // The strip knows the pointer is on it.
+    detail('enter');
+    // The pointer cannot be in the two windows at once: the strip's presence
+    // is invalid, so its auto-hide is not frozen any more.
+    expect(widgetEffects.states[11]).toBe(false);
+  });
+
+  // #264/S13: la salida de la tira que llega mucho después de la evidencia
+  // del detalle es autoridad. El modelo no puede quedarse pegado a una
+  // presencia vieja: si la salida del detalle se pierde, la única evidencia
+  // real —la salida de la tira— cerraba el panel con el puntero fuera.
+  it('closes the detail when the strip reports a late leave after the detail entered (#264/S13)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    // La salida del detalle se pierde (Wayland native) y la de la tira llega
+    // mucho después: es la única evidencia que queda del puntero.
+    await vi.advanceTimersByTimeAsync(3000);
+    dock.onMouseLeave();
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S14: la misma salida pegada al gesto (pocos ms) es el resto de ese
+  // gesto: no cierra un panel que el usuario está leyendo.
+  it('keeps the detail open when the strip leaves within the same gesture (#264/S14)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    dock.onMouseLeave(); // Pega al `enter` del detalle: mismo gesto.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  // #264/S16: GTK entrega el `leave` de la ventana del detalle aunque
+  // WebKitGTK no lo traduzca al DOM. Ese relé nativo es otra fuente de
+  // presencia de esa superficie: sin él, el panel queda abierto (S1).
+  it('closes the detail after a native leave of the detail window (#264/S16)', async () => {
+    const { dock, detail, native } = await wire();
+    dock.onMouseEnter();
+    detail('enter'); // El DOM sí entrega la entrada al detalle.
+    native('detail', 'leave'); // La salida llega sólo por el relé nativo.
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S16: la entrada nativa es la misma evidencia que la del DOM: si el
+  // puntero vuelve a la superficie, el cierre ya armado se cancela y el
+  // panel no parpadea.
+  it('cancels a pending close when a native enter arrives (#264/S16)', async () => {
+    const { dock, detail, native } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    detail('leave'); // Arma el cierre.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    native('detail', 'enter'); // El puntero vuelve: el cierre se cancela.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  // #264/S16: la salida nativa de la tira también cierra: es la misma
+  // evidencia que el `mouseleave` del DOM.
+  it('closes the detail after a native leave of the strip (#264/S16)', async () => {
+    const { dock, native } = await wire();
+    dock.onMouseEnter();
+    native('widget', 'leave'); // La salida de la tira llega por el relé nativo.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264: el nativo manda cuando existe. En cuanto llega el primer cruce
+  // nativo, el DOM deja de decidir la presencia: la segunda salida ya no
+  // rearma el timer ni lo atrasa (R1).
+  it('closes the detail at the native leave even when the DOM leave arrives later (#264/R1)', async () => {
+    const { dock, native } = await wire();
+    dock.onMouseEnter();
+    native('widget', 'leave'); // La salida real de la tira llega por el relé nativo.
+    await vi.advanceTimersByTimeAsync(100);
+    dock.onMouseLeave(); // El DOM también avisa, más tarde: ya no manda.
+    await vi.advanceTimersByTimeAsync(180); // 280 ms desde la salida nativa.
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264 (R2): en Wayland puede llegar `enter nativo → leave nativo → enter
+  // DOM` sin el `leave` DOM, que WebKitGTK pierde. Con el DOM mandando, la
+  // entrada tardía cancela el cierre y el panel queda pegado.
+  it('closes the detail when the native crossings arrive and the DOM enter comes later (#264/R2)', async () => {
+    const { detail, native } = await wire();
+    native('detail', 'enter'); // El puntero entra al detalle (nativo).
+    native('detail', 'leave'); // Y sale (nativo): el cierre se arma.
+    detail('enter'); // El DOM avisa la entrada tarde: ya no manda.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264: sin ningún cruce nativo el DOM sigue decidiendo la presencia, que
+  // es el caso de Windows y macOS (allí no llega ningún cruce nativo).
+  it('keeps closing from the DOM alone when no native crossing has arrived (#264)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    detail('leave'); // Sólo el DOM: el cierre se arma y el panel se cierra.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #170/#223: que un panel anclado siga abierto es intencional. El modelo
+  // decide el cierre por hover, así que tiene que respetar esa salida: con el
+  // panel anclado, salir de las dos superficies no arma ningún cierre.
+  it('keeps an anchored detail open when the pointer leaves both surfaces (#170/#223)', async () => {
+    const { dock, detail } = await wire(true);
+    dock.onMouseEnter();
+    detail('enter');
+    detail('leave');
+    dock.onMouseLeave();
+    // Más que el retardo de cierre: si el guard del anclaje desapareciera, el
+    // timer se armaría y el panel se cerraría solo.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+  });
+
+  // #264/S19: el bloqueo del hover tras reordenar (#222/#240) lo libera el
+  // único escritor del modelo de presencia: cuando la presencia pasa de
+  // `widget` a otro estado, el puntero dejó la tira. Antes lo liberaba sólo
+  // el `mouseleave` del DOM, que en Wayland nativo se pierde (#264/S16).
+  //
+  // El bloqueo se observa por su efecto, no por el ref: con el bloqueo puesto
+  // el hover sobre el orbe no abre el detalle; liberado, lo abre.
+  describe('the reorder hold follows the presence model (#264/S19)', () => {
+    /** El orbe como lo ve el hover: sólo necesita su rectángulo. */
+    const orbElement = { getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }) };
+
+    /**
+     * Reordena de verdad: arrastra el orbe y lo suelta encima de la tira.
+     * Es lo que pone el bloqueo del hover (#222).
+     */
+    const reorder = (orbs: OrbPointer[]) => {
+      const orb = orbs.find((o) => o.id === 'a')!;
+      const target = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
+      orb.onPointerDown({ button: 0, clientX: 10, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerMove({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerUp({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+    };
+
+    /**
+     * El hover sobre el orbe, ya fuera de la guarda del reordenamiento
+     * (400 ms): antes de eso lo frena el gesto, no el bloqueo.
+     */
+    const hoverAfterTheGuard = async (hover: (el: HTMLElement) => void) => {
+      await vi.advanceTimersByTimeAsync(500);
+      hover(orbElement as unknown as HTMLElement);
+    };
+
+    // El puntero sale de la tira y la salida llega sólo por el relé nativo:
+    // es el camino que se perdía en Wayland nativo (#264/S16).
+    it('releases the hold when the pointer leaves the strip natively (#264/S19)', async () => {
+      const { dock, native, hover, orbs } = await wire();
+      dock.onMouseEnter(); // El puntero está sobre la tira.
+      reorder(orbs); // El reordenamiento bloquea el hover (#222).
+      native('widget', 'leave'); // La salida llega sólo por el relé nativo.
+      await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
+    // El puntero pasa de la tira al detalle: ya no está en la tira, así que
+    // el bloqueo se suelta aunque el `mouseleave` de la tira no llegue nunca.
+    it('releases the hold when the pointer moves from the strip to the detail (#264/S19)', async () => {
+      const { dock, detail, hover, orbs } = await wire();
+      dock.onMouseEnter();
+      reorder(orbs);
+      detail('enter'); // El puntero entra al detalle.
+      await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
+    // #222: el detalle se cierra con el puntero encima del orbe (justo al
+    // soltar un reordenamiento). Esa escritura deja la presencia en `widget`,
+    // así que NO puede liberar el bloqueo: si lo liberara, el panel se abriría
+    // solo. Esta prueba tiene que pasar antes de implementar el cambio.
+    it('keeps the hold when the presence stays on the strip (#264/S19, #222)', async () => {
+      const { dock, hover, orbs, detailState } = await wire(false, NO_PANEL);
+      dock.onMouseEnter();
+      reorder(orbs);
+      detailState(); // El detalle se cierra con el puntero sobre la tira.
+      await hoverAfterTheGuard(hover);
+      // La apertura retardada del hover, si el bloqueo no estuviera puesto.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    });
+
+    // Sin cruce nativo (Windows y macOS) la salida del DOM sigue siendo la
+    // que libera el bloqueo.
+    it('keeps releasing the hold on the DOM exit of the strip (#264/S19)', async () => {
+      const { dock, hover, orbs } = await wire();
+      dock.onMouseEnter();
+      reorder(orbs);
+      dock.onMouseLeave(); // La salida del DOM: Windows y macOS.
+      await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+  });
+});
+
+// #264/L18: arrastrar un orbe hacia la derecha reordenaba el DOM, y mover un
+// nodo con `insertBefore` libera la captura del puntero: el gesto se cortaba
+// a mitad de camino (el `lostpointercapture` llegaba 10-30 ms después del
+// cambio de índice). El DOM no se reordena durante el arrastre; la vista
+// previa del orden nuevo la cuenta la propiedad CSS `order` de cada orbe
+// (`.strip__orbs` es flex).
+describe('the reorder preview keeps the DOM still (#264/L18)', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  const report = (id: string) => ({
+    id, name: id, kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+  } as unknown as UsageReport);
+
+  /** Los orbes del markup: su id y su `order` de CSS, en el orden del DOM. */
+  const orbs = (markup: string) =>
+    [...markup.matchAll(/<button[^>]*class="orb eg-gauge"[^>]*>/g)].map((m) => ({
+      id: m[0].match(/data-id="([^"]*)"/)?.[1],
+      order: m[0].match(/style="([^"]*)"/)?.[1]?.match(/(?:^|;)\s*order:\s*(\d+)/)?.[1],
+    }));
+
+  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above):
+  // 0 config, 1 reports, 5 geo, 6 stripSize, 19 reorder. Ref slots: 6 orbsRef,
+  // 26 orbDrag.
+  const render = (reorder: { id: string; order: string[] } | null) => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.states[0] = {
+      providerOrder: ['a', 'b', 'c'], hiddenProviders: [], accounts: [], nineRouter: { baseUrl: '' },
+      alerts: { threshold: 90 },
+    };
+    widgetEffects.states[1] = [report('a'), report('b'), report('c')];
+    widgetEffects.states[5] = geo;
+    widgetEffects.states[6] = { w: 400, h: 80 };
+    widgetEffects.states[9] = false;
+    widgetEffects.states[19] = reorder;
+    let tree: ReactNode = null;
+    function CaptureWidget() { tree = Widget(); return tree; }
+    const markup = renderToStaticMarkup(createElement(CaptureWidget));
+    return { markup, tree: tree! };
+  };
+  const markup = (reorder: { id: string; order: string[] } | null) => render(reorder).markup;
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the saved DOM order while the preview moves an orb to the right', () => {
+    const list = orbs(markup({ id: 'a', order: ['b', 'a', 'c'] }));
+    // El DOM no se movió: sigue el orden guardado.
+    expect(list.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+    // La vista previa la cuenta el `order` de CSS de cada orbe.
+    expect(list.map((o) => o.order)).toEqual(['1', '0', '2']);
+  });
+
+  it('keeps the saved DOM order while the preview moves an orb to the end', () => {
+    const list = orbs(markup({ id: 'a', order: ['b', 'c', 'a'] }));
+    expect(list.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+    expect(list.map((o) => o.order)).toEqual(['2', '0', '1']);
+  });
+
+  it('renders the saved order with no CSS order outside the gesture', () => {
+    const list = orbs(markup(null));
+    expect(list.map((o) => o.id)).toEqual(['a', 'b', 'c']);
+    // Fuera del arrastre el DOM y el orden visual coinciden: no hay `order`,
+    // y el foco con teclado sigue el orden que se ve.
+    expect(list.map((o) => o.order)).toEqual([undefined, undefined, undefined]);
+  });
+
+  // El índice de destino lo decide la posición visual, no el orden del DOM:
+  // el DOM conserva el orden guardado, así que los centros llegan desordenados.
+  it('drops the dragged orb at its visual position, not at the DOM one', () => {
+    vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });
+    // La vista previa pone a 'b' al final: en pantalla el orden es a, c, b.
+    const { tree } = render({ id: 'a', order: ['a', 'c', 'b'] });
+    const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
+    // El DOM sigue el orden guardado (a, b, c) con las posiciones de la vista
+    // previa: a en la ranura 0, c en la 1 y b en la 2.
+    widgetEffects.refs[6].current = {
+      querySelectorAll: () => [
+        { dataset: { id: 'a' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 60 }) },
+        { dataset: { id: 'b' }, getBoundingClientRect: () => ({ left: 200, top: 0, width: 60, height: 60 }) },
+        { dataset: { id: 'c' }, getBoundingClientRect: () => ({ left: 100, top: 0, width: 60, height: 60 }) },
+      ],
+    };
+    dragged.onPointerDown({
+      button: 0, clientX: 30, clientY: 30, pointerId: 1,
+      currentTarget: { setPointerCapture: () => {} },
+    });
+    // El puntero cae entre 'c' (centro 130) y 'b' (centro 230).
+    dragged.onPointerMove({ clientX: 150, clientY: 30 });
+    expect(widgetEffects.states[19]).toEqual({ id: 'a', order: ['c', 'a', 'b'] });
   });
 });

@@ -18,10 +18,18 @@ export function moveTo(ids: string[], id: string, index: number): string[] {
   return [...rest.slice(0, i), id, ...rest.slice(i)];
 }
 
-/** Índice en el que caería un elemento arrastrado según los centros de los demás. */
+/**
+ * Índice en el que caería un elemento arrastrado según los centros de los demás.
+ *
+ * Los centros pueden llegar en el orden del DOM, que durante el arrastre no es
+ * el orden visual (#264/L18): la vista previa se pinta con la propiedad CSS
+ * `order` y el DOM conserva el orden guardado. El índice lo decide la
+ * posición, así que los centros se ordenan aquí.
+ */
 export function dropIndex(centers: number[], pointer: number): number {
-  const i = centers.findIndex((c) => pointer < c);
-  return i === -1 ? centers.length : i;
+  const sorted = [...centers].sort((a, b) => a - b);
+  const i = sorted.findIndex((c) => pointer < c);
+  return i === -1 ? sorted.length : i;
 }
 
 export const OFFICIAL_USAGE_URL: Record<string, string> = {
