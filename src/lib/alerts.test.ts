@@ -384,7 +384,7 @@ describe('pace', () => {
 
   it('uses the meter window', () => {
     // reinicio a las 15:00, ventana 5 h → empezó a las 10:00; ahora 12:00 = 40 %
-    const p = meterPace(rep(20).meters[0], NOW)!;
+    const p = meterPace(rep(20), rep(20).meters[0], NOW)!;
     expect(p.elapsed).toBe(0.4);
     expect(p.status).toBe('ok');
   });

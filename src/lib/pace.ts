@@ -35,9 +35,6 @@ export function paceOf(used: number, start: number, end: number, now: number): P
   return { elapsed, used, ratio, projected, exhaustAt, status };
 }
 
-/** El informe trae medidores; el medidor, no. */
-const isReport = (v: UsageReport | Meter): v is UsageReport => 'meters' in v;
-
 /**
  * Ritmo de un medidor con % y ventana conocida (sesión 5 h, semana, mes…).
  *
@@ -45,13 +42,8 @@ const isReport = (v: UsageReport | Meter): v is UsageReport => 'meters' in v;
  * un ciclo anterior describe el pasado, no el estado de ahora. La regla de
  * obsolescencia la pone el frente (`isStaleMeter`), no este módulo.
  */
-export function meterPace(report: UsageReport, m: Meter, now?: number): Pace | null;
-export function meterPace(m: Meter, now?: number): Pace | null;
-export function meterPace(a: UsageReport | Meter, b?: Meter | number, c?: number): Pace | null {
-  const report = isReport(a) ? a : null;
-  const m = (report ? b : a) as Meter;
-  const now = report ? c ?? Date.now() : typeof b === 'number' ? b : Date.now();
-  if (report && isStaleMeter(report, m)) return null;
+export function meterPace(report: UsageReport, m: Meter, now: number = Date.now()): Pace | null {
+  if (isStaleMeter(report, m)) return null;
   if (m.percent == null || !m.windowSeconds) return null;
   const end = windowEnd(m);
   const start = windowStart(m);
