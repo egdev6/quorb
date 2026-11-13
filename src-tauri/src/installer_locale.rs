@@ -3,8 +3,9 @@
 //! After a successful interactive install, NSIS writes `installer-locale` into
 //! the app config directory (`$APPDATA\<bundle id>`) with two lines: the chosen
 //! locale and the installer version. On Windows startup the app reads it and
-//! always removes it; it applies the choice only to a fresh configuration, so an
-//! existing, legacy or unreadable config is never overwritten.
+//! attempts to remove it; it applies the choice only after removal succeeds and
+//! only to a fresh configuration, so an existing, legacy or unreadable config is
+//! never overwritten.
 
 use crate::config::{self, AppConfig, ConfigOrigin};
 use std::path::Path;
@@ -12,12 +13,13 @@ use std::path::Path;
 pub const FILE: &str = "installer-locale";
 const MAX_BYTES: u64 = 64;
 
-/// Reads the handoff and always removes it. Returns the locale only when it is
-/// supported and was written by this exact version.
+/// Reads the handoff and attempts to remove it. A choice is returned only after
+/// removal succeeds; a failed removal leaves the unapplied choice for a retry.
+/// The locale must also be supported and from this exact version.
 pub fn take(dir: &Path, version: &str) -> Option<String> {
     let path = dir.join(FILE);
     let text = read_bounded(&path);
-    let _ = std::fs::remove_file(&path);
+    std::fs::remove_file(&path).ok()?;
     parse(&text?, version)
 }
 
@@ -30,17 +32,13 @@ fn read_bounded(path: &Path) -> Option<String> {
 }
 
 fn parse(text: &str, version: &str) -> Option<String> {
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect();
-    match lines.as_slice() {
-        [locale, written_by] if *written_by == version && config::LOCALES.contains(locale) => {
-            Some((*locale).to_string())
-        }
-        _ => None,
-    }
+    let (locale, written_by) = text.split_once('\n')?;
+    let locale = locale.strip_suffix('\r').unwrap_or(locale);
+    let written_by = match written_by.strip_suffix('\n') {
+        Some(line) => line.strip_suffix('\r').unwrap_or(line),
+        None => written_by,
+    };
+    (written_by == version && config::LOCALES.contains(&locale)).then(|| locale.to_string())
 }
 
 /// Applies a handoff choice only to a fresh Windows configuration without a
@@ -66,6 +64,12 @@ pub fn startup_config(os: &str, config_dir: &Path, version: &str) -> (AppConfig,
     if apply(os, &mut cfg, origin, handoff.as_deref()) {
         if let Err(err) = config::save(&path, &cfg) {
             eprintln!("quorb: could not save the installer locale choice: {err}");
+            // apply() only succeeds for Missing; discard any partial save.
+            if let Err(cleanup_err) = std::fs::remove_file(&path) {
+                if cleanup_err.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("quorb: could not remove the partial config: {cleanup_err}");
+                }
+            }
             return (before, origin);
         }
     }
@@ -111,7 +115,14 @@ mod tests {
 
     #[test]
     fn take_returns_supported_locale_for_this_version_and_removes_file() {
-        for (raw, expected) in [("es\r\n0.8.0\r\n", "es"), ("en\n0.8.0", "en")] {
+        for (raw, expected) in [
+            ("es\r\n0.8.0\r\n", "es"),
+            ("en\n0.8.0", "en"),
+            ("es\r\n0.8.0", "es"),
+            ("en\n0.8.0\n", "en"),
+            ("es\r\n0.8.0\n", "es"),
+            ("en\n0.8.0\r\n", "en"),
+        ] {
             let dir = Dir::new("valid");
             std::fs::write(dir.handoff(), raw).unwrap();
             assert_eq!(take(&dir.0, VERSION).as_deref(), Some(expected), "{raw:?}");
@@ -138,6 +149,90 @@ mod tests {
         }
         let dir = Dir::new("absent");
         assert_eq!(take(&dir.0, VERSION), None);
+    }
+
+    #[test]
+    fn take_rejects_whitespace_and_blank_lines_without_trimming() {
+        for raw in [
+            "en\n\n0.8.0\n",
+            "\nen\n0.8.0\n",
+            "en\n0.8.0\n\n",
+            "en\n0.8.0 \n",
+            " en\n0.8.0\n",
+            "en\r0.8.0\r",
+            "en\n0.8.0\r",
+        ] {
+            let dir = Dir::new("strict-format");
+            std::fs::write(dir.handoff(), raw).unwrap();
+            assert_eq!(take(&dir.0, VERSION), None, "{raw:?}");
+            assert!(!dir.handoff().exists(), "{raw:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn take_does_not_apply_a_choice_until_removal_succeeds() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = Dir::new("cannot-remove");
+        std::fs::write(dir.handoff(), "en\n0.8.0\n").unwrap();
+        std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let first = take(&dir.0, VERSION);
+        let still_present = dir.handoff().exists();
+        // Restore permissions before assertions so the temporary directory is cleaned on failure.
+        std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(first, None);
+        assert!(still_present);
+        assert_eq!(take(&dir.0, VERSION).as_deref(), Some("en"));
+        assert!(!dir.handoff().exists());
+        assert_eq!(take(&dir.0, VERSION), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_startup_save_leaves_config_fresh_for_the_next_start() {
+        const CHILD: &str = "QUORB_INSTALLER_LOCALE_SAVE_FAILURE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "installer_locale::tests::failed_startup_save_leaves_config_fresh_for_the_next_start",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child failed: {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let dir = Dir::new("partial-save");
+        std::fs::write(dir.handoff(), "en\n0.8.0\n").unwrap();
+        let limit = libc::rlimit {
+            rlim_cur: 512,
+            rlim_max: 512,
+        };
+        // Restrict only this child: the normal config JSON is larger than 512 bytes.
+        unsafe {
+            assert_ne!(libc::signal(libc::SIGXFSZ, libc::SIG_IGN), libc::SIG_ERR);
+            assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limit), 0);
+        }
+
+        for _ in 0..2 {
+            let (cfg, origin) = startup_config("windows", &dir.0, VERSION);
+            assert_eq!(origin, ConfigOrigin::Missing);
+            assert_eq!(cfg, AppConfig::default().sanitized());
+            assert!(crate::locale_picker_needed_on("windows", &cfg, origin));
+            assert!(!dir.config().exists());
+            assert!(!dir.handoff().exists());
+        }
     }
 
     #[test]
