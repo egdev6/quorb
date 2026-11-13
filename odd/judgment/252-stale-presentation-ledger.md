@@ -52,19 +52,58 @@ Correcciones obligatorias que los dos jueces coinciden en exigir:
 
 Confirmados con lectura directa: `gaugeState` sólo atenúa `needsLogin`/`unconfigured`/`error`; los anillos se eligen con `all = report.meters.filter(m => m.percent != null)` y el color sale del índice; la tarjeta tiene su propia pastilla de informe; en `opencode_go.rs` el 403 `EntitlementError` se traduce en `Status::Warning`, que es lo que dispara la resurrección del informe anterior; `Settings.tsx:622` es el quinto consumidor de `peakMeter`.
 
+## Ronda 2 — re-juicio acotado (los dos jueces, sobre este ledger + el delta)
+
+Los dos jueces examinaron el ledger congelado y el delta (`3e7071c`, `1fda69a`, `56a5e96`, `02e74ab`) y **coincidieron sin contradicciones**:
+
+| ID | Juez A | Juez B |
+| --- | --- | --- |
+| C-1 (obsolescencia por dos vías) | FIXED | FIXED |
+| C-2 (el pico se calcula sobre los vigentes) | FIXED | FIXED |
+| C-3 (estado, anillos y ritmo recalculados) | FIXED | FIXED |
+| C-4 (la última lectura se conserva y se fecha) | FIXED | FIXED |
+| C-5 (el pico obsoleto no manda) | FIXED | FIXED |
+| C-6 (no se resucita otro régimen) | FIXED en el escenario confirmado | FIXED dentro del alcance declarado |
+| C-7 (los dos niveles de marca) | HONORED | FIXED |
+| S-1 (índice de anillo coherente) | HONORED | HONORED |
+| S-2 (tercera rama, `needsLogin`) | HONORED | HONORED |
+| S-3 (salud de Ajustes) | HONORED | HONORED |
+| S-4 (la serie del medidor viejo no se borra) | HONORED | HONORED |
+| S-5 (estado del orbe sin lectura vigente) | HONORED | HONORED (con un matiz sobre la guarda) |
+| I-1 (el valor viejo pierde el color de marca) | addressed | addressed |
+
+### Residuales de la ronda 2
+
+| ID | Sev | Hallazgo | Quién |
+| --- | --- | --- | --- |
+| **F1** | WARNING | El gasto conservado se presenta como actual en el detalle (fila de ritmo y proyección "a este ritmo") y en la tarjeta, mientras el tooltip de la bandeja sí lo esconde: la regla se aplica en un consumidor y no en el otro | A y B |
+| **F2** | WARNING | La rama que conserva el informe anterior devuelve `{ ...old, ... }`: **descarta la declaración de régimen del informe nuevo** y se queda con la del anterior. Con el caso "el nuevo declara el régimen y el anterior no" no hay comparación posible y los medidores del régimen anterior se resucitan en cada ciclo | A (el padre lo verificó en el código) |
+| **F3** | WARNING | El resumen que se copia (`reportSummary`) lista los medidores viejos y el gasto conservado como valores actuales, sin la marca de caché ni la fecha | A y B |
+| **F4** | SUGGESTION | El tooltip esconde el gasto con `hasStaleData` (algún medidor viejo) en vez de "el gasto es viejo": en un informe **mixto** con gasto **fresco** y medidores viejos, el gasto fresco desaparece (defecto **introducido** por el arreglo) | B |
+| **F5** | SUGGESTION | El orbe compacto (colapsado) pinta su único anillo con el índice 0, así que para los proveedores por modelo el color puede no coincidir con el número de anillo de la tarjeta. **Preexistente**, fuera del delta | B |
+| **F6** | SUGGESTION | El comentario de `gaugeState` dice "sin ninguna lectura vigente el orbe queda atenuado" pero la guarda exige además que haya datos viejos: el **comportamiento** está bien (una suscripción inactiva sin lecturas sigue avisando), lo que no cuadra es el comentario | B |
+
+### Ronda de corrección 2 (decidida por el padre)
+
+- **F1 + F4**: la regla del gasto es única y es "el gasto es viejo si el **informe entero** está viejo" (`report.stale`), no "si hay algún medidor viejo". Con eso el gasto fresco de un informe mixto **vuelve a verse** (F4) y el gasto viejo **no se proyecta** ni se presenta como actual (F1).
+- **F2**: la comparación de régimen pasa a ser **asimétrica**: si el informe nuevo declara un régimen y el anterior no declara ninguno, los medidores del anterior **no** se conservan (no se pueden atribuir al régimen vigente); si el nuevo no declara nada (lectura fallida), se conserva todo como hoy. Sólo afecta a NaN, el único proveedor que declara régimen. El test del delta que fijaba el comportamiento viejo cambia y se añade el caso positivo.
+- **F3**: el resumen copiado marca los medidores viejos (caché + fecha) y el gasto viejo.
+- **F6**: se corrige el comentario de `gaugeState` (el comportamiento se queda).
+- **F5**: queda registrado como `info`: es **preexistente** y no lo introduce este trabajo.
+
 ## Estado de la ronda
 
 ```yaml
 target_identity: eeebf275ad4b2c1d94ab79134174eff4320a87782ad91a35ad4c8f9cee142511
-round: 1
+round: 2
 confirmed: [C-1, C-2, C-3, C-4, C-5, C-6, C-7]
 suspect: [S-1, S-2, S-3, S-4, S-5]
-info: [I-1, I-2, I-3]
+info: [I-1, I-2, I-3, F5]
+fix_work_units: [T31a, T31b, F1, F2, F3, F4, F6]
 contradictions: []
-fix_work_units: [T31]
-scoped_rejudgment: not_run
+scoped_rejudgment: pending
 terminal_state: pending
 skill_resolution: paths-injected
 ```
 
-Ronda 2 (re-juicio acotado): sobre este ledger congelado + el delta de la implementación de T31. Sin la ronda 2 no hay veredicto terminal.
+Ronda 3 (re-juicio acotado final): sobre este ledger + el delta de la ronda de corrección 2. Sin ella no hay veredicto terminal.
