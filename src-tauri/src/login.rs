@@ -255,9 +255,10 @@ fn account_env(
         return Ok((a.provider.to_string(), Some((var, dir))));
     }
     // Cuenta PRINCIPAL con `credentials_path` personalizado (revisión PR
-    // #253): el login debe escribir en la carpeta de ESA ruta, la misma que
-    // lee `account_session`/el fetch; si no, el CLI guarda en su carpeta por
-    // defecto y Quorb busca en otro sitio (nunca hay sesión tras el login).
+    // #253): para el nombre estándar del CLI se usa la carpeta que lee
+    // `account_session`/el fetch. En host, un nombre distinto puede venir
+    // de un comando avanzado y mantiene el comportamiento sin variable; en
+    // WSL no se permite porque el CLI debe escribir donde Quorb lee.
     let Some(var) = main_session_var(id) else {
         return Ok((id.to_string(), None));
     };
@@ -275,12 +276,19 @@ fn account_env(
             ));
         }
     }
-    let dir = main_session_dir(id, path).ok_or_else(|| {
-        format!(
-            "La ruta de credenciales de {id} debe terminar en el fichero del CLI ({}): así el login escribe donde Quorb lee",
-            crate::config::credentials_file_name(id).unwrap_or("…")
-        )
-    })?;
+    let Some(dir) = main_session_dir(id, path) else {
+        let file = crate::config::credentials_file_name(id).unwrap_or("…");
+        // Un nombre estándar sin carpeta deducible sigue siendo inválido;
+        // solo los nombres distintos conservan el comando avanzado de host.
+        if wsl.is_none()
+            && Path::new(&path.replace('\\', "/")).file_name() != Path::new(file).file_name()
+        {
+            return Ok((id.to_string(), None));
+        }
+        return Err(format!(
+            "La ruta de credenciales de {id} debe terminar en el fichero del CLI ({file}): así el login escribe donde Quorb lee"
+        ));
+    };
     if wsl.is_none() {
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("No pude crear {}: {e}", dir.display()))?;
@@ -316,9 +324,9 @@ fn main_session_var(provider: &str) -> Option<&'static str> {
 /// Carpeta de la variable de sesión a partir de la ruta de credenciales
 /// personalizada: la base que, unida al fichero estándar del CLI, da
 /// exactamente esa ruta (`CLAUDE_CONFIG_DIR/<.credentials.json>`, o
-/// `GEMINI_CLI_HOME/.gemini/oauth_creds.json`). Una ruta que no termina en el
-/// fichero del CLI no permite derivarla: se rechaza con un mensaje accionable
-/// en vez de escribir en un sitio distinto del que se lee.
+/// `GEMINI_CLI_HOME/.gemini/oauth_creds.json`). Si no se puede derivar, el
+/// llamador conserva los nombres no estándar en host sin variable adicional
+/// y rechaza los demás casos con un mensaje accionable.
 fn main_session_dir(provider: &str, credentials_path: &str) -> Option<PathBuf> {
     let file = crate::config::credentials_file_name(provider)?;
     let normalized = credentials_path.trim().replace('\\', "/");
@@ -1141,7 +1149,7 @@ mod tests {
             Some(PathBuf::from("/home/user"))
         );
         // Una ruta que no termina en el fichero del CLI no permite derivar la
-        // carpeta: error accionable, no un login que escribe en otro sitio.
+        // carpeta; el llamador decide si conserva el comando o rechaza en WSL.
         assert_eq!(main_session_dir("claude", "D:\\trabajo\\otra.json"), None);
         assert_eq!(main_session_dir("cursor", "/tmp/x"), None);
     }
@@ -1168,6 +1176,101 @@ mod tests {
         let cfg = AppConfig::default();
         let (_, env) = account_env("claude", &cfg, None).expect("env");
         assert!(env.is_none());
+    }
+
+    /// Un comando avanzado de host puede escribir un nombre no estándar: no
+    /// se deduce una carpeta ni se altera el comando configurado.
+    #[test]
+    fn main_account_nonstandard_host_filename_keeps_advanced_command_without_override() {
+        let tmp = TempDir::new("principal-custom-filename");
+        let absent_dir = tmp.path().join("not-created");
+        let synthetic = absent_dir.join("auth-work.json");
+        let paths = [
+            r"C:\work\auth-work.json".to_string(),
+            synthetic.to_string_lossy().into_owned(),
+        ];
+        let mut cfg = AppConfig::default();
+        assert!(!absent_dir.exists());
+        for path in paths {
+            let command = format!("custom-login --output \"{path}\"");
+            cfg.codex.credentials_path = Some(path);
+            cfg.codex.login_command = command.clone();
+            assert_eq!(account_env("codex", &cfg, None), Ok(("codex".into(), None)));
+            assert_eq!(cfg.codex.login_command, command);
+            assert!(!absent_dir.exists(), "no se crea una carpeta de sesión");
+        }
+    }
+
+    /// Los nombres estándar conservan su variable y carpeta; el guest rechaza
+    /// rutas inválidas o nombres distintos antes de consultar el adaptador.
+    #[test]
+    fn main_account_standard_filenames_and_guest_validation_are_preserved() {
+        let tmp = TempDir::new("principal-standard-filenames");
+        for (provider, file, var) in [
+            ("claude", ".credentials.json", "CLAUDE_CONFIG_DIR"),
+            ("codex", "auth.json", "CODEX_HOME"),
+            ("gemini", ".gemini/oauth_creds.json", "GEMINI_CLI_HOME"),
+            ("grok", "auth.json", "GROK_HOME"),
+        ] {
+            let dir = tmp.path().join(provider);
+            let credentials = dir.join(file);
+            let mut cfg = AppConfig::default();
+            let sub = match provider {
+                "claude" => &mut cfg.claude,
+                "codex" => &mut cfg.codex,
+                "gemini" => &mut cfg.gemini,
+                "grok" => &mut cfg.grok,
+                _ => unreachable!(),
+            };
+            sub.credentials_path = Some(credentials.to_string_lossy().into_owned());
+            assert_eq!(
+                account_env(provider, &cfg, None),
+                Ok((provider.into(), Some((var, dir.clone()))))
+            );
+            assert!(dir.is_dir());
+            assert!(!credentials.exists(), "no se crea el fichero de sesión");
+        }
+
+        // Un nombre estándar sin carpeta deducible ya se rechazaba en host.
+        let mut cfg = AppConfig::default();
+        cfg.codex.credentials_path = Some("auth.json".into());
+        assert_eq!(
+            account_env("codex", &cfg, None),
+            Err("La ruta de credenciales de codex debe terminar en el fichero del CLI (auth.json): así el login escribe donde Quorb lee".into())
+        );
+
+        let mock = crate::wsl::MockWslAdapter::new();
+        let wsl = WslLogin {
+            adapter: &mock,
+            distro: "synthetic-distro",
+        };
+        let mut cfg = AppConfig::default();
+        cfg.gemini.credentials_path = Some("/synthetic/session/.gemini/oauth_creds.json".into());
+        assert_eq!(
+            account_env("gemini", &cfg, Some(&wsl)),
+            Ok((
+                "gemini".into(),
+                Some(("GEMINI_CLI_HOME", PathBuf::from("/synthetic/session")))
+            ))
+        );
+        for (path, expected) in [
+            (
+                r"C:\work\auth-work.json",
+                r"La ruta de credenciales de codex no es válida en modo WSL: La ruta en modo WSL no puede llevar separadores de Windows (\). Pega la ruta del guest (por ejemplo /home/usuario/...) en su lugar: C:\work\auth-work.json",
+            ),
+            (
+                "relative/auth.json",
+                "La ruta de credenciales de codex no es válida en modo WSL: La ruta en modo WSL debe ser absoluta del guest (empieza por '/'), se recibió: relative/auth.json",
+            ),
+            (
+                "/synthetic/session/auth-work.json",
+                "La ruta de credenciales de codex debe terminar en el fichero del CLI (auth.json): así el login escribe donde Quorb lee",
+            ),
+        ] {
+            cfg.codex.credentials_path = Some(path.into());
+            assert_eq!(open("codex", &cfg, Some(WslLogin { ..wsl })), Err(expected.into()));
+            assert!(mock.calls().is_empty(), "el guest no recibe llamadas");
+        }
     }
 
     #[test]

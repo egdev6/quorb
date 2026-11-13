@@ -18,8 +18,8 @@ S6. Accepted review, real acceptance evidence: “Para cerrar #92 sigue haciendo
 
 ## Tasks
 
-- T1 | S2 | gentle-ai-worker (runtime context backstop after parent authored RED cases) | done | commit: pending recording after commit | RED: 2 stale-result/rejection failures (then 4 with added overlap coverage); GREEN: focused 23/23, frontend 1028/1028, typecheck; diff check OK | Risk: item 4 (ordering concurrent poll responses).
-- T2 | S3 | inline parent (same login module ownership) | pending | commit: pending | RED/GREEN: pending | Risk: item 3 (restore advanced host configuration compatibility).
+- T1 | S2 | gentle-ai-worker (runtime context backstop after parent authored RED cases) | done | commit: f1dbcdb07fb61b5138843af176561d3c679e57f6 | RED: 2 stale-result/rejection failures (then 4 with added overlap coverage); GREEN: focused 23/23, frontend 1028/1028, typecheck; diff check OK | Risk: item 4 (ordering concurrent poll responses).
+- T2 | S3 | gentle-ai-worker (runtime context backstop; sequential login.rs ownership) | done | commit: pending recording after commit | RED: 3 passed/1 failed; GREEN: 4 main-account tests, 48 login tests, fmt/diff OK | Risk: item 3 (restore advanced host configuration compatibility).
 - T3 | S4 | inline parent (same login module ownership) | pending | commit: pending | RED/GREEN: pending | Risk: item 2 (normalized WSL execution guard).
 - T4 | S5 | inline parent (same login module ownership) | pending | commit: pending | synthetic safety checks: pending | Risk: item 2 (prevent credential exposure and isolate test effects).
 - T5 | S1-S5 | parent suites, then one independent gentle-ai-verify over the final correction slice | pending | commit: pending | focused/full suites, typecheck, shared-path differential, inventory, Windows applicability: pending.
@@ -42,3 +42,7 @@ L7. Worker mwf680uh-3-e5hn returned interaction_required before running RED: the
 L8. Human selected the closed-envelope answer “A — Replace the RED and GREEN commands” (opaque value A). The replacement uses --no-cache --configLoader runner for both Vitest commands, preserving the timeout and subsequent diff check. Return T1 to in_progress and deliver this answer exactly once to the same finished worker. No child is active or uncertain: the worker returned its final interaction_required result.
 
 L5. Verification policy: observe one meaningful RED per requested deterministic rule, then GREEN and existing touched-path coverage. Run a scratch differential against b79fd3c for unrequested behavior sharing changed helpers; do not commit history-dependent tests. Use existing on-disk Cargo target (not the previously exhausted /tmp target). Do not run the unsafe GAP4 or inspect actual credential files. Tests use synthetic, isolated data only; real login remains a separate human action.
+
+L9. T1 completed by worker mwf6hlhl-4-28zw: RED exit1 with the two reported stale-order failures, expanded RED four failures; GREEN exit0, focused23/frontend1028 (76 files), TypeScript OK, diff check OK. Parent inspected the full T1 diff and committed f1dbcdb07fb61b5138843af176561d3c679e57f6. T2 starts with narrow sequential ownership of login.rs. Final independent verification remains T5.
+
+L10. Delivery slice starts at b79fd3c9972ff73bb50195685ba6eb63446b9f5f; T1 correction133 authored changed lines including tracking. Runtime's2417-line branch warning includes114 inherited PR commits, not only these corrections. Preserve the accepted existing-PR single-pr strategy; no new PR chain or merge is created.
