@@ -125,6 +125,20 @@ describe('alerts', () => {
     ]);
   });
 
+  it('reports a reset that renews within the same UTC day', () => {
+    // El periodo publicado anterior termina el 1 de diciembre a las 00:00 UTC y el
+    // periodo de cuenta nuevo empieza ese mismo día a las 22:15:31: las dos ventanas
+    // caen el mismo día calendario, pero NO se solapan (la vieja terminó antes de que
+    // arrancara la nueva) y el consumo absoluto bajó (950 M → 60 M): el reinicio es
+    // real y hay que avisarlo. Comparar las ventanas por día descartaba esta
+    // renovación: el mismo día no significa el mismo periodo.
+    const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
+    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2026-12-31T22:15:31Z' })]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
+      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 2 },
+    ]);
+  });
+
   it('does not report a reset when the new window starts before the old one ends', () => {
     // La cuenta (5-nov → 5-dic) y después la cuota publicada del mes siguiente
     // (1-dic → 1-ene): el consumo bajó (la cuenta se renovó el 5-dic), pero la ventana

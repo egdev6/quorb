@@ -3,8 +3,6 @@
 
 import type { Meter } from './types';
 
-const DAY_MS = 86_400_000;
-
 /** Fin de la ventana: `resetsAt` es el reinicio. Sin él (o ilegible), no hay ventana. */
 export function windowEnd(m: Meter): number | null {
   if (!m.resetsAt) return null;
@@ -18,6 +16,3 @@ export function windowStart(m: Meter): number | null {
   if (end == null || m.windowSeconds == null) return null;
   return end - m.windowSeconds * 1000;
 }
-
-/** Día UTC (índice) de un instante: las ventanas se comparan por día, nunca por instante. */
-export const utcDay = (ms: number) => Math.floor(ms / DAY_MS);

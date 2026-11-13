@@ -4,7 +4,7 @@
 // Se recuerda qué se ha avisado por ventana para no repetir (la memoria se guarda en el widget).
 
 import type { AlertMoment, AlertsConfig, Effect, Meter, UsageReport } from './types';
-import { utcDay, windowEnd, windowStart } from './window';
+import { windowEnd, windowStart } from './window';
 
 /**
  * ¿Debe el widget lanzar avisos nativos? Requiere el interruptor maestro
@@ -121,10 +121,12 @@ function isReset(old: Meter, next: Meter, pct: number, threshold: number): boole
  * Cambio de base de medición: el porcentaje bajó porque cambió el denominador (la cuota
  * que el proveedor declara como base), así que el reinicio sólo se afirma si la ventana
  * nueva arranca DESPUÉS de que terminara la vieja (la renovación) y el consumo absoluto
- * bajó. Las ventanas se comparan POR DÍA UTC: las dos bases describen periodos distintos
- * con horas distintas (el mes calendario contra el periodo de facturación del 5 al 5) y
- * comparar instantes daría falsos positivos. Sin unidades comparables o sin los datos de
- * la ventana y del consumo, no se afirma nada.
+ * bajó. Las ventanas se comparan POR INSTANTE, no por día: una renovación que cae dentro
+ * del mismo día UTC (la ventana vieja termina el 1 a las 00:00 y la nueva arranca el 1 a
+ * las 22:15) es una renovación real, y el mismo día no significa el mismo periodo. Lo que
+ * se descarta es el solapamiento (la ventana nueva empieza antes de que termine la vieja):
+ * ahí las dos fuentes están describiendo periods a la vez y no se puede afirmar nada. Sin
+ * unidades comparables o sin los datos de la ventana y del consumo, no se afirma nada.
  */
 function resetAcrossBasis(old: Meter, next: Meter): boolean {
   if (old.unit !== next.unit) return false;
@@ -133,7 +135,7 @@ function resetAcrossBasis(old: Meter, next: Meter): boolean {
   const oldEnd = windowEnd(old);
   const newStart = windowStart(next);
   if (oldEnd == null || newStart == null || old.windowSeconds == null) return false;
-  if (utcDay(newStart) <= utcDay(oldEnd)) return false;
+  if (newStart < oldEnd) return false;
   return next.used < old.used;
 }
 

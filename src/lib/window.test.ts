@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { utcDay, windowEnd, windowStart } from './window';
+import { windowEnd, windowStart } from './window';
 import type { Meter } from './types';
 
 /** Medidor con los dos datos de la ventana: el fin (`resetsAt`) y su duración. */
@@ -31,15 +31,5 @@ describe('window', () => {
     expect(windowEnd(meter('no es una fecha', 100))).toBeNull();
     expect(windowStart(meter('2026-12-01T00:00:00Z', null))).toBeNull();
     expect(windowStart(meter(null, 100))).toBeNull();
-  });
-
-  it('compares windows by UTC day, not by instant', () => {
-    // Dos ventanas que difieren en horas pero no en días son el mismo día UTC.
-    const midnight = windowStart(meter('2026-12-05T00:00:00Z', 2_592_000))!;
-    const evening = windowStart(meter('2026-12-05T22:15:31Z', 2_592_000))!;
-    expect(utcDay(midnight)).toBe(utcDay(evening));
-    // Una ventana que empieza al día siguiente es otro día.
-    const nextDay = windowStart(meter('2026-12-06T00:00:00Z', 2_592_000))!;
-    expect(utcDay(nextDay)).toBe(utcDay(evening) + 1);
   });
 });
