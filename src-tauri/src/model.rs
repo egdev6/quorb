@@ -42,6 +42,13 @@ pub struct Meter {
     pub resets_at: Option<String>,
     /// Duración de la ventana en segundos (5 h, 7 días, mes…), para calcular el ritmo de consumo.
     pub window_seconds: Option<i64>,
+    /// Base contra la que se midió **este** medidor: la declara el proveedor (la cuota
+    /// de la cuenta, la cuota publicada…) y el frente la trata como texto opaco, sin
+    /// saber qué significa. Un medidor sin base se compara siempre; si la base cambia
+    /// entre dos lecturas, el porcentaje bajó porque cambió el denominador y no es un
+    /// reinicio de la cuota.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_source: Option<&'static str>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -96,6 +103,11 @@ pub struct UsageReport {
     /// Tokens por día (si el proveedor los da), para el historial del panel.
     pub daily: Vec<Daily>,
     pub fetched_at: String,
+    /// Régimen de facturación que declara el proveedor: el frente lo trata como texto
+    /// opaco (no sabe qué significa, sólo compara si cambió entre dos informes). Es
+    /// opcional: los proveedores que no lo conocen no lo declaran y su JSON no cambia.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub billing_regime: Option<&'static str>,
 }
 
 impl UsageReport {
@@ -114,6 +126,7 @@ impl UsageReport {
             action: None,
             daily: vec![],
             fetched_at: chrono::Utc::now().to_rfc3339(),
+            billing_regime: None,
         }
     }
 
@@ -158,6 +171,51 @@ mod tests {
         assert_eq!(v["id"], "weekly");
         assert_eq!(v["label"], "Semana");
         assert_eq!(serde_json::to_value(Meter::default()).unwrap()["id"], "");
+    }
+
+    #[test]
+    fn the_meter_declares_its_measurement_basis() {
+        // La base se declara en el medidor: sin base no hay clave en el JSON.
+        let plain = Meter::default();
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("quotaSource")
+            .is_none());
+        let with_basis = Meter {
+            quota_source: Some("account"),
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&with_basis).unwrap()["quotaSource"],
+            "account"
+        );
+    }
+
+    #[test]
+    fn the_report_does_not_carry_the_quota_source() {
+        // La base es de cada medidor, no del informe: el informe no la lleva.
+        let report = UsageReport::new("nan", "NaN", Kind::Subscription);
+        assert!(serde_json::to_value(&report)
+            .unwrap()
+            .get("quotaSource")
+            .is_none());
+    }
+
+    #[test]
+    fn the_report_declares_the_billing_regime_only_when_it_is_known() {
+        // El régimen de facturación es opcional: los proveedores que no lo conocen
+        // (todos menos NaN) no ponen la clave, así que su JSON no cambia ni una línea.
+        let report = UsageReport::new("claude", "Claude", Kind::Subscription);
+        assert!(serde_json::to_value(&report)
+            .unwrap()
+            .get("billingRegime")
+            .is_none());
+        let mut declared = report.clone();
+        declared.billing_regime = Some("model-quota");
+        assert_eq!(
+            serde_json::to_value(&declared).unwrap()["billingRegime"],
+            "model-quota"
+        );
     }
 
     #[test]

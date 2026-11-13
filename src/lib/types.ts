@@ -14,6 +14,26 @@ export interface Meter {
   resetsAt: string | null;
   /** Duración de la ventana en segundos (5 h, 7 días, mes…) */
   windowSeconds: number | null;
+  /**
+   * Base contra la que se midió este medidor, declarada por el proveedor. El frente la
+   * trata como texto opaco: solo le importa si cambió entre dos lecturas (el porcentaje
+   * bajó porque cambió el denominador, no porque la cuota se reiniciara). Sin base, el
+   * medidor se compara siempre.
+   */
+  quotaSource?: string;
+  /**
+   * Marcado por el propio front (el backend no lo declara): este medidor no se
+   * pudo actualizar en el último ciclo y se conserva del anterior, así que lo que
+   * se ve es viejo. Un informe entero puede traer medidores frescos y otros viejos.
+   */
+  stale?: boolean;
+  /**
+   * Marcado por el propio front (el backend no lo declara): instante de la última
+   * lectura de este medidor (`fetchedAt` del informe del que viene). Sólo lo
+   * llevan los medidores conservados de un ciclo anterior: dice cuándo se leyó,
+   * para que el dato viejo se pueda leer como tal.
+   */
+  readAt?: string;
 }
 
 export interface Spend {
@@ -42,6 +62,14 @@ export interface UsageReport {
   fetchedAt: string;
   /** Solo frontend: datos del último ciclo correcto porque el actual falló. */
   stale?: boolean;
+  /**
+   * Régimen de facturación que declara el proveedor. El frente lo trata como texto
+   * opaco: no sabe qué significa, sólo compara si cambió entre dos informes (un aviso
+   * de «suscripción inactiva» en una cuenta que cambió de régimen no es un fallo de
+   * lectura: los topes del régimen anterior ya no aplican). Lo declaran los
+   * proveedores que lo conocen; si un informe no lo declara, no hay comparación.
+   */
+  billingRegime?: string;
 }
 
 export interface SubscriptionConfig {

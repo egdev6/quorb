@@ -312,6 +312,7 @@ pub(crate) fn parse(body: &Value, _now: DateTime<Utc>) -> Parsed {
                 unit: None,
                 resets_at: at.map(str::to_string),
                 window_seconds: window.or(Some(WEEK_SECONDS)),
+                quota_source: None,
             }]
         }
         _ => vec![],

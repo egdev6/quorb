@@ -43,6 +43,15 @@ describe('ProviderCard i18n (SSR)', () => {
     expect(html).toContain('Presupuesto');
   });
 
+  it('marks the kept spend as cached with the date of its last reading', () => {
+    // El gasto conservado no se presenta como una cifra actual: lleva su marca y
+    // la fecha de la lectura de la que viene.
+    const html = renderToStaticMarkup(<ProviderCard report={report} locale="es" />);
+    expect(html).toContain('6 oct');
+    const en = renderToStaticMarkup(<ProviderCard report={report} locale="en" />);
+    expect(en).toContain('Oct 6');
+  });
+
   it('renders the English UI texts when the locale is en', () => {
     const html = renderToStaticMarkup(<ProviderCard report={report} locale="en" />);
     expect(html).toContain('Signed out');

@@ -507,7 +507,7 @@ export const es = {
           stepTitle: 'Conecta tu cuenta o pega una API key',
           advancedSummary: 'Avanzado · URL, facturación y endpoint de consumo',
           billingDayLabel: 'Día de inicio de facturación',
-          billingDayHint: 'Solo para GLM 5.3 (cuenta por periodo de Stripe) cuando usas la API key.',
+          billingDayHint: 'El día del mes en que empieza tu periodo de facturación. Solo se usa si el panel de NaN no responde: para el periodo de GLM 5.3 y para cortar el consumo agregado.',
           usageEndpointLabel: 'Endpoint de consumo · URL',
           usageEndpointHint: 'Se llama con tu key como Bearer y debe devolver JSON.',
           pointerUsedLabel: 'JSON Pointer · usado',
@@ -640,6 +640,7 @@ export const es = {
       error: 'Error',
       needsLogin: 'Sin sesión',
       unconfigured: 'Sin configurar',
+      noCurrentReading: 'Sin lectura actual',
     },
     action: {
       login: 'Iniciar sesión',
@@ -649,6 +650,7 @@ export const es = {
     },
     staleChip: 'caché',
     staleChipTitle: 'Datos del último ciclo correcto',
+    staleReadAt: 'última lectura {date}',
     budget: 'Presupuesto',
     copy: {
       summary: 'Copiar resumen',

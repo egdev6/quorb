@@ -32,7 +32,7 @@ import quorbLogo from './assets/quorb-logo.png';
 import { useUpdater } from './lib/useUpdater';
 import { t, type MessageKey } from './i18n';
 import { changeLocale as applyLocaleChange, useLocale } from './i18n/use-locale';
-import { formatMoney, formatPercent, peakMeter } from './lib/format';
+import { formatMoney, formatPercent, isStaleSpend, peakMeter } from './lib/format';
 
 const LINKS = {
   anthropicAdmin: 'https://console.anthropic.com/settings/admin-keys',
@@ -618,7 +618,7 @@ export function healthSummary(r: UsageReport, locale: Locale = 'es'): string {
   const data =
     peak?.percent != null
       ? t(locale, 'settings.providers.health.peakAt', { label: peak.label, percent: formatPercent(peak.percent) })
-      : r.spend
+      : r.spend && !isStaleSpend(r)
         ? `${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`
         : t(locale, 'settings.providers.health.dataReceived');
   return r.plan ? `${r.plan} · ${data}` : data;

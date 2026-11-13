@@ -275,6 +275,7 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             window_seconds: Some(86_400),
+            quota_source: None,
         };
         let keep = by_model
             .get(&name)

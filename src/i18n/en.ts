@@ -484,7 +484,7 @@ export const en = {
           stepTitle: 'Connect your account or paste an API key',
           advancedSummary: 'Advanced · URL, billing and usage endpoint',
           billingDayLabel: 'Billing start day',
-          billingDayHint: 'Only for GLM 5.3 (billed by Stripe period) when using the API key.',
+          billingDayHint: 'The day of the month your billing period starts. Only used if the NaN dashboard does not answer: for the GLM 5.3 period and to cut the aggregate consumption.',
           usageEndpointLabel: 'Usage endpoint · URL',
           usageEndpointHint: 'It is called with your key as Bearer and must return JSON.',
           pointerUsedLabel: 'JSON Pointer · used',
@@ -615,6 +615,7 @@ export const en = {
       error: 'Error',
       needsLogin: 'Signed out',
       unconfigured: 'Not set up',
+      noCurrentReading: 'No current reading',
     },
     action: {
       login: 'Sign in',
@@ -624,6 +625,7 @@ export const en = {
     },
     staleChip: 'cached',
     staleChipTitle: 'Data from the last good cycle',
+    staleReadAt: 'last read {date}',
     budget: 'Budget',
     copy: {
       summary: 'Copy summary',

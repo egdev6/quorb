@@ -88,9 +88,15 @@ pub async fn login_complete(link: &str) -> Result<String, String> {
     Ok(cookie_header(&jar))
 }
 
+/// Credentials accepted by the Cloud API: the dashboard session (cookie) or an API key (bearer).
+enum Auth<'a> {
+    Cookie(&'a str),
+    Bearer(&'a str),
+}
+
 /// Comprueba la sesión y devuelve el nombre de usuario.
 pub async fn whoami(http: &reqwest::Client, cookie: &str) -> Result<String, CloudError> {
-    let v = get_json(http, cookie, "/api/auth/me").await?;
+    let v = get_json(http, Auth::Cookie(cookie), "/api/auth/me").await?;
     Ok(v.pointer("/handle")
         .or_else(|| v.pointer("/username"))
         .or_else(|| v.pointer("/user/handle"))
@@ -108,11 +114,13 @@ pub struct CloudUsage {
 }
 
 pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, CloudError> {
-    let quota = get_json(http, cookie, "/api/usage/quota").await?;
+    let quota = send_json(http, quota_request(http, Auth::Cookie(cookie))).await?;
     // Las métricas son un extra: si fallan, seguimos con las cuotas.
-    let metrics = get_json(http, cookie, "/api/metrics/usage").await.ok();
+    let metrics = get_json(http, Auth::Cookie(cookie), "/api/metrics/usage")
+        .await
+        .ok();
     Ok(CloudUsage {
-        meters: parse_quota(&quota),
+        meters: session_meters(&quota),
         daily: metrics.as_ref().map(parse_daily).unwrap_or_default(),
         last24h: metrics
             .as_ref()
@@ -125,12 +133,40 @@ pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, C
     })
 }
 
-async fn get_json(http: &reqwest::Client, cookie: &str, path: &str) -> Result<Value, CloudError> {
-    let res = http
+/// Account quota of an API key: same payload as the dashboard (quota, usage and dates together).
+pub async fn fetch_account_quota(http: &reqwest::Client, key: &str) -> Result<Value, CloudError> {
+    send_json(http, quota_request(http, Auth::Bearer(key))).await
+}
+
+/// The request that reads the quota of the account (the payload the dashboard shows).
+fn quota_request(http: &reqwest::Client, auth: Auth<'_>) -> reqwest::RequestBuilder {
+    request(http, auth, "/api/usage/quota")
+}
+
+/// Builds the request of a Cloud path with the given credentials.
+fn request(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> reqwest::RequestBuilder {
+    let req = http
         .get(format!("{API}{path}"))
-        .header(reqwest::header::COOKIE, cookie)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .send()
+        .header(reqwest::header::ACCEPT, "application/json");
+    match auth {
+        Auth::Cookie(cookie) => req.header(reqwest::header::COOKIE, cookie),
+        Auth::Bearer(key) => req.bearer_auth(key),
+    }
+}
+
+async fn get_json(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> Result<Value, CloudError> {
+    send_json(http, request(http, auth, path)).await
+}
+
+/// Sends the request and parses the JSON body; the errors name the path of the request.
+async fn send_json(
+    http: &reqwest::Client,
+    req: reqwest::RequestBuilder,
+) -> Result<Value, CloudError> {
+    let req = req.build().map_err(|e| CloudError::Other(net_error(e)))?;
+    let path = req.url().path().to_string();
+    let res = http
+        .execute(req)
         .await
         .map_err(|e| CloudError::Other(net_error(e)))?;
     match res.status().as_u16() {
@@ -168,14 +204,22 @@ pub(crate) fn cookie_header(jar: &BTreeMap<String, String>) -> String {
         .join("; ")
 }
 
+/// Los medidores de la sesión: los modelos con cuota y sin consumo todavía no se cuentan
+/// (la sesión enseña el consumo de los modelos en uso). La ruta de API key sí los enseña:
+/// una asignación sin consumo es una asignación, no la ausencia de cuota.
+fn session_meters(v: &Value) -> Vec<Meter> {
+    parse_quota(v)
+        .into_iter()
+        .filter(|m| m.used.unwrap_or(0.0) > 0.0)
+        .collect()
+}
+
 /// Un medidor por modelo con tokens usados (ordenados por %, el mayor primero).
 pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
     let period_start = v
         .get("periodStart")
         .and_then(Value::as_str)
-        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .map(|d| d.and_utc());
+        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
     let mut out: Vec<Meter> = v
         .get("models")
         .and_then(Value::as_array)
@@ -184,33 +228,42 @@ pub(crate) fn parse_quota(v: &Value) -> Vec<Meter> {
         .filter_map(|m| {
             let model = m.get("model").and_then(Value::as_str)?;
             let used = m.get("tokensUsed").and_then(Value::as_f64)?;
-            let cap = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0)?;
-            if used <= 0.0 {
+            if used < 0.0 {
                 return None;
             }
+            // Denominator: `cap` is the allowance the account got for the current period,
+            // the same number the dashboard shows as "Allowance per billing period". A
+            // prorated first period arrives prorated, so it needs no special case.
+            let limit = m.get("cap").and_then(Value::as_f64).filter(|c| *c > 0.0)?;
             let end = m
                 .get("periodEnd")
                 .and_then(Value::as_str)
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc));
             // Mensual: desde periodStart. Periodo de facturación (glm5.3): un mes antes del fin.
+            // `periodStart` es una FECHA (el día del inicio del periodo) y `periodEnd` es un
+            // INSTANTE con hora: el inicio real del periodo es ese día a la MISMA hora del
+            // fin de ese modelo (la cuenta de verdad factura del 5 al 5 a las 22:15:31).
             let start = match (end, period_start) {
-                (Some(e), Some(s)) if m.get("windowHours").is_none() => Some(s.min(e)),
+                (Some(e), Some(d)) if m.get("windowHours").is_none() => {
+                    Some(d.and_time(e.time()).and_utc().min(e))
+                }
                 (Some(e), _) => e.checked_sub_months(Months::new(1)),
                 _ => None,
             };
             Some(Meter {
                 id: format!("model:{model}"),
                 label: model.to_string(),
-                percent: Some(used / cap * 100.0),
+                percent: Some(used / limit * 100.0),
                 used: Some(used),
-                limit: Some(cap),
+                limit: Some(limit),
                 unit: Some("tokens".into()),
                 resets_at: end.map(|e| e.to_rfc3339()),
                 window_seconds: match (start, end) {
                     (Some(s), Some(e)) if e > s => Some((e - s).num_seconds()),
                     _ => None,
                 },
+                quota_source: None,
             })
         })
         .collect();
@@ -245,6 +298,17 @@ pub(crate) fn parse_daily(v: &Value) -> Vec<Daily> {
         .collect()
 }
 
+/// Payload real de una cuenta (censurado): es lo que devuelve
+/// `GET https://cloud-api.nan.builders/api/usage/quota` con la API key de la cuenta.
+/// Fixture canónico de #252: la forma real del contrato, sin campos inventados.
+#[cfg(test)]
+pub(crate) fn real_account_payload() -> Value {
+    serde_json::json!({"periodStart": "2026-11-05", "models": [
+        {"model": "deepseek-v4-flash", "tokensUsed": 955_581_032u64, "cap": 1_000_000_000u64, "remaining": 44_418_968u64, "periodEnd": "2026-12-05T22:15:31Z", "extraTokens": 0u64, "extraUsable": true},
+        {"model": "glm5.3-flash", "tokensUsed": 496_625_346u64, "cap": 500_000_000u64, "remaining": 3_374_654u64, "periodEnd": "2026-12-05T22:15:31Z", "extraTokens": 0u64, "extraUsable": true}
+    ]})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,21 +316,178 @@ mod tests {
 
     #[test]
     fn parses_quota_like_the_dashboard() {
-        let v = json!({"periodStart": "2026-10-01", "models": [
-            {"model": "deepseek-v4-flash", "tokensUsed": 444165538u64, "cap": 3000000000u64, "remaining": 2555834462u64, "periodEnd": "2026-11-01T00:00:00Z"},
-            {"model": "mimo-v2.6-flash", "tokensUsed": 75802306, "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"},
-            {"model": "glm5.3", "tokensUsed": 0, "cap": 3000000000u64, "periodEnd": "2026-10-17T05:53:20Z", "fullWindowTokens": 400000000, "windowHours": 4},
-            {"model": "qwen3.8-flash", "tokensUsed": 0, "cap": 500000000, "periodEnd": "2026-11-01T00:00:00Z"}
+        // The real payload of an account is the canonical fixture: two metered models,
+        // the same numbers the dashboard shows ("your tier").
+        let m = parse_quota(&real_account_payload());
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].id, "model:glm5.3-flash");
+        assert_eq!(m[1].id, "model:deepseek-v4-flash");
+        assert!((m[0].percent.unwrap() - 99.325).abs() < 0.01);
+        assert!((m[1].percent.unwrap() - 95.558).abs() < 0.01);
+        assert_eq!(m[0].resets_at.as_deref(), Some("2026-12-05T22:15:31+00:00"));
+        assert_eq!(m[0].window_seconds, Some(30 * 86400));
+    }
+
+    #[test]
+    fn the_account_period_starts_at_the_hour_of_its_own_end() {
+        // The real account payload: `periodStart` is a DATE (the 5th) and `periodEnd` is
+        // an INSTANT (the 5th of the next month at 22:15:31). The real start of the period
+        // is that day at the same hour, so the window is exactly 30 days, not 30 days
+        // plus the hours of the day it starts at.
+        let m = parse_quota(&real_account_payload());
+        let deepseek = m
+            .iter()
+            .find(|x| x.id == "model:deepseek-v4-flash")
+            .expect("deepseek meter");
+        let resets = deepseek
+            .resets_at
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&Utc))
+            .expect("the meter resets at an instant");
+        assert_eq!(
+            resets,
+            DateTime::parse_from_rfc3339("2026-12-05T22:15:31Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(deepseek.window_seconds, Some(2_592_000));
+        assert_eq!(deepseek.window_seconds, Some(30 * 86400));
+    }
+
+    #[test]
+    fn a_period_starts_at_the_hour_of_its_own_end() {
+        // The rule of the start: `periodStart` is a DATE (the 5th) and `periodEnd` is an
+        // INSTANT, so the period starts on that day at the same hour as its end. The
+        // trivial case: a period that ends at midnight starts at midnight too and its
+        // window is exactly the 30 days of the period.
+        let v = json!({"periodStart": "2026-11-05", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-12-05T00:00:00Z"}
         ]});
         let m = parse_quota(&v);
-        assert_eq!(m.len(), 2);
-        assert_eq!(m[0].label, "deepseek-v4-flash");
-        assert_eq!(m[0].id, "model:deepseek-v4-flash");
-        assert_eq!(m[1].id, "model:mimo-v2.6-flash");
-        assert!((m[0].percent.unwrap() - 14.8055).abs() < 0.01);
-        assert_eq!(m[0].resets_at.as_deref(), Some("2026-11-01T00:00:00+00:00"));
-        assert_eq!(m[0].window_seconds, Some(31 * 86400));
-        assert_eq!(m[1].label, "mimo-v2.6-flash");
+        assert_eq!(m[0].window_seconds, Some(2_592_000));
+
+        // The same rule with an end that is NOT at midnight: the start takes that hour,
+        // so the window is still exactly the 30 days of the period (and not 30 days plus
+        // the hours of the day it starts at).
+        let v = json!({"periodStart": "2026-11-05", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-12-05T03:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m[0].window_seconds, Some(2_592_000));
+    }
+
+    #[test]
+    fn the_canonical_fixture_yields_the_dates_of_the_real_account() {
+        // The fixture is the contract of the provider, but what has to hold is what the
+        // parsing gives: the real account's period, from the 5th at 22:15:31 to the 5th
+        // of the next month at the same hour.
+        let end = DateTime::parse_from_rfc3339("2026-12-05T22:15:31Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let start = DateTime::parse_from_rfc3339("2026-11-05T22:15:31Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let meters = parse_quota(&real_account_payload());
+        assert_eq!(meters.len(), 2);
+        for meter in &meters {
+            assert_eq!(
+                meter
+                    .resets_at
+                    .as_deref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|d| d.with_timezone(&Utc)),
+                Some(end)
+            );
+            let seconds = meter.window_seconds.expect("the meter has a window");
+            assert_eq!(seconds, 2_592_000);
+            // The window starts on the 5th at the hour of the end, not at midnight.
+            assert_eq!(end.timestamp() - seconds, start.timestamp());
+        }
+    }
+
+    #[test]
+    fn uses_the_account_allowance_from_the_payload() {
+        // Real payload of an account: `cap` is the allowance of the plan (1.000M) and
+        // `tokensUsed` the consumption of that same period.
+        let m = parse_quota(&real_account_payload());
+        let deepseek = m
+            .iter()
+            .find(|x| x.id == "model:deepseek-v4-flash")
+            .expect("deepseek meter");
+        let glm = m
+            .iter()
+            .find(|x| x.id == "model:glm5.3-flash")
+            .expect("glm meter");
+        assert_eq!(deepseek.limit, Some(1e9));
+        assert_eq!(deepseek.used, Some(955_581_032.0));
+        assert!((deepseek.percent.unwrap() - 95.558).abs() < 0.01);
+        assert_eq!(glm.limit, Some(5e8));
+        assert_eq!(glm.used, Some(496_625_346.0));
+        assert!((glm.percent.unwrap() - 99.325).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_session_path_skips_the_models_with_no_consumption() {
+        // The session shows the consumption of the models in use: a model with an
+        // allowance and no consumption yet does not appear there.
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "glm5.3", "tokensUsed": 0, "cap": 3000000000u64, "periodEnd": "2026-11-01T00:00:00Z"},
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let meters = session_meters(&v);
+        assert_eq!(meters.len(), 1);
+        assert_eq!(meters[0].id, "model:deepseek-v4-flash");
+    }
+
+    #[test]
+    fn unknown_fields_do_not_change_the_meters() {
+        // We assert nothing about the meaning of `extraTokens`/`extraUsable`: the only
+        // claim here is that the parser ignores the fields it does not know.
+        let with_extra = real_account_payload();
+        let mut without_extra = real_account_payload();
+        if let Some(models) = without_extra["models"].as_array_mut() {
+            for model in models {
+                if let Some(o) = model.as_object_mut() {
+                    o.remove("extraTokens");
+                    o.remove("extraUsable");
+                }
+            }
+        }
+        assert_eq!(parse_quota(&with_extra), parse_quota(&without_extra));
+    }
+
+    #[test]
+    fn prorated_first_period_uses_the_prorated_allowance() {
+        // On the first period the account only has a fraction of the plan, so the payload
+        // prorates `cap`: that prorated value is the allowance of the period.
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "glm5.3", "tokensUsed": 100_000_000u64, "cap": 333_333_333u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let m = parse_quota(&v);
+        assert_eq!(m[0].limit, Some(333_333_333.0));
+        assert!((m[0].percent.unwrap() - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn without_quota_fields_there_is_no_meter() {
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 123_456u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        assert!(parse_quota(&v).is_empty());
+    }
+
+    #[test]
+    fn each_account_gets_its_own_allowance() {
+        let payload = |cap: u64| {
+            json!({"periodStart": "2026-10-01", "models": [
+                {"model": "deepseek-v4-flash", "tokensUsed": 100_000_000u64, "cap": cap, "periodEnd": "2026-11-01T00:00:00Z"}
+            ]})
+        };
+        let a = parse_quota(&payload(1_000_000_000));
+        let b = parse_quota(&payload(500_000_000));
+        assert_eq!(a[0].limit, Some(1e9));
+        assert_eq!(b[0].limit, Some(5e8));
     }
 
     #[test]
@@ -328,5 +549,49 @@ mod tests {
         assert!(!is_nan_host(
             &reqwest::Url::parse("http://cloud.nan.builders/x").unwrap()
         ));
+    }
+
+    #[test]
+    fn the_account_quota_request_carries_the_api_key_as_bearer() {
+        let http = reqwest::Client::new();
+        let req = quota_request(&http, Auth::Bearer("nan-key"))
+            .build()
+            .expect("the request builds without network");
+        assert_eq!(
+            req.url().as_str(),
+            "https://cloud-api.nan.builders/api/usage/quota"
+        );
+        assert_eq!(
+            req.headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("Bearer nan-key")
+        );
+        assert_eq!(
+            req.headers()
+                .get(reqwest::header::ACCEPT)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json")
+        );
+        assert!(req.headers().get(reqwest::header::COOKIE).is_none());
+    }
+
+    #[test]
+    fn the_session_quota_request_carries_the_cookie_and_no_authorization() {
+        let http = reqwest::Client::new();
+        let req = quota_request(&http, Auth::Cookie("session=abc"))
+            .build()
+            .expect("the request builds without network");
+        assert_eq!(
+            req.url().as_str(),
+            "https://cloud-api.nan.builders/api/usage/quota"
+        );
+        assert_eq!(
+            req.headers()
+                .get(reqwest::header::COOKIE)
+                .and_then(|v| v.to_str().ok()),
+            Some("session=abc")
+        );
+        assert!(req.headers().get(reqwest::header::AUTHORIZATION).is_none());
     }
 }

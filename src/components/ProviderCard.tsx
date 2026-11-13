@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Locale, UsageReport } from '../lib/types';
-import { formatMoney } from '../lib/format';
+import { formatMoney, currentMeters, isStaleMeter, isStaleSpend, formatShortDate } from '../lib/format';
 import { t } from '../i18n';
 import { MeterBar } from './MeterBar';
 import { popupMeterColor } from '../lib/popup-preferences';
@@ -55,7 +55,23 @@ function ActionButton({ report, locale = 'es' }: { report: UsageReport; locale?:
 export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; locale?: Locale }) {
   const { spend } = report;
   const tone = STATUS_TONE[report.status];
-  let ring = 0;
+  // Los medidores vigentes con porcentaje: la lista que comparte con el orbe y el detalle.
+  const currentRings = currentMeters(report).filter((m) => m.percent != null);
+  // El gasto conservado (informe entero viejo) no se presenta como una cifra actual:
+  // se ve, pero marcado como viejo y con la fecha de su última lectura.
+  const staleSpend = isStaleSpend(report);
+  const spendReadAt = staleSpend ? formatShortDate(report.fetchedAt, locale) : null;
+  // La marca de lo viejo para el gasto conservado: el importe y su presupuesto son
+  // de la misma lectura vieja, así que los dos se marcan igual.
+  const spendMark = staleSpend ? (
+    <span className="eg-stat__delta">
+      {/* Mismas marcas que los medidores viejos (el CSS no cambia). */}
+      <span className="eg-status eg-status--neutral" title={t(locale, 'details.staleChipTitle')}>
+        {t(locale, 'details.staleChip')}
+      </span>
+      {spendReadAt && <span className="q-spend__stale-at">{t(locale, 'details.staleReadAt', { date: spendReadAt })}</span>}
+    </span>
+  ) : null;
   return (
     <div className="q-card" data-status={report.status} data-provider={report.id}>
       <div className="eg-module-card__head">
@@ -78,15 +94,18 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
       {report.meters.length > 0 && (
         <div className="q-card__meters">
           {report.meters.map((m) => {
-            // Count only percentage quotas, just like the gauge and detail series.
-            const index = m.percent != null ? ring++ : null;
-            const r = index != null && index < 3 ? index + 1 : null;
+            // El índice de anillo se cuenta sobre la MISMA lista que usan el orbe y
+            // el detalle: los medidores vigentes con porcentaje. Lo viejo no ocupa
+            // lugar en la leyenda (ni aporta color ni clave de anillo).
+            const index = currentRings.indexOf(m);
+            const r = index >= 0 && index < 3 ? index + 1 : null;
             return (
               <MeterBar
                 key={m.id || m.label}
                 meter={m}
                 ring={r}
-                color={index != null ? popupMeterColor(report, m, index) : undefined}
+                color={index >= 0 ? popupMeterColor(report, m, index) : undefined}
+                stale={isStaleMeter(report, m)}
                 locale={locale}
               />
             );
@@ -99,11 +118,13 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
           <div className="eg-stat eg-stat--sm">
             <span className="eg-stat__label">{spend.periodLabel}</span>
             <span className="eg-stat__value">{formatMoney(spend.amount, spend.currency)}</span>
+            {spendMark}
           </div>
           {spend.budget != null && spend.budget > 0 && (
             <div className="eg-stat eg-stat--sm">
               <span className="eg-stat__label">{t(locale, 'details.budget')}</span>
               <span className="eg-stat__value">{formatMoney(spend.budget, spend.currency)}</span>
+              {spendMark}
             </div>
           )}
         </div>
