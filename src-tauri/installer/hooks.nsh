@@ -4,6 +4,10 @@
   !if "${INSTALLMODE}" != "currentUser"
     !error "Quorb delete-data cleanup only supports currentUser installers"
   !endif
+  ; An uninstall abandons any unconsumed installer choice, except during update.
+  ${If} $UpdateMode <> 1
+    Delete "$APPDATA\${BUNDLEID}\installer-locale"
+  ${EndIf}
   ; The template also deletes AppData later. Disarm its checkbox in every
   ; keep-data mode, including installer-driven manual upgrades/reinstalls (_?=).
   ${If} $UpdateMode = 1
@@ -39,5 +43,33 @@
         Abort
       ${EndIf}
     ${EndIf}
+  ${EndIf}
+!macroend
+
+; Only a completed interactive install hands its choice to the first app start.
+!macro NSIS_HOOK_POSTINSTALL
+  ${IfNot} ${Silent}
+  ${AndIf} $PassiveMode <> 1
+  ${AndIf} $UpdateMode <> 1
+    CreateDirectory "$APPDATA\${BUNDLEID}"
+    ; Discard any previous choice before attempting a new handoff.
+    Delete "$APPDATA\${BUNDLEID}\installer-locale"
+    ClearErrors
+    FileOpen $0 "$APPDATA\${BUNDLEID}\installer-locale" w
+    ${IfNot} ${Errors}
+      ${If} $LANGUAGE = 1034
+        FileWrite $0 "es$\r$\n"
+      ${Else}
+        FileWrite $0 "en$\r$\n"
+      ${EndIf}
+      FileWrite $0 "${VERSION}$\r$\n"
+      FileClose $0
+      ; A partial write is not a choice: let the app use its own picker.
+      ${If} ${Errors}
+        Delete "$APPDATA\${BUNDLEID}\installer-locale"
+      ${EndIf}
+    ${EndIf}
+  ${Else}
+    Delete "$APPDATA\${BUNDLEID}\installer-locale"
   ${EndIf}
 !macroend
