@@ -244,7 +244,7 @@ export function SecretInput({ id, label, configured, onSaved, hint, locale = 'es
 }
 
 /** Conectar NaN Cloud como la CLI oficial: enlace de un solo uso enviado al correo. */
-function NanConnect({ connected, onChange, account }: { connected: boolean; onChange: () => void; account?: string }) {
+export function NanConnect({ locale = 'es', connected, onChange, account }: { locale?: Locale; connected: boolean; onChange: () => void; account?: string }) {
   const [email, setEmail] = useState('');
   const [link, setLink] = useState('');
   const [step, setStep] = useState<'email' | 'link'>('email');
@@ -266,7 +266,7 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
   if (connected) {
     return (
       <div className="q-inline">
-        <span className="eg-status eg-status--success">Cuenta de NaN Cloud conectada{msg ? ` · ${msg}` : ''}</span>
+        <span className="eg-status eg-status--success">{t(locale, 'settings.providers.nanConnect.connectedAccount')}{msg ? ` · ${msg}` : ''}</span>
         <button
           className="eg-btn eg-btn--destructive eg-btn--sm"
           disabled={busy}
@@ -277,7 +277,7 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
             })
           }
         >
-          Desconectar
+          {t(locale, 'settings.providers.nanConnect.disconnect')}
         </button>
       </div>
     );
@@ -285,10 +285,10 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
 
   return (
     <div className="eg-field">
-      <span className="eg-field__label">Conectar tu cuenta (recomendado)</span>
+      <span className="eg-field__label">{t(locale, 'settings.providers.nanConnect.label')}</span>
       {step === 'email' ? (
         <div className="q-inline">
-          <input type="email" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input type="email" placeholder={t(locale, 'settings.providers.nanConnect.emailPlaceholder')} value={email} onChange={(e) => setEmail(e.target.value)} />
           <button
             className="eg-btn eg-btn--primary"
             disabled={busy || !email.includes('@')}
@@ -296,11 +296,11 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
               run(async () => {
                 await api.nanLoginRequest(email);
                 setStep('link');
-                setMsg('Te hemos enviado un enlace. Cópialo (sin abrirlo) y pégalo aquí.');
+                setMsg(t(locale, 'settings.providers.nanConnect.linkSent'));
               })
             }
           >
-            Enviar enlace
+            {t(locale, 'settings.providers.nanConnect.sendLink')}
           </button>
         </div>
       ) : (
@@ -312,34 +312,31 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
             onClick={() =>
               run(async () => {
                 const who = await api.nanLoginComplete(link, account);
-                setMsg(`Conectado como ${who}`);
+                setMsg(t(locale, 'settings.providers.nanConnect.connectedAs', { who }));
                 setLink('');
                 onChange();
               })
             }
           >
-            Conectar
+            {t(locale, 'settings.providers.connect')}
           </button>
           <button className="eg-btn eg-btn--ghost" disabled={busy} onClick={() => setStep('email')}>
-            Volver
+            {t(locale, 'settings.providers.nanConnect.back')}
           </button>
         </div>
       )}
-      <small className="eg-field__hint">
-        {msg ??
-          'Igual que «nan auth login --email»: NaN te manda un enlace de un solo uso. No lo abras en el navegador (se gastaría): cópialo y pégalo aquí. La sesión se guarda en el almacén de credenciales del sistema y da los mismos datos que tu dashboard.'}
-      </small>
+      <small className="eg-field__hint">{msg ?? t(locale, 'settings.providers.nanConnect.hint')}</small>
     </div>
   );
 }
 
 /** Muestra las respuestas en crudo de la API de NaN con tu key (para depurar). */
-function NanProbe() {
+export function NanProbe({ locale = 'es' }: { locale?: Locale } = {}) {
   const [out, setOut] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
     <details className="q-details">
-      <summary>Probar la API de NaN con la key</summary>
+      <summary>{t(locale, 'settings.providers.nanProbe.title')}</summary>
       <button
         className="eg-btn eg-btn--ghost"
         disabled={busy}
@@ -354,7 +351,7 @@ function NanProbe() {
           }
         }}
       >
-        {busy ? 'Consultando…' : 'Ver respuestas de /v1/models y /v1/usage'}
+        {busy ? t(locale, 'settings.providers.nanProbe.checking') : t(locale, 'settings.providers.nanProbe.run')}
       </button>
       {out && <pre className="q-pre">{out}</pre>}
     </details>
@@ -362,7 +359,7 @@ function NanProbe() {
 }
 
 /** Contraseña del dashboard de 9Router: se guarda y se prueba el login a la vez. */
-function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolean; baseUrl: string; onChange: () => void }) {
+export function NineRouterConnect({ locale = 'es', connected, baseUrl, onChange }: { locale?: Locale; connected: boolean; baseUrl: string; onChange: () => void }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -374,12 +371,12 @@ function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolea
     try {
       if (!value.trim()) {
         await api.nineRouterLogout();
-        setMsg('9Router desconectado');
+        setMsg(t(locale, 'settings.providers.nineRouterConnect.disconnectedMsg'));
       } else {
         // Prueba contra la URL del borrador: si el usuario cambió «Base URL» sin
         // guardar, el login debe ir a esa, no a la persistida (regresión punto 4).
         setOut(await api.nineRouterLogin(value, baseUrl));
-        setMsg('Conectado');
+        setMsg(t(locale, 'settings.providers.nineRouterConnect.connectedMsg'));
       }
       setPassword('');
       onChange();
@@ -392,28 +389,26 @@ function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolea
 
   return (
     <details className="q-details" open={!connected}>
-      <summary>{connected ? '9Router conectado · volver a conectar' : 'Conectar con el dashboard'}</summary>
+      <summary>{connected ? t(locale, 'settings.providers.nineRouterConnect.connectedSummary') : t(locale, 'settings.providers.nineRouterConnect.connectSummary')}</summary>
       <div className="q-inline">
         <input
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={connected ? '•••••••• (configurada)' : 'Contraseña del dashboard'}
+          placeholder={connected ? t(locale, 'settings.providers.nineRouterConnect.placeholderConfigured') : t(locale, 'settings.providers.nineRouterConnect.placeholderPassword')}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
         <button className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
-          Guardar y probar
+          {t(locale, 'settings.providers.nineRouterConnect.saveAndTest')}
         </button>
         {connected && (
-          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title="Desconectar 9Router">
-            Quitar
+          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title={t(locale, 'settings.providers.nineRouterConnect.removeTitle')}>
+            {t(locale, 'settings.providers.nineRouterConnect.remove')}
           </button>
         )}
       </div>
-      <small className="eg-field__hint">
-        {msg ?? 'La contraseña del dashboard de 9Router (por defecto «123456» hasta que la cambies). Se guarda en el almacén seguro del sistema.'}
-      </small>
+      <small className="eg-field__hint">{msg ?? t(locale, 'settings.providers.nineRouterConnect.hint')}</small>
       {out && <pre className="q-pre">{out}</pre>}
     </details>
   );
@@ -916,7 +911,7 @@ export function CliConnectView({
         <li>
           <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
           <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
-          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+          {provider === 'codex' ? <CodexInstall locale={locale} controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
         </li>
       )}
       <li data-done={connected || undefined}>
@@ -1089,7 +1084,7 @@ export function AccountEditor({
           <>
             <li data-done={has('nan_session') || has('nan_api_key') || undefined}>
               <b>{t(locale, 'settings.providers.accountEditor.nanTitle')}</b>
-              <NanConnect account={a.id} connected={has('nan_session')} onChange={onSecrets} />
+              <NanConnect locale={locale} account={a.id} connected={has('nan_session')} onChange={onSecrets} />
               <SecretInput locale={locale} id={key('nan_api_key')} label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')} configured={has('nan_api_key')} onSaved={onSecrets} />
             </li>
             <li data-done>
@@ -2279,6 +2274,209 @@ export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecre
   );
 }
 
+/** Paneles de APIs y conexiones NaN/9Router (T2c slice 2 C2, #66). Extraídos de
+ *  `Settings()` para poder renderizarlos en pruebas de i18n. Los títulos son marcas
+ *  y no se traducen; tampoco `Base URL` ni los rótulos de consolas de terceros. */
+export function OpenRouterPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.openrouter.kicker')} title="OpenRouter">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.openrouter.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.openrouter_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.apiKey')}</b>
+          <SecretInput
+            locale={locale}
+            id="openrouter_api_key"
+            label={t(locale, 'settings.providers.apiKey')}
+            configured={!!secrets.openrouter_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>.</>}
+          />
+        </li>
+        <HealthStep id="openrouter" {...healthFor('openrouter', !cfg.openrouter.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.nan.kicker')} title="NaN Builders">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
+      <p className="q-note">
+        {t(locale, 'settings.providers.panels.nan.noteBefore')} <code>/v1/usage</code> {t(locale, 'settings.providers.panels.nan.noteAfter')} <Link href={LINKS.nanDocs}>Docs</Link>
+      </p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.nan_session || !!secrets.nan_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.panels.nan.stepTitle')}</b>
+          <NanConnect locale={locale} connected={!!secrets.nan_session} onChange={loadSecrets} />
+          <SecretInput
+            locale={locale}
+            id="nan_api_key"
+            label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')}
+            configured={!!secrets.nan_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.nanKeys}>cloud.nan.builders</Link> › API Keys</>}
+          />
+        </li>
+        <li data-done>
+          <b>{t(locale, 'settings.providers.planLabel')}</b>
+          <Field label={t(locale, 'settings.providers.planLabel')}>
+            <select value={cfg.nan.plan} onChange={(e) => set('nan', { plan: e.target.value })}>
+              <option value="community">nan_community</option>
+              <option value="member">nan_member</option>
+              <option value="premium">GLM Premium</option>
+            </select>
+          </Field>
+        </li>
+        <HealthStep id="nan" {...healthFor('nan', !cfg.nan.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.nan.advancedSummary')}</summary>
+        <Field label="Base URL">
+          <input type="text" spellCheck={false} value={cfg.nan.baseUrl} onChange={(e) => set('nan', { baseUrl: e.target.value })} />
+        </Field>
+        <Field label={t(locale, 'settings.providers.panels.nan.billingDayLabel')} hint={t(locale, 'settings.providers.panels.nan.billingDayHint')}>
+          <input type="number" min={1} max={28} value={cfg.nan.billingDay} onChange={(e) => set('nan', { billingDay: Number(e.target.value) || 1 })} />
+        </Field>
+        <NanProbe locale={locale} />
+        <Field label={t(locale, 'settings.providers.panels.nan.usageEndpointLabel')} hint={t(locale, 'settings.providers.panels.nan.usageEndpointHint')}>
+          <input type="text" spellCheck={false} value={cfg.nan.usageUrl ?? ''} onChange={(e) => set('nan', { usageUrl: strOrNull(e.target.value) })} />
+        </Field>
+        <div className="q-cols">
+          <Field label={t(locale, 'settings.providers.panels.nan.pointerUsedLabel')} hint={t(locale, 'settings.providers.panels.nan.pointerUsedHint')}>
+            <input type="text" spellCheck={false} value={cfg.nan.usedPointer ?? ''} onChange={(e) => set('nan', { usedPointer: strOrNull(e.target.value) })} />
+          </Field>
+          <Field label={t(locale, 'settings.providers.panels.nan.pointerLimitLabel')} hint={t(locale, 'settings.providers.panels.nan.pointerLimitHint')}>
+            <input type="text" spellCheck={false} value={cfg.nan.limitPointer ?? ''} onChange={(e) => set('nan', { limitPointer: strOrNull(e.target.value) })} />
+          </Field>
+        </div>
+        <Field label={t(locale, 'settings.providers.panels.nan.usageLabelField')}>
+          <input type="text" value={cfg.nan.usageLabel ?? ''} placeholder={t(locale, 'settings.providers.panels.nan.usageLabelPlaceholder')} onChange={(e) => set('nan', { usageLabel: strOrNull(e.target.value) })} />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function NineRouterPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.nineRouter.kicker')} title="9Router">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={cfg.nineRouter.enabled} onChange={(v) => setVisibility('nine_router', v)} />
+      <p className="q-note">
+        {t(locale, 'settings.providers.panels.nineRouter.noteBefore')} <b>9Router</b> {t(locale, 'settings.providers.panels.nineRouter.noteAfter')}
+      </p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.nineRouter.stepsAria')}>
+        <li data-done={!!secrets.nine_router_password || undefined}>
+          <b>{t(locale, 'settings.providers.panels.nineRouter.connectTitle')}</b>
+          <NineRouterConnect locale={locale} connected={!!secrets.nine_router_password} baseUrl={cfg.nineRouter.baseUrl} onChange={loadSecrets} />
+        </li>
+        <li data-done>
+          <b>{t(locale, 'settings.providers.panels.nineRouter.periodTitle')}</b>
+          <Field label={t(locale, 'settings.providers.panels.nineRouter.periodLabel')} hint={t(locale, 'settings.providers.panels.nineRouter.periodHint')}>
+            <select value={cfg.nineRouter.period} onChange={(e) => set('nineRouter', { period: e.target.value as NineRouterPeriod })}>
+              <option value="today">{t(locale, 'settings.providers.panels.nineRouter.periodToday')}</option>
+              <option value="24h">{t(locale, 'settings.providers.panels.nineRouter.period24h')}</option>
+              <option value="7d">{t(locale, 'settings.providers.panels.nineRouter.period7d')}</option>
+              <option value="30d">{t(locale, 'settings.providers.panels.nineRouter.period30d')}</option>
+              <option value="60d">{t(locale, 'settings.providers.panels.nineRouter.period60d')}</option>
+              <option value="all">{t(locale, 'settings.providers.panels.nineRouter.periodAll')}</option>
+            </select>
+          </Field>
+          <Toggle
+            label={t(locale, 'settings.providers.panels.nineRouter.subprovidersToggle')}
+            checked={cfg.nineRouter.showSubProviders}
+            onChange={(v) => set('nineRouter', { showSubProviders: v })}
+          />
+          <Field label={t(locale, 'settings.providers.panels.nineRouter.minSpendLabel')} hint={t(locale, 'settings.providers.panels.nineRouter.minSpendHint')}>
+            <input
+              type="number"
+              min={0}
+              step="0.5"
+              value={cfg.nineRouter.minSpendUsd}
+              onChange={(e) => set('nineRouter', { minSpendUsd: Math.max(0, Number(e.target.value) || 0) })}
+            />
+          </Field>
+          <Field label={t(locale, 'settings.providers.panels.nineRouter.budgetLabel')} hint={t(locale, 'settings.providers.panels.nineRouter.budgetHint')}>
+            <input
+              type="number"
+              min={0}
+              step="1"
+              value={cfg.nineRouter.monthlyBudgetUsd ?? ''}
+              onChange={(e) => set('nineRouter', { monthlyBudgetUsd: strOrNull(e.target.value) == null ? null : Number(e.target.value) })}
+            />
+          </Field>
+        </li>
+        <HealthStep id="nine_router" {...healthFor('nine_router', !cfg.nineRouter.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.nineRouter.advancedSummary')}</summary>
+        <Field label="Base URL" hint={t(locale, 'settings.providers.panels.nineRouter.baseUrlHint')}>
+          <input type="text" spellCheck={false} value={cfg.nineRouter.baseUrl} onChange={(e) => set('nineRouter', { baseUrl: e.target.value })} />
+        </Field>
+      </details>
+      {(() => {
+        // Suborbes de 9Router ocultados desde el widget: se pueden recuperar aquí.
+        const hidden = hiddenNineRouterIds(cfg.hiddenProviders);
+        if (hidden.length === 0) return null;
+        return (
+          <div className="eg-field">
+            <span className="eg-field__label">{t(locale, 'settings.providers.panels.nineRouter.hiddenTitle')}</span>
+            <div className="q-chips">
+              {hidden.map((id) => (
+                <button key={id} type="button" className="eg-chip" onClick={() => set('hiddenProviders', revealIds(cfg.hiddenProviders, [id]))}>
+                  {nineRouterSubName(id)} · {t(locale, 'settings.providers.panels.nineRouter.hiddenShow')}
+                </button>
+              ))}
+            </div>
+            <small className="eg-field__hint">{t(locale, 'settings.providers.panels.nineRouter.hiddenHint')}</small>
+          </div>
+        );
+      })()}
+    </Section>
+  );
+}
+
+export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor, tab }: PanelProps & { tab: 'anthropic_api' | 'openai_api' }) {
+  const k = tab === 'anthropic_api' ? 'anthropicApi' : 'openaiApi';
+  const secret: SecretKey = tab === 'anthropic_api' ? 'anthropic_admin_key' : 'openai_admin_key';
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.adminApi.kicker')} title={tab === 'anthropic_api' ? 'Anthropic API' : 'OpenAI API'}>
+      <Toggle label={t(locale, 'settings.providers.panels.adminApi.showSpend')} checked={isAccountVisible(cfg, tab, cfg[k].enabled)} onChange={(v) => setVisibility(tab, v)} />
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets[secret] || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.adminKey')}</b>
+          <SecretInput
+            locale={locale}
+            id={secret}
+            label={tab === 'anthropic_api' ? 'Admin API key (sk-ant-admin…)' : t(locale, 'settings.providers.accountEditor.adminKey')}
+            configured={!!secrets[secret]}
+            onSaved={loadSecrets}
+            hint={
+              tab === 'anthropic_api' ? (
+                <>
+                  {t(locale, 'settings.providers.panels.adminApi.anthropicHintBefore')} <Link href={LINKS.anthropicAdmin}>Admin key</Link>{' '}
+                  {t(locale, 'settings.providers.panels.adminApi.anthropicHintAfter')}
+                </>
+              ) : (
+                <>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openaiAdmin}>Organization › Admin keys</Link>.</>
+              )
+            }
+          />
+        </li>
+        <li data-done={cfg[k].monthlyBudgetUsd != null || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.budgetTitle')}</b>
+          <Field label={t(locale, 'settings.providers.accountEditor.budgetLabel')}>
+            <input type="number" min={0} step="any" value={cfg[k].monthlyBudgetUsd ?? ''} onChange={(e) => set(k, { monthlyBudgetUsd: numOrNull(e.target.value) })} />
+          </Field>
+        </li>
+        <HealthStep id={tab} {...healthFor(tab, !cfg[k].enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
 
 export function Settings() {
   const appName = useAppName();
@@ -2783,207 +2981,17 @@ export function Settings() {
       {tab === 'copilot' && <CopilotPanel {...panel} />}
 
       {tab === 'minimax' && <MiniMaxPanel {...panel} />}
-      {tab === 'openrouter' && (
-        <Section kicker="Pago por uso · API oficial" title="OpenRouter">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
-          <p className="q-note">Gasto del mes y de hoy, límite de la key (si tiene) y saldo de la cuenta.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.openrouter_api_key || undefined}>
-              <b>API key</b>
-              <SecretInput
-                locale={locale}
-                id="openrouter_api_key"
-                label="API key"
-                configured={!!secrets.openrouter_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>.</>}
-              />
-            </li>
-            <HealthStep id="openrouter" {...healthFor('openrouter', !cfg.openrouter.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'openrouter' && <OpenRouterPanel {...panel} />}
 
       {tab === 'zai' && <ZaiPanel {...panel} />}
 
       {tab === 'opencode_go' && <OpenCodeGoPanel {...panel} />}
 
-      {tab === 'nan' && (
-        <Section kicker="Suscripción · cuenta o API key" title="NaN Builders">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
-          <p className="q-note">
-            Con la cuenta conectada ves lo mismo que en tu dashboard: tokens usados frente a la cuota de cada modelo, cuándo se reinicia y la serie
-            diaria. Sin cuenta, la API key usa <code>/v1/usage</code> y las cuotas publicadas. <Link href={LINKS.nanDocs}>Docs</Link>
-          </p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.nan_session || !!secrets.nan_api_key || undefined}>
-              <b>Conecta tu cuenta o pega una API key</b>
-              <NanConnect connected={!!secrets.nan_session} onChange={loadSecrets} />
-              <SecretInput
-                locale={locale}
-                id="nan_api_key"
-                label="API key (alternativa)"
-                configured={!!secrets.nan_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.nanKeys}>cloud.nan.builders</Link> › API Keys</>}
-              />
-            </li>
-            <li data-done>
-              <b>Plan</b>
-              <Field label="Plan">
-                <select value={cfg.nan.plan} onChange={(e) => set('nan', { plan: e.target.value })}>
-                  <option value="community">nan_community</option>
-                  <option value="member">nan_member</option>
-                  <option value="premium">GLM Premium</option>
-                </select>
-              </Field>
-            </li>
-            <HealthStep id="nan" {...healthFor('nan', !cfg.nan.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · URL, facturación y endpoint de consumo</summary>
-            <Field label="Base URL">
-              <input type="text" spellCheck={false} value={cfg.nan.baseUrl} onChange={(e) => set('nan', { baseUrl: e.target.value })} />
-            </Field>
-            <Field label="Día de inicio de facturación" hint="Solo para GLM 5.3 (cuenta por periodo de Stripe) cuando usas la API key.">
-              <input type="number" min={1} max={28} value={cfg.nan.billingDay} onChange={(e) => set('nan', { billingDay: Number(e.target.value) || 1 })} />
-            </Field>
-            <NanProbe />
-            <Field label="Endpoint de consumo · URL" hint="Se llama con tu key como Bearer y debe devolver JSON.">
-              <input type="text" spellCheck={false} value={cfg.nan.usageUrl ?? ''} onChange={(e) => set('nan', { usageUrl: strOrNull(e.target.value) })} />
-            </Field>
-            <div className="q-cols">
-              <Field label="JSON Pointer · usado" hint="p. ej. /usage/used_tokens">
-                <input type="text" spellCheck={false} value={cfg.nan.usedPointer ?? ''} onChange={(e) => set('nan', { usedPointer: strOrNull(e.target.value) })} />
-              </Field>
-              <Field label="JSON Pointer · límite" hint="p. ej. /usage/quota_tokens">
-                <input type="text" spellCheck={false} value={cfg.nan.limitPointer ?? ''} onChange={(e) => set('nan', { limitPointer: strOrNull(e.target.value) })} />
-              </Field>
-            </div>
-            <Field label="Etiqueta">
-              <input type="text" value={cfg.nan.usageLabel ?? ''} placeholder="Consumo" onChange={(e) => set('nan', { usageLabel: strOrNull(e.target.value) })} />
-            </Field>
-          </details>
-        </Section>
-      )}
+      {tab === 'nan' && <NanPanel {...panel} />}
 
-      {tab === 'nine_router' && (
-        <Section kicker="Pasarela local · uso agregado" title="9Router">
-            <Toggle
-              label="Mostrar en el widget"
-              checked={cfg.nineRouter.enabled}
-              onChange={(v) => setVisibility('nine_router', v)}
-            />
-          <p className="q-note">
-            Quorb lee el uso y el gasto que <b>9Router</b> ya registra en tu equipo: peticiones, tokens y coste por proveedor del periodo. Además del
-            orbe agregado, cada proveedor que haya visto (Claude, Kiro, GLM…) aparece como su propia cuenta.
-          </p>
-          <ol className="q-steps" aria-label="Cómo conectar 9Router">
-            <li data-done={!!secrets.nine_router_password || undefined}>
-              <b>Conecta tu dashboard local</b>
-              <NineRouterConnect connected={!!secrets.nine_router_password} baseUrl={cfg.nineRouter.baseUrl} onChange={loadSecrets} />
-            </li>
-            <li data-done>
-              <b>Periodo y desglose</b>
-              <Field label="Periodo de uso" hint="Rango que muestra el orbe y su historial.">
-                <select value={cfg.nineRouter.period} onChange={(e) => set('nineRouter', { period: e.target.value as NineRouterPeriod })}>
-                  <option value="today">Hoy</option>
-                  <option value="24h">Últimas 24 h</option>
-                  <option value="7d">Últimos 7 días</option>
-                  <option value="30d">Últimos 30 días</option>
-                  <option value="60d">Últimos 60 días</option>
-                  <option value="all">Todo</option>
-                </select>
-              </Field>
-              <Toggle
-                label="Mostrar cada sub-proveedor como su propia cuenta"
-                checked={cfg.nineRouter.showSubProviders}
-                onChange={(v) => set('nineRouter', { showSubProviders: v })}
-              />
-              <Field label="Gasto mínimo por sub-proveedor (USD)" hint="No muestra un sub-orbe hasta que su gasto en el periodo supere esta cifra. 0 = cualquiera que gaste.">
-                <input
-                  type="number"
-                  min={0}
-                  step="0.5"
-                  value={cfg.nineRouter.minSpendUsd}
-                  onChange={(e) => set('nineRouter', { minSpendUsd: Math.max(0, Number(e.target.value) || 0) })}
-                />
-              </Field>
-              <Field label="Presupuesto (USD)" hint="Opcional: pinta la barra de gasto del periodo frente al tope que pongas.">
-                <input
-                  type="number"
-                  min={0}
-                  step="1"
-                  value={cfg.nineRouter.monthlyBudgetUsd ?? ''}
-                  onChange={(e) => set('nineRouter', { monthlyBudgetUsd: strOrNull(e.target.value) == null ? null : Number(e.target.value) })}
-                />
-              </Field>
-            </li>
-            <HealthStep id="nine_router" {...healthFor('nine_router', !cfg.nineRouter.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · dirección del servidor</summary>
-            <Field label="Base URL" hint="Dónde escucha 9Router (por defecto http://localhost:20128).">
-              <input type="text" spellCheck={false} value={cfg.nineRouter.baseUrl} onChange={(e) => set('nineRouter', { baseUrl: e.target.value })} />
-            </Field>
-          </details>
-          {(() => {
-            // Suborbes de 9Router ocultados desde el widget: se pueden recuperar aquí.
-            const hidden = hiddenNineRouterIds(cfg.hiddenProviders);
-            if (hidden.length === 0) return null;
-            return (
-              <div className="eg-field">
-                <span className="eg-field__label">Suborbes ocultos de 9Router</span>
-                <div className="q-chips">
-                  {hidden.map((id) => (
-                    <button key={id} type="button" className="eg-chip" onClick={() => set('hiddenProviders', revealIds(cfg.hiddenProviders, [id]))}>
-                      {nineRouterSubName(id)} · mostrar
-                    </button>
-                  ))}
-                </div>
-                <small className="eg-field__hint">Los ocultaste desde su panel en la tira. Pulsa para volver a mostrarlos.</small>
-              </div>
-            );
-          })()}
-        </Section>
-      )}
+      {tab === 'nine_router' && <NineRouterPanel {...panel} />}
 
-      {(tab === 'anthropic_api' || tab === 'openai_api') &&
-        (() => {
-          const k = tab === 'anthropic_api' ? 'anthropicApi' : 'openaiApi';
-          const secret: SecretKey = tab === 'anthropic_api' ? 'anthropic_admin_key' : 'openai_admin_key';
-          return (
-            <Section kicker="Pago por uso · Admin key" title={tab === 'anthropic_api' ? 'Anthropic API' : 'OpenAI API'}>
-              <Toggle label="Mostrar gasto del mes" checked={isAccountVisible(cfg, tab, cfg[k].enabled)} onChange={(v) => setVisibility(tab, v)} />
-              <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-                <li data-done={!!secrets[secret] || undefined}>
-                  <b>Admin key</b>
-                  <SecretInput
-                    locale={locale}
-                    id={secret}
-                    label={tab === 'anthropic_api' ? 'Admin API key (sk-ant-admin…)' : 'Admin key'}
-                    configured={!!secrets[secret]}
-                    onSaved={loadSecrets}
-                    hint={
-                      tab === 'anthropic_api' ? (
-                        <>Las APIs de coste no admiten OAuth: hace falta una <Link href={LINKS.anthropicAdmin}>Admin key</Link> (solo lectura de la organización).</>
-                      ) : (
-                        <>Créala en <Link href={LINKS.openaiAdmin}>Organization › Admin keys</Link>.</>
-                      )
-                    }
-                  />
-                </li>
-                <li data-done={cfg[k].monthlyBudgetUsd != null || undefined}>
-                  <b>Presupuesto mensual (opcional)</b>
-                  <Field label="USD al mes">
-                    <input type="number" min={0} step="any" value={cfg[k].monthlyBudgetUsd ?? ''} onChange={(e) => set(k, { monthlyBudgetUsd: numOrNull(e.target.value) })} />
-                  </Field>
-                </li>
-                <HealthStep id={tab} {...healthFor(tab, !cfg[k].enabled)} />
-              </ol>
-            </Section>
-          );
-        })()}
+      {(tab === 'anthropic_api' || tab === 'openai_api') && <AdminApiPanel {...panel} tab={tab} />}
         </>
       )}
                   </InDrawer.Provider>
