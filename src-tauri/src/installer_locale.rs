@@ -345,4 +345,30 @@ mod tests {
         ));
         assert_eq!((cfg.locale.as_str(), cfg.locale_selected), ("en", true));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn handoff_retry_after_failed_delete_never_overrides_a_saved_choice() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let dir = Dir::new("delete-retry");
+        fs::write(dir.handoff(), b"en\n0.8.0\n").unwrap();
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o500)).unwrap();
+        let (mut cfg, origin) = startup_config("windows", &dir.0, VERSION);
+        let pending = fs::read(dir.handoff()).unwrap();
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(pending, b"en\n0.8.0\n");
+        assert_eq!(origin, ConfigOrigin::Missing);
+        assert!(crate::locale_picker_needed_on("windows", &cfg, origin));
+        cfg.choose_locale("es").unwrap();
+        config::save(&dir.config(), &cfg).unwrap();
+        let saved = fs::read(dir.config()).unwrap();
+
+        let (next, origin) = startup_config("windows", &dir.0, VERSION);
+
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert_eq!((next.locale.as_str(), next.locale_selected), ("es", true));
+        assert_eq!(fs::read(dir.config()).unwrap(), saved);
+        assert!(!dir.handoff().exists());
+    }
 }
