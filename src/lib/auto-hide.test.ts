@@ -8,6 +8,7 @@ import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, wai
 import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
 import { DETAIL_EVENTS, physicalPanelBounds } from './detail-panel';
+import { POINTER_SURFACE_EVENT } from './hover-presence';
 import { NO_PANEL } from './anchor-panel';
 import type { UsageReport } from './types';
 
@@ -1209,14 +1210,21 @@ describe('hover presence wiring', () => {
         !!v && typeof v === 'object' && 'report' in v)!;
     // The listener that receives the detail window's interaction events.
     widgetEffects.listeners.delete(DETAIL_EVENTS.interaction);
+    // The listener that receives the native pointer relay (#264/S16).
+    widgetEffects.listeners.delete(POINTER_SURFACE_EVENT);
     const listener = widgetEffects.effects.find((e) => e.run.toString().includes('DETAIL_EVENTS.interaction'))!;
     listener.run();
     await flush();
     const handlers = (widgetEffects.listeners.get(DETAIL_EVENTS.interaction) ?? []) as ((event: { payload: unknown }) => void)[];
+    const nativeHandlers = (widgetEffects.listeners.get(POINTER_SURFACE_EVENT) ?? []) as ((event: { payload: unknown }) => void)[];
     return {
       dock: dock!,
       detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => (
         h({ payload: { revision: published.revision, provider: 'a', kind } })
+      )),
+      /** The native relay of the backend: GTK's enter/leave (#264/S16). */
+      native: (surface: 'widget' | 'detail', kind: 'enter' | 'leave') => nativeHandlers.forEach((h) => (
+        h({ payload: { surface, kind } })
       )),
     };
   };
@@ -1279,6 +1287,107 @@ describe('hover presence wiring', () => {
     // The pointer cannot be in the two windows at once: the strip's presence
     // is invalid, so its auto-hide is not frozen any more.
     expect(widgetEffects.states[11]).toBe(false);
+  });
+
+  // #264/S13: la salida de la tira que llega mucho después de la evidencia
+  // del detalle es autoridad. El modelo no puede quedarse pegado a una
+  // presencia vieja: si la salida del detalle se pierde, la única evidencia
+  // real —la salida de la tira— cerraba el panel con el puntero fuera.
+  it('closes the detail when the strip reports a late leave after the detail entered (#264/S13)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    // La salida del detalle se pierde (Wayland native) y la de la tira llega
+    // mucho después: es la única evidencia que queda del puntero.
+    await vi.advanceTimersByTimeAsync(3000);
+    dock.onMouseLeave();
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S14: la misma salida pegada al gesto (pocos ms) es el resto de ese
+  // gesto: no cierra un panel que el usuario está leyendo.
+  it('keeps the detail open when the strip leaves within the same gesture (#264/S14)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    dock.onMouseLeave(); // Pega al `enter` del detalle: mismo gesto.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  // #264/S16: GTK entrega el `leave` de la ventana del detalle aunque
+  // WebKitGTK no lo traduzca al DOM. Ese relé nativo es otra fuente de
+  // presencia de esa superficie: sin él, el panel queda abierto (S1).
+  it('closes the detail after a native leave of the detail window (#264/S16)', async () => {
+    const { dock, detail, native } = await wire();
+    dock.onMouseEnter();
+    detail('enter'); // El DOM sí entrega la entrada al detalle.
+    native('detail', 'leave'); // La salida llega sólo por el relé nativo.
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S16: la entrada nativa es la misma evidencia que la del DOM: si el
+  // puntero vuelve a la superficie, el cierre ya armado se cancela y el
+  // panel no parpadea.
+  it('cancels a pending close when a native enter arrives (#264/S16)', async () => {
+    const { dock, detail, native } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    detail('leave'); // Arma el cierre.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    native('detail', 'enter'); // El puntero vuelve: el cierre se cancela.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  // #264/S16: la salida nativa de la tira también cierra: es la misma
+  // evidencia que el `mouseleave` del DOM.
+  it('closes the detail after a native leave of the strip (#264/S16)', async () => {
+    const { dock, native } = await wire();
+    dock.onMouseEnter();
+    native('widget', 'leave'); // La salida de la tira llega por el relé nativo.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264: el nativo manda cuando existe. En cuanto llega el primer cruce
+  // nativo, el DOM deja de decidir la presencia: la segunda salida ya no
+  // rearma el timer ni lo atrasa (R1).
+  it('closes the detail at the native leave even when the DOM leave arrives later (#264/R1)', async () => {
+    const { dock, native } = await wire();
+    dock.onMouseEnter();
+    native('widget', 'leave'); // La salida real de la tira llega por el relé nativo.
+    await vi.advanceTimersByTimeAsync(100);
+    dock.onMouseLeave(); // El DOM también avisa, más tarde: ya no manda.
+    await vi.advanceTimersByTimeAsync(180); // 280 ms desde la salida nativa.
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264 (R2): en Wayland puede llegar `enter nativo → leave nativo → enter
+  // DOM` sin el `leave` DOM, que WebKitGTK pierde. Con el DOM mandando, la
+  // entrada tardía cancela el cierre y el panel queda pegado.
+  it('closes the detail when the native crossings arrive and the DOM enter comes later (#264/R2)', async () => {
+    const { detail, native } = await wire();
+    native('detail', 'enter'); // El puntero entra al detalle (nativo).
+    native('detail', 'leave'); // Y sale (nativo): el cierre se arma.
+    detail('enter'); // El DOM avisa la entrada tarde: ya no manda.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264: sin ningún cruce nativo el DOM sigue decidiendo la presencia, que
+  // es el caso de Windows y macOS (allí no llega ningún cruce nativo).
+  it('keeps closing from the DOM alone when no native crossing has arrived (#264)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    detail('enter');
+    detail('leave'); // Sólo el DOM: el cierre se arma y el panel se cierra.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
   });
 
   // #170/#223: que un panel anclado siga abierto es intencional. El modelo
