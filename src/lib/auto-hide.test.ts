@@ -1603,7 +1603,13 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
   // El índice de destino lo decide la posición visual, no el orden del DOM:
   // el DOM conserva el orden guardado, así que los centros llegan desordenados.
   it('drops the dragged orb at its visual position, not at the DOM one', () => {
-    vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      innerWidth: 1920, innerHeight: 1080,
+    });
+    widgetEffects.patch.mockImplementation(async (patch: { providerOrder: string[] }) => ({
+      accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+    }));
     // La vista previa pone a 'b' al final: en pantalla el orden es a, c, b.
     const { tree } = render({ id: 'a', order: ['a', 'c', 'b'] });
     const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
@@ -1623,5 +1629,22 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     // El puntero cae entre 'c' (centro 130) y 'b' (centro 230).
     dragged.onPointerMove({ clientX: 150, clientY: 30 });
     expect(widgetEffects.states[19]).toEqual({ id: 'a', order: ['c', 'a', 'b'] });
+    // Mover el puntero sólo cambia la vista previa: todavía no se persiste nada.
+    expect(widgetEffects.patch).not.toHaveBeenCalled();
+
+    // El gesto termina con el `onPointerUp` del orbe. Los handlers son
+    // cierres del render que los creó, así que el que suelta tiene que ser el
+    // del render nuevo, con la vista previa ya escrita.
+    const { tree: after } = render(widgetEffects.states[19] as { id: string; order: string[] });
+    const dropped = findOrbPointers(after).find((o) => o.id === 'a')!;
+    dropped.onPointerUp({
+      clientX: 150, clientY: 30, pointerId: 1,
+      currentTarget: { releasePointerCapture: () => {} },
+    });
+    // Lo que se guarda es el orden visual (c, a, b), no el del DOM (a, b, c).
+    expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
+    expect(widgetEffects.patch).toHaveBeenCalledWith({ providerOrder: ['c', 'a', 'b'] });
+    // Al soltar se limpia la vista previa.
+    expect(widgetEffects.states[19]).toBeNull();
   });
 });

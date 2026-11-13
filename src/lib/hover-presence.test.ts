@@ -4,7 +4,6 @@ import {
   nextPointerTarget,
   pointerInsideWidget,
   shouldArmClose,
-  STALE_LEAVE_WINDOW_MS,
   type HoverEvent,
   type HoverSurface,
   type PointerPresence,
@@ -109,12 +108,19 @@ describe('hover presence model', () => {
     expect(shouldArmClose(glued.target)).toBe(false);
   });
 
+  // #264/S13/S14: the window is 250 ms wide. The instants are literals on
+  // purpose: a test built from the production constant passes for any value
+  // of that constant, so it would not pin the boundary it claims to pin.
   it('uses the window as the boundary between a remainder and authority (#264/S13/S14)', () => {
     const evidence: PointerPresence = { target: 'detail', at: 1000 };
-    const inside = nextPointerTarget(evidence, transition('widget', 'leave', 1000 + STALE_LEAVE_WINDOW_MS));
-    expect(inside.target).toBe('detail');
-    const outside = nextPointerTarget(evidence, transition('widget', 'leave', 1000 + STALE_LEAVE_WINDOW_MS + 1));
-    expect(outside.target).toBe('outside');
+    // 250 ms after the evidence: the remainder of the same gesture.
+    const remainder = nextPointerTarget(evidence, transition('widget', 'leave', 1250));
+    expect(remainder.target).toBe('detail');
+    expect(shouldArmClose(remainder.target)).toBe(false);
+    // 251 ms after: the only evidence left about the pointer, so authority.
+    const authority = nextPointerTarget(evidence, transition('widget', 'leave', 1251));
+    expect(authority.target).toBe('outside');
+    expect(shouldArmClose(authority.target)).toBe(true);
   });
 
   it('answers every event from the given state alone (no hidden state, no timers)', () => {
