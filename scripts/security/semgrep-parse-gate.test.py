@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Behavior tests for the trusted parse gate. Pure unittest; no scanner, no network."""
+"""Behavior tests with inert synthetic scanners; no Semgrep binary or network."""
+import contextlib
 import hashlib
 import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -38,6 +42,38 @@ class Clock:
         value = self.values[min(self.index, len(self.values) - 1)]
         self.index += 1
         return value
+
+
+class ManualClock:
+    """Thread-safe elapsed time advanced by simulated subprocesses."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.value = 0.0
+
+    def __call__(self):
+        with self.lock:
+            return self.value
+
+    def advance(self, value):
+        with self.lock:
+            self.value += value
+
+
+class SnapshotClock:
+    """Simulate time spent validating the snapshot before the first call."""
+
+    def __init__(self, elapsed):
+        self.elapsed = elapsed
+        self.lock = threading.Lock()
+        self.first = True
+
+    def __call__(self):
+        with self.lock:
+            if self.first:
+                self.first = False
+                return 0.0
+            return self.elapsed
 
 
 def fake(calls=None, *, outcome=0, raises=None, mutate=None):
@@ -90,9 +126,12 @@ class ParseGateTest(unittest.TestCase):
                                     runner=fake(calls), clock=lambda: 0.0)
         self.assertEqual(result, [entry["path"] for entry in entries])
         self.assertEqual(len(calls), len(EXTENSIONS))
-        for index, (args, kwargs) in enumerate(calls):
-            language = "typescript" if EXTENSIONS[index] in (".ts", ".tsx") else "javascript"
-            self.assertEqual(args, ["semgrep", "show", "dump-ast", language, entries[index]["path"]])
+        by_path = {args[-1]: (args, kwargs) for args, kwargs in calls}
+        self.assertEqual(set(by_path), {entry["path"] for entry in entries})
+        for entry, extension in zip(entries, EXTENSIONS):
+            args, kwargs = by_path[entry["path"]]
+            language = "typescript" if extension in (".ts", ".tsx") else "javascript"
+            self.assertEqual(args, ["semgrep", "show", "dump-ast", language, entry["path"]])
             self.assertIs(kwargs["shell"], False)
             self.assertIs(kwargs["check"], False)
             self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
@@ -180,7 +219,8 @@ class ParseGateTest(unittest.TestCase):
         calls = []
         with self.assertRaises(MODULE.ParseGateError):
             MODULE.check_parse("semgrep", [entry], self.root,
-                               runner=fake(calls), clock=Clock([0.0, 120.0]))
+                               runner=fake(calls), clock=Clock([0.0, 120.0]),
+                               budget_seconds=120.0)
         self.assertEqual(calls, [])
 
     def test_budget_exhausted_after_last_call(self):
@@ -188,7 +228,8 @@ class ParseGateTest(unittest.TestCase):
         calls = []
         with self.assertRaises(MODULE.ParseGateError):
             MODULE.check_parse("semgrep", [entry], self.root,
-                               runner=fake(calls), clock=Clock([0.0, 0.0, 120.0]))
+                               runner=fake(calls), clock=Clock([0.0, 0.0, 120.0]),
+                               budget_seconds=120.0)
         self.assertEqual(len(calls), 1)
 
     def test_budget_exhausted_after_final_hash_check(self):
@@ -196,16 +237,669 @@ class ParseGateTest(unittest.TestCase):
         calls = []
         with self.assertRaises(MODULE.ParseGateError):
             MODULE.check_parse("semgrep", [entry], self.root,
-                               runner=fake(calls), clock=Clock([0.0, 0.0, 0.0, 120.0]))
+                               runner=fake(calls), clock=Clock([0.0, 0.0, 0.0, 120.0]),
+                               budget_seconds=120.0)
         self.assertEqual(len(calls), 1)
 
     def test_invalid_budget_rejected(self):
         entry = self.write("000000.js")
-        for budget in [0, -1, 0.0, float("inf")]:
+        for budget in [0, -1, 0.0, float("inf"), float("nan"), True]:
             with self.subTest(budget=budget):
                 with self.assertRaises(MODULE.ParseGateError):
                     MODULE.check_parse("semgrep", [entry], self.root, runner=fake(),
                                        clock=lambda: 0.0, budget_seconds=budget)
+
+    def test_400_files_at_point_four_seconds_are_all_parsed_with_two_workers(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(400)])
+        clock = ManualClock()
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        calls = []
+        active = 0
+        peak = 0
+
+        def run(args, **kwargs):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                calls.append((args[-1], kwargs["timeout"]))
+            if barrier.wait(timeout=2) == 0:
+                clock.advance(0.4)
+            barrier.wait(timeout=2)
+            with lock:
+                active -= 1
+            return Result()
+
+        result = MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=clock)
+        self.assertEqual(result, [entry["path"] for entry in entries])
+        self.assertEqual({path for path, _ in calls}, set(result))
+        self.assertEqual(len(calls), 400)
+        self.assertEqual(peak, 2)
+        self.assertEqual(active, 0)
+        self.assertAlmostEqual(clock(), 80.0)
+        self.assertTrue(all(0 < timeout <= 10.0 for _, timeout in calls))
+
+    def test_scaled_budget_boundary_and_cap(self):
+        entries = self.entries([f"{i:06d}.ts" for i in range(800)])
+        for count, budget in [(1, 120.25), (4, 121.0), (400, 220.0), (800, 300.0)]:
+            for elapsed, succeeds in [(budget - 0.1, True), (budget, False)]:
+                with self.subTest(count=count, elapsed=elapsed):
+                    clock = SnapshotClock(elapsed)
+                    calls = []
+
+                    def run(args, **kwargs):
+                        calls.append((args[-1], kwargs["timeout"]))
+                        return Result()
+
+                    if succeeds:
+                        result = MODULE.check_parse("semgrep", entries[:count], self.root,
+                                                    runner=run, clock=clock)
+                        self.assertEqual(result, [entry["path"] for entry in entries[:count]])
+                        self.assertEqual({path for path, _ in calls}, set(result))
+                        self.assertEqual(len(calls), count)
+                        self.assertTrue(all(0 < timeout <= 0.100001 for _, timeout in calls))
+                    else:
+                        with self.assertRaises(MODULE.ParseGateError) as ctx:
+                            MODULE.check_parse("semgrep", entries[:count], self.root,
+                                               runner=run, clock=clock)
+                        self.assertEqual(str(ctx.exception), FAILED)
+                        self.assertEqual(calls, [])
+
+    def test_scaled_total_exhaustion_during_calls_fails_closed(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(40)])
+        clock = ManualClock()
+        calls = []
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        def run(args, **kwargs):
+            timeout = kwargs["timeout"]
+            calls.append(args[-1])
+            clock.advance(min(6.0, timeout))
+            if timeout < 6.0:
+                raise subprocess.TimeoutExpired("sensitive-path", timeout)
+            return Result()
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=clock)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertGreaterEqual(clock(), 130.0)  # 120 + 40 * 0.25
+        self.assertLess(len(calls), len(entries))
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                         [entry["path"] for entry in entries])
+
+    def test_injected_budget_can_only_lower_the_trusted_budget(self):
+        entries = [self.write("000000.js")]
+        for override, elapsed in [(900.0, 120.25), (1.0, 1.0)]:
+            with self.subTest(override=override):
+                clock = SnapshotClock(elapsed)
+                calls = []
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse("semgrep", entries, self.root, runner=fake(calls),
+                                       clock=clock, budget_seconds=override)
+                self.assertEqual(str(ctx.exception), FAILED)
+                self.assertEqual(calls, [])
+
+    def test_per_call_timeout_fails_closed_and_discards_details(self):
+        entry = self.write("000000.js")
+        calls = []
+        clock = ManualClock()
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        def run(args, **kwargs):
+            duration = 10.1
+            timeout = kwargs["timeout"]
+            calls.append(timeout)
+            clock.advance(min(duration, timeout))
+            if duration > timeout:
+                raise subprocess.TimeoutExpired("sensitive-path", timeout)
+            return Result()
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse("semgrep", [entry], self.root, runner=run, clock=clock)
+        self.assertEqual(calls, [10.0])
+        self.assertEqual(clock(), 10.0)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot([entry], self.root), [entry["path"]])
+
+    def test_parallel_completion_preserves_inventory_order(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(4)])
+        first_started = threading.Event()
+        second_finished = threading.Event()
+        completed = []
+
+        def run(args, **kwargs):
+            path = args[-1]
+            if path == entries[0]["path"]:
+                first_started.set()
+                if not second_finished.wait(2):
+                    raise RuntimeError("second worker did not start")
+            elif path == entries[1]["path"]:
+                if not first_started.wait(2):
+                    raise RuntimeError("first worker did not start")
+                completed.append(path)
+                second_finished.set()
+                return Result()
+            completed.append(path)
+            return Result()
+
+        result = MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=lambda: 0.0)
+        self.assertEqual(result, [entry["path"] for entry in entries])
+        self.assertEqual(completed[0], entries[1]["path"])
+        self.assertEqual(set(completed), set(result))
+        self.assertEqual(len(completed), len(entries))
+
+    def test_parallel_worker_failure_is_sanitized_and_joined(self):
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        for failure in ("nonzero", "exception"):
+            with self.subTest(failure=failure):
+                first_started = threading.Event()
+                second_started = threading.Event()
+                completed = []
+                output = io.StringIO()
+                errors = io.StringIO()
+
+                def run(args, **kwargs):
+                    path = args[-1]
+                    if path == entries[0]["path"]:
+                        first_started.set()
+                        if not second_started.wait(2):
+                            raise RuntimeError("second worker did not start")
+                    elif path == entries[1]["path"]:
+                        if not first_started.wait(2):
+                            raise RuntimeError("first worker did not start")
+                        second_started.set()
+                        completed.append(path)
+                        if failure == "nonzero":
+                            return Result(3)
+                        raise OSError("secret scanner output")
+                    completed.append(path)
+                    return Result()
+
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    with self.assertRaises(MODULE.ParseGateError) as ctx:
+                        MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=lambda: 0.0)
+                self.assertEqual(str(ctx.exception), FAILED)
+                self.assertIsNone(ctx.exception.__cause__)
+                self.assertTrue({entries[0]["path"], entries[1]["path"]}.issubset(completed))
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(errors.getvalue(), "")
+                self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                                 [entry["path"] for entry in entries])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_real_success_parses_all_files_in_separate_sessions(self):
+        exe = self.root / "successful-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, sys
+if os.getsid(0) != os.getpid(): sys.exit(4)
+open(os.path.join({str(self.root)!r}, os.path.basename(sys.argv[-1]) + '.done'), 'w').write('done')
+print('scanner output')
+print('scanner error', file=sys.stderr)
+""")
+        exe.chmod(0o700)
+        entries = self.entries([f"{i:06d}.js" for i in range(4)])
+        output = io.StringIO()
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            result = MODULE.check_parse(str(exe), entries, self.root)
+        self.assertEqual(result, [entry["path"] for entry in entries])
+        self.assertTrue(all((self.root / f"{i:06d}.js.done").read_text() == "done" for i in range(4)))
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_non_posix_fallback_stops_direct_process(self):
+        import signal
+        pidfile = self.root / "direct.pid"
+        exe = self.root / "direct-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, time
+open({str(pidfile)!r}, 'w').write(str(os.getpid()))
+time.sleep(15)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+
+        class NonPosix:
+            name = "nt"
+
+            def __getattr__(self, name):
+                if name == "killpg":
+                    raise AssertionError("non-POSIX fallback must not signal a process group")
+                return getattr(os, name)
+
+        try:
+            with mock.patch.object(MODULE, "os", NonPosix()):
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse(str(exe), entries, self.root, budget_seconds=0.8)
+            self.assertEqual(str(ctx.exception), FAILED)
+            self.assertTrue(pidfile.exists(), "parser did not start")
+            pid = int(pidfile.read_text())
+            proc = Path(f"/proc/{pid}/stat")
+            alive = proc.exists() and proc.read_text().rsplit(") ", 1)[1][0] not in "ZX"
+            self.assertFalse(alive, f"direct parser {pid} survived timeout")
+        finally:
+            if pidfile.exists():
+                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_failed_peer_leaves_no_parser_descendant(self):
+        import signal, time
+        pidfile = self.root / "child.pid"
+        exe = self.root / "scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, subprocess, sys, time
+p = {str(pidfile)!r}
+if sys.argv[-1].endswith("000000.js"):
+    end = time.monotonic() + 2
+    while not os.path.exists(p) and time.monotonic() < end: time.sleep(.01)
+    sys.exit(7)
+c = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(15)"])
+open(p, "w").write(str(c.pid))
+time.sleep(15)
+""")
+        exe.chmod(0o700)
+        entries = self.entries(["000000.js", "000001.js"])
+        try:
+            with self.assertRaises(MODULE.ParseGateError):
+                MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertTrue(pidfile.exists(), "second parser did not start")
+            pid = int(pidfile.read_text())
+            proc = Path(f"/proc/{pid}/stat")
+            alive = proc.exists() and proc.read_text().rsplit(") ", 1)[1][0] not in "ZX"
+            self.assertFalse(alive, f"orphan {pid}")
+        finally:
+            if pidfile.exists():
+                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    def test_no_new_parser_is_dispatched_after_peer_failure(self):
+        import time
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        first_started = threading.Event()
+        second_failed = threading.Event()
+        calls = []
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        def run(args, **kwargs):
+            path = args[-1]
+            calls.append(path)
+            if path == entries[0]["path"]:
+                first_started.set()
+                if not second_failed.wait(2):
+                    raise RuntimeError("peer did not start")
+                time.sleep(0.15)
+                return Result()
+            if path == entries[1]["path"]:
+                if not first_started.wait(2):
+                    raise RuntimeError("first did not start")
+                second_failed.set()
+                return Result(3)
+            return Result()
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse("semgrep", entries, self.root, runner=run, clock=lambda: 0.0)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertEqual(set(calls), {entries[0]["path"], entries[1]["path"]})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                         [entry["path"] for entry in entries])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_exited_failure_is_not_hidden_by_delayed_worker(self):
+        import time
+        pidfile = self.root / "failed.pid"
+        third = self.root / "third-dispatched"
+        exe = self.root / "ordered-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, sys, time
+p = os.path.basename(sys.argv[-1])
+if p == '000000.js':
+    end = time.monotonic() + 2
+    while not os.path.exists({str(pidfile)!r}) and time.monotonic() < end: time.sleep(.01)
+    time.sleep(.1)
+elif p == '000001.js':
+    open({str(pidfile)!r}, 'w').write(str(os.getpid()))
+    sys.exit(7)
+else:
+    open({str(third)!r}, 'w').write('dispatched')
+""")
+        exe.chmod(0o700)
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        original_waitid = os.waitid
+        delayed = threading.Event()
+
+        def slow_peer_waitid(kind, pid, flags):
+            try:
+                failed_pid = int(pidfile.read_text())
+            except (OSError, ValueError):
+                failed_pid = None
+            if (threading.current_thread() is not threading.main_thread()
+                    and pid == failed_pid and not delayed.is_set()):
+                delayed.set()
+                time.sleep(0.4)
+            return original_waitid(kind, pid, flags)
+
+        with mock.patch.object(MODULE.os, "waitid", side_effect=slow_peer_waitid):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertTrue(delayed.is_set(), "failed parser monitor was not delayed")
+        self.assertFalse(third.exists(), "third parser started after its peer exited with failure")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                         [entry["path"] for entry in entries])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_timed_out_peer_blocks_new_process_even_if_monitor_is_delayed(self):
+        import signal, time
+        pidfile = self.root / "slow-peer.pid"
+        started = self.root / "late-dispatch"
+        exe = self.root / "timeout-order-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os, sys, time
+if sys.argv[-1].endswith('000001.js'):
+    open({str(pidfile)!r}, 'w').write(str(os.getpid()))
+    time.sleep(15)
+else:
+    open({str(started)!r}, 'w').write('dispatched')
+""")
+        exe.chmod(0o700)
+        entries = self.entries([f"{i:06d}.js" for i in range(3)])
+        original_waitid = os.waitid
+        delayed = threading.Event()
+        previous = MODULE.PER_CALL_TIMEOUT
+        MODULE.PER_CALL_TIMEOUT = 0.2
+
+        def slow_path(value):
+            if str(value).endswith("000000.js"):
+                time.sleep(0.35)
+            return Path(value)
+
+        def slow_peer_waitid(kind, pid, flags):
+            try:
+                peer_pid = int(pidfile.read_text())
+            except (OSError, ValueError):
+                peer_pid = None
+            if pid == peer_pid and not delayed.is_set():
+                delayed.set()
+                time.sleep(0.6)
+            return original_waitid(kind, pid, flags)
+
+        try:
+            with mock.patch.object(MODULE, "Path", side_effect=slow_path):
+                with mock.patch.object(MODULE.os, "waitid", side_effect=slow_peer_waitid):
+                    with self.assertRaises(MODULE.ParseGateError) as ctx:
+                        MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertEqual(str(ctx.exception), FAILED)
+            self.assertTrue(delayed.is_set(), "peer monitor was not delayed")
+            self.assertFalse(started.exists(), "parser started after its peer timed out")
+            self.assertEqual(MODULE.verify_snapshot(entries, self.root),
+                             [entry["path"] for entry in entries])
+        finally:
+            MODULE.PER_CALL_TIMEOUT = previous
+            if pidfile.exists():
+                try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_late_success_cannot_bypass_per_call_timeout(self):
+        import time
+        exe = self.root / "slow-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import time
+time.sleep(0.08)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        original_waitid = os.waitid
+        previous = MODULE.PER_CALL_TIMEOUT
+        MODULE.PER_CALL_TIMEOUT = 0.03
+
+        def delayed_waitid(*args):
+            time.sleep(0.15)
+            return original_waitid(*args)
+
+        try:
+            with mock.patch.object(MODULE.os, "waitid", side_effect=delayed_waitid):
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertEqual(str(ctx.exception), FAILED)
+            self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+        finally:
+            MODULE.PER_CALL_TIMEOUT = previous
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux")
+    def test_cleanup_wait_is_bounded(self):
+        import time
+        class Process:
+            pid = 999999999
+            def wait(self, *args, **kwargs): return 0
+        start = time.monotonic()
+        def killpg(*args):
+            if time.monotonic() - start >= 2: raise ProcessLookupError
+        with mock.patch.object(MODULE.os, "killpg", side_effect=killpg):
+            MODULE._stop_parsers([Process()])
+        self.assertLess(time.monotonic() - start, 1)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux")
+    def test_failure_kills_child_of_completed_parser(self):
+        import signal
+        pid, third = self.root / "pid", self.root / "third"
+        child = (f"import os,signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                 f"open({str(pid)!r},'w').write(str(os.getpid()));time.sleep(15)")
+        exe = self.root / "scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os,subprocess,sys,time
+n=sys.argv[-1]
+if n.endswith('000000.js'):
+ subprocess.Popen([sys.executable,'-c',{child!r}])
+ while not os.path.exists({str(pid)!r}): time.sleep(.005)
+elif n.endswith('000001.js'):
+ while not os.path.exists({str(third)!r}): time.sleep(.005)
+ sys.exit(7)
+else:
+ open({str(third)!r},'w').close(); time.sleep(15)
+""")
+        exe.chmod(0o700)
+        try:
+            with self.assertRaises(MODULE.ParseGateError):
+                MODULE.check_parse(str(exe), self.entries(
+                    [f"{i:06d}.js" for i in range(3)]), self.root, budget_seconds=3)
+            self.assertTrue(third.exists(), "later failure was not reached")
+            stat = Path(f"/proc/{pid.read_text()}/stat")
+            self.assertFalse(stat.exists() and stat.read_text().rsplit(") ", 1)[1][0] not in "ZX")
+        finally:
+            if pid.exists():
+                try: os.kill(int(pid.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_success_kills_completed_parser_descendant(self):
+        import signal
+        pid = self.root / "success.pid"
+        child = ("import os,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                 f"open({str(pid)!r},'w').write(str(os.getpid())); time.sleep(15)")
+        exe = self.root / "success-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import os,subprocess,sys,time
+subprocess.Popen([sys.executable,'-c',{child!r}])
+while not os.path.exists({str(pid)!r}): time.sleep(.005)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        output = io.StringIO()
+        errors = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                result = MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+            self.assertEqual(result, [entries[0]["path"]])
+            stat = Path(f"/proc/{pid.read_text()}/stat")
+            self.assertFalse(stat.exists() and stat.read_text().rsplit(") ", 1)[1][0] not in "ZX")
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(errors.getvalue(), "")
+        finally:
+            if pid.exists():
+                try: os.kill(int(pid.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_cleanup_bounds_process_wait(self):
+        import time
+        class Process:
+            pid = 999999998
+            def wait(self, timeout=None):
+                if timeout is None:
+                    time.sleep(1.2)
+                    return 0
+                raise subprocess.TimeoutExpired("synthetic", timeout)
+        start = time.monotonic()
+        with mock.patch.object(MODULE.os, "killpg", side_effect=ProcessLookupError):
+            MODULE._stop_parsers([Process()])
+        self.assertLess(time.monotonic() - start, 1)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_cleanup_deadline_is_shared_across_parsers(self):
+        import time
+        waits = []
+
+        class Process:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                delay = 0.55 if timeout is None else min(0.55, timeout)
+                time.sleep(delay)
+                if timeout is not None and timeout < 0.55:
+                    raise subprocess.TimeoutExpired("synthetic", timeout)
+                return 0
+
+        start = time.monotonic()
+        with mock.patch.object(MODULE.os, "killpg", side_effect=ProcessLookupError):
+            complete = MODULE._stop_parsers([Process(999999997), Process(999999998)])
+        self.assertFalse(complete)
+        self.assertEqual(len(waits), 2)
+        self.assertLess(waits[1], waits[0])
+        self.assertLess(time.monotonic() - start, 1)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_incomplete_success_cleanup_fails_closed(self):
+        import time
+        exe = self.root / "success-with-unresolved-group"
+        exe.write_text(f"""#!{sys.executable}
+pass
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        original_killpg = os.killpg
+        start = time.monotonic()
+
+        def unresolved_group(group, sig):
+            if sig == 0 and time.monotonic() - start < 2:
+                return
+            return original_killpg(group, sig)
+
+        output = io.StringIO()
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            with mock.patch.object(MODULE.os, "killpg", side_effect=unresolved_group):
+                with self.assertRaises(MODULE.ParseGateError) as ctx:
+                    MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+        self.assertLess(time.monotonic() - start, 1)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_failure_waits_until_signalled_group_is_gone(self):
+        import time
+        exe = self.root / "failed-scanner"
+        exe.write_text(f"""#!{sys.executable}
+import sys
+sys.exit(7)
+""")
+        exe.chmod(0o700)
+        entries = [self.write("000000.js")]
+        original_killpg = os.killpg
+        first_probe = []
+
+        def delayed_disappearance(group, sig):
+            if sig == 0:
+                if not first_probe:
+                    first_probe.append(time.monotonic())
+                if time.monotonic() - first_probe[0] < 0.25:
+                    return
+            return original_killpg(group, sig)
+
+        with mock.patch.object(MODULE.os, "killpg", side_effect=delayed_disappearance):
+            with self.assertRaises(MODULE.ParseGateError) as ctx:
+                MODULE.check_parse(str(exe), entries, self.root, budget_seconds=3)
+        self.assertEqual(str(ctx.exception), FAILED)
+        self.assertTrue(first_probe, "process group was not checked")
+        self.assertGreaterEqual(time.monotonic() - first_probe[0], 0.25)
+        self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_timeouts_kill_term_resistant_descendant(self):
+        import signal
+        for mode in ("per-call", "total"):
+            with self.subTest(mode=mode):
+                pidfile = self.root / f"{mode}.pid"
+                ready = self.root / f"{mode}.ready"
+                exe = self.root / f"scanner-{mode}"
+                child = ("import os, signal, time; "
+                         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                         f"open({str(ready)!r}, 'w').write('ready'); time.sleep(15)")
+                exe.write_text(f"""#!{sys.executable}
+import subprocess, sys, time
+c = subprocess.Popen([sys.executable, '-c', {child!r}])
+open({str(pidfile)!r}, 'w').write(str(c.pid))
+time.sleep(15)
+""")
+                exe.chmod(0o700)
+                entries = [self.write("000000.js")]
+                previous = MODULE.PER_CALL_TIMEOUT
+                if mode == "per-call":
+                    MODULE.PER_CALL_TIMEOUT = 0.8
+                output = io.StringIO()
+                errors = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        with self.assertRaises(MODULE.ParseGateError) as ctx:
+                            MODULE.check_parse(str(exe), entries, self.root,
+                                               budget_seconds=0.8 if mode == "total" else 3)
+                    self.assertEqual(str(ctx.exception), FAILED)
+                    self.assertTrue(pidfile.exists(), "parser did not start its child")
+                    self.assertTrue(ready.exists(), "child did not install its SIGTERM handler")
+                    pid = int(pidfile.read_text())
+                    proc = Path(f"/proc/{pid}/stat")
+                    alive = proc.exists() and proc.read_text().rsplit(") ", 1)[1][0] not in "ZX"
+                    self.assertFalse(alive, f"orphan {pid} after {mode} timeout")
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(errors.getvalue(), "")
+                    self.assertEqual(MODULE.verify_snapshot(entries, self.root), [entries[0]["path"]])
+                finally:
+                    MODULE.PER_CALL_TIMEOUT = previous
+                    if pidfile.exists():
+                        try: os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                        except ProcessLookupError: pass
 
     def test_errors_never_leak_paths_or_secrets(self):
         secret = "sup3r-secret-token"

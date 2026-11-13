@@ -805,17 +805,34 @@ fn unreadable_config() -> AppConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigOrigin {
+    Missing,
+    Existing,
+}
+
 /// Ausente → primer arranque (`locale_selected == false`). Legible → lo que dice el
 /// archivo. Ilegible → `unreadable_config`. Nunca escribe en disco.
-pub fn load(path: &Path) -> AppConfig {
-    let cfg = match std::fs::read_to_string(path) {
-        Ok(text) => {
-            serde_json::from_str::<AppConfig>(&text).unwrap_or_else(|_| unreadable_config())
+/// El origen sale de la misma lectura; no se infiere de la bandera ni de un precheck.
+pub fn load(path: &Path) -> (AppConfig, ConfigOrigin) {
+    let (cfg, origin) = match std::fs::read_to_string(path) {
+        Ok(text) => (
+            serde_json::from_str::<AppConfig>(&text).unwrap_or_else(|_| unreadable_config()),
+            ConfigOrigin::Existing,
+        ),
+        // A dangling symlink also reports NotFound, but the entry exists: it is not
+        // a fresh install. Keep the previous config semantics for it.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let origin = if std::fs::symlink_metadata(path).is_ok() {
+                ConfigOrigin::Existing
+            } else {
+                ConfigOrigin::Missing
+            };
+            (AppConfig::default(), origin)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AppConfig::default(),
-        Err(_) => unreadable_config(),
+        Err(_) => (unreadable_config(), ConfigOrigin::Existing),
     };
-    cfg.sanitized()
+    (cfg.sanitized(), origin)
 }
 
 pub fn save(path: &Path, cfg: &AppConfig) -> Result<(), String> {
@@ -829,6 +846,11 @@ pub fn save(path: &Path, cfg: &AppConfig) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Las regresiones de datos siguen comprobando el AppConfig del lector real.
+    fn load(path: &std::path::Path) -> AppConfig {
+        super::load(path).0
+    }
 
     #[test]
     fn reset_badges_default_visible_in_legacy_config() {
@@ -1272,6 +1294,44 @@ mod tests {
     }
 
     #[test]
+    fn config_origin_is_missing_only_for_not_found() {
+        let missing = temp_config_path("origin-missing");
+        let (cfg, origin) = super::load(&missing);
+        assert_eq!(origin, ConfigOrigin::Missing);
+        assert!(!cfg.locale_selected);
+        assert!(!missing.exists());
+
+        for (tag, raw, selected, locale) in [
+            (
+                "origin-existing-unselected",
+                r#"{"locale":"en","localeSelected":false,"refreshMinutes":12}"#,
+                false,
+                "en",
+            ),
+            ("origin-legacy", r#"{"locale":"en"}"#, true, "en"),
+            ("origin-corrupt", "{ not json", true, "es"),
+        ] {
+            let path = temp_config_path(tag);
+            write_raw(&path, raw);
+            let (cfg, origin) = super::load(&path);
+            assert_eq!(origin, ConfigOrigin::Existing, "{tag}");
+            assert_eq!(cfg.locale_selected, selected, "{tag}");
+            assert_eq!(locale_of(&cfg), locale, "{tag}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), raw, "{tag}");
+            let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        }
+
+        let unreadable = temp_config_path("origin-read-error");
+        std::fs::create_dir_all(&unreadable).unwrap();
+        let (cfg, origin) = super::load(&unreadable);
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert!(cfg.locale_selected);
+        assert!(unreadable.is_dir());
+        assert_eq!(std::fs::read_dir(&unreadable).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(unreadable.parent().unwrap());
+    }
+
+    #[test]
     fn locale_selected_defaults_to_false() {
         assert!(!AppConfig::default().locale_selected);
     }
@@ -1357,20 +1417,29 @@ mod tests {
 
     #[test]
     fn choosing_a_locale_persists_flag_and_keeps_other_data() {
-        // S2: elegir guarda locale + localeSelected:true por config::save y recarga igual.
+        // S2: recorre choose_locale → save → load; no asigna a mano la elección.
         let path = temp_config_path("choose-en");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         let mut cfg = load(&path);
         assert!(!cfg.locale_selected);
+        assert!(!path.exists(), "load must not persist an unchosen locale");
         cfg.refresh_minutes = 12;
-        cfg.locale = "en".into();
-        cfg.locale_selected = true;
-        save(&path, &cfg.sanitized()).unwrap();
 
-        let reloaded = load(&path);
-        assert_eq!(locale_of(&reloaded), "en");
-        assert!(reloaded.locale_selected);
-        assert_eq!(reloaded.refresh_minutes, 12);
+        for locale in ["en", "es"] {
+            let mut expected = cfg.clone();
+            expected.locale = locale.into();
+            expected.locale_selected = true;
+            cfg.choose_locale(locale).unwrap();
+            assert_eq!(cfg, expected, "choice must preserve every other setting");
+
+            let expected = cfg.sanitized();
+            save(&path, &expected).unwrap();
+            let reloaded = load(&path);
+            assert_eq!(locale_of(&reloaded), locale);
+            assert!(reloaded.locale_selected);
+            assert_eq!(reloaded, expected, "saved settings must round-trip intact");
+            cfg = reloaded;
+        }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -1389,9 +1458,15 @@ mod tests {
 
     #[test]
     fn first_run_choice_rejects_unsupported_locale_without_changes() {
-        let mut cfg = AppConfig::default();
-        assert!(cfg.choose_locale("fr").is_err());
-        assert_eq!(cfg, AppConfig::default());
+        let mut chosen = AppConfig::default();
+        chosen.choose_locale("en").unwrap();
+        chosen.refresh_minutes = 12;
+
+        for mut cfg in [AppConfig::default(), chosen] {
+            let before = cfg.clone();
+            assert!(cfg.choose_locale("fr").is_err());
+            assert_eq!(cfg, before, "rejection must not reset existing preferences");
+        }
     }
 
     #[test]
@@ -1399,5 +1474,34 @@ mod tests {
         assert!(is_account_id("nine_router:claude"));
         assert!(is_account_id("nine_router:open-code"));
         assert!(!is_account_id("nine_router:Claude")); // mayúsculas no válidas
+    }
+
+    #[test]
+    fn mixed_existing_config_preserves_settings_and_rejected_choice_bytes() {
+        let path = temp_config_path("independent-mixed");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let raw = br#"{"locale":" EN ","localeSelected":false,"refreshMinutes":129,"compact":true,"hiddenProviders":["codex","codex"]}"#;
+        std::fs::write(&path, raw).unwrap();
+
+        let (mut cfg, origin) = super::load(&path);
+        let expected = AppConfig {
+            locale: "en".into(),
+            locale_selected: false,
+            refresh_minutes: 120,
+            compact: true,
+            hidden_providers: vec!["codex".into()],
+            ..AppConfig::default()
+        }
+        .sanitized();
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert_eq!(cfg, expected);
+
+        assert_eq!(
+            cfg.choose_locale("fr"),
+            Err("idioma no soportado: fr".into())
+        );
+        assert_eq!(cfg, expected);
+        assert_eq!(std::fs::read(&path).unwrap(), raw.to_vec());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
