@@ -2568,7 +2568,8 @@ mod synthetic_wsl_login_lab {
                 .env_clear()
                 .env("HOME", &self.0)
                 .env("PATH", "/usr/bin:/bin")
-                .env("SHELL", "/bin/true")
+                // Resolved through PATH: macOS has no /bin/true.
+                .env("SHELL", "true")
                 .current_dir(&self.0)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
