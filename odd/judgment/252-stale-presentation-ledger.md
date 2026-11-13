@@ -91,19 +91,37 @@ Los dos jueces examinaron el ledger congelado y el delta (`3e7071c`, `1fda69a`, 
 - **F6**: se corrige el comentario de `gaugeState` (el comportamiento se queda).
 - **F5**: queda registrado como `info`: es **preexistente** y no lo introduce este trabajo.
 
-## Estado de la ronda
+## Ronda 3 — re-juicio final (los dos jueces, sobre este ledger + el delta de la corrección)
+
+Los dos jueces examinaron el ledger congelado y el delta de la corrección (`a5b4d87`, `adf2af1`) y **terminaron con `findings: []`**: los dos coinciden en que **no queda ningún defecto**.
+
+| ID | Veredicto de los dos jueces |
+| --- | --- |
+| F1 (el gasto conservado como actual) | FIXED |
+| F2 (el régimen se perdía al conservar) | FIXED (comparación asimétrica) |
+| F3 (el resumen copiado afirmaba el estado viejo) | FIXED |
+| F4 (el tooltip escondía el gasto fresco del informe mixto) | FIXED |
+| F6 (el comentario de `gaugeState` no describía su guarda) | FIXED (solo el comentario; el comportamiento no cambió) |
+| F5 (el orbe colapsado con índice 0) | CONFIRMADO PREEXISTENTE, fuera de alcance: el delta no lo introduce y no contradice ningún criterio |
+| Criterios de aceptación | Reverificados de punta a punta por los dos jueces |
+
+Ambos washes: **ningún defecto introducido por la corrección**. El juez A lo verificó además ejecutando sobre un `git archive` del commit: `tsc --noEmit` limpio y `vitest run --dir src` → 77 archivos / 1070 tests en verde; y comprobó que el inventario i18n registra exactamente los hashes del árbol del delta (`src=3814331d…`, `src-tauri/src=efa61876…`) y que no se agregó ninguna clave nueva.
+
+Observación del juez A (no es un hallazgo): la rama bloqueada por el cambio de régimen descarta también el `spend` del ciclo anterior, lo cual es coherente con la regla asimétrica congelada y con la rama de régimen distinto que ya existía, porque en NaN el gasto también depende del régimen.
+
+## Veredicto terminal
 
 ```yaml
 target_identity: eeebf275ad4b2c1d94ab79134174eff4320a87782ad91a35ad4c8f9cee142511
-round: 2
+round: 3
 confirmed: [C-1, C-2, C-3, C-4, C-5, C-6, C-7]
 suspect: [S-1, S-2, S-3, S-4, S-5]
 info: [I-1, I-2, I-3, F5]
 fix_work_units: [T31a, T31b, F1, F2, F3, F4, F6]
 contradictions: []
-scoped_rejudgment: pending
-terminal_state: pending
+scoped_rejudgment: approved
+terminal_state: approved
 skill_resolution: paths-injected
 ```
 
-Ronda 3 (re-juicio acotado final): sobre este ledger + el delta de la ronda de corrección 2. Sin ella no hay veredicto terminal.
+El juicio **no emite recibo ni autoriza la entrega**: publicar (push, PR, release) sigue siendo la decisión del owner bajo la política del repo.
