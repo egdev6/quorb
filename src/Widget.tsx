@@ -296,8 +296,9 @@ export function Widget() {
   const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const lastReorderAt = useRef(0);
   // Tras reordenar, el hover no abre hasta que el puntero salga de la tira (#222).
-  // Solo la libera el `mouseleave` de la tira: el `mouseenter` puede llegar
-  // segundos después de soltar. Solo frena la vía del puntero; foco y clic no la consultan.
+  // La libera el modelo de presencia (#264/S19): cuando la presencia pasa de
+  // `widget` a otro estado, el puntero dejó la tira. Solo frena la vía del
+  // puntero; foco y clic no la consultan.
   const reorderHold = useRef<boolean>(false);
   const openPeakRef = useRef<() => void>(() => {});
   const dragWork = useRef<Promise<void>>(Promise.resolve());
@@ -308,11 +309,22 @@ export function Widget() {
 
   /** Move the pointer's location in the presence model (#250). */
   const setHoverPresence = (presence: PointerPresence) => {
+    const previous = hoverRef.current;
     hoverRef.current = presence.target;
     hoverAtRef.current = presence.at;
     // The strip's presence follows the model: the pointer cannot be in both
     // windows, so the detail's `enter` releases the strip's auto-hide.
     setInside(pointerInsideWidget(presence.target));
+    // #264/S19: the pointer left the strip, so the reorder hold is released.
+    // This is the only writer of the presence, so it is the only place that
+    // knows the pointer left: the DOM exit, the native exit, the detail's
+    // `enter` and the native sample all land here.
+    //
+    // Only a real transition out of `widget` releases it: a write that keeps
+    // the pointer on the strip (`widget` -> `widget`) does not, so the
+    // detail's own closing effect does not reopen the panel right after a
+    // reorder, with the pointer on the orb (#222).
+    if (previous === 'widget' && presence.target !== 'widget') reorderHold.current = false;
   };
 
   /** A pointer transition reported by one of the two surfaces. */
@@ -928,6 +940,12 @@ export function Widget() {
       await add(listen(DETAIL_EVENTS.widgetHidden, () => {
         cancelTimers();
         setHoverPresence({ target: 'outside', at: Date.now() });
+        // #264/S19: this is a total reset (the user hid the strip), not a
+        // presence transition. The transition rule only releases the hold when
+        // the presence was `widget`, and the hold can be set while the model
+        // says `outside` (the DOM `enter` of the strip can be lost, which is
+        // the very case this change fixes). A reset leaves no stale hold, and
+        // it cannot reopen the panel: it closes it.
         reorderHold.current = false;
         setPanel(closePanel());
       }));
@@ -1404,7 +1422,10 @@ export function Widget() {
         applyHover({ surface: 'widget', kind: 'enter' });
       }}
       onMouseLeave={() => {
-        reorderHold.current = false;
+        // #264/S19: the release of the reorder hold is not here any more: it
+        // is the presence model's, and it happens when the presence leaves
+        // `widget`. When the native relay is in charge the DOM does not reach
+        // the model (#264/S18), and the native exit of the strip does.
         // The native crossing wins when it exists (#264).
         if (nativeCrossingsRef.current) return;
         applyHover({ surface: 'widget', kind: 'leave' });

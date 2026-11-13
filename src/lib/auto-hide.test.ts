@@ -9,7 +9,7 @@ import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
 import { DETAIL_EVENTS, physicalPanelBounds } from './detail-panel';
 import { POINTER_SURFACE_EVENT } from './hover-presence';
-import { NO_PANEL } from './anchor-panel';
+import { NO_PANEL, type PanelState } from './anchor-panel';
 import type { UsageReport } from './types';
 
 type GripHandlers = {
@@ -1202,7 +1202,7 @@ describe('hover presence wiring', () => {
    * strip's `mouseenter`/`mouseleave` come from the rendered tree and the
    * detail's `enter`/`leave` from the listener the Widget registers.
    */
-  const wire = async (anchored = false) => {
+  const wire = async (anchored = false, panel: PanelState = { providerId: 'a', anchored }) => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
@@ -1210,17 +1210,25 @@ describe('hover presence wiring', () => {
     widgetEffects.states[1] = [report];
     widgetEffects.states[5] = geo;
     widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[7] = { providerId: 'a', anchored };
+    widgetEffects.states[7] = panel;
     widgetEffects.states[9] = false;
     let dock: DockHandlers | undefined;
+    let hover: ((el: HTMLElement) => void) | undefined;
+    let orbs: OrbPointer[] = [];
     function CaptureWidget() {
       const tree = Widget();
       dock = findDock(tree); // Real handlers from the returned JSX, not copied logic.
+      hover = findOrbHover(tree); // The orb's own `mouseenter`, the one that reads the hold.
+      orbs = findOrbPointers(tree); // The orb's reorder handlers.
       return tree;
     }
     renderToStaticMarkup(createElement(CaptureWidget));
     // The detail state effect publishes the revision that the interaction carries.
-    const detailState = widgetEffects.effects.find((e) => e.deps?.[0] === report)!;
+    // Its deps start with the active report; with no panel there is no active
+    // report and they start with `null`. Either way it is the only effect whose
+    // second dep is the geometry and whose dep list is the long one.
+    const detailState = widgetEffects.effects.find((e) => e.deps?.[0] === report)
+      ?? widgetEffects.effects.find((e) => e.deps?.[1] === geo && e.deps.length > 10)!;
     detailState.run();
     const published = widgetEffects.refs
       .map((r) => r.current)
@@ -1237,6 +1245,12 @@ describe('hover presence wiring', () => {
     const nativeHandlers = (widgetEffects.listeners.get(POINTER_SURFACE_EVENT) ?? []) as ((event: { payload: unknown }) => void)[];
     return {
       dock: dock!,
+      /** The orb's `mouseenter`: the only path that reads the reorder hold. */
+      hover: hover!,
+      /** The reorder handlers of the orbs of the strip. */
+      orbs,
+      /** The effect that publishes the detail state (and its presence write). */
+      detailState: () => detailState.run(),
       detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => (
         h({ payload: { revision: published.revision, provider: 'a', kind } })
       )),
@@ -1249,7 +1263,12 @@ describe('hover presence wiring', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.stubGlobal('window', { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      // The viewport of the strip: the reorder hold needs to know if the
+      // pointer was released inside the window.
+      innerWidth: 1920, innerHeight: 1080,
+    });
   });
 
   afterEach(() => {
@@ -1421,6 +1440,87 @@ describe('hover presence wiring', () => {
     // timer se armaría y el panel se cerraría solo.
     await vi.advanceTimersByTimeAsync(280);
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+  });
+
+  // #264/S19: el bloqueo del hover tras reordenar (#222/#240) lo libera el
+  // único escritor del modelo de presencia: cuando la presencia pasa de
+  // `widget` a otro estado, el puntero dejó la tira. Antes lo liberaba sólo
+  // el `mouseleave` del DOM, que en Wayland nativo se pierde (#264/S16).
+  //
+  // El bloqueo se observa por su efecto, no por el ref: con el bloqueo puesto
+  // el hover sobre el orbe no abre el detalle; liberado, lo abre.
+  describe('the reorder hold follows the presence model (#264/S19)', () => {
+    /** El orbe como lo ve el hover: sólo necesita su rectángulo. */
+    const orbElement = { getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }) };
+
+    /**
+     * Reordena de verdad: arrastra el orbe y lo suelta encima de la tira.
+     * Es lo que pone el bloqueo del hover (#222).
+     */
+    const reorder = (orbs: OrbPointer[]) => {
+      const orb = orbs.find((o) => o.id === 'a')!;
+      const target = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
+      orb.onPointerDown({ button: 0, clientX: 10, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerMove({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerUp({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+    };
+
+    /**
+     * El hover sobre el orbe, ya fuera de la guarda del reordenamiento
+     * (400 ms): antes de eso lo frena el gesto, no el bloqueo.
+     */
+    const hoverAfterTheGuard = async (hover: (el: HTMLElement) => void) => {
+      await vi.advanceTimersByTimeAsync(500);
+      hover(orbElement as unknown as HTMLElement);
+    };
+
+    // El puntero sale de la tira y la salida llega sólo por el relé nativo:
+    // es el camino que se perdía en Wayland nativo (#264/S16).
+    it('releases the hold when the pointer leaves the strip natively (#264/S19)', async () => {
+      const { dock, native, hover, orbs } = await wire();
+      dock.onMouseEnter(); // El puntero está sobre la tira.
+      reorder(orbs); // El reordenamiento bloquea el hover (#222).
+      native('widget', 'leave'); // La salida llega sólo por el relé nativo.
+      await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
+    // El puntero pasa de la tira al detalle: ya no está en la tira, así que
+    // el bloqueo se suelta aunque el `mouseleave` de la tira no llegue nunca.
+    it('releases the hold when the pointer moves from the strip to the detail (#264/S19)', async () => {
+      const { dock, detail, hover, orbs } = await wire();
+      dock.onMouseEnter();
+      reorder(orbs);
+      detail('enter'); // El puntero entra al detalle.
+      await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
+    // #222: el detalle se cierra con el puntero encima del orbe (justo al
+    // soltar un reordenamiento). Esa escritura deja la presencia en `widget`,
+    // así que NO puede liberar el bloqueo: si lo liberara, el panel se abriría
+    // solo. Esta prueba tiene que pasar antes de implementar el cambio.
+    it('keeps the hold when the presence stays on the strip (#264/S19, #222)', async () => {
+      const { dock, hover, orbs, detailState } = await wire(false, NO_PANEL);
+      dock.onMouseEnter();
+      reorder(orbs);
+      detailState(); // El detalle se cierra con el puntero sobre la tira.
+      await hoverAfterTheGuard(hover);
+      // La apertura retardada del hover, si el bloqueo no estuviera puesto.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    });
+
+    // Sin cruce nativo (Windows y macOS) la salida del DOM sigue siendo la
+    // que libera el bloqueo.
+    it('keeps releasing the hold on the DOM exit of the strip (#264/S19)', async () => {
+      const { dock, hover, orbs } = await wire();
+      dock.onMouseEnter();
+      reorder(orbs);
+      dock.onMouseLeave(); // La salida del DOM: Windows y macOS.
+      await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
   });
 });
 
