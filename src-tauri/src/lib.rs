@@ -629,7 +629,12 @@ async fn session_resolver(
                     home
                 }
             };
-            Ok(Some(wsl::SessionResolver::for_wsl(adapter, distro, home)))
+            Ok(Some(wsl::SessionResolver::for_wsl(
+                adapter,
+                distro,
+                home,
+                crate::i18n::locale_from_config(&cfg.locale),
+            )))
         }
     }
 }

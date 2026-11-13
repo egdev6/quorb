@@ -23,6 +23,7 @@ use crate::config::{
     credentials_file_name, Account, ApiCostConfig, AppConfig, CopilotConfig, NanConfig,
     OpenCodeGoConfig, OpenRouterConfig, SubscriptionConfig, ZaiConfig,
 };
+use crate::i18n::Locale;
 use crate::model::{Kind, Status, UsageReport};
 use crate::secrets;
 use crate::wsl::SessionResolver;
@@ -118,6 +119,8 @@ pub async fn fetch_all(
     // Entorno inaccesible: los CLIs reportan el fallo en su orbe (revisión PR
     // #248); el resto de proveedores se consulta con normalidad.
     let env_error = access.unavailable();
+    // Los mensajes propios de credenciales/login nacen en la locale activa.
+    let locale = crate::i18n::locale_from_config(&cfg.locale);
     let mut jobs: Vec<BoxFuture<'_, Vec<UsageReport>>> = vec![];
     if cfg.claude.enabled {
         jobs.push(
@@ -126,7 +129,10 @@ pub async fn fetch_all(
                     Some(e) => Who::main("claude")
                         .report("Claude", Kind::Subscription)
                         .fail(Status::Error, e),
-                    None => claude::fetch(&cfg.claude, Who::main("claude"), http, resolver).await,
+                    None => {
+                        claude::fetch(&cfg.claude, locale, Who::main("claude"), http, resolver)
+                            .await
+                    }
                 }]
             }
             .boxed(),
@@ -139,7 +145,9 @@ pub async fn fetch_all(
                     Some(e) => Who::main("codex")
                         .report("ChatGPT · Codex", Kind::Subscription)
                         .fail(Status::Error, e),
-                    None => codex::fetch(&cfg.codex, Who::main("codex"), http, resolver).await,
+                    None => {
+                        codex::fetch(&cfg.codex, locale, Who::main("codex"), http, resolver).await
+                    }
                 }]
             }
             .boxed(),
@@ -152,7 +160,10 @@ pub async fn fetch_all(
                     Some(e) => Who::main("gemini")
                         .report("Gemini", Kind::Subscription)
                         .fail(Status::Error, e),
-                    None => gemini::fetch(&cfg.gemini, Who::main("gemini"), http, resolver).await,
+                    None => {
+                        gemini::fetch(&cfg.gemini, locale, Who::main("gemini"), http, resolver)
+                            .await
+                    }
                 }]
             }
             .boxed(),
@@ -165,7 +176,7 @@ pub async fn fetch_all(
                     Some(e) => Who::main("grok")
                         .report("Grok", Kind::Subscription)
                         .fail(Status::Error, e),
-                    None => grok::fetch(&cfg.grok, Who::main("grok"), http, resolver).await,
+                    None => grok::fetch(&cfg.grok, locale, Who::main("grok"), http, resolver).await,
                 }]
             }
             .boxed(),
@@ -173,7 +184,7 @@ pub async fn fetch_all(
     }
     if cfg.cursor.enabled {
         jobs.push(
-            async move { vec![cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await] }
+            async move { vec![cursor::fetch(&cfg.cursor, locale, Who::main("cursor"), http).await] }
                 .boxed(),
         );
     }
@@ -266,32 +277,33 @@ pub async fn fetch_one(
     }
     let resolver = access.resolver();
     let env_error = access.unavailable();
+    let locale = crate::i18n::locale_from_config(&cfg.locale);
     Some(match id {
         "claude" => match env_error {
             Some(e) => Who::main("claude")
                 .report("Claude", Kind::Subscription)
                 .fail(Status::Error, e),
-            None => claude::fetch(&cfg.claude, Who::main("claude"), http, resolver).await,
+            None => claude::fetch(&cfg.claude, locale, Who::main("claude"), http, resolver).await,
         },
         "codex" => match env_error {
             Some(e) => Who::main("codex")
                 .report("ChatGPT · Codex", Kind::Subscription)
                 .fail(Status::Error, e),
-            None => codex::fetch(&cfg.codex, Who::main("codex"), http, resolver).await,
+            None => codex::fetch(&cfg.codex, locale, Who::main("codex"), http, resolver).await,
         },
         "gemini" => match env_error {
             Some(e) => Who::main("gemini")
                 .report("Gemini", Kind::Subscription)
                 .fail(Status::Error, e),
-            None => gemini::fetch(&cfg.gemini, Who::main("gemini"), http, resolver).await,
+            None => gemini::fetch(&cfg.gemini, locale, Who::main("gemini"), http, resolver).await,
         },
         "grok" => match env_error {
             Some(e) => Who::main("grok")
                 .report("Grok", Kind::Subscription)
                 .fail(Status::Error, e),
-            None => grok::fetch(&cfg.grok, Who::main("grok"), http, resolver).await,
+            None => grok::fetch(&cfg.grok, locale, Who::main("grok"), http, resolver).await,
         },
-        "cursor" => cursor::fetch(&cfg.cursor, Who::main("cursor"), http).await,
+        "cursor" => cursor::fetch(&cfg.cursor, locale, Who::main("cursor"), http).await,
         "copilot" => copilot::fetch(&cfg.copilot, Who::main("copilot"), http).await,
         "nan" => nan::fetch(&cfg.nan, Who::main("nan"), http).await,
         "openrouter" => openrouter::fetch(&cfg.openrouter, Who::main("openrouter"), http).await,
@@ -312,6 +324,7 @@ pub async fn fetch_one(
 /// o Gemini (por proveedor) o una adicional (por id). `None` si no usa CLI.
 /// `home` se inyecta para poder probar con carpetas propias.
 pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
+    let locale = crate::i18n::locale_from_config(&cfg.locale);
     if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
         return a.credentials_file(home);
     }
@@ -328,12 +341,12 @@ pub fn session_file(cfg: &AppConfig, id: &str, home: &Path) -> Option<PathBuf> {
             &cfg.claude,
             home.join(".claude").join(".credentials.json"),
         )),
-        "codex" => codex::resolved_auth_path(cfg.codex.credentials_path.as_deref()).ok(),
+        "codex" => codex::resolved_auth_path(locale, cfg.codex.credentials_path.as_deref()).ok(),
         "gemini" => Some(main(
             &cfg.gemini,
             home.join(".gemini").join("oauth_creds.json"),
         )),
-        "grok" => grok::resolved_auth_path(cfg.grok.credentials_path.as_deref()).ok(),
+        "grok" => grok::resolved_auth_path(locale, cfg.grok.credentials_path.as_deref()).ok(),
         _ => None,
     }
 }
@@ -439,6 +452,7 @@ fn fetch_account<'a>(
     access: SessionAccess<'a>,
 ) -> BoxFuture<'a, UsageReport> {
     let who = Who::extra(a);
+    let locale = crate::i18n::locale_from_config(&cfg.locale);
     // Algunas cuentas adicionales son de proveedores sin sesión CLI (Copilot,
     // APIs…): su fetch no depende del ENTORNO y no le aplica el fallo de WSL
     // (revisión PR #248). Las de proveedores CLI sí: su sesión vive en la
@@ -476,20 +490,25 @@ fn fetch_account<'a>(
     };
     match a.provider.as_str() {
         "claude" => {
-            async move { claude::fetch(&session(&cfg.claude), who, http, resolver).await }.boxed()
+            async move { claude::fetch(&session(&cfg.claude), locale, who, http, resolver).await }
+                .boxed()
         }
         "codex" => {
-            async move { codex::fetch(&session(&cfg.codex), who, http, resolver).await }.boxed()
+            async move { codex::fetch(&session(&cfg.codex), locale, who, http, resolver).await }
+                .boxed()
         }
         "gemini" => {
-            async move { gemini::fetch(&session(&cfg.gemini), who, http, resolver).await }.boxed()
+            async move { gemini::fetch(&session(&cfg.gemini), locale, who, http, resolver).await }
+                .boxed()
         }
         "grok" => {
-            async move { grok::fetch(&session(&cfg.grok), who, http, resolver).await }.boxed()
+            async move { grok::fetch(&session(&cfg.grok), locale, who, http, resolver).await }
+                .boxed()
         }
         // Solo con su token: la sesión de la app de Cursor es la de la cuenta principal.
         "cursor" => {
-            async move { cursor::fetch(&SubscriptionConfig::default(), who, http).await }.boxed()
+            async move { cursor::fetch(&SubscriptionConfig::default(), locale, who, http).await }
+                .boxed()
         }
         "copilot" => {
             let c = CopilotConfig {
@@ -575,8 +594,10 @@ pub(crate) fn unix_to_rfc3339(secs: i64) -> Option<String> {
     Utc.timestamp_opt(secs, 0).single().map(|d| d.to_rfc3339())
 }
 
-/// Ruta explícita si existe; si no, la primera candidata que exista.
+/// Ruta explícita si existe; si no, la primera candidata que exista. Los
+/// mensajes nacen en la locale activa (L4, #66); las rutas van literales.
 pub(crate) fn resolve_path(
+    locale: Locale,
     explicit: Option<&str>,
     candidates: &[PathBuf],
 ) -> Result<PathBuf, String> {
@@ -585,7 +606,10 @@ pub(crate) fn resolve_path(
         return if p.is_file() {
             Ok(p)
         } else {
-            Err(format!("No existe {}", p.display()))
+            Err(crate::i18n::path_not_found(
+                locale,
+                &p.display().to_string(),
+            ))
         };
     }
     candidates
@@ -594,14 +618,16 @@ pub(crate) fn resolve_path(
         .cloned()
         .ok_or_else(|| {
             let list: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
-            format!("No encuentro credenciales en: {}", list.join(", "))
+            crate::i18n::credentials_not_found(locale, &list.join(", "))
         })
 }
 
-pub(crate) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("No puedo leer {}: {e}", path.display()))?;
-    serde_json::from_str(&raw).map_err(|e| format!("JSON inválido en {}: {e}", path.display()))
+pub(crate) fn read_json(locale: Locale, path: &Path) -> Result<serde_json::Value, String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        crate::i18n::cannot_read(locale, &path.display().to_string(), &e.to_string())
+    })?;
+    serde_json::from_str(&raw)
+        .map_err(|e| crate::i18n::invalid_json(locale, &path.display().to_string(), &e.to_string()))
 }
 
 /// Huella de los ficheros de sesión de los CLIs (Claude Code, Codex, Gemini) de
@@ -625,6 +651,7 @@ pub async fn session_stamp(cfg: &AppConfig, resolver: Option<&SessionResolver>) 
 
 /// Sello del entorno host: suma de mtimes de los ficheros de sesión.
 fn host_session_stamp(cfg: &AppConfig) -> u64 {
+    let locale = crate::i18n::locale_from_config(&cfg.locale);
     let h = home();
     let main = |c: &SubscriptionConfig, default: PathBuf| match c
         .credentials_path
@@ -644,7 +671,7 @@ fn host_session_stamp(cfg: &AppConfig) -> u64 {
     if cfg.codex.enabled {
         // Mismo resolver que `codex::fetch`: así el sello observa el fichero
         // que de verdad se lee (incluido el respaldo ~/.codex/auth.json).
-        if let Ok(p) = codex::resolved_auth_path(cfg.codex.credentials_path.as_deref()) {
+        if let Ok(p) = codex::resolved_auth_path(locale, cfg.codex.credentials_path.as_deref()) {
             files.push(p);
         }
     }
@@ -657,7 +684,7 @@ fn host_session_stamp(cfg: &AppConfig) -> u64 {
     if cfg.grok.enabled {
         // Mismo resolver que `grok::fetch`: el sello observa el fichero que de
         // verdad se lee (incluido el respaldo ~/.grok/auth.json).
-        if let Ok(p) = grok::resolved_auth_path(cfg.grok.credentials_path.as_deref()) {
+        if let Ok(p) = grok::resolved_auth_path(locale, cfg.grok.credentials_path.as_deref()) {
             files.push(p);
         }
     }
@@ -770,6 +797,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let cfg = AppConfig {
             claude: SubscriptionConfig {
@@ -805,6 +833,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let cfg = AppConfig {
             claude: SubscriptionConfig {
@@ -840,6 +869,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let cfg = AppConfig {
             accounts: vec![Account {
@@ -896,6 +926,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let cfg = AppConfig {
             accounts: vec![Account {
@@ -998,6 +1029,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let mk = |dir: Option<String>| Account {
             id: "claude:w1".into(),
@@ -1039,6 +1071,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let a = Account {
             id: "openrouter:w1".into(),
@@ -1063,6 +1096,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let mk = |id: &str| Account {
             id: id.into(),
@@ -1215,9 +1249,179 @@ mod tests {
             PathBuf::from("/home/u/.claude/.credentials.json"),
             PathBuf::from("/var/lib/creds x.json"),
         ];
-        let err = resolve_path(Some("/no existe/ruta con espacios.json"), &candidates).unwrap_err();
+        let err = resolve_path(
+            Locale::Es,
+            Some("/no existe/ruta con espacios.json"),
+            &candidates,
+        )
+        .unwrap_err();
         // La ruta con espacios y la lista de candidatos aparecen en el mensaje.
         assert!(err.contains("/no existe/ruta con espacios.json"));
+    }
+
+    /// L4 (#66): los errores de `resolve_path` nacen en la locale activa;
+    /// las rutas viajan literales en ambos idiomas.
+    #[test]
+    fn resolve_path_errors_follow_the_locale() {
+        let candidates = [PathBuf::from("/home/u/.claude/.credentials.json")];
+        assert_eq!(
+            resolve_path(Locale::Es, None, &candidates).unwrap_err(),
+            "No encuentro credenciales en: /home/u/.claude/.credentials.json"
+        );
+        assert_eq!(
+            resolve_path(Locale::En, None, &candidates).unwrap_err(),
+            "No credentials found in: /home/u/.claude/.credentials.json"
+        );
+        assert_eq!(
+            resolve_path(Locale::En, Some("/no/hay.json"), &candidates).unwrap_err(),
+            "Path not found: /no/hay.json"
+        );
+    }
+
+    /// L4 (#66, reporte de ludevdot): con la app en inglés y sin sesión de
+    /// Claude disponible, tanto el error de credenciales como la indicación
+    /// de login llegan en inglés; la ruta viaja literal. La ruta explícita
+    /// inexistente evita el respaldo de Keychain y hace el test hermético.
+    #[test]
+    fn claude_login_messages_follow_the_app_locale() {
+        let cfg = AppConfig {
+            locale: "en".into(),
+            claude: SubscriptionConfig {
+                enabled: true,
+                credentials_path: Some("/no/existe/quorb-l4-en.json".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        let http = reqwest::Client::new();
+        let report = rt
+            .block_on(fetch_one(&cfg, "claude", &http, SessionAccess::Host))
+            .expect("informe de claude");
+        assert_eq!(report.status, Status::NeedsLogin);
+        assert_eq!(
+            report.message.as_deref(),
+            Some("Path not found: /no/existe/quorb-l4-en.json. Sign in to Claude Code.")
+        );
+    }
+
+    /// S5.1 (review #272): consulta `id` con `fetch_one` apuntando su ruta de
+    /// credenciales a un fichero con `contents`, y la app en `locale`. Ninguna
+    /// de las rutas probadas llega a la red: el fallo es local.
+    fn fetch_with_credentials(id: &str, locale: &str, tag: &str, contents: &str) -> UsageReport {
+        let dir = temp_dir(tag);
+        let file = dir.join("creds.json");
+        std::fs::write(&file, contents).unwrap();
+        let sub = SubscriptionConfig {
+            enabled: true,
+            credentials_path: Some(file.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        let mut cfg = AppConfig {
+            locale: locale.into(),
+            ..Default::default()
+        };
+        match id {
+            "claude" => cfg.claude = sub,
+            "codex" => cfg.codex = sub,
+            "gemini" => cfg.gemini = sub,
+            "grok" => cfg.grok = sub,
+            other => panic!("proveedor sin ruta de credenciales en el test: {other}"),
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        let http = reqwest::Client::new();
+        let report = rt
+            .block_on(fetch_one(&cfg, id, &http, SessionAccess::Host))
+            .expect("informe del proveedor");
+        let _ = std::fs::remove_dir_all(&dir);
+        report
+    }
+
+    /// S5.1: el reporte exacto del revisor — con la app en `en`, un `auth.json`
+    /// con `{}` mostraba el mensaje en español. Codex y Grok lo dicen en la
+    /// locale de la app; en `es` el literal original no cambia.
+    #[test]
+    fn codex_and_grok_empty_auth_json_follows_the_app_locale() {
+        for (id, en, es) in [
+            (
+                "codex",
+                "auth.json has no tokens. Run “codex login”.",
+                "auth.json sin tokens. Ejecuta «codex login».",
+            ),
+            (
+                "grok",
+                "auth.json has no valid credentials. Run “grok login”.",
+                "auth.json sin credenciales válidas. Ejecuta «grok login».",
+            ),
+        ] {
+            let report = fetch_with_credentials(id, "en", &format!("{id}-empty-en"), "{}");
+            assert_eq!(report.status, Status::NeedsLogin, "{id} en");
+            assert_eq!(report.message.as_deref(), Some(en), "{id} en");
+            let report = fetch_with_credentials(id, "es", &format!("{id}-empty-es"), "{}");
+            assert_eq!(report.status, Status::NeedsLogin, "{id} es");
+            assert_eq!(report.message.as_deref(), Some(es), "{id} es");
+        }
+    }
+
+    /// S5.1: Codex con solo API key también sigue la locale.
+    #[test]
+    fn codex_api_key_only_auth_json_follows_the_app_locale() {
+        let raw = "{\"OPENAI_API_KEY\":\"sk-test\"}";
+        let en = fetch_with_credentials("codex", "en", "codex-apikey-en", raw);
+        assert_eq!(
+            en.message.as_deref(),
+            Some("Codex is authenticated with an API key, not with your ChatGPT account. Run “codex login”.")
+        );
+        let es = fetch_with_credentials("codex", "es", "codex-apikey-es", raw);
+        assert_eq!(
+            es.message.as_deref(),
+            Some("Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login».")
+        );
+    }
+
+    /// S5.1: sesión de Claude caducada (el token local expiró, sin red) y
+    /// credenciales sin `claudeAiOauth`.
+    #[test]
+    fn claude_expired_and_api_key_credentials_follow_the_app_locale() {
+        let expired = "{\"claudeAiOauth\":{\"accessToken\":\"t\",\"expiresAt\":1}}";
+        let en = fetch_with_credentials("claude", "en", "claude-expired-en", expired);
+        assert_eq!(en.status, Status::NeedsLogin);
+        assert_eq!(
+            en.message.as_deref(),
+            Some("The session has expired. “Renew session” opens Claude Code, which renews it; Quorb updates itself.")
+        );
+        let es = fetch_with_credentials("claude", "es", "claude-expired-es", expired);
+        assert_eq!(
+            es.message.as_deref(),
+            Some("La sesión ha caducado. «Renovar sesión» abre Claude Code, que la renueva; Quorb se actualiza solo.")
+        );
+        let en = fetch_with_credentials("claude", "en", "claude-nooauth-en", "{}");
+        assert_eq!(
+            en.message.as_deref(),
+            Some("Credentials without “claudeAiOauth” (signed in with an API key?)")
+        );
+    }
+
+    /// S5.1: Gemini sin `refresh_token` y con el acceso caducado (sin red).
+    #[test]
+    fn gemini_expired_session_follows_the_app_locale() {
+        let en = fetch_with_credentials("gemini", "en", "gemini-expired-en", "{}");
+        assert_eq!(en.status, Status::NeedsLogin);
+        assert_eq!(
+            en.message.as_deref(),
+            Some("The Gemini CLI session has expired. Open it to renew it.")
+        );
+        let es = fetch_with_credentials("gemini", "es", "gemini-expired-es", "{}");
+        assert_eq!(
+            es.message.as_deref(),
+            Some("La sesión de Gemini CLI ha caducado. Ábrelo para renovarla.")
+        );
     }
 
     #[test]

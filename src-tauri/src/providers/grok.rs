@@ -13,6 +13,7 @@
 
 use super::{home, net_error, read_json, resolve_path, Who};
 use crate::config::SubscriptionConfig;
+use crate::i18n::{text, Locale, Msg};
 use crate::model::{Kind, Meter, Status, UsageReport};
 use crate::wsl::{SessionError, SessionResolver};
 use chrono::{DateTime, Utc};
@@ -42,16 +43,21 @@ pub(crate) fn auth_candidates(grok_home: Option<&Path>, home: &Path) -> Vec<Path
 /// Ruta efectiva de `auth.json`: respeta `credentials_path` explícito y, si no,
 /// el primer candidato existente.
 pub(crate) fn auth_path(
+    locale: Locale,
     credentials_path: Option<&str>,
     grok_home: Option<&Path>,
     home: &Path,
 ) -> Result<PathBuf, String> {
-    resolve_path(credentials_path, &auth_candidates(grok_home, home))
+    resolve_path(locale, credentials_path, &auth_candidates(grok_home, home))
 }
 
 /// `auth_path` leyendo `GROK_HOME` del entorno (uso real; los tests inyectan).
-pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolved_auth_path(
+    locale: Locale,
+    credentials_path: Option<&str>,
+) -> Result<PathBuf, String> {
     auth_path(
+        locale,
         credentials_path,
         std::env::var_os("GROK_HOME").map(PathBuf::from).as_deref(),
         &home(),
@@ -60,6 +66,7 @@ pub(crate) fn resolved_auth_path(credentials_path: Option<&str>) -> Result<PathB
 
 pub async fn fetch(
     cfg: &SubscriptionConfig,
+    locale: Locale,
     who: Who<'_>,
     http: &reqwest::Client,
     resolver: Option<&SessionResolver>,
@@ -83,13 +90,19 @@ pub async fn fetch(
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
                     Ok(v) => v,
                     Err(e) => {
-                        return report.fail(Status::Error, format!("{e}. Ejecuta «grok login»."))
+                        return report.fail(
+                            Status::Error,
+                            format!("{}. {}", e, text(locale, Msg::SignInGrok)),
+                        )
                     }
                 },
                 // Sin credenciales en el entorno elegido: hace falta login
                 // AQUÍ (no en otro entorno).
                 Err(SessionError::Absent(m)) => {
-                    return report.fail(Status::NeedsLogin, format!("{m}. Ejecuta «grok login»."))
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{}. {}", m, text(locale, Msg::SignInGrok)),
+                    )
                 }
                 // El fallo es del subsistema o de la distro: la acción
                 // correcta no es "inicia sesión".
@@ -100,20 +113,23 @@ pub async fn fetch(
             }
         }
         None => {
-            let path = match resolved_auth_path(cfg.credentials_path.as_deref()) {
+            let path = match resolved_auth_path(locale, cfg.credentials_path.as_deref()) {
                 Ok(p) => p,
                 Err(e) => {
-                    return report.fail(Status::NeedsLogin, format!("{e}. Ejecuta «grok login»."))
+                    return report.fail(
+                        Status::NeedsLogin,
+                        format!("{}. {}", e, text(locale, Msg::SignInGrok)),
+                    )
                 }
             };
-            match read_json(&path) {
+            match read_json(locale, &path) {
                 Ok(v) => v,
                 Err(e) => return report.fail(Status::NeedsLogin, e),
             }
         }
     };
     let now = Utc::now();
-    let auth = match Auth::parse(&auth_json, now) {
+    let auth = match Auth::parse(locale, &auth_json, now) {
         Ok(a) => a,
         Err(e) => return report.fail(Status::NeedsLogin, e),
     };
@@ -131,12 +147,7 @@ pub async fn fetch(
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => {
-            return report.fail(
-                Status::NeedsLogin,
-                "Sesión caducada. Ejecuta «grok login» para renovarla.",
-            )
-        }
+        401 | 403 => return report.fail(Status::NeedsLogin, text(locale, Msg::GrokSessionExpired)),
         429 => {
             return report.fail(
                 Status::Warning,
@@ -194,7 +205,7 @@ impl Auth {
     /// Elige la entrada del fichero: primero una `auth.x.ai::` no caducada;
     /// si ninguna, el legado no caducado; si tampoco, la preferida caducada
     /// (para poder decir «ejecuta grok login» en vez de «no hay credenciales»).
-    pub fn parse(v: &Value, now: DateTime<Utc>) -> Result<Self, String> {
+    pub fn parse(locale: Locale, v: &Value, now: DateTime<Utc>) -> Result<Self, String> {
         let obj = v.as_object().ok_or("auth.json no es un objeto")?;
         let token_of = |e: Option<&Value>| -> Option<String> {
             e.and_then(|e| e.get("key"))
@@ -235,7 +246,7 @@ impl Auth {
         if let Some(t) = pick(AUTH_LEGACY) {
             return Ok(Auth { token: t });
         }
-        Err("auth.json sin credenciales válidas. Ejecuta «grok login».".into())
+        Err(text(locale, Msg::GrokNoCredentials).to_string())
     }
 }
 
@@ -341,7 +352,10 @@ mod tests {
             "https://accounts.x.ai/sign-in": {"key": "legacy-token", "expires_at": "2099-01-01T00:00:00Z"},
             "https://auth.x.ai::abc123": {"key": "current-token", "expires_at": "2099-01-01T00:00:00Z"}
         }));
-        assert_eq!(Auth::parse(&v, now).unwrap().token, "current-token");
+        assert_eq!(
+            Auth::parse(Locale::Es, &v, now).unwrap().token,
+            "current-token"
+        );
     }
 
     #[test]
@@ -350,7 +364,10 @@ mod tests {
         let v = auth_with(json!({
             "https://accounts.x.ai/sign-in": {"key": "legacy-token", "expires_at": "2099-01-01T00:00:00Z"}
         }));
-        assert_eq!(Auth::parse(&v, now).unwrap().token, "legacy-token");
+        assert_eq!(
+            Auth::parse(Locale::Es, &v, now).unwrap().token,
+            "legacy-token"
+        );
     }
 
     #[test]
@@ -361,9 +378,9 @@ mod tests {
         }));
         // Caducada: se acepta el token pero el flujo responderá NeedsLogin por
         // HTTP 401; aquí verificamos que no hay otra entrada que preferir.
-        assert_eq!(Auth::parse(&v, now).unwrap().token, "old-token");
+        assert_eq!(Auth::parse(Locale::Es, &v, now).unwrap().token, "old-token");
         let empty = auth_with(json!({}));
-        assert!(Auth::parse(&empty, now).is_err());
+        assert!(Auth::parse(Locale::Es, &empty, now).is_err());
     }
 
     #[test]
