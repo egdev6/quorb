@@ -394,7 +394,11 @@ fn account_session_dir_linux(a: &Account, wsl: &WslLogin<'_>) -> Result<PathBuf,
 /// segundo `wsl.exe` dentro del guest, que no existe), y buscarlo en el
 /// guest da un falso «no instalado» (revisión PR #253).
 fn is_wsl_command(command: &str) -> bool {
-    let program = program_of(command);
+    let program = split_login_command(command)
+        .map(|(program, _)| program)
+        // An invalid command cannot execute; retain the previous guard result
+        // for malformed inputs, including a plain wsl with unclosed arguments.
+        .unwrap_or_else(|_| program_of(command));
     let file = program
         .rsplit(['\\', '/'])
         .next()
@@ -1670,12 +1674,106 @@ mod wsl_login_tests {
     /// comando del CLI con un mensaje accionable (PR #253).
     #[test]
     fn wsl_login_rejects_a_command_that_already_launches_wsl() {
+        for command in [
+            "wsl codex login",
+            "WSL.EXE codex login",
+            r#""C:\Windows\System32\wsl.exe" codex login"#,
+            "wsl 'unterminated",
+            "'wsl' codex login",
+            "'wsl.exe' codex login",
+        ] {
+            let mock = MockWslAdapter::new();
+            let result = prepare_wsl_login(&wsl_of(&mock), "codex", command, &None);
+            assert_eq!(
+                result,
+                Err("El comando de login de codex ya incluye `wsl`: en modo WSL escribe el comando del CLI dentro de la distro (por ejemplo `codex login`) y elige la distro en Ajustes; Quorb lo ejecuta dentro de ella.".into()),
+                "{command}"
+            );
+            assert!(mock.calls().is_empty(), "{command}: {:?}", mock.calls());
+        }
+    }
+
+    #[test]
+    fn cli_status_rejects_normalized_wsl_programs_without_guest_probes() {
         let mock = MockWslAdapter::new();
-        let w = wsl_of(&mock);
-        let err = prepare_wsl_login(&w, "codex", "wsl codex login", &None).unwrap_err();
-        assert!(err.contains("ya incluye `wsl`"), "{err}");
-        // Sin tocar el adaptador: el rechazo es de configuración.
-        assert!(mock.calls().is_empty(), "{:?}", mock.calls());
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
+        mock.set_command_output(CommandOutput {
+            code: 0,
+            stdout: "/synthetic/cli\n".into(),
+            stderr: String::new(),
+        });
+        let mut cfg = AppConfig::default();
+        cfg.claude.login_command = "'wsl' codex login".into();
+        cfg.codex.login_command = "'wsl.exe' codex login".into();
+        cfg.gemini.login_command = r#""C:\Windows\System32\WSL.EXE" codex login"#.into();
+        cfg.grok.login_command = "wsl codex login".into();
+
+        let status = cli_status(&cfg, Some(wsl_of(&mock)));
+        assert!(
+            status.values().all(|s| *s == CliStatus::Error),
+            "{status:?}"
+        );
+        assert_eq!(status.len(), 4);
+        assert_eq!(
+            mock.calls(),
+            vec![
+                WslCall::ListDistributions,
+                WslCall::ShellStrategy("Ubuntu-22.04".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn ordinary_guest_cli_detection_and_literal_argv_are_preserved() {
+        let mock = MockWslAdapter::new();
+        mock.set_distributions(vec![distro("Ubuntu-22.04", DistroState::Running)]);
+        mock.set_shell("Ubuntu-22.04", ShellStrategy::BashLogin);
+        mock.set_command_output(CommandOutput {
+            code: 0,
+            stdout: "/synthetic/cli\n".into(),
+            stderr: String::new(),
+        });
+        let mut cfg = AppConfig::default();
+        cfg.codex.login_command = r#""/opt/my tools/codex" login --label "ñ&|;$HOME""#.into();
+
+        let status = cli_status(&cfg, Some(wsl_of(&mock)));
+        assert_eq!(status["codex"], CliStatus::Ready);
+        let expected_probe = WslCall::RunCommand(
+            "Ubuntu-22.04".into(),
+            [
+                "bash",
+                "-c",
+                wsl::SCRIPT_COMMAND_V,
+                "quorb",
+                "/opt/my tools/codex",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        );
+        assert!(mock.calls().contains(&expected_probe), "{:?}", mock.calls());
+
+        let argv = prepare_wsl_login(&wsl_of(&mock), "codex", &cfg.codex.login_command, &None)
+            .expect("ordinary guest login argv");
+        assert_eq!(
+            argv,
+            vec![
+                "wsl.exe",
+                "-d",
+                "Ubuntu-22.04",
+                "-e",
+                "bash",
+                "-lc",
+                WSL_LOGIN_WRAP,
+                "quorb",
+                "/opt/my tools/codex",
+                "login",
+                "--label",
+                "ñ&|;$HOME",
+            ]
+        );
+        assert_eq!(mock.calls().last(), Some(&expected_probe));
     }
 
     /// #92: la CLI se detecta DENTRO de la distro (Running) con `command -v`.
