@@ -820,8 +820,15 @@ pub fn load(path: &Path) -> (AppConfig, ConfigOrigin) {
             serde_json::from_str::<AppConfig>(&text).unwrap_or_else(|_| unreadable_config()),
             ConfigOrigin::Existing,
         ),
+        // A dangling symlink also reports NotFound, but the entry exists: it is not
+        // a fresh install. Keep the previous config semantics for it.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            (AppConfig::default(), ConfigOrigin::Missing)
+            let origin = if std::fs::symlink_metadata(path).is_ok() {
+                ConfigOrigin::Existing
+            } else {
+                ConfigOrigin::Missing
+            };
+            (AppConfig::default(), origin)
         }
         Err(_) => (unreadable_config(), ConfigOrigin::Existing),
     };

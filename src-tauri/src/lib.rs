@@ -2281,4 +2281,21 @@ mod tests {
         }
         assert!(!locale_picker_needed_on("freebsd", &fresh, origin));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_config_symlink_is_existing_not_fresh() {
+        let fixture = LocaleStartupFixture::new("dangling");
+        let path = fixture.file("config.json");
+        std::os::unix::fs::symlink(fixture.file("unavailable-config.json"), &path).unwrap();
+
+        let (cfg, origin) = config::load(&path);
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert_eq!(cfg, AppConfig::default().sanitized());
+        assert!(!locale_picker_needed_on("windows", &cfg, origin));
+        // Linux/macOS keep their previous policy for an absent readable target.
+        assert!(locale_picker_needed_on("linux", &cfg, origin));
+        assert!(locale_picker_needed_on("macos", &cfg, origin));
+        assert!(!fixture.file("unavailable-config.json").exists());
+    }
 }
