@@ -52,6 +52,9 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+// En scope para el dispatch estático del adaptador en `account_session`
+// (el de `session_resolver` ya es `dyn` y no lo necesita).
+use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 /// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
