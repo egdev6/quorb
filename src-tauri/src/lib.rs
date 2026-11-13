@@ -7,6 +7,7 @@ mod detail_geometry;
 mod email;
 mod history;
 mod i18n;
+mod installer_locale;
 mod login;
 mod model;
 mod providers;
@@ -37,7 +38,7 @@ mod windows_backdrop;
 mod wm_compat;
 pub mod wsl;
 
-use config::AppConfig;
+use config::{AppConfig, ConfigOrigin};
 use model::UsageReport;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -1299,14 +1300,19 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-/// Linux y macOS piden idioma antes de crear la UI principal; Windows no cambia.
-fn locale_picker_needed_on(os: &str, cfg: &AppConfig) -> bool {
-    matches!(os, "linux" | "macos") && !cfg.locale_selected
+/// Linux/macOS conservan su política; Windows sólo pregunta si faltaba la config.
+fn locale_picker_needed_on(os: &str, cfg: &AppConfig, origin: ConfigOrigin) -> bool {
+    !cfg.locale_selected
+        && match os {
+            "linux" | "macos" => true,
+            "windows" => origin == ConfigOrigin::Missing,
+            _ => false,
+        }
 }
 
 /// Gate de producción, compartido por setup y la prueba del target compilado.
-fn locale_picker_needed(cfg: &AppConfig) -> bool {
-    locale_picker_needed_on(std::env::consts::OS, cfg)
+fn locale_picker_needed(cfg: &AppConfig, origin: ConfigOrigin) -> bool {
+    locale_picker_needed_on(std::env::consts::OS, cfg, origin)
 }
 
 /// Destino de una segunda instancia: el selector abierto tiene prioridad (S14).
@@ -1555,7 +1561,12 @@ pub fn run() {
             migrate_legacy_dir(&config_dir, "config.json");
             migrate_legacy_dir(&data_dir, "history.json");
             let config_path = config_dir.join("config.json");
-            let cfg = config::load(&config_path);
+            // On Windows, a fresh install may carry the NSIS language choice (#233).
+            let (cfg, config_origin) = installer_locale::startup_config(
+                std::env::consts::OS,
+                &config_dir,
+                env!("CARGO_PKG_VERSION"),
+            );
             let http = reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .user_agent(concat!("quorb/", env!("CARGO_PKG_VERSION")))
@@ -1574,7 +1585,10 @@ pub fn run() {
                 wsl_homes: wsl::WslHomeCache::default(),
             });
             // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
-            let picker = locale_picker_needed(&app.state::<AppState>().config.lock().unwrap());
+            let picker = locale_picker_needed(
+                &app.state::<AppState>().config.lock().unwrap(),
+                config_origin,
+            );
             if picker {
                 open_locale_picker(app.handle())?;
             } else {
@@ -1696,44 +1710,143 @@ mod tests {
         assert_eq!(widget["create"], serde_json::json!(false));
     }
 
+    struct LocaleStartupFixture {
+        root: std::path::PathBuf,
+    }
+
+    impl LocaleStartupFixture {
+        fn new(tag: &str) -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "quorb-f1-locale-startup-{tag}-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            Self { root }
+        }
+
+        fn file(&self, name: &str) -> std::path::PathBuf {
+            self.root.join(name)
+        }
+    }
+
+    impl Drop for LocaleStartupFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     #[test]
     fn locale_picker_is_required_on_fresh_macos() {
         assert!(
-            locale_picker_needed_on("macos", &AppConfig::default()),
+            locale_picker_needed_on("macos", &AppConfig::default(), ConfigOrigin::Missing),
             "fresh macOS must show the locale picker before the main UI"
         );
     }
 
     #[test]
     fn locale_picker_platform_policy_preserves_existing_choices() {
-        let fresh = AppConfig::default();
-        let chosen = AppConfig {
-            locale_selected: true,
-            ..AppConfig::default()
-        };
-        for (os, needs_picker) in [
-            ("macos", true),
-            ("linux", true),
-            ("windows", false),
-            ("freebsd", false),
-        ] {
-            assert_eq!(locale_picker_needed_on(os, &fresh), needs_picker, "{os}");
-            assert!(!locale_picker_needed_on(os, &chosen), "{os}");
+        let fixture = LocaleStartupFixture::new("platform-policy");
+        let missing = fixture.file("missing.json");
+        let (fresh, fresh_origin) = config::load(&missing);
+        assert!(!missing.exists(), "loading must not create a config");
+
+        let chosen_path = fixture.file("chosen.json");
+        let mut chosen = fresh.clone();
+        chosen.choose_locale("en").unwrap();
+        config::save(&chosen_path, &chosen.sanitized()).unwrap();
+        let (chosen, chosen_origin) = config::load(&chosen_path);
+
+        for (os, needs_picker) in [("macos", true), ("linux", true), ("freebsd", false)] {
+            assert_eq!(
+                locale_picker_needed_on(os, &fresh, fresh_origin),
+                needs_picker,
+                "{os}"
+            );
         }
+        for os in ["macos", "linux", "windows", "freebsd"] {
+            assert!(!locale_picker_needed_on(os, &chosen, chosen_origin), "{os}");
+        }
+        assert!(
+            !missing.exists(),
+            "the startup gate must not persist a choice"
+        );
+    }
+
+    #[test]
+    fn locale_picker_windows_existing_configs_keep_their_startup_policy() {
+        let fixture = LocaleStartupFixture::new("windows-existing");
+        let unselected = serde_json::to_string(&AppConfig::default()).unwrap();
+        for (name, raw) in [
+            (
+                "selected.json",
+                r#"{"locale":"en","localeSelected":true,"refreshMinutes":12}"#,
+            ),
+            ("unselected.json", unselected.as_str()),
+            ("legacy.json", r#"{"locale":"en","refreshMinutes":12}"#),
+            ("corrupt.json", "{ not json"),
+        ] {
+            let path = fixture.file(name);
+            std::fs::write(&path, raw).unwrap();
+            let (cfg, origin) = config::load(&path);
+            assert_eq!(origin, ConfigOrigin::Existing, "{name}");
+            assert!(
+                !locale_picker_needed_on("windows", &cfg, origin),
+                "existing Windows configuration must retain its startup policy: {name}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), raw, "{name}");
+            if name == "unselected.json" {
+                assert!(!cfg.locale_selected);
+                for os in ["linux", "macos"] {
+                    assert!(locale_picker_needed_on(os, &cfg, origin), "{os}");
+                }
+            }
+        }
+
+        let unreadable = fixture.file("read-error.json");
+        std::fs::create_dir(&unreadable).unwrap();
+        let (cfg, origin) = config::load(&unreadable);
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert!(cfg.locale_selected);
+        assert!(!locale_picker_needed_on("windows", &cfg, origin));
+        assert!(unreadable.is_dir());
+        assert_eq!(std::fs::read_dir(&unreadable).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn locale_picker_is_required_on_windows_after_missing_config_load() {
+        let fixture = LocaleStartupFixture::new("windows-missing");
+        let path = fixture.file("config.json");
+        let (fresh, origin) = config::load(&path);
+        assert_eq!(origin, ConfigOrigin::Missing);
+        assert!(!fresh.locale_selected);
+        let needs_picker = locale_picker_needed_on("windows", &fresh, origin);
+        assert!(!path.exists(), "the decision must not create config.json");
+        assert!(
+            needs_picker,
+            "fresh Windows without an installer choice must show the shared locale picker"
+        );
     }
 
     #[test]
     fn locale_picker_production_gate_matches_compiled_target() {
         // Se ejercita el mismo gate que setup, no solo la tabla de plataformas.
         assert_eq!(
-            locale_picker_needed(&AppConfig::default()),
-            cfg!(any(target_os = "linux", target_os = "macos"))
+            locale_picker_needed(&AppConfig::default(), ConfigOrigin::Missing),
+            cfg!(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "windows"
+            ))
         );
         let chosen = AppConfig {
             locale_selected: true,
             ..AppConfig::default()
         };
-        assert!(!locale_picker_needed(&chosen));
+        assert!(!locale_picker_needed(&chosen, ConfigOrigin::Missing));
     }
 
     /// #227: la regla de KWin documentada en docs/build-linux.md §6.2 solo debe
@@ -2300,5 +2413,56 @@ mod tests {
         assert_eq!(map.len(), 1);
         assert!(errors.is_empty());
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn locale_gate_handles_empty_and_non_utf8_existing_files() {
+        let fixture = LocaleStartupFixture::new("independent-invalid");
+        for (name, bytes) in [
+            ("empty", &b""[..]),
+            ("non-utf8", &b"\xff"[..]),
+            ("null", &b"null"[..]),
+        ] {
+            let path = fixture.file(name);
+            std::fs::write(&path, bytes).unwrap();
+            let (cfg, origin) = config::load(&path);
+            assert_eq!(origin, ConfigOrigin::Existing, "{name}");
+            assert_eq!(
+                cfg,
+                AppConfig {
+                    locale_selected: true,
+                    ..AppConfig::default()
+                }
+                .sanitized(),
+                "{name}"
+            );
+            for os in ["windows", "linux", "macos"] {
+                assert!(!locale_picker_needed_on(os, &cfg, origin), "{name}: {os}");
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+
+        let (fresh, origin) = config::load(&fixture.file("absent"));
+        for os in ["windows", "linux", "macos"] {
+            assert!(locale_picker_needed_on(os, &fresh, origin), "{os}");
+        }
+        assert!(!locale_picker_needed_on("freebsd", &fresh, origin));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_config_symlink_is_existing_not_fresh() {
+        let fixture = LocaleStartupFixture::new("dangling");
+        let path = fixture.file("config.json");
+        std::os::unix::fs::symlink(fixture.file("unavailable-config.json"), &path).unwrap();
+
+        let (cfg, origin) = config::load(&path);
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert_eq!(cfg, AppConfig::default().sanitized());
+        assert!(!locale_picker_needed_on("windows", &cfg, origin));
+        // Linux/macOS keep their previous policy for an absent readable target.
+        assert!(locale_picker_needed_on("linux", &cfg, origin));
+        assert!(locale_picker_needed_on("macos", &cfg, origin));
+        assert!(!fixture.file("unavailable-config.json").exists());
     }
 }
