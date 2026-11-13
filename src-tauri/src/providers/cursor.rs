@@ -125,12 +125,12 @@ fn read_app_token(locale: Locale, explicit: Option<&str>) -> Result<String, Stri
             [],
             |r| r.get(0),
         )
-        .map_err(|_| "Cursor no tiene sesión iniciada.".to_string())?;
+        .map_err(|_| text(locale, Msg::CursorNoSession).to_string())?;
     // Según la versión de Cursor el valor es texto o BLOB.
     let raw = match value {
         rusqlite::types::Value::Text(t) => t,
         rusqlite::types::Value::Blob(b) => String::from_utf8_lossy(&b).into_owned(),
-        _ => return Err("Cursor no tiene sesión iniciada.".into()),
+        _ => return Err(text(locale, Msg::CursorNoSession).to_string()),
     };
     Ok(raw.trim().trim_matches('"').to_string())
 }
@@ -333,5 +333,52 @@ mod tests {
         let token = format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig");
         assert_eq!(user_id_from_jwt(&token).as_deref(), Some("user_01ABC"));
         assert_eq!(user_id_from_jwt("nope"), None);
+    }
+
+    /// S5.1 (review #272): la base de Cursor existe pero no guarda sesión (ni
+    /// fila, ni valor de texto/BLOB): el mensaje sigue la locale de la app.
+    #[test]
+    fn cursor_without_session_follows_the_app_locale() {
+        let dir =
+            std::env::temp_dir().join(format!("quorb-cursor-nosession-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.vscdb");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+                [],
+            )
+            .unwrap();
+        }
+        let explicit = path.to_string_lossy().into_owned();
+        // Sin la fila `cursorAuth/accessToken`.
+        assert_eq!(
+            read_app_token(Locale::En, Some(&explicit)),
+            Err("Cursor is not signed in.".to_string())
+        );
+        assert_eq!(
+            read_app_token(Locale::Es, Some(&explicit)),
+            Err("Cursor no tiene sesión iniciada.".to_string())
+        );
+        // Con la fila pero con un valor que no es texto ni BLOB.
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO ItemTable (key, value) VALUES ('cursorAuth/accessToken', 5)",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            read_app_token(Locale::En, Some(&explicit)),
+            Err("Cursor is not signed in.".to_string())
+        );
+        assert_eq!(
+            read_app_token(Locale::Es, Some(&explicit)),
+            Err("Cursor no tiene sesión iniciada.".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

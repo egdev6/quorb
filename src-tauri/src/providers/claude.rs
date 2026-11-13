@@ -172,7 +172,8 @@ fn parse_keychain_secret(raw: &str) -> Option<Credentials> {
     }
     serde_json::from_str::<Value>(trimmed)
         .ok()
-        .and_then(|v| Credentials::parse(&v).ok())
+        // El error se descarta: el locale no llega a verse.
+        .and_then(|v| Credentials::parse(Locale::Es, &v).ok())
 }
 
 pub async fn fetch(
@@ -201,7 +202,7 @@ pub async fn fetch(
             };
             match r.read_async(&path).await {
                 Ok(raw) => match serde_json::from_str::<Value>(&raw) {
-                    Ok(v) => match Credentials::parse(&v) {
+                    Ok(v) => match Credentials::parse(locale, &v) {
                         Ok(c) => c,
                         Err(e) => {
                             return report.fail(
@@ -234,7 +235,7 @@ pub async fn fetch(
             }
         }
         None => match resolve_path(locale, cfg.credentials_path.as_deref(), &[default_path]) {
-            Ok(p) => match read_json(locale, &p).and_then(|v| Credentials::parse(&v)) {
+            Ok(p) => match read_json(locale, &p).and_then(|v| Credentials::parse(locale, &v)) {
                 Ok(c) => c,
                 Err(e) => return report.fail(Status::Error, e),
             },
@@ -270,10 +271,7 @@ pub async fn fetch(
     report.plan = creds.plan.clone();
 
     if creds.is_expired(chrono::Utc::now().timestamp_millis()) {
-        return report.fail(
-            Status::NeedsLogin,
-            "La sesión ha caducado. «Renovar sesión» abre Claude Code, que la renueva; Quorb se actualiza solo.",
-        );
+        return report.fail(Status::NeedsLogin, text(locale, Msg::ClaudeSessionExpired));
     }
 
     let res = http
@@ -289,8 +287,15 @@ pub async fn fetch(
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return report.fail(Status::NeedsLogin, "Token rechazado. «Renovar sesión» abre Claude Code para renovarlo; Quorb se actualiza solo."),
-        429 => return report.fail(Status::Warning, "El endpoint de uso está limitando peticiones; reintento en el próximo ciclo."),
+        401 | 403 => {
+            return report.fail(Status::NeedsLogin, text(locale, Msg::ClaudeTokenRejected))
+        }
+        429 => {
+            return report.fail(
+                Status::Warning,
+                "El endpoint de uso está limitando peticiones; reintento en el próximo ciclo.",
+            )
+        }
         code => return report.fail(Status::Error, format!("HTTP {code} en el endpoint de uso")),
     }
     let body: Value = match res.json().await {
@@ -315,10 +320,10 @@ pub(crate) struct Credentials {
 }
 
 impl Credentials {
-    pub fn parse(v: &Value) -> Result<Self, String> {
+    pub fn parse(locale: Locale, v: &Value) -> Result<Self, String> {
         let o = v
             .get("claudeAiOauth")
-            .ok_or("Credenciales sin «claudeAiOauth» (¿login con API key?)")?;
+            .ok_or_else(|| text(locale, Msg::ClaudeNoOauth).to_string())?;
         let access_token = o
             .get("accessToken")
             .and_then(Value::as_str)
@@ -409,7 +414,7 @@ mod tests {
     #[test]
     fn parses_credentials() {
         let v = json!({"claudeAiOauth": {"accessToken": "sk-ant-oat01-x", "refreshToken": "r", "expiresAt": 1_900_000_000_000_i64, "subscriptionType": "max"}});
-        let c = Credentials::parse(&v).unwrap();
+        let c = Credentials::parse(Locale::Es, &v).unwrap();
         assert_eq!(c.plan.as_deref(), Some("Max"));
         assert!(!c.is_expired(1_800_000_000_000));
         assert!(c.is_expired(1_900_000_000_000));
@@ -417,7 +422,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_oauth() {
-        assert!(Credentials::parse(&json!({})).is_err());
+        assert!(Credentials::parse(Locale::Es, &json!({})).is_err());
     }
 
     /// Sesión real de Claude Code: el fixture es la estructura que escribe
@@ -428,7 +433,8 @@ mod tests {
     fn parses_real_session_fixture() {
         let raw = include_str!("fixtures/claude-credentials.json");
         let v: Value = serde_json::from_str(raw).expect("fixture claude válido");
-        let c = Credentials::parse(&v).expect("el fixture debe parsear como sesión real");
+        let c =
+            Credentials::parse(Locale::Es, &v).expect("el fixture debe parsear como sesión real");
         assert_eq!(c.access_token, "example-access-token-abcdef");
         assert_eq!(c.plan.as_deref(), Some("Pro"));
         let exp = c.expires_at_ms.expect("el fixture trae expiresAt");

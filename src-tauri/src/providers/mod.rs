@@ -1303,6 +1303,122 @@ mod tests {
         );
     }
 
+    /// S5.1 (review #272): consulta `id` con `fetch_one` apuntando su ruta de
+    /// credenciales a un fichero con `contents`, y la app en `locale`. Ninguna
+    /// de las rutas probadas llega a la red: el fallo es local.
+    fn fetch_with_credentials(id: &str, locale: &str, tag: &str, contents: &str) -> UsageReport {
+        let dir = temp_dir(tag);
+        let file = dir.join("creds.json");
+        std::fs::write(&file, contents).unwrap();
+        let sub = SubscriptionConfig {
+            enabled: true,
+            credentials_path: Some(file.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        let mut cfg = AppConfig {
+            locale: locale.into(),
+            ..Default::default()
+        };
+        match id {
+            "claude" => cfg.claude = sub,
+            "codex" => cfg.codex = sub,
+            "gemini" => cfg.gemini = sub,
+            "grok" => cfg.grok = sub,
+            other => panic!("proveedor sin ruta de credenciales en el test: {other}"),
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime de un hilo");
+        let http = reqwest::Client::new();
+        let report = rt
+            .block_on(fetch_one(&cfg, id, &http, SessionAccess::Host))
+            .expect("informe del proveedor");
+        let _ = std::fs::remove_dir_all(&dir);
+        report
+    }
+
+    /// S5.1: el reporte exacto del revisor — con la app en `en`, un `auth.json`
+    /// con `{}` mostraba el mensaje en español. Codex y Grok lo dicen en la
+    /// locale de la app; en `es` el literal original no cambia.
+    #[test]
+    fn codex_and_grok_empty_auth_json_follows_the_app_locale() {
+        for (id, en, es) in [
+            (
+                "codex",
+                "auth.json has no tokens. Run “codex login”.",
+                "auth.json sin tokens. Ejecuta «codex login».",
+            ),
+            (
+                "grok",
+                "auth.json has no valid credentials. Run “grok login”.",
+                "auth.json sin credenciales válidas. Ejecuta «grok login».",
+            ),
+        ] {
+            let report = fetch_with_credentials(id, "en", &format!("{id}-empty-en"), "{}");
+            assert_eq!(report.status, Status::NeedsLogin, "{id} en");
+            assert_eq!(report.message.as_deref(), Some(en), "{id} en");
+            let report = fetch_with_credentials(id, "es", &format!("{id}-empty-es"), "{}");
+            assert_eq!(report.status, Status::NeedsLogin, "{id} es");
+            assert_eq!(report.message.as_deref(), Some(es), "{id} es");
+        }
+    }
+
+    /// S5.1: Codex con solo API key también sigue la locale.
+    #[test]
+    fn codex_api_key_only_auth_json_follows_the_app_locale() {
+        let raw = "{\"OPENAI_API_KEY\":\"sk-test\"}";
+        let en = fetch_with_credentials("codex", "en", "codex-apikey-en", raw);
+        assert_eq!(
+            en.message.as_deref(),
+            Some("Codex is authenticated with an API key, not with your ChatGPT account. Run “codex login”.")
+        );
+        let es = fetch_with_credentials("codex", "es", "codex-apikey-es", raw);
+        assert_eq!(
+            es.message.as_deref(),
+            Some("Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login».")
+        );
+    }
+
+    /// S5.1: sesión de Claude caducada (el token local expiró, sin red) y
+    /// credenciales sin `claudeAiOauth`.
+    #[test]
+    fn claude_expired_and_api_key_credentials_follow_the_app_locale() {
+        let expired = "{\"claudeAiOauth\":{\"accessToken\":\"t\",\"expiresAt\":1}}";
+        let en = fetch_with_credentials("claude", "en", "claude-expired-en", expired);
+        assert_eq!(en.status, Status::NeedsLogin);
+        assert_eq!(
+            en.message.as_deref(),
+            Some("The session has expired. “Renew session” opens Claude Code, which renews it; Quorb updates itself.")
+        );
+        let es = fetch_with_credentials("claude", "es", "claude-expired-es", expired);
+        assert_eq!(
+            es.message.as_deref(),
+            Some("La sesión ha caducado. «Renovar sesión» abre Claude Code, que la renueva; Quorb se actualiza solo.")
+        );
+        let en = fetch_with_credentials("claude", "en", "claude-nooauth-en", "{}");
+        assert_eq!(
+            en.message.as_deref(),
+            Some("Credentials without “claudeAiOauth” (signed in with an API key?)")
+        );
+    }
+
+    /// S5.1: Gemini sin `refresh_token` y con el acceso caducado (sin red).
+    #[test]
+    fn gemini_expired_session_follows_the_app_locale() {
+        let en = fetch_with_credentials("gemini", "en", "gemini-expired-en", "{}");
+        assert_eq!(en.status, Status::NeedsLogin);
+        assert_eq!(
+            en.message.as_deref(),
+            Some("The Gemini CLI session has expired. Open it to renew it.")
+        );
+        let es = fetch_with_credentials("gemini", "es", "gemini-expired-es", "{}");
+        assert_eq!(
+            es.message.as_deref(),
+            Some("La sesión de Gemini CLI ha caducado. Ábrelo para renovarla.")
+        );
+    }
+
     #[test]
     fn month_start_is_first_day_midnight() {
         let now = Utc.with_ymd_and_hms(2026, 10, 6, 15, 30, 0).unwrap();

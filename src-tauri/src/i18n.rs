@@ -78,6 +78,30 @@ pub enum Msg {
     /// #246 para textos por plataforma).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     KeychainTimedOut,
+    /// Cursor: «Cursor no tiene sesión iniciada.»
+    CursorNoSession,
+    /// Claude: sesión caducada antes de consultar (el token local expiró).
+    ClaudeSessionExpired,
+    /// Claude: el endpoint rechazó el token (401/403).
+    ClaudeTokenRejected,
+    /// Claude: credenciales sin `claudeAiOauth` (login con API key).
+    ClaudeNoOauth,
+    /// Codex: `auth.json` solo con API key, sin cuenta de ChatGPT.
+    CodexApiKeyOnly,
+    /// Codex: `auth.json` sin el objeto `tokens`.
+    CodexNoTokens,
+    /// Codex: el endpoint rechazó la sesión (401/403).
+    CodexSessionExpired,
+    /// Grok: `auth.json` sin ninguna entrada con token.
+    GrokNoCredentials,
+    /// Grok: el endpoint rechazó la sesión (401/403).
+    GrokSessionExpired,
+    /// Gemini: sin `refresh_token` y con el token de acceso caducado.
+    GeminiSessionExpired,
+    /// Gemini: Google no renovó la sesión con el `refresh_token`.
+    GeminiRefreshFailed,
+    /// Gemini: el endpoint de cuotas rechazó la sesión (401).
+    GeminiSessionRejected,
 }
 
 /// Todas las variantes: los tests de paridad recorren esta lista y el match
@@ -115,6 +139,18 @@ pub const ALL_MSGS: &[Msg] = &[
     Msg::CursorSessionNotFound,
     Msg::CursorSessionExpired,
     Msg::KeychainTimedOut,
+    Msg::CursorNoSession,
+    Msg::ClaudeSessionExpired,
+    Msg::ClaudeTokenRejected,
+    Msg::ClaudeNoOauth,
+    Msg::CodexApiKeyOnly,
+    Msg::CodexNoTokens,
+    Msg::CodexSessionExpired,
+    Msg::GrokNoCredentials,
+    Msg::GrokSessionExpired,
+    Msg::GeminiSessionExpired,
+    Msg::GeminiRefreshFailed,
+    Msg::GeminiSessionRejected,
 ];
 
 /// Texto original del diálogo de consentimiento de Codex, byte a byte (nace de
@@ -207,6 +243,70 @@ pub fn text(locale: Locale, msg: Msg) -> &'static str {
         }
         (Locale::Es, Msg::KeychainTimedOut) => "La autorización del Keychain no se completó a tiempo. Concede el acceso a «Claude Code-credentials» y espera al próximo refresco.",
         (Locale::En, Msg::KeychainTimedOut) => "Keychain authorization did not complete in time. Grant access to “Claude Code-credentials” and wait for the next refresh.",
+        (Locale::Es, Msg::CursorNoSession) => "Cursor no tiene sesión iniciada.",
+        (Locale::En, Msg::CursorNoSession) => "Cursor is not signed in.",
+        (Locale::Es, Msg::ClaudeSessionExpired) => {
+            "La sesión ha caducado. «Renovar sesión» abre Claude Code, que la renueva; Quorb se actualiza solo."
+        }
+        (Locale::En, Msg::ClaudeSessionExpired) => {
+            "The session has expired. “Renew session” opens Claude Code, which renews it; Quorb updates itself."
+        }
+        (Locale::Es, Msg::ClaudeTokenRejected) => {
+            "Token rechazado. «Renovar sesión» abre Claude Code para renovarlo; Quorb se actualiza solo."
+        }
+        (Locale::En, Msg::ClaudeTokenRejected) => {
+            "Token rejected. “Renew session” opens Claude Code to renew it; Quorb updates itself."
+        }
+        (Locale::Es, Msg::ClaudeNoOauth) => {
+            "Credenciales sin «claudeAiOauth» (¿login con API key?)"
+        }
+        (Locale::En, Msg::ClaudeNoOauth) => {
+            "Credentials without “claudeAiOauth” (signed in with an API key?)"
+        }
+        (Locale::Es, Msg::CodexApiKeyOnly) => {
+            "Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login»."
+        }
+        (Locale::En, Msg::CodexApiKeyOnly) => {
+            "Codex is authenticated with an API key, not with your ChatGPT account. Run “codex login”."
+        }
+        (Locale::Es, Msg::CodexNoTokens) => "auth.json sin tokens. Ejecuta «codex login».",
+        (Locale::En, Msg::CodexNoTokens) => "auth.json has no tokens. Run “codex login”.",
+        (Locale::Es, Msg::CodexSessionExpired) => {
+            "Sesión caducada. Ejecuta «codex» para renovarla."
+        }
+        (Locale::En, Msg::CodexSessionExpired) => {
+            "Session expired. Run “codex” to renew it."
+        }
+        (Locale::Es, Msg::GrokNoCredentials) => {
+            "auth.json sin credenciales válidas. Ejecuta «grok login»."
+        }
+        (Locale::En, Msg::GrokNoCredentials) => {
+            "auth.json has no valid credentials. Run “grok login”."
+        }
+        (Locale::Es, Msg::GrokSessionExpired) => {
+            "Sesión caducada. Ejecuta «grok login» para renovarla."
+        }
+        (Locale::En, Msg::GrokSessionExpired) => {
+            "Session expired. Run “grok login” to renew it."
+        }
+        (Locale::Es, Msg::GeminiSessionExpired) => {
+            "La sesión de Gemini CLI ha caducado. Ábrelo para renovarla."
+        }
+        (Locale::En, Msg::GeminiSessionExpired) => {
+            "The Gemini CLI session has expired. Open it to renew it."
+        }
+        (Locale::Es, Msg::GeminiRefreshFailed) => {
+            "Google no ha renovado la sesión de Gemini CLI. Ábrelo e inicia sesión de nuevo."
+        }
+        (Locale::En, Msg::GeminiRefreshFailed) => {
+            "Google did not renew the Gemini CLI session. Open it and sign in again."
+        }
+        (Locale::Es, Msg::GeminiSessionRejected) => {
+            "Sesión de Gemini rechazada. Abre Gemini CLI para renovarla."
+        }
+        (Locale::En, Msg::GeminiSessionRejected) => {
+            "Gemini session rejected. Open Gemini CLI to renew it."
+        }
     }
 }
 
@@ -314,6 +414,36 @@ pub fn codex_consent_message(locale: Locale, channel: &str, home_dir: &str) -> S
         .replace("~/.quorb/", &format!("~/{home_dir}/"))
 }
 
+/// Sustituye `{nombre}` por su valor en UNA sola pasada sobre la plantilla:
+/// lo ya insertado no se vuelve a examinar, así que un valor que contiene
+/// `{error}`, `{path}` o `{distro}` viaja literal (rutas y errores externos
+/// nunca se reinterpretan, S5.3 de la review de #272).
+fn fill(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open..];
+        let hit = values.iter().find(|(name, _)| {
+            rest[1..]
+                .strip_prefix(name)
+                .is_some_and(|tail| tail.starts_with('}'))
+        });
+        match hit {
+            Some((name, value)) => {
+                out.push_str(value);
+                rest = &rest[name.len() + 2..];
+            }
+            None => {
+                out.push('{');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// «No encuentro credenciales en: {lista}» — sin ruta explícita y ningún
 /// candidato existe (`resolve_path`). Las rutas viajan literales (L4, #66).
 pub fn credentials_not_found(locale: Locale, list: &str) -> String {
@@ -332,24 +462,27 @@ pub fn credentials_not_found_at(locale: Locale, path: &str) -> String {
 
 /// «No encuentro credenciales en {distro}: {ruta}» — resolvedor en WSL.
 pub fn credentials_not_found_in_distro(locale: Locale, distro: &str, path: &str) -> String {
-    text(locale, Msg::CredentialsNotFoundDistro)
-        .replace("{distro}", distro)
-        .replace("{path}", path)
+    fill(
+        text(locale, Msg::CredentialsNotFoundDistro),
+        &[("distro", distro), ("path", path)],
+    )
 }
 
 /// «No puedo leer {ruta}: {error}» — el fichero existe pero no se lee; el
 /// error del sistema o de WSL viaja literal, sin traducir.
 pub fn cannot_read(locale: Locale, path: &str, error: &str) -> String {
-    text(locale, Msg::CannotRead)
-        .replace("{path}", path)
-        .replace("{error}", error)
+    fill(
+        text(locale, Msg::CannotRead),
+        &[("path", path), ("error", error)],
+    )
 }
 
 /// «JSON inválido en {ruta}: {error}» — se leyó pero no es JSON válido.
 pub fn invalid_json(locale: Locale, path: &str, error: &str) -> String {
-    text(locale, Msg::InvalidJson)
-        .replace("{path}", path)
-        .replace("{error}", error)
+    fill(
+        text(locale, Msg::InvalidJson),
+        &[("path", path), ("error", error)],
+    )
 }
 
 /// «No encuentro la sesión de Cursor en {ruta}. Inicia sesión en Cursor.»
@@ -496,6 +629,79 @@ mod tests {
         assert_eq!(
             es(Msg::KeychainTimedOut),
             "La autorización del Keychain no se completó a tiempo. Concede el acceso a «Claude Code-credentials» y espera al próximo refresco."
+        );
+        assert_eq!(es(Msg::CursorNoSession), "Cursor no tiene sesión iniciada.");
+        assert_eq!(
+            es(Msg::ClaudeSessionExpired),
+            "La sesión ha caducado. «Renovar sesión» abre Claude Code, que la renueva; Quorb se actualiza solo."
+        );
+        assert_eq!(
+            es(Msg::ClaudeTokenRejected),
+            "Token rechazado. «Renovar sesión» abre Claude Code para renovarlo; Quorb se actualiza solo."
+        );
+        assert_eq!(
+            es(Msg::ClaudeNoOauth),
+            "Credenciales sin «claudeAiOauth» (¿login con API key?)"
+        );
+        assert_eq!(
+            es(Msg::CodexApiKeyOnly),
+            "Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login»."
+        );
+        assert_eq!(
+            es(Msg::CodexNoTokens),
+            "auth.json sin tokens. Ejecuta «codex login»."
+        );
+        assert_eq!(
+            es(Msg::CodexSessionExpired),
+            "Sesión caducada. Ejecuta «codex» para renovarla."
+        );
+        assert_eq!(
+            es(Msg::GrokNoCredentials),
+            "auth.json sin credenciales válidas. Ejecuta «grok login»."
+        );
+        assert_eq!(
+            es(Msg::GrokSessionExpired),
+            "Sesión caducada. Ejecuta «grok login» para renovarla."
+        );
+        assert_eq!(
+            es(Msg::GeminiSessionExpired),
+            "La sesión de Gemini CLI ha caducado. Ábrelo para renovarla."
+        );
+        assert_eq!(
+            es(Msg::GeminiRefreshFailed),
+            "Google no ha renovado la sesión de Gemini CLI. Ábrelo e inicia sesión de nuevo."
+        );
+        assert_eq!(
+            es(Msg::GeminiSessionRejected),
+            "Sesión de Gemini rechazada. Abre Gemini CLI para renovarla."
+        );
+    }
+
+    /// S5.3 (review #272): la sustitución es de una sola pasada; un valor que
+    /// contiene `{error}`, `{path}` o `{distro}` se inserta literal y nunca se
+    /// vuelve a sustituir.
+    #[test]
+    fn placeholders_inside_values_are_inserted_literally() {
+        assert_eq!(
+            cannot_read(Locale::Es, "/tmp/{error}/creds.json", "boom"),
+            "No puedo leer /tmp/{error}/creds.json: boom"
+        );
+        assert_eq!(
+            invalid_json(Locale::En, "/tmp/{error}/creds.json", "boom"),
+            "Invalid JSON in /tmp/{error}/creds.json: boom"
+        );
+        // El error externo también es literal: un `{path}` suyo no se toca.
+        assert_eq!(
+            cannot_read(Locale::Es, "/a", "fallo en {path}"),
+            "No puedo leer /a: fallo en {path}"
+        );
+        assert_eq!(
+            credentials_not_found_in_distro(Locale::Es, "Ub{path}untu", "/home/u/c.json"),
+            "No encuentro credenciales en Ub{path}untu: /home/u/c.json"
+        );
+        assert_eq!(
+            credentials_not_found_in_distro(Locale::En, "Ubuntu", "/home/{distro}/c.json"),
+            "No credentials found in Ubuntu: /home/{distro}/c.json"
         );
     }
 

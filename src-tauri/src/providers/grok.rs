@@ -129,7 +129,7 @@ pub async fn fetch(
         }
     };
     let now = Utc::now();
-    let auth = match Auth::parse(&auth_json, now) {
+    let auth = match Auth::parse(locale, &auth_json, now) {
         Ok(a) => a,
         Err(e) => return report.fail(Status::NeedsLogin, e),
     };
@@ -147,12 +147,7 @@ pub async fn fetch(
     };
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => {
-            return report.fail(
-                Status::NeedsLogin,
-                "Sesión caducada. Ejecuta «grok login» para renovarla.",
-            )
-        }
+        401 | 403 => return report.fail(Status::NeedsLogin, text(locale, Msg::GrokSessionExpired)),
         429 => {
             return report.fail(
                 Status::Warning,
@@ -210,7 +205,7 @@ impl Auth {
     /// Elige la entrada del fichero: primero una `auth.x.ai::` no caducada;
     /// si ninguna, el legado no caducado; si tampoco, la preferida caducada
     /// (para poder decir «ejecuta grok login» en vez de «no hay credenciales»).
-    pub fn parse(v: &Value, now: DateTime<Utc>) -> Result<Self, String> {
+    pub fn parse(locale: Locale, v: &Value, now: DateTime<Utc>) -> Result<Self, String> {
         let obj = v.as_object().ok_or("auth.json no es un objeto")?;
         let token_of = |e: Option<&Value>| -> Option<String> {
             e.and_then(|e| e.get("key"))
@@ -251,7 +246,7 @@ impl Auth {
         if let Some(t) = pick(AUTH_LEGACY) {
             return Ok(Auth { token: t });
         }
-        Err("auth.json sin credenciales válidas. Ejecuta «grok login».".into())
+        Err(text(locale, Msg::GrokNoCredentials).to_string())
     }
 }
 
@@ -357,7 +352,10 @@ mod tests {
             "https://accounts.x.ai/sign-in": {"key": "legacy-token", "expires_at": "2099-01-01T00:00:00Z"},
             "https://auth.x.ai::abc123": {"key": "current-token", "expires_at": "2099-01-01T00:00:00Z"}
         }));
-        assert_eq!(Auth::parse(&v, now).unwrap().token, "current-token");
+        assert_eq!(
+            Auth::parse(Locale::Es, &v, now).unwrap().token,
+            "current-token"
+        );
     }
 
     #[test]
@@ -366,7 +364,10 @@ mod tests {
         let v = auth_with(json!({
             "https://accounts.x.ai/sign-in": {"key": "legacy-token", "expires_at": "2099-01-01T00:00:00Z"}
         }));
-        assert_eq!(Auth::parse(&v, now).unwrap().token, "legacy-token");
+        assert_eq!(
+            Auth::parse(Locale::Es, &v, now).unwrap().token,
+            "legacy-token"
+        );
     }
 
     #[test]
@@ -377,9 +378,9 @@ mod tests {
         }));
         // Caducada: se acepta el token pero el flujo responderá NeedsLogin por
         // HTTP 401; aquí verificamos que no hay otra entrada que preferir.
-        assert_eq!(Auth::parse(&v, now).unwrap().token, "old-token");
+        assert_eq!(Auth::parse(Locale::Es, &v, now).unwrap().token, "old-token");
         let empty = auth_with(json!({}));
-        assert!(Auth::parse(&empty, now).is_err());
+        assert!(Auth::parse(Locale::Es, &empty, now).is_err());
     }
 
     #[test]

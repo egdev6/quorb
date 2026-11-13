@@ -91,13 +91,13 @@ pub async fn fetch(
             }
         }
     };
-    let token = match access_token(&creds, http).await {
+    let token = match access_token(locale, &creds, http).await {
         Ok(t) => t,
         Err(e) => return report.fail(Status::NeedsLogin, e),
     };
 
     // 1. Proyecto y plan
-    let load = post(http, &token, "loadCodeAssist", &json!({
+    let load = post(locale, http, &token, "loadCodeAssist", &json!({
         "metadata": { "ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI" }
     }))
     .await;
@@ -114,7 +114,7 @@ pub async fn fetch(
         Some(p) => json!({ "project": p }),
         None => json!({}),
     };
-    let quota = match post(http, &token, "retrieveUserQuota", &body).await {
+    let quota = match post(locale, http, &token, "retrieveUserQuota", &body).await {
         Ok(v) => v,
         Err(e) => return report.fail(e.0, e.1),
     };
@@ -142,7 +142,11 @@ fn token_needs_refresh(creds: &Value, now_ms: i64) -> bool {
     expiry - 60_000 <= now_ms
 }
 
-async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, String> {
+async fn access_token(
+    locale: Locale,
+    creds: &Value,
+    http: &reqwest::Client,
+) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp_millis();
     if !token_needs_refresh(creds, now) {
         return Ok(creds
@@ -154,7 +158,7 @@ async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, S
     let refresh = creds
         .get("refresh_token")
         .and_then(Value::as_str)
-        .ok_or("La sesión de Gemini CLI ha caducado. Ábrelo para renovarla.")?;
+        .ok_or_else(|| text(locale, Msg::GeminiSessionExpired).to_string())?;
     let cached = CACHED.lock().unwrap().get(refresh).cloned();
     if let Some((t, exp)) = cached {
         if exp - 60_000 > now {
@@ -173,10 +177,7 @@ async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, S
         .await
         .map_err(net_error)?;
     if !res.status().is_success() {
-        return Err(
-            "Google no ha renovado la sesión de Gemini CLI. Ábrelo e inicia sesión de nuevo."
-                .into(),
-        );
+        return Err(text(locale, Msg::GeminiRefreshFailed).to_string());
     }
     let v: Value = res.json().await.map_err(|e| e.to_string())?;
     let t = v
@@ -193,6 +194,7 @@ async fn access_token(creds: &Value, http: &reqwest::Client) -> Result<String, S
 }
 
 async fn post(
+    locale: Locale,
     http: &reqwest::Client,
     token: &str,
     method: &str,
@@ -214,7 +216,7 @@ async fn post(
             CACHED.lock().unwrap().clear();
             Err((
                 Status::NeedsLogin,
-                "Sesión de Gemini rechazada. Abre Gemini CLI para renovarla.".into(),
+                text(locale, Msg::GeminiSessionRejected).to_string(),
             ))
         }
         429 => Err((

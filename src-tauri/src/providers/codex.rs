@@ -118,7 +118,7 @@ pub async fn fetch(
             }
         }
     };
-    let auth = match Auth::parse(&auth_json) {
+    let auth = match Auth::parse(locale, &auth_json) {
         Ok(a) => a,
         Err(e) => return report.fail(Status::NeedsLogin, e),
     };
@@ -137,10 +137,7 @@ pub async fn fetch(
     match res.status().as_u16() {
         200 => {}
         401 | 403 => {
-            return report.fail(
-                Status::NeedsLogin,
-                "Sesión caducada. Ejecuta «codex» para renovarla.",
-            )
+            return report.fail(Status::NeedsLogin, text(locale, Msg::CodexSessionExpired))
         }
         429 => {
             return report.fail(
@@ -186,16 +183,15 @@ pub(crate) struct Auth {
 }
 
 impl Auth {
-    pub fn parse(v: &Value) -> Result<Self, String> {
+    pub fn parse(locale: Locale, v: &Value) -> Result<Self, String> {
         let tokens = v.get("tokens").filter(|t| t.is_object());
         let Some(tokens) = tokens else {
-            return Err(
-                if v.get("OPENAI_API_KEY").and_then(Value::as_str).is_some() {
-                    "Codex está autenticado con API key, no con tu cuenta de ChatGPT. Ejecuta «codex login».".into()
-                } else {
-                    "auth.json sin tokens. Ejecuta «codex login».".into()
-                },
-            );
+            let msg = if v.get("OPENAI_API_KEY").and_then(Value::as_str).is_some() {
+                Msg::CodexApiKeyOnly
+            } else {
+                Msg::CodexNoTokens
+            };
+            return Err(text(locale, msg).to_string());
         };
         let access_token = tokens
             .get("access_token")
@@ -469,15 +465,17 @@ mod tests {
     fn parses_auth() {
         let v = json!({"OPENAI_API_KEY": null, "tokens": {"id_token": "a", "access_token": "b", "refresh_token": "c", "account_id": "acc"}});
         assert_eq!(
-            Auth::parse(&v).unwrap(),
+            Auth::parse(Locale::Es, &v).unwrap(),
             Auth {
                 access_token: "b".into(),
                 account_id: Some("acc".into())
             }
         );
-        assert!(Auth::parse(&json!({"OPENAI_API_KEY": "sk-..."}))
-            .unwrap_err()
-            .contains("API key"));
+        assert!(
+            Auth::parse(Locale::Es, &json!({"OPENAI_API_KEY": "sk-..."}))
+                .unwrap_err()
+                .contains("API key")
+        );
     }
 
     /// Sesión real de Codex: el fixture es la estructura que escribe
@@ -487,7 +485,7 @@ mod tests {
     fn parses_real_session_fixture() {
         let raw = include_str!("fixtures/codex-auth.json");
         let v: Value = serde_json::from_str(raw).expect("fixture codex válido");
-        let auth = Auth::parse(&v).expect("el fixture debe parsear como sesión real");
+        let auth = Auth::parse(Locale::Es, &v).expect("el fixture debe parsear como sesión real");
         assert_eq!(auth.access_token, "example-access-token-codex");
         assert_eq!(auth.account_id.as_deref(), Some("account-example-123"));
         // El id_token del fixture expira en el año ~2100: a día de hoy es válido.
