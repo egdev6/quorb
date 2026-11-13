@@ -107,6 +107,86 @@ describe('isConnectionDirty', () => {
 });
 
 describe('createPresencePoller', () => {
+  it.each(['result', 'rejection'] as const)('ignores a stale %s from an overlapping poll', async (stale) => {
+    const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
+    let tick!: () => void;
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
+      onResult,
+      setInterval: (fn) => { tick = fn; return 7; },
+      clearInterval: () => {},
+    });
+    poller.start();
+    tick();
+    expect(requests).toHaveLength(2);
+    requests[1].resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[true]]);
+    if (stale === 'result') requests[0].resolve(false);
+    else requests[0].reject(new Error('stale poll failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[true]]);
+    poller.stop();
+  });
+
+  it.each(['result', 'rejection'] as const)('ignores a stale %s while the latest poll is pending', async (stale) => {
+    const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
+    let tick!: () => void;
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
+      onResult,
+      setInterval: (fn) => { tick = fn; return 7; },
+      clearInterval: () => {},
+    });
+    poller.start();
+    tick();
+    expect(requests).toHaveLength(2);
+    if (stale === 'result') requests[0].resolve(false);
+    else requests[0].reject(new Error('stale poll failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).not.toHaveBeenCalled();
+    requests[1].reject(new Error('latest poll failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[null]]);
+    poller.stop();
+  });
+
+  it('discards old requests and timers after stop and restart', async () => {
+    const requests: ((found: boolean) => void)[] = [];
+    const ticks: (() => void)[] = [];
+    const cleared: number[] = [];
+    const exists = vi.fn(() => new Promise<boolean>((resolve) => requests.push(resolve)));
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists,
+      onResult,
+      setInterval: (fn) => { ticks.push(fn); return ticks.length; },
+      clearInterval: (handle) => cleared.push(handle),
+    });
+    poller.start();
+    poller.stop();
+    poller.start();
+    expect(cleared).toEqual([1]);
+    ticks[0]();
+    expect(exists).toHaveBeenCalledTimes(2);
+    requests[0](false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).not.toHaveBeenCalled();
+    requests[1](true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[true]]);
+    poller.stop();
+    expect(cleared).toEqual([1, 2]);
+  });
+
   it('comprueba al arrancar y notifica el resultado vigente', async () => {
     const onResult = vi.fn();
     const poller = createPresencePoller({ exists: async () => true, onResult, setInterval: () => 0, clearInterval: () => {} });
