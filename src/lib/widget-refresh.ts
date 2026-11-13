@@ -9,10 +9,14 @@ import type { AppConfig } from './types';
  * El ENTORNO (host/WSL y la distro) también invalida los informes (revisión PR
  * #248): los datos de un entorno no valen para el otro, y sin esta clave el
  * widget seguiría mostrando la lectura del entorno anterior.
+ *
+ * El IDIOMA también (revisión PR #272): el backend traduce los mensajes
+ * propios de los proveedores al hacer fetch y quedan guardados en el informe;
+ * sin la locale en la clave, cambiar de idioma no los refrescaría.
  */
 export function dataKey(c: AppConfig | null): string {
   return c
-    ? JSON.stringify([c.sessionEnv, c.wslDistro, c.claude, c.codex, c.gemini, c.cursor, c.grok, c.copilot, c.openrouter, c.anthropicApi, c.openaiApi, c.nan, c.minimax, c.nineRouter, c.zai, c.opencodeGo, c.antigravity])
+    ? JSON.stringify([c.locale, c.sessionEnv, c.wslDistro, c.claude, c.codex, c.gemini, c.cursor, c.grok, c.copilot, c.openrouter, c.anthropicApi, c.openaiApi, c.nan, c.minimax, c.nineRouter, c.zai, c.opencodeGo, c.antigravity])
     : '';
 }
 
