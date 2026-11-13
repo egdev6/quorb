@@ -132,7 +132,7 @@ describe('createPresencePoller', () => {
     poller.stop();
   });
 
-  it.each(['result', 'rejection'] as const)('ignores a stale %s while the latest poll is pending', async (stale) => {
+  it.each(['result', 'rejection'] as const)('notifies a completed %s while a newer poll is pending', async (outcome) => {
     const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
     let tick!: () => void;
     const onResult = vi.fn();
@@ -145,16 +145,46 @@ describe('createPresencePoller', () => {
     poller.start();
     tick();
     expect(requests).toHaveLength(2);
-    if (stale === 'result') requests[0].resolve(false);
-    else requests[0].reject(new Error('stale poll failed'));
+    if (outcome === 'result') requests[0].resolve(false);
+    else requests[0].reject(new Error('poll failed'));
     await Promise.resolve();
     await Promise.resolve();
-    expect(onResult).not.toHaveBeenCalled();
+    const first = outcome === 'result' ? false : null;
+    expect(onResult.mock.calls).toEqual([[first]]);
     requests[1].reject(new Error('latest poll failed'));
     await Promise.resolve();
     await Promise.resolve();
-    expect(onResult.mock.calls).toEqual([[null]]);
+    expect(onResult.mock.calls).toEqual([[first], [null]]);
     poller.stop();
+  });
+
+  it('does not retain a confirmed session when consecutive slow checks fail', async () => {
+    const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
+    let tick!: () => void;
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
+      onResult,
+      setInterval: (fn) => { tick = fn; return 7; },
+      clearInterval: () => {},
+    });
+    const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+    poller.start();
+    requests[0].resolve(true);
+    await flush();
+    tick();
+    tick();
+    requests[1].reject(new Error('slow check failed'));
+    await flush();
+    tick();
+    requests[2].reject(new Error('slow check failed'));
+    await flush();
+    tick();
+    requests[3].reject(new Error('slow check failed'));
+    await flush();
+    poller.stop();
+    expect(requests).toHaveLength(5);
+    expect(onResult.mock.calls).toEqual([[true], [null], [null], [null]]);
   });
 
   it('discards old requests and timers after stop and restart', async () => {

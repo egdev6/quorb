@@ -52,12 +52,13 @@ export interface PresencePoller {
 /**
  * Sondea la presencia del fichero de sesión mientras la cuenta está abierta.
  * Una respuesta que llega después de `stop()` (p. ej. al desmontar o al cambiar
- * de cuenta), o de un sondeo anterior al último iniciado, no se notifica: evita
- * estados obsoletos o marcar como conectada una cuenta equivocada.
+ * de cuenta), o de un sondeo anterior a otro resultado ya notificado, no se
+ * notifica: evita estados obsoletos o marcar como conectada una cuenta equivocada.
  */
 export function createPresencePoller(options: PresencePollerOptions): PresencePoller {
   let generation = 0;
   let latestRequest = 0;
+  let latestDelivered = 0;
   let running = false;
   let handle: number | undefined;
   const timer = options.setInterval ?? ((fn: () => void, ms: number) => globalThis.setInterval(fn, ms));
@@ -65,16 +66,18 @@ export function createPresencePoller(options: PresencePollerOptions): PresencePo
   const check = (gen: number) => {
     if (!running || gen !== generation) return;
     const request = ++latestRequest;
+    const publish = (found: boolean | null) => {
+      if (running && gen === generation && request >= latestDelivered) {
+        latestDelivered = request;
+        options.onResult(found);
+      }
+    };
     options
       .exists()
-      .then((found) => {
-        if (running && gen === generation && request === latestRequest) options.onResult(found);
-      })
+      .then(publish)
       // Un fallo de sondeo no puede dejar la última respuesta como verdad:
       // se notifica `null` (revisión PR #92) y la UI muestra estado desconocido.
-      .catch(() => {
-        if (running && gen === generation && request === latestRequest) options.onResult(null);
-      });
+      .catch(() => publish(null));
   };
   return {
     start() {
