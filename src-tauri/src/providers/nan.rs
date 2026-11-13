@@ -87,6 +87,56 @@ pub(crate) struct Credits {
     pub frozen: bool,
 }
 
+impl Credits {
+    /// El régimen que declara este bloque: la cuenta se factura en créditos.
+    pub fn regime(&self) -> BillingRegime {
+        BillingRegime::Credits {
+            frozen: self.frozen,
+        }
+    }
+}
+
+/// El régimen de facturación de la cuenta, tal y como lo declara el payload del
+/// proveedor. El frente lo trata como **texto opaco**: no sabe qué significa, sólo
+/// compara si cambió entre dos informes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BillingRegime {
+    /// La cuenta se factura en créditos: lo dice el bloque `credits` del payload.
+    Credits { frozen: bool },
+    /// La cuenta se factura con una asignación por modelo (el bloque `credits` vino
+    /// `null`).
+    ModelQuota,
+    /// No se pudo leer el dato que lo decide: el informe no declara régimen y el frente
+    /// conserva los datos anteriores como siempre.
+    Unknown,
+}
+
+impl BillingRegime {
+    /// El régimen que dice el bloque `credits` del payload: `Some` cuando la cuenta se
+    /// factura en créditos, `None` cuando el bloque vino `null` (la cuenta se factura
+    /// con una asignación por modelo). Sólo se usa cuando la lectura tuvo éxito.
+    pub fn from_credits(credits: Option<&Credits>) -> Self {
+        match credits {
+            Some(c) => c.regime(),
+            None => BillingRegime::ModelQuota,
+        }
+    }
+
+    /// El texto opaco que viaja en el informe (el frente no lo interpreta).
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            BillingRegime::Credits { .. } => Some(CREDITS_REGIME),
+            BillingRegime::ModelQuota => Some(MODEL_QUOTA_REGIME),
+            BillingRegime::Unknown => None,
+        }
+    }
+}
+
+/// Los literales del régimen: texto opaco y estable. No nombran al proveedor ni al
+/// plan (el frente no puede deducir nada de ellos).
+pub(crate) const CREDITS_REGIME: &str = "credits";
+pub(crate) const MODEL_QUOTA_REGIME: &str = "model-quota";
+
 pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
     let mut report = who.report("NaN Builders", Kind::Subscription);
     report.plan = Some(plan_name(&cfg.plan).into());
@@ -171,10 +221,20 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     // El régimen de facturación lo declara el proveedor: el bloque `credits` de la raíz de
     // `GET /v1/usage` es `null` si la cuenta NO se factura en créditos. La detección vive
     // aquí (en el backend): el frente recibe los datos, no el concepto.
-    let (credits, first_page) = match fetch_credits(cfg, http, &key, from, now).await {
-        Ok((credits, page)) => (credits, Some(page)),
+    let (credits, first_page, credits_read) = match fetch_credits(cfg, http, &key, from, now).await
+    {
+        Ok((credits, page)) => (credits, Some(page), true),
         // Sin lectura no se sabe el régimen: se sigue por el camino de siempre.
-        Err(_) => (None, None),
+        Err(_) => (None, None, false),
+    };
+    // El régimen que declara el proveedor: con créditos no hay topes por modelo (esos
+    // topes no existen para esa cuenta) y sin ellos la cuenta se factura con una
+    // asignación por modelo. Si el dato no se pudo leer, el informe NO declara
+    // régimen: el frente conserva los datos anteriores como siempre.
+    let regime = if credits_read {
+        BillingRegime::from_credits(credits.as_ref())
+    } else {
+        BillingRegime::Unknown
     };
 
     // Los medidores de CUOTA del informe: vacíos si el periodo no se pudo leer (el caso
@@ -184,10 +244,8 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         // La cuenta se factura en créditos: NO se declaran los medidores por modelo ni
         // se recurre a la cuota publicada (esos topes no existen para una cuenta
         // facturada en créditos). Lo decide el backend; el frente no lo repite.
-        let declared = declare(Some(c), None, None, &quotas, now, cfg.billing_day);
-        quota = declared.meters;
-        report.message = Some(declared.header);
-        report.status = declared.status;
+        let declared = declare(c.regime(), None, None, &quotas, now, cfg.billing_day);
+        declared.apply(&mut report, &mut quota);
     } else {
         // Cuota por cuenta del panel de NaN, con la MISMA API key (`GET /api/usage/quota` de
         // `cloud-api.nan.builders`): `nan_cloud::parse_quota` toma `cap`, que es la asignación de
@@ -204,18 +262,14 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
             // 2. La cuota de la cuenta manda: cuota, consumo y fechas salen del mismo payload, así
             // que no se lee `/v1/usage` (mide el consumo de esta key, de otro periodo) ni se usa
             // `billing_day` (el periodo es el del payload).
-            let declared = declare(None, Some(meters), None, &quotas, now, cfg.billing_day);
-            quota = declared.meters;
-            report.message = Some(declared.header);
-            report.status = declared.status;
+            let declared = declare(regime, Some(meters), None, &quotas, now, cfg.billing_day);
+            declared.apply(&mut report, &mut quota);
         } else {
             // 3. Consumo del periodo (desde el inicio del mes o del periodo de facturación, lo que sea antes)
             match fetch_usage(cfg, http, &key, from, now, first_page).await {
                 Ok(pages) => {
                     let declared = declare_usage(&pages, &quotas, now, cfg.billing_day);
-                    quota = declared.meters;
-                    report.message = Some(declared.header);
-                    report.status = declared.status;
+                    declared.apply(&mut report, &mut quota);
                 }
                 Err(e) => {
                     report.status = Status::Warning;
@@ -223,6 +277,8 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
                         "No pude leer /v1/usage ({e}). {}",
                         plan_quota(&cfg.plan)
                     ));
+                    // El régimen ya se conoce si la lectura de `credits` tuvo éxito.
+                    report.billing_regime = regime.label();
                 }
             }
         }
@@ -676,13 +732,13 @@ pub(crate) fn declare_usage(
     // medidores por modelo ni se recurre a la cuota publicada (esos topes no existen
     // para una cuenta facturada en créditos). Sin lectura extra a la red.
     if let Some(c) = pages.first().and_then(parse_credits) {
-        return declare(Some(&c), None, None, published, now, billing_day);
+        return declare(c.regime(), None, None, published, now, billing_day);
     }
     // Para el mes natural solo contamos días del mes; para glm5.3, desde el inicio del periodo.
     let month = summarize(pages, Some(month_start(now)));
     let period = summarize(pages, Some(billing_period_start(now, billing_day)));
     declare(
-        None,
+        BillingRegime::ModelQuota,
         None,
         Some((&month, &period)),
         published,
@@ -696,6 +752,20 @@ pub(crate) struct Declared {
     pub meters: Vec<Meter>,
     pub header: String,
     pub status: Status,
+    /// El régimen de facturación que declara el backend: viaja en el informe como texto
+    /// opaco (el frente sólo compara si cambió).
+    pub regime: BillingRegime,
+}
+
+impl Declared {
+    /// Aplica lo declarado al informe: estado, cabecera y régimen. Los medidores de
+    /// cuota se componen aparte (con los propios y los de rate limit).
+    pub fn apply(self, report: &mut UsageReport, quota: &mut Vec<Meter>) {
+        *quota = self.meters;
+        report.message = Some(self.header);
+        report.status = self.status;
+        report.billing_regime = self.regime.label();
+    }
 }
 
 /// Qué medidores declara el backend. El régimen lo declara el proveedor (el bloque
@@ -703,28 +773,25 @@ pub(crate) struct Declared {
 /// topes no existen para una cuenta facturada en créditos. La decisión no llega al
 /// frente: sólo llegan los datos.
 pub(crate) fn declare(
-    credits: Option<&Credits>,
+    regime: BillingRegime,
     account_meters: Option<Vec<Meter>>,
     usage: Option<(&UsageSummary, &UsageSummary)>,
     published: &BTreeMap<String, Quota>,
     now: DateTime<Utc>,
     billing_day: u32,
 ) -> Declared {
-    if let Some(c) = credits {
+    if let BillingRegime::Credits { frozen } = regime {
         // Una cuenta facturada en créditos no tiene topes por modelo: no se declara
         // ningún medidor (la asignación del periodo, el saldo de packs y el desglose
         // por modelo son de la otra mitad del alcance, #268).
         // `frozen` es «la suscripción no está activa» (las peticiones se rechazan):
         // algo que merece atención, aunque no haya datos.
-        let status = if c.frozen {
-            Status::Warning
-        } else {
-            Status::Ok
-        };
+        let status = if frozen { Status::Warning } else { Status::Ok };
         return Declared {
             meters: Vec::new(),
-            header: credits_message(c),
+            header: credits_message(frozen),
             status,
+            regime,
         };
     }
     let (meters, source, header) = nan_meters(account_meters, usage, published, now, billing_day);
@@ -732,15 +799,16 @@ pub(crate) fn declare(
         meters,
         header,
         status: status_for(source),
+        regime,
     }
 }
 
 /// La cabecera del informe cuando la cuenta se factura en créditos: la indicación de
 /// que la cuenta se factura en créditos (y el aviso de suscripción inactiva, si la
 /// hay). El texto lo arma el backend (el frente no interpreta nada).
-fn credits_message(credits: &Credits) -> String {
+fn credits_message(frozen: bool) -> String {
     let mut parts: Vec<String> = vec!["la cuenta se factura en créditos".into()];
-    if credits.frozen {
+    if frozen {
         parts.push("suscripción inactiva: las peticiones se rechazan".into());
     }
     parts.join(" · ")
@@ -1283,7 +1351,7 @@ mod tests {
             &crate::providers::nan_cloud::real_account_payload(),
         );
         let declared = declare(
-            Some(&c),
+            c.regime(),
             Some(account),
             Some((&UsageSummary::default(), &UsageSummary::default())),
             &published_quotas(),
@@ -1312,7 +1380,7 @@ mod tests {
             &crate::providers::nan_cloud::real_account_payload(),
         );
         let declared = declare(
-            Some(&c),
+            c.regime(),
             Some(account),
             Some((&UsageSummary::default(), &UsageSummary::default())),
             &published_quotas(),
@@ -1332,7 +1400,14 @@ mod tests {
         let account = crate::providers::nan_cloud::parse_quota(
             &crate::providers::nan_cloud::real_account_payload(),
         );
-        let declared = declare(None, Some(account), None, &published_quotas(), now(), 1);
+        let declared = declare(
+            BillingRegime::ModelQuota,
+            Some(account),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
         assert_eq!(declared.status, Status::Ok);
         assert!(declared
             .meters
@@ -1346,7 +1421,7 @@ mod tests {
         let mut page = published_credits_page();
         page["credits"]["frozen"] = json!(true);
         let c = parse_credits(&page).expect("the credits block");
-        let declared = declare(Some(&c), None, None, &published_quotas(), now(), 1);
+        let declared = declare(c.regime(), None, None, &published_quotas(), now(), 1);
         assert_eq!(declared.status, Status::Warning);
         assert!(declared.header.contains("inactiva"), "{}", declared.header);
     }
@@ -1564,6 +1639,60 @@ mod tests {
             meters.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             vec!["model:glm5.3", "rate_requests"]
         );
+    }
+
+    #[test]
+    fn the_credits_account_declares_the_credits_regime() {
+        // El backend declara el régimen de facturación en el informe y el frente lo
+        // trata como texto opaco (no sabe qué significa): una cuenta facturada en
+        // créditos lo dice en su informe.
+        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let declared = declare(c.regime(), None, None, &published_quotas(), now(), 1);
+        let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
+        let mut quota = Vec::new();
+        declared.apply(&mut report, &mut quota);
+        assert_eq!(
+            serde_json::to_value(&report).unwrap()["billingRegime"],
+            "credits"
+        );
+    }
+
+    #[test]
+    fn the_model_quota_account_declares_its_own_regime() {
+        // La otra rama: una cuenta con asignación por modelo declara OTRO régimen,
+        // distinto y estable.
+        let account = crate::providers::nan_cloud::parse_quota(
+            &crate::providers::nan_cloud::real_account_payload(),
+        );
+        let declared = declare(
+            BillingRegime::ModelQuota,
+            Some(account),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
+        let mut quota = Vec::new();
+        declared.apply(&mut report, &mut quota);
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["billingRegime"], "model-quota");
+        assert_ne!(v["billingRegime"], "credits");
+    }
+
+    #[test]
+    fn the_regime_names_do_not_mention_the_provider_nor_the_plan() {
+        // Los literales son texto opaco y estable: no nombran al proveedor ni al plan
+        // (el frente no puede deducir nada de ellos).
+        for name in [CREDITS_REGIME, MODEL_QUOTA_REGIME] {
+            let lower = name.to_lowercase();
+            for forbidden in ["nan", "gentle", "inference", "premium", "community"] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "el régimen {name} nombra {forbidden}"
+                );
+            }
+        }
     }
 
     #[test]

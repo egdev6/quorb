@@ -103,6 +103,11 @@ pub struct UsageReport {
     /// Tokens por día (si el proveedor los da), para el historial del panel.
     pub daily: Vec<Daily>,
     pub fetched_at: String,
+    /// Régimen de facturación que declara el proveedor: el frente lo trata como texto
+    /// opaco (no sabe qué significa, sólo compara si cambió entre dos informes). Es
+    /// opcional: los proveedores que no lo conocen no lo declaran y su JSON no cambia.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub billing_regime: Option<&'static str>,
 }
 
 impl UsageReport {
@@ -121,6 +126,7 @@ impl UsageReport {
             action: None,
             daily: vec![],
             fetched_at: chrono::Utc::now().to_rfc3339(),
+            billing_regime: None,
         }
     }
 
@@ -193,6 +199,23 @@ mod tests {
             .unwrap()
             .get("quotaSource")
             .is_none());
+    }
+
+    #[test]
+    fn the_report_declares_the_billing_regime_only_when_it_is_known() {
+        // El régimen de facturación es opcional: los proveedores que no lo conocen
+        // (todos menos NaN) no ponen la clave, así que su JSON no cambia ni una línea.
+        let report = UsageReport::new("claude", "Claude", Kind::Subscription);
+        assert!(serde_json::to_value(&report)
+            .unwrap()
+            .get("billingRegime")
+            .is_none());
+        let mut declared = report.clone();
+        declared.billing_regime = Some("model-quota");
+        assert_eq!(
+            serde_json::to_value(&declared).unwrap()["billingRegime"],
+            "model-quota"
+        );
     }
 
     #[test]

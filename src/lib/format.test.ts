@@ -400,3 +400,85 @@ describe('stale data is never presented as the current state (T31)', () => {
     expect(merged.meters.every((m) => m.readAt === '2026-11-10T08:00:00Z')).toBe(true);
   });
 });
+
+// T31b (S33 caso 2, C-6): el backend declara el régimen de facturación en el informe y
+// el frente sólo compara si cambió. Un aviso de «suscripción inactiva» en una cuenta
+// que cambió de régimen NO es un fallo de lectura: los topes del régimen anterior ya no
+// aplican, así que no se resucitan. El texto del régimen es opaco para el frente.
+describe('a different billing regime does not bring the old meters back (T31b)', () => {
+  const modelQuotaMeter: Meter = {
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    resetsAt: '2026-12-05T22:15:31Z',
+    windowSeconds: 2_592_000,
+    quotaSource: 'account',
+  };
+  const rateMeter: Meter = {
+    id: 'rate_requests',
+    label: 'Peticiones (ventana)',
+    percent: 20,
+    used: 20,
+    limit: 100,
+    unit: 'req',
+    resetsAt: null,
+    windowSeconds: null,
+  };
+
+  it('does not resurrect the meters of the previous regime (credits account)', () => {
+    // El caso del owner: un informe de una cuenta con créditos (llega como aviso)
+    // no revive el medidor por modelo de la cuenta de asignación por modelo.
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const credits: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'suscripción inactiva', meters: [] };
+    const [merged] = mergeReports([previous], [credits]);
+    // El medidor del régimen anterior no aparece.
+    expect(merged.meters).toEqual([]);
+    // Y no queda nada viejo que conservar: el informe no se marca desactualizado.
+    expect(merged.stale).toBeUndefined();
+    // El mensaje del ciclo nuevo manda.
+    expect(merged.message).toBe('suscripción inactiva');
+  });
+
+  it('does not keep the missing meters of the previous regime in a mixed report', () => {
+    // El informe MIXTO: llegan los medidores frescos (cabeceras de rate limit) pero
+    // los del régimen anterior no se conservan.
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const credits: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'suscripción inactiva', meters: [rateMeter] };
+    const [merged] = mergeReports([previous], [credits]);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.meters[0].stale).toBeUndefined();
+  });
+
+  it('keeps the old data when the regime is the same', () => {
+    // Mismo régimen: el aviso es un fallo de lectura y los datos anteriores se
+    // conservan como estaban (desactualizados, con su fecha).
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', billingRegime: 'model-quota', message: 'cuota no disponible', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+    expect(merged.meters[0].readAt).toBe(previous.fetchedAt);
+  });
+
+  it('keeps the old data when a report declares no regime', () => {
+    // Un proveedor que no declara régimen (o un informe sin régimen): no hay
+    // comparación posible, así que el comportamiento es el de siempre.
+    const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', message: 'sin cuota', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+  });
+
+  it('keeps the old data when only the new report declares a regime', () => {
+    // Sólo uno de los dos declara régimen: tampoco hay comparación posible.
+    const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'sin cuota', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+  });
+});

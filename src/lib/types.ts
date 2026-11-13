@@ -62,6 +62,14 @@ export interface UsageReport {
   fetchedAt: string;
   /** Solo frontend: datos del último ciclo correcto porque el actual falló. */
   stale?: boolean;
+  /**
+   * Régimen de facturación que declara el proveedor. El frente lo trata como texto
+   * opaco: no sabe qué significa, sólo compara si cambió entre dos informes (un aviso
+   * de «suscripción inactiva» en una cuenta que cambió de régimen no es un fallo de
+   * lectura: los topes del régimen anterior ya no aplican). Lo declaran los
+   * proveedores que lo conocen; si un informe no lo declara, no hay comparación.
+   */
+  billingRegime?: string;
 }
 
 export interface SubscriptionConfig {

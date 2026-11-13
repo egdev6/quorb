@@ -124,6 +124,18 @@ export function formatShortDate(iso: string | null, locale: Locale = 'es'): stri
 }
 
 /**
+ * ¿El informe nuevo declara un régimen de facturación DISTINTO del que declaraba el
+ * anterior? El texto es opaco: el frente no sabe qué significa, sólo si es el mismo.
+ * Si alguno de los dos no lo declara no hay comparación posible (y el comportamiento
+ * es el de siempre).
+ */
+function regimeChanged(old: UsageReport | undefined, next: UsageReport): boolean {
+  const before = old?.billingRegime;
+  const after = next.billingRegime;
+  return before != null && after != null && before !== after;
+}
+
+/**
  * Si un ciclo falla pero el anterior tenía datos, conservamos los datos
  * antiguos marcados como `stale` para que el widget no se quede vacío.
  */
@@ -133,6 +145,10 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     const old = byId.get(r.id);
     const failed = r.status === 'error' || r.status === 'warning';
     if (failed && r.meters.length === 0 && !r.spend && old && (old.meters.length > 0 || old.spend)) {
+      // Un régimen DISTINTO no es un fallo de lectura: los medidores del informe anterior
+      // (topes por modelo de una cuenta que ya no se factura así) ya no aplican, así que
+      // no se resucitan. El plan no es una lectura —nome la cuenta— y sí se conserva.
+      if (regimeChanged(old, r)) return { ...r, plan: r.plan ?? old.plan };
       return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(old.meters, old.fetchedAt) };
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
@@ -141,9 +157,14 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     // desaparezcan en silencio. El informe mergeado manda; lo que no trae se conserva del
     // anterior. El informe NO queda desactualizado entero: trae datos frescos, y marcarlo
     // saltaría los avisos del ciclo entero (con el fresco incluido).
-    // Si más adelante el informe declara el régimen de facturación, la regla de no
-    // resucitar medidores de otro régimen se aplica aquí (mismo sitio, misma marca).
+    // Si el informe declara el régimen de facturación, la regla de no resucitar
+    // medidores de otro régimen se aplica aquí (mismo sitio, misma marca): si el
+    // informe nuevo declara un régimen distinto del anterior, los medidores que no
+    // trae no se conservan (arriba, con `regimeChanged`).
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
+      // Con un régimen DISTINTO tampoco se conservan los medidores que el informe nuevo
+      // no trae: son de un régimen que ya no aplica (mismo sitio, misma marca).
+      if (regimeChanged(old, r)) return { ...r, plan: r.plan ?? old.plan };
       const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)));
       // Si no se conserva ningún medidor, no hay nada viejo que avisar: el informe
       // nuevo se queda tal cual (sus medidores son todos frescos).
