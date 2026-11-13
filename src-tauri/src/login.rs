@@ -2309,12 +2309,12 @@ mod wsl_login_tests {
     }
 }
 
-/// EVIDENCIA REAL en Windows + WSL (issue #92, AC9).
+/// Legacy Windows/WSL integration checks, not interactive-login evidence.
 ///
-/// Estos tests NO corren en el CI normal: llevan `#[ignore]` y solo se
-/// ejecutan en el lab `wsl-login-evidence.yml` (runner Windows con WSL2),
-/// donde la distro y sus shims son reales. Simulan nada: hablan con
-/// `wsl.exe` de verdad.
+/// These ignored tests require a dedicated, pre-provisioned disposable guest:
+/// GAP2 resolves a command by name and GAP3 reads a fixed fixture path. Never
+/// point them at a personal distro. GAP4 is replaced below by a hermetic
+/// synthetic test; none of these checks opens Quorb's terminal or proves S6.
 #[cfg(windows)]
 #[cfg(test)]
 mod wsl_evidence {
@@ -2372,9 +2372,7 @@ mod wsl_evidence {
             .expect("wsl.exe");
         assert!(
             out.status.success(),
-            "el login debe ejecutarse en la distro: {:?} {:?}",
-            out.stdout,
-            out.stderr
+            "el comando debe ejecutarse en la distro (salida omitida)"
         );
         // El marker del shim está DENTRO de la distro.
         let check = std::process::Command::new("wsl.exe")
@@ -2394,7 +2392,9 @@ mod wsl_evidence {
     fn gap3_session_read_uses_the_resolved_path_inside_the_distro() {
         let adapter: std::sync::Arc<dyn WslAdapter> = std::sync::Arc::new(RealWslAdapter::new());
         let d = distro();
-        let home = adapter.resolve_home(&d).expect("home de la distro");
+        let home = adapter
+            .resolve_home(&d)
+            .unwrap_or_else(|_| panic!("no se pudo resolver el home de la distro"));
         let r = SessionResolver::for_wsl(adapter, d.clone(), home, crate::i18n::Locale::Es);
         let path = r.default_path(&crate::wsl::guest_relative(&[
             ".quorb",
@@ -2407,91 +2407,253 @@ mod wsl_evidence {
         // `read` y `read_async` comparten el mismo `adapter.read_file`.
         let contents = r
             .read(&path)
-            .expect("la sesión plantada dentro de la distro debe leerse");
-        assert!(
-            contents.contains("v-evidencia-92"),
-            "contenido inesperado: {contents}"
-        );
+            .unwrap_or_else(|_| panic!("no se pudo leer la sesión sintética"));
+        assert!(contents.contains("v-evidencia-92"), "marcador ausente");
+    }
+}
+
+/// Hermetic replacement for GAP4: run the generated guest shell argv locally
+/// against an absolute, test-owned shim, then pass its synthetic output through
+/// the WSL session resolver and mock adapter. This is not Windows/WSL or login
+/// evidence. No vendor executable, guest resource, or real session is used.
+#[cfg(all(test, unix))]
+mod synthetic_wsl_login_lab {
+    use super::*;
+    use crate::wsl::{MockWslAdapter, SessionResolver, WslCall};
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    const DISTRO: &str = "synthetic-distro";
+    const LITERAL_ARG: &str = "ñ&|;$HOME";
+    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            // create_dir is exclusive: never remove or reuse an existing path.
+            for _ in 0..128 {
+                let n = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+                let root = std::env::temp_dir()
+                    .join(format!("quorb-synthetic-login-{}-{n}", std::process::id()));
+                match std::fs::DirBuilder::new().mode(0o700).create(&root) {
+                    Ok(()) => {
+                        let fixture = Self(root);
+                        let mut shim = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .mode(0o700)
+                            .open(fixture.shim())
+                            .expect("create synthetic shim");
+                        shim.write_all(
+                            b"#!/bin/sh\ntest \"$2\" = '\xc3\xb1&|;$HOME' || exit 1\nprintf '%s' \"$1\" > \"$CLAUDE_CONFIG_DIR/.credentials.json\" || exit 1\nprintf invoked > \"$3\"\n",
+                        )
+                        .expect("write synthetic shim");
+                        return fixture;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(_) => panic!("create synthetic fixture"),
+                }
+            }
+            panic!("could not allocate a unique synthetic fixture")
+        }
+
+        fn shim(&self) -> PathBuf {
+            self.0.join("quorb's synthetic shim")
+        }
+
+        fn session_dir(&self) -> PathBuf {
+            self.0.join("account Ñ &")
+        }
+
+        fn session_file(&self) -> PathBuf {
+            self.session_dir().join(".credentials.json")
+        }
+
+        fn marker(&self) -> String {
+            format!(
+                "synthetic-only-{}",
+                self.0.file_name().unwrap().to_string_lossy()
+            )
+        }
+
+        fn run(&self) -> Result<(), &'static str> {
+            // Do not follow a replaced session directory outside the fixture.
+            match std::fs::symlink_metadata(self.session_dir()) {
+                Ok(m) if !m.file_type().is_dir() => {
+                    return Err("invalid fixture session directory")
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("cannot inspect fixture session directory"),
+            }
+            // Reject even a matching prior marker, before starting the shim.
+            match std::fs::symlink_metadata(self.session_file()) {
+                Ok(_) => return Err("synthetic output already exists"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("cannot inspect synthetic output"),
+            }
+
+            let adapter = Arc::new(MockWslAdapter::new());
+            adapter.set_home(DISTRO, self.0.clone());
+            let wsl = WslLogin {
+                adapter: adapter.as_ref(),
+                distro: DISTRO,
+            };
+            let cfg = AppConfig {
+                accounts: vec![Account {
+                    id: "claude:synthetic".into(),
+                    provider: "claude".into(),
+                    config_dir: Some(self.session_dir().to_string_lossy().into_owned()),
+                    enabled: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let (provider, env) = account_env("claude:synthetic", &cfg, Some(&wsl))
+                .map_err(|_| "cannot resolve synthetic account environment")?;
+            if provider != "claude" || env != Some(("CLAUDE_CONFIG_DIR", self.session_dir())) {
+                return Err("unexpected synthetic account environment");
+            }
+            let resolver = SessionResolver::for_wsl(
+                adapter.clone(),
+                DISTRO.into(),
+                self.0.clone(),
+                crate::i18n::Locale::Es,
+            );
+            let path = crate::providers::account_session_path(&cfg.accounts[0], Some(&resolver))
+                .map_err(|_| "cannot resolve synthetic account path")?
+                .ok_or("missing synthetic account path")?;
+            if Path::new(&path) != self.session_file().as_path() {
+                return Err("login and resolver paths differ");
+            }
+
+            let invoked = self.0.join("shim-invoked");
+            let command = format!(
+                "{} {} {} {}",
+                sh_quote(&self.shim().to_string_lossy()),
+                sh_quote(&self.marker()),
+                sh_quote(LITERAL_ARG),
+                sh_quote(&invoked.to_string_lossy()),
+            );
+            let argv = wsl_login_argv(DISTRO, ShellStrategy::ShPosix, &command, &env)
+                .map_err(|_| "cannot construct synthetic argv")?;
+            let expected: Vec<std::ffi::OsString> = vec![
+                "wsl.exe".into(),
+                "-d".into(),
+                DISTRO.into(),
+                "-e".into(),
+                "sh".into(),
+                "-c".into(),
+                WSL_LOGIN_WRAP_MKDIR.into(),
+                "quorb".into(),
+                self.session_dir().into(),
+                "env".into(),
+                format!("CLAUDE_CONFIG_DIR={}", self.session_dir().display()).into(),
+                self.shim().into(),
+                self.marker().into(),
+                LITERAL_ARG.into(),
+                invoked.into(),
+            ];
+            if argv != expected {
+                return Err("unexpected synthetic argv");
+            }
+            // Execute only the guest-shell suffix locally; the absolute shim
+            // is ours, and no child output or inherited credentials escape.
+            let status = std::process::Command::new("/bin/sh")
+                .args(argv.iter().skip(5))
+                .env_clear()
+                .env("HOME", &self.0)
+                .env("PATH", "/usr/bin:/bin")
+                .env("SHELL", "/bin/true")
+                .current_dir(&self.0)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|_| "cannot launch synthetic shell")?;
+            if !status.success() {
+                return Err("synthetic shell failed");
+            }
+            let output = std::fs::read_to_string(self.session_file())
+                .map_err(|_| "synthetic output missing")?;
+            if output != self.marker() {
+                return Err("synthetic output mismatch");
+            }
+            // The mock receives only the newly produced fixture data; the
+            // resolver must request the exact path calculated by the provider.
+            adapter.set_file(DISTRO, PathBuf::from(&path), output);
+            let read = resolver
+                .read(Path::new(&path))
+                .map_err(|_| "cannot read synthetic session through resolver")?;
+            if read != self.marker()
+                || !adapter
+                    .calls()
+                    .contains(&WslCall::ReadFile(DISTRO.into(), path.into()))
+            {
+                return Err("synthetic resolver mismatch");
+            }
+            Ok(())
+        }
     }
 
-    /// GAP4 — Login real de una cuenta ADICIONAL dentro de la distro
-    /// (revisión PR #253: evidencia pedida para cerrar #92, sin datos
-    /// personales). El argv lleva la carpeta de la cuenta, el CLI (shim)
-    /// escribe ahí y la MISMA ruta que lee la app encuentra la sesión.
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            // This exact private directory was exclusively created by new().
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
-    #[ignore = "requiere WSL real (evidencia #92)"]
-    fn gap4_extra_account_login_writes_inside_its_guest_folder() {
-        let adapter: std::sync::Arc<dyn WslAdapter> = std::sync::Arc::new(RealWslAdapter::new());
-        let d = distro();
-        let home = adapter.resolve_home(&d).expect("home de la distro");
-        let wsl = WslLogin {
-            adapter: adapter.as_ref(),
-            distro: &d,
-        };
-        let cfg = AppConfig {
-            accounts: vec![Account {
-                id: "claude:w2".into(),
-                provider: "claude".into(),
-                enabled: true,
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let (_, env) = account_env("claude:w2", &cfg, Some(&wsl)).expect("entorno de la cuenta");
-        let (var, dir) = env.expect("la cuenta adicional lleva su carpeta");
-        assert_eq!(var, "CLAUDE_CONFIG_DIR");
+    fn synthetic_gap4_runs_owned_shim_and_resolves_its_output() {
+        let fixture = Fixture::new();
+        let other = Fixture::new();
+        assert_ne!(fixture.session_dir(), other.session_dir());
+        std::fs::create_dir(other.session_dir()).expect("create other synthetic account");
+        std::fs::write(other.session_file(), "other synthetic session")
+            .expect("seed other account");
+        assert!(fixture.run().is_ok(), "synthetic login seam failed");
+        assert!(fixture.0.join("shim-invoked").is_file());
         assert!(
-            dir.starts_with("/"),
-            "la carpeta debe ser POSIX del guest: {}",
-            dir.display()
+            std::fs::read_to_string(other.session_file()).unwrap() == "other synthetic session"
         );
-        // Mismo argv que compone la app, con la carpeta de la cuenta.
-        let argv = wsl_login_argv(
-            &d,
-            ShellStrategy::BashLogin,
-            "claude",
-            &Some((var, dir.clone())),
-        )
-        .expect("argv del login");
-        let out = std::process::Command::new("wsl.exe")
-            .args(argv.iter().skip(1))
-            .output()
-            .expect("wsl.exe");
+        assert!(matches!(
+            fixture.run(),
+            Err("synthetic output already exists")
+        ));
+    }
+
+    #[test]
+    fn synthetic_gap4_rejects_a_matching_prior_output_before_running() {
+        let fixture = Fixture::new();
+        std::fs::create_dir(fixture.session_dir()).expect("create synthetic account");
+        std::fs::write(fixture.session_file(), fixture.marker()).expect("seed stale output");
+        assert!(matches!(
+            fixture.run(),
+            Err("synthetic output already exists")
+        ));
+        assert!(!fixture.0.join("shim-invoked").exists());
+        assert!(std::fs::read_to_string(fixture.session_file()).unwrap() == fixture.marker());
+    }
+
+    #[test]
+    fn synthetic_gap4_rejects_a_session_directory_symlink() {
+        let fixture = Fixture::new();
+        let other = Fixture::new();
+        std::fs::create_dir(other.session_dir()).expect("create other synthetic account");
+        std::fs::write(other.session_file(), "other synthetic session")
+            .expect("seed other account");
+        std::os::unix::fs::symlink(other.session_dir(), fixture.session_dir())
+            .expect("create synthetic symlink");
+        assert!(matches!(
+            fixture.run(),
+            Err("invalid fixture session directory")
+        ));
+        assert!(!fixture.0.join("shim-invoked").exists());
         assert!(
-            out.status.success(),
-            "el login debe ejecutarse en la distro: {:?} {:?}",
-            out.stdout,
-            out.stderr
+            std::fs::read_to_string(other.session_file()).unwrap() == "other synthetic session"
         );
-        // El CLI escribió en la carpeta de la CUENTA (no en la del host). La
-        // ruta se compone con POSIX: `PathBuf::join` en Windows pondría `\`
-        // y el guest lo leería como parte del nombre (hallazgo del lab).
-        let file = format!(
-            "{}/.credentials.json",
-            dir.to_string_lossy().trim_end_matches('/')
-        );
-        let check = std::process::Command::new("wsl.exe")
-            .args(["-d", &d, "-e", "cat", &file])
-            .output()
-            .expect("wsl.exe cat");
-        assert!(
-            check.status.success(),
-            "el fichero de la cuenta debe existir en el guest: {:?}",
-            check.stderr
-        );
-        let contents = String::from_utf8_lossy(&check.stdout);
-        assert!(
-            contents.contains("v-adicional-92"),
-            "contenido inesperado: {contents}"
-        );
-        // Y la MISMA ruta que usa la app (resolución de sesiones) la lee.
-        let r = SessionResolver::for_wsl(adapter, d.clone(), home, crate::i18n::Locale::Es);
-        let path = crate::providers::account_session_path(&cfg.accounts[0], Some(&r))
-            .expect("ruta de la cuenta")
-            .expect("la cuenta tiene sesión");
-        let read = r
-            .read(std::path::Path::new(&path))
-            .expect("leer la sesión de la cuenta adicional");
-        assert!(read.contains("v-adicional-92"), "{read}");
     }
 }

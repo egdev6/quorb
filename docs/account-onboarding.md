@@ -118,3 +118,6 @@ la carpeta de sesión del login. En host, si usas otro nombre con un comando
 avanzado, Quorb no impone una carpeta: el comando debe escribir en la ruta
 configurada. En WSL se exige una ruta absoluta del guest y el nombre estándar
 del CLI.
+
+Para validar el flujo interactivo de una cuenta adicional en Windows/WSL, sigue
+la [guía de validación de login en WSL](./wsl-login-validation.md).
