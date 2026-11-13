@@ -30,6 +30,7 @@ Your AI quotas, always in sight: usage, remaining capacity and spending across y
 | macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
 
 Run the Windows installer, or open the macOS DMG and copy Quorb to Applications.
+From the release after v0.8.0, the Windows installer first asks for Español or English, continues in that language and opens a fresh install of Quorb in it; MSI and silent installs ask on Quorb's first start instead. Updates and reinstalls keep your saved language, which you can change in Settings.
 The macOS release uses Developer ID signing and Apple notarization; updates are **manual**.
 First browser download, quarantine, installation and GUI checks on a real Mac remain pending in [#118](https://github.com/egdev6/quorb/issues/118); do not remove quarantine to bypass a warning.
 These links are pinned to **v0.8.0**; see [all releases](https://github.com/egdev6/quorb/releases) for other versions.

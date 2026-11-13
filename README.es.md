@@ -30,6 +30,7 @@ Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de t
 | macOS 15+ · Apple Silicon (M1+) | [Descargar .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
 
 Ejecutad el instalador de Windows, o abrid el DMG de macOS y copiad Quorb a Aplicaciones.
+Desde la release posterior a v0.8.0, el instalador de Windows pregunta primero Español o English, continúa en ese idioma y abre una instalación nueva de Quorb en él; las instalaciones MSI y silenciosas lo preguntan en el primer inicio de Quorb. Las actualizaciones y reinstalaciones conservan el idioma guardado, que podéis cambiar en Ajustes.
 La release macOS usa firma Developer ID y notarización de Apple; las actualizaciones son **manuales**.
 La primera descarga por navegador, cuarentena, instalación y GUI en un Mac real siguen pendientes en [#118](https://github.com/egdev6/quorb/issues/118); no retiréis la cuarentena para eludir un aviso.
 Estos enlaces apuntan a **v0.8.0**; consultad [todas las releases](https://github.com/egdev6/quorb/releases) para otras versiones.
