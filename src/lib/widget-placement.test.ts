@@ -145,6 +145,24 @@ describe('readPlacementWithRetries', () => {
     }
   });
 
+  it('retries the reasons the caller asks for', async () => {
+    // La política de reintento es explícita por llamante (#250/S17): la tira
+    // reintenta sólo `not_viewable`, el detalle también `read_failed`.
+    const read = sequence(report({ status: 'unverified', bounds: null, reason: 'read_failed' }));
+    const result = await readPlacementWithRetries(read, {
+      sleep: async () => {},
+      retryReasons: ['not_viewable', 'read_failed'],
+    });
+    expect(read).toHaveBeenCalledTimes(5);
+    expect(result?.reason).toBe('read_failed');
+  });
+
+  it('keeps the strip policy by default: only `not_viewable` is retried', async () => {
+    const read = sequence(report({ status: 'unverified', bounds: null, reason: 'read_failed' }));
+    await readPlacementWithRetries(read, { sleep: async () => {} });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
   it('waits between the retries', async () => {
     const sleep = vi.fn(async () => {});
     const read = sequence(notViewable());

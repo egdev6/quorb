@@ -39,6 +39,14 @@ pub enum Msg {
     CodexConsentInstall,
     /// Diálogo de Codex: botón de cancelación.
     CodexConsentCancel,
+    /// Email #245: asunto del aviso.
+    EmailSubject,
+    EmailUsageSubject,
+    EmailUsageBody,
+    EmailUsageMeterBody,
+    EmailDropSubject,
+    EmailDropBody,
+    EmailDropMeterBody,
 }
 
 /// Todas las variantes: los tests de paridad recorren esta lista y el match
@@ -56,6 +64,13 @@ pub const ALL_MSGS: &[Msg] = &[
     Msg::CodexConsentMessage,
     Msg::CodexConsentInstall,
     Msg::CodexConsentCancel,
+    Msg::EmailSubject,
+    Msg::EmailUsageSubject,
+    Msg::EmailUsageBody,
+    Msg::EmailUsageMeterBody,
+    Msg::EmailDropSubject,
+    Msg::EmailDropBody,
+    Msg::EmailDropMeterBody,
 ];
 
 /// Texto original del diálogo de consentimiento de Codex, byte a byte (nace de
@@ -94,7 +109,59 @@ pub fn text(locale: Locale, msg: Msg) -> &'static str {
         (Locale::En, Msg::CodexConsentInstall) => "Install",
         (Locale::Es, Msg::CodexConsentCancel) => "Cancelar",
         (Locale::En, Msg::CodexConsentCancel) => "Cancel",
+        (Locale::Es, Msg::EmailSubject) => "Quorb: alerta de consumo",
+        (Locale::En, Msg::EmailSubject) => "Quorb: usage alert",
+        (Locale::Es, Msg::EmailUsageSubject) => "Quorb · {provider}: consumo al {percent}",
+        (Locale::En, Msg::EmailUsageSubject) => "Quorb · {provider}: usage at {percent}",
+        (Locale::Es, Msg::EmailUsageBody) => "El consumo observado en {provider} ha alcanzado el {percent} del límite.\n\nSe ha alcanzado el umbral de aviso configurado en Quorb.",
+        (Locale::En, Msg::EmailUsageBody) => "Observed usage in {provider} has reached {percent} of the limit.\n\nThe alert threshold configured in Quorb has been reached.",
+        (Locale::Es, Msg::EmailUsageMeterBody) => "El consumo observado en {provider} ha alcanzado el {percent} del {meter}.\n\nSe ha alcanzado el umbral de aviso configurado en Quorb.",
+        (Locale::En, Msg::EmailUsageMeterBody) => "Observed usage in {provider} has reached {percent} of the {meter}.\n\nThe alert threshold configured in Quorb has been reached.",
+        (Locale::Es, Msg::EmailDropSubject) => "Quorb · {provider}: consumo por debajo del umbral de aviso",
+        (Locale::En, Msg::EmailDropSubject) => "Quorb · {provider}: usage below the alert threshold",
+        (Locale::Es, Msg::EmailDropBody) => "El consumo observado en {provider} ha bajado por debajo del umbral de aviso configurado en Quorb.\n\nConsumo actual: {percent}.",
+        (Locale::En, Msg::EmailDropBody) => "Observed usage in {provider} has dropped below the alert threshold configured in Quorb.\n\nCurrent usage: {percent}.",
+        (Locale::Es, Msg::EmailDropMeterBody) => "El consumo observado en {provider} ({meter}) ha bajado por debajo del umbral de aviso configurado en Quorb.\n\nConsumo actual: {percent}.",
+        (Locale::En, Msg::EmailDropMeterBody) => "Observed usage in {provider} ({meter}) has dropped below the alert threshold configured in Quorb.\n\nCurrent usage: {percent}.",
     }
+}
+
+/// Asunto del email de aviso (#245).
+pub fn email_subject(locale: Locale) -> &'static str {
+    text(locale, Msg::EmailSubject)
+}
+
+/// Cuerpo del email de prueba explícita, sin datos de consumo (#245).
+pub fn email_test_body(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Es => "Quorb: prueba explícita de email (sin datos de consumo).",
+        Locale::En => "Quorb: explicit email test (no usage data).",
+    }
+}
+
+/// Conservative provider-specific descriptions; never infer duration from a suffix.
+pub fn email_meter(locale: Locale, provider: &str, meter: &str) -> Option<&'static str> {
+    let (es, en) = match (provider, meter) {
+        ("claude" | "codex" | "zai" | "opencode_go", "weekly") => {
+            ("límite semanal", "weekly limit")
+        }
+        ("claude", "weekly_opus") => ("límite semanal de Opus", "weekly Opus limit"),
+        ("claude", "weekly_sonnet") => ("límite semanal de Sonnet", "weekly Sonnet limit"),
+        ("claude", "weekly_apps") => ("límite semanal de aplicaciones", "weekly apps limit"),
+        ("openrouter", "key_limit_daily") => ("límite diario", "daily limit"),
+        ("openrouter", "key_limit_weekly") => ("límite semanal", "weekly limit"),
+        ("openrouter", "key_limit_monthly") => ("límite mensual", "monthly limit"),
+        ("anthropic_api" | "openai_api", "budget_monthly") => {
+            ("presupuesto mensual", "monthly budget")
+        }
+        ("opencode_go", "five_hour") => ("límite de 5 horas", "5-hour limit"),
+        ("opencode_go", "monthly") => ("límite del ciclo de facturación", "billing-cycle limit"),
+        _ => return None,
+    };
+    Some(match locale {
+        Locale::Es => es,
+        Locale::En => en,
+    })
 }
 
 /// Traducción inglesa del diálogo de consentimiento. Mismas anclas de
@@ -193,6 +260,22 @@ mod tests {
         assert_eq!(es(Msg::CodexConsentInstall), "Instalar");
         assert_eq!(es(Msg::CodexConsentCancel), "Cancelar");
         assert_eq!(es(Msg::CodexConsentMessage), CODEX_CONSENT_MESSAGE_ES);
+    }
+
+    /// Textos del email #245 por idioma: inglés byte a byte (era el literal
+    /// original) y su traducción española, con paridad vía `ALL_MSGS`.
+    #[test]
+    fn email_texts_match_locale() {
+        assert_eq!(email_subject(Locale::En), "Quorb: usage alert");
+        assert_eq!(email_subject(Locale::Es), "Quorb: alerta de consumo");
+        assert_eq!(
+            email_test_body(Locale::En),
+            "Quorb: explicit email test (no usage data)."
+        );
+        assert_eq!(
+            email_test_body(Locale::Es),
+            "Quorb: prueba explícita de email (sin datos de consumo)."
+        );
     }
 
     /// Parseo del locale guardado: known → su variante; desconocido → `Es`.

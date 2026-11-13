@@ -34,7 +34,10 @@ pub const NINE_ROUTER_SESSION: &str = "nine_router_session";
 /// coincide con el destino actual, no se envían (evita credenciales de A en B).
 pub const NINE_ROUTER_BOUND_URL: &str = "nine_router_bound_url";
 
-pub const ALL: [&str; 14] = [
+/// Clave de Resend para avisos por email; no pertenece a ningún proveedor de consumo.
+pub const RESEND_API_KEY: &str = "resend_api_key";
+
+pub const ALL: [&str; 15] = [
     ANTHROPIC_ADMIN_KEY,
     OPENAI_ADMIN_KEY,
     NAN_API_KEY,
@@ -49,6 +52,7 @@ pub const ALL: [&str; 14] = [
     NINE_ROUTER_PASSWORD,
     NINE_ROUTER_SESSION,
     NINE_ROUTER_BOUND_URL,
+    RESEND_API_KEY,
 ];
 
 /// Secretos que usa cada proveedor (las cuentas extra guardan los suyos con sufijo).
@@ -105,6 +109,24 @@ pub fn get(key: &str) -> Option<String> {
     current.or_else(|| migrate_legacy(key))
 }
 
+/// Lectura exclusiva de email: distingue ausencia de fallo sin migración legacy
+/// ni exposición de los diagnósticos del backend. No usar para proveedores.
+pub fn get_resend_api_key() -> Result<Option<String>, String> {
+    let e = entry(RESEND_API_KEY)
+        .map_err(|_| "No se pudo leer la clave de Resend del almacén seguro".to_string())?;
+    read_email_key_with(|| e.get_password())
+}
+
+fn read_email_key_with(
+    read: impl FnOnce() -> Result<String, keyring::Error>,
+) -> Result<Option<String>, String> {
+    match read() {
+        Ok(value) => Ok((!value.trim().is_empty()).then_some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err("No se pudo leer la clave de Resend del almacén seguro".into()),
+    }
+}
+
 /// Si el secreto estaba guardado con el nombre anterior, lo copia al nuevo y lo devuelve.
 fn migrate_legacy(key: &str) -> Option<String> {
     let old = keyring::Entry::new(LEGACY_SERVICE, key).ok()?;
@@ -155,6 +177,179 @@ pub fn forget_account(account: &crate::config::Account) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resend_key_uses_existing_closed_storage_without_becoming_a_provider() {
+        assert!(ALL.contains(&RESEND_API_KEY));
+        assert!(is_known(RESEND_API_KEY));
+        assert!(for_provider("resend").is_empty());
+        assert!(!is_known("resend_api_key_typo"));
+    }
+
+    #[test]
+    fn email_reader_distinguishes_absence_empty_and_backend_failure() {
+        assert_eq!(
+            read_email_key_with(|| Err(keyring::Error::NoEntry)),
+            Ok(None)
+        );
+        assert_eq!(read_email_key_with(|| Ok("  ".into())), Ok(None));
+        assert_eq!(
+            read_email_key_with(|| Ok("synthetic-api-key".into())),
+            Ok(Some("synthetic-api-key".into()))
+        );
+        let error = read_email_key_with(|| {
+            Err(keyring::Error::Invalid(
+                "sensitive-backend-detail".into(),
+                "private-value".into(),
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "No se pudo leer la clave de Resend del almacén seguro"
+        );
+        assert!(!error.contains("private-value"));
+        assert!(!error.contains("sensitive-backend-detail"));
+    }
+
+    #[test]
+    fn provider_keys_and_legacy_optional_reader_remain_compatible() {
+        assert_eq!(for_provider("openrouter"), &[OPENROUTER_API_KEY]);
+        assert_eq!(
+            for_provider("minimax"),
+            &[MINIMAX_SUBSCRIPTION_KEY, MINIMAX_API_KEY]
+        );
+        assert!(get("unknown-email-secret").is_none());
+    }
+
+    #[test]
+    fn public_email_storage_boundary() {
+        // El builder de keyring es global: aislarlo de los demás tests.
+        if std::env::var_os("QUORB_EMAIL_MOCK_CHILD").is_none() {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "secrets::tests::public_email_storage_boundary"])
+                .env("QUORB_EMAIL_MOCK_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            assert!(
+                result.stderr.is_empty(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        use keyring::credential::{Credential, CredentialApi, CredentialBuilderApi};
+        use std::sync::{Arc, Mutex};
+        #[derive(Default)]
+        struct Store {
+            data: BTreeMap<(String, String), Vec<u8>>,
+            calls: Vec<(String, String)>,
+            failure: u8,
+        }
+        struct Builder(Arc<Mutex<Store>>);
+        struct Item(Arc<Mutex<Store>>, (String, String));
+        fn failure() -> keyring::Error {
+            keyring::Error::Invalid("private-field".into(), "private-value".into())
+        }
+        impl CredentialBuilderApi for Builder {
+            fn build(
+                &self,
+                _: Option<&str>,
+                service: &str,
+                user: &str,
+            ) -> keyring::Result<Box<Credential>> {
+                let key = (service.to_string(), user.to_string());
+                let mut store = self.0.lock().unwrap();
+                store.calls.push(key.clone());
+                if store.failure == 2 {
+                    return Err(failure());
+                }
+                Ok(Box::new(Item(self.0.clone(), key)))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        impl CredentialApi for Item {
+            fn set_secret(&self, value: &[u8]) -> keyring::Result<()> {
+                let mut store = self.0.lock().unwrap();
+                if store.failure != 0 {
+                    return Err(failure());
+                }
+                store.data.insert(self.1.clone(), value.to_vec());
+                Ok(())
+            }
+            fn get_secret(&self) -> keyring::Result<Vec<u8>> {
+                let store = self.0.lock().unwrap();
+                if store.failure != 0 {
+                    return Err(failure());
+                }
+                store
+                    .data
+                    .get(&self.1)
+                    .cloned()
+                    .ok_or(keyring::Error::NoEntry)
+            }
+            fn delete_credential(&self) -> keyring::Result<()> {
+                let mut store = self.0.lock().unwrap();
+                if store.failure != 0 {
+                    return Err(failure());
+                }
+                store
+                    .data
+                    .remove(&self.1)
+                    .map(|_| ())
+                    .ok_or(keyring::Error::NoEntry)
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        let store = Arc::new(Mutex::new(Store::default()));
+        keyring::set_default_credential_builder(Box::new(Builder(store.clone())));
+        let key = (
+            crate::channel::current().identifier.to_string(),
+            RESEND_API_KEY.to_string(),
+        );
+        assert_eq!(get_resend_api_key(), Ok(None));
+        assert_eq!(set(RESEND_API_KEY, "  synthetic-email-key \n"), Ok(()));
+        assert_eq!(get_resend_api_key(), Ok(Some("synthetic-email-key".into())));
+        assert_eq!(status(&[]).get(RESEND_API_KEY), Some(&true));
+        let before = store.lock().unwrap().data.clone();
+        for invalid in ["resend_api_key_typo", "resend_api_key@../../x", ""] {
+            assert!(set(invalid, "rejected-private-value").is_err());
+            assert_eq!(store.lock().unwrap().data, before);
+        }
+        store.lock().unwrap().calls.clear();
+        for n in 1..=2 {
+            store.lock().unwrap().failure = n;
+            assert_eq!(
+                get_resend_api_key(),
+                Err("No se pudo leer la clave de Resend del almacén seguro".into())
+            );
+            assert_eq!(store.lock().unwrap().data, before);
+        }
+        assert!(store.lock().unwrap().calls.iter().all(|k| k == &key));
+        store.lock().unwrap().failure = 0;
+        for value in ["", " \t\r\n", "\u{2003}"] {
+            store
+                .lock()
+                .unwrap()
+                .data
+                .insert(key.clone(), value.as_bytes().to_vec());
+            assert_eq!(get_resend_api_key(), Ok(None));
+        }
+        assert_eq!(set(RESEND_API_KEY, ""), Ok(()));
+        assert_eq!(set(RESEND_API_KEY, ""), Ok(()));
+        assert_eq!(get_resend_api_key(), Ok(None));
+        assert_eq!(status(&[]).get(RESEND_API_KEY), Some(&false));
+        assert!(!store.lock().unwrap().data.contains_key(&key));
+    }
 
     #[test]
     fn scoped_keys_are_validated() {

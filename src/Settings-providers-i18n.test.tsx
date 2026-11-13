@@ -39,6 +39,8 @@ const enabledOnly = (...ids: string[]) => {
   const on = (id: string) => ({ enabled: ids.includes(id), username: 'egdev6' });
   return {
     refreshMinutes: 5,
+    sessionEnv: 'host',
+    wslDistro: '',
     claude: on('claude'),
     codex: on('codex'),
     gemini: on('gemini'),
@@ -61,14 +63,15 @@ const enabledOnly = (...ids: string[]) => {
 // claude: activo con 1 cuenta extra · copilot: activo sin token (falta conectar) · resto desactivados.
 const cfg = enabledOnly('claude', 'copilot');
 
-const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true) =>
+const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true, platform: 'windows' | 'macos' | 'linux' = 'windows') =>
   renderToStaticMarkup(
-    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} />,
+    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform={platform} />,
   );
 
 const descriptions: [es: string, en: string][] = [
   ['Pro / Max · sesión de 5 h, semanal y por modelo', 'Pro / Max · 5 h session, weekly and per-model'],
   ['Plus / Pro · sesión y semanal de Codex', 'Plus / Pro · Codex session and weekly'],
+  ['Sesión de los CLIs', 'CLI session host'],
   ['Cuota diaria por modelo', 'Daily quota per model'],
   ['Uso del plan en el ciclo y on-demand', 'Plan usage in the cycle and on-demand'],
   ['SuperGrok · uso semanal de créditos del CLI', 'SuperGrok · weekly CLI credit usage'],
@@ -102,6 +105,38 @@ describe('Providers list: tab descriptions and badges (SSR, i18n)', () => {
       [...descriptions.map(([es]) => es), 'ChatGPT y Codex', 'Activo', 'Falta conectar', 'Desactivado', 'Conectar', 'Configurar', 'cuentas'],
       'en',
     );
+  });
+});
+
+describe('ProvidersCard: session-environment selector is Windows-only (PR #248)', () => {
+  it('renders the WSL selector on Windows', () => {
+    const html = card('es', 'claude', true, 'windows');
+    // Solo cuando el entorno ofrece WSL de verdad: el widget de la distro.
+    expect(html).toContain('Sesión de los CLIs');
+    expect(html).toContain('>WSL<');
+  });
+
+  it('does NOT offer WSL on macOS or Linux (the widget would show wsl.exe errors)', () => {
+    for (const platform of ['macos', 'linux'] as const) {
+      const html = card('es', 'claude', true, platform);
+      expect(html, `windows-only: ${platform}`).not.toContain('Sesión de los CLIs');
+      expect(html, `windows-only: ${platform}`).not.toContain('Distro WSL');
+      expect(html, `windows-only: ${platform}`).not.toContain('>WSL<');
+    }
+  });
+
+  it('warns that WSL without a distro reads the host session (PR #248)', () => {
+    const wslCfg = { ...cfg, sessionEnv: 'wsl', wslDistro: '  ' } as AppConfig;
+    const empty = renderToStaticMarkup(
+      <ProvidersCard locale="es" cfg={wslCfg} secrets={{}} tab="claude" drawerOpen onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform="windows" />,
+    );
+    expect(empty).toContain('Sin distro, WSL no está completo');
+    // Con distro escrita, la ayuda normal (sin el aviso).
+    const named = renderToStaticMarkup(
+      <ProvidersCard locale="es" cfg={{ ...wslCfg, wslDistro: 'Ubuntu-22.04' } as AppConfig} secrets={{}} tab="claude" drawerOpen onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform="windows" />,
+    );
+    expect(named).toContain('Distro donde viven los CLIs');
+    expect(named).not.toContain('Sin distro, WSL no está completo');
   });
 });
 

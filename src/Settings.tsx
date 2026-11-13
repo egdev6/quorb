@@ -1,4 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { emailDefaults, emailReady, patchEmail, persistEmailTestAlerts, sendEmailTest } from './lib/email';
+import type { EmailStatus } from './lib/types';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
@@ -21,6 +24,7 @@ import { createCodexInstallController, type CodexInstallController } from './lib
 import { keyringErrorHint } from './lib/keyring-message';
 import { comboFromEvent, prettyCombo } from './lib/shortcuts';
 import { detectWindowManager, type WindowManagerInfo } from './lib/wm-detect';
+import { osFromUA, type Os } from './lib/os-detect';
 import { desktopCompatRows, showDesktopCompat } from './lib/desktop-compat';
 import { ProviderLogo } from './components/ProviderLogo';
 import { CodexInstall } from './components/CodexInstall';
@@ -789,6 +793,7 @@ function CliConnect({
   health,
   codexInstall,
   onCodexRecheck,
+  sessionEnv = 'host',
 }: {
   /** Idioma de los pasos. */
   locale: Locale;
@@ -805,6 +810,9 @@ function CliConnect({
   codexInstall: CodexInstallController;
   /** Relectura del CLI compartida con la raíz tras una instalación. */
   onCodexRecheck: () => void;
+  /** Entorno elegido (revisión PR #248): en WSL, detección y login siguen
+   *  siendo los de Windows hasta que aterrice #92. */
+  sessionEnv?: 'host' | 'wsl';
 }) {
   const connected = useCliSession(id, persisted);
   const [busy, setBusy] = useState(false);
@@ -843,6 +851,7 @@ function CliConnect({
       busy={busy}
       loginError={loginError}
       onConnect={connect}
+      sessionEnv={sessionEnv}
     />
   );
 }
@@ -864,6 +873,7 @@ export function CliConnectView({
   busy,
   loginError,
   onConnect,
+  sessionEnv = 'host',
 }: {
   locale: Locale;
   id: string;
@@ -882,9 +892,21 @@ export function CliConnectView({
   /** Diagnóstico del último intento de login que falló. */
   loginError: string | null;
   onConnect: () => void;
+  /** Entorno elegido: en WSL, detección y login aún son los de Windows (#92). */
+  sessionEnv?: 'host' | 'wsl';
 }) {
   return (
     <>
+      {sessionEnv === 'wsl' && (
+        <li>
+          {/* Hasta #92 la detección del CLI y el login abren el CLI de HOST:
+              no deben presentarse como si ya corrieran dentro de la distro
+              (revisión PR #248). */}
+          <span className="eg-notice eg-notice--sm eg-notice--warning q-steps__notice" role="status">
+            <span className="eg-notice__text">{t(locale, 'settings.providers.cliConnect.wslHostOnly')}</span>
+          </span>
+        </li>
+      )}
       {cliMissing && (
         <li>
           <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
@@ -945,6 +967,7 @@ export function AccountEditor({
   health,
   codexInstall,
   onCodexRecheck,
+  sessionEnv = 'host',
 }: {
   /** Idioma del editor. */
   locale: Locale;
@@ -965,6 +988,9 @@ export function AccountEditor({
   /** Instalación asistida de Codex, compartida por la raíz y todas las cuentas. */
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
+  /** Entorno elegido (revisión PR #248): en WSL, detección y login son los de
+   *  Windows hasta #92. */
+  sessionEnv?: 'host' | 'wsl';
 }) {
   const appName = useAppName();
   const key = (k: SecretKey) => secretKey(k, a.id);
@@ -1000,7 +1026,7 @@ export function AccountEditor({
         </li>
 
         {session && (
-          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} />
+          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} />
         )}
 
         {a.provider === 'cursor' && (
@@ -1285,7 +1311,7 @@ function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect
 
 /** Tarjeta de la página «Proveedores»: intervalo de consulta y las dos listas
  *  (suscripciones y APIs). Extraída para poder renderizarla en pruebas de i18n. */
-export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes }: {
+export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro, platform = 'windows' }: {
   locale: Locale;
   cfg: AppConfig;
   secrets: SecretStatus;
@@ -1293,6 +1319,12 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
   drawerOpen: boolean;
   onSelectTab: (id: ProviderTab) => void;
   onRefreshMinutes: (minutes: number) => void;
+  onSessionEnv: (env: 'host' | 'wsl') => void;
+  onWslDistro: (distro: string) => void;
+  /** Plataforma del proceso (UA): el modo WSL solo existe en Windows (revisión
+   *  PR #248, bloqueante). Fuera de Windows no se ofrece guardar WSL, que el
+   *  widget convertiría en un error de `wsl.exe` en cada refresco. */
+  platform?: Os;
 }) {
   const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
     <ProviderCard
@@ -1316,6 +1348,31 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
           <input type="number" min={1} max={120} value={cfg.refreshMinutes} onChange={(e) => onRefreshMinutes(Number(e.target.value) || 1)} />
           {t(locale, 'settings.providers.refreshUnit')}
         </label>
+        {platform === 'windows' && (
+          <>
+            <label className="q-section__aside">
+              {t(locale, 'settings.providers.sessionEnv')}
+              <select value={cfg.sessionEnv} onChange={(e) => onSessionEnv(e.target.value as 'host' | 'wsl')}>
+                <option value="host">{t(locale, 'settings.providers.sessionHost')}</option>
+                <option value="wsl">WSL</option>
+              </select>
+              <small className="eg-field__hint">{t(locale, 'settings.providers.sessionEnvHint')}</small>
+            </label>
+            {cfg.sessionEnv === 'wsl' && (
+              <label className="q-section__aside q-section__aside--distro">
+                {t(locale, 'settings.providers.wslDistro')}
+                <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
+                <small className="eg-field__hint">
+                  {/* WSL sin distro se resuelve como HOST (config.rs; revisión PR
+                      #248): el campo lo dice hasta que se escribe una distro. */}
+                  {cfg.wslDistro.trim() === ''
+                    ? t(locale, 'settings.providers.wslDistroMissing')
+                    : t(locale, 'settings.providers.wslDistroHint')}
+                </small>
+              </label>
+            )}
+          </>
+        )}
       </div>
       <div className="eg-module-card__body">
       <p className="eg-eyebrow">{t(locale, 'settings.providers.subscriptions')}</p>
@@ -1601,17 +1658,103 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
   );
 }
 
+/** Tono del aviso de resultado por estado: verde para aceptación, amarillo
+ *  para requisitos o incertidumbre y rojo para fallos del envío; neutros
+ *  cuando aún no hay intento ni envío automático. */
+const EMAIL_STATUS_TONE: Record<EmailStatus, '' | 'warning' | 'success' | 'danger'> = {
+  idle: '',
+  disabled: '',
+  accepted: 'success',
+  consentRequired: 'warning',
+  configurationMissing: 'warning',
+  keyMissing: 'warning',
+  keyringError: 'danger',
+  authenticationError: 'danger',
+  senderRejected: 'danger',
+  requestRejected: 'danger',
+  rateLimited: 'danger',
+  serviceError: 'danger',
+  acceptanceUnknown: 'warning',
+};
+
+/** Resultado visible de la última acción de email, con el patrón
+ *  «eg-notice» del resto de Ajustes. Extraída para poder renderizarla en
+ *  pruebas sin montar la ventana completa. */
+export function EmailStatusLine({ locale, status }: { locale: Locale; status: EmailStatus }) {
+  const tone = EMAIL_STATUS_TONE[status];
+  return (
+    <p className={tone ? `eg-notice eg-notice--sm eg-notice--${tone}` : 'eg-notice eg-notice--sm'} role="status">
+      {t(locale, `settings.alerts.email.status.${status}`)}
+    </p>
+  );
+}
+
+function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }: {
+  locale: Locale; alerts: AlertsConfig; onAlerts: (patch: Partial<AlertsConfig>) => void;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>; secrets: SecretStatus; onSecrets: () => void;
+}) {
+  const email = alerts.email ?? emailDefaults;
+  const [status, setStatus] = useState<EmailStatus>('idle');
+  const [busy, setBusy] = useState(false);
+  const update = (patch: Partial<typeof email>) => onAlerts({ email: patchEmail(email, patch) });
+  useEffect(() => {
+    let alive = true; let updated = false;
+    const off = listen<EmailStatus>('email-status', ({ payload }) => {
+      if (alive) { updated = true; setStatus(payload); }
+    }).catch(() => () => {});
+    api.emailStatus().then((value) => { if (alive && !updated) setStatus(value); }).catch(() => { if (alive) setStatus('serviceError'); });
+    return () => { alive = false; void off.then((stop) => stop()).catch(() => {}); };
+  }, []);
+  const test = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      setStatus(await sendEmailTest(email, () => onPersist(alerts, { emailTest: true }), () => api.sendEmailAlert(null)));
+    } finally { setBusy(false); }
+  };
+  return (
+    <Section title={t(locale, 'settings.alerts.email.title')}>
+      <p className="q-note">{t(locale, 'settings.alerts.email.availability')}</p>
+      <p className="q-note">{t(locale, 'settings.alerts.email.privacy')}</p>
+      <p className="q-note">{t(locale, 'settings.alerts.email.attempts')}</p>
+      <Rows>
+        <Toggle label={t(locale, 'settings.alerts.email.consent')} checked={email.consent} onChange={(consent) => update({ consent })} />
+        {email.consent && <Toggle label={t(locale, 'settings.alerts.email.enable')} checked={email.enabled} onChange={(enabled) => update({ enabled })} />}
+      </Rows>
+      <p className="q-note">{t(locale, 'settings.alerts.email.switches')}</p>
+      <Field label={t(locale, 'settings.alerts.email.sender')} hint={t(locale, 'settings.alerts.email.senderHint')}>
+        <input type="email" autoComplete="off" value={email.sender} onChange={(e) => update({ sender: e.target.value.trim() })} />
+      </Field>
+      <Field label={t(locale, 'settings.alerts.email.recipient')}>
+        <input type="email" autoComplete="off" value={email.recipient} onChange={(e) => update({ recipient: e.target.value.trim() })} />
+      </Field>
+      <SecretInput locale={locale} id="resend_api_key" label={t(locale, 'settings.alerts.email.key')} configured={!!secrets.resend_api_key} onSaved={onSecrets} />
+      {typeof navigator !== 'undefined' && osFromUA(navigator.userAgent) === 'linux' && (
+        <p className="q-note">{t(locale, 'settings.alerts.email.linux')}</p>
+      )}
+      <p className="q-note">{t(locale, 'settings.alerts.email.testHint')}</p>
+      <button type="button" className="eg-btn eg-btn--ghost" disabled={busy || !emailReady(email) || !secrets.resend_api_key} onClick={() => void test()}>
+        {t(locale, busy ? 'settings.alerts.email.testing' : 'settings.alerts.email.test')}
+      </button>
+      <EmailStatusLine locale={locale} status={status} />
+    </Section>
+  );
+}
+
 /** Sección «Alertas»: cuándo avisar (dos momentos) y el efecto propio. Extraída
  *  por el mismo motivo que LookSection. */
-export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError }: {
+export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, secrets = {}, onSecrets = () => {} }: {
   locale: Locale;
   alerts: AlertsConfig;
   onAlerts: (patch: Partial<AlertsConfig>) => void;
-  onPersist: (alerts: AlertsConfig) => Promise<void>;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>;
   onError: (msg: string) => void;
+  secrets?: SecretStatus;
+  onSecrets?: () => void;
 }) {
   return (
     <>
+      <EmailAlerts locale={locale} alerts={alerts} onAlerts={onAlerts} onPersist={onPersist} secrets={secrets} onSecrets={onSecrets} />
       <Section title={t(locale, 'settings.alerts.when')}>
         <Rows>
           <Toggle label={t(locale, 'settings.alerts.enable')} checked={alerts.enabled} onChange={(v) => onAlerts({ enabled: v })} />
@@ -1883,7 +2026,9 @@ export function SubscriptionPanel({
       title: 'Claude (Pro / Max)',
       note: t(locale, 'settings.providers.panels.claude.note'),
       file: t(locale, 'settings.providers.panels.credentialsFile'),
-      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>\\wsl.localhost\Ubuntu\home\{t(locale, 'settings.providers.panels.claude.wslUser')}\.claude\.credentials.json</code></>,
+      // En WSL la ruta es POSIX del GUEST: `\\wsl.localhost\...` (UNC) o
+      // `C:\...` se rechazan en modo WSL (revisión PR #248).
+      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>/home/{t(locale, 'settings.providers.panels.claude.wslUser')}/.claude/.credentials.json</code></>,
     },
     codex: {
       kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
@@ -1931,6 +2076,7 @@ export function SubscriptionPanel({
           health={healthFor(p, !cfg[p].enabled)}
           codexInstall={codexInstall}
           onCodexRecheck={onCodexRecheck}
+          sessionEnv={cfg.sessionEnv}
         />
       </ol>
       <details className="q-details">
@@ -2483,8 +2629,10 @@ export function Settings() {
 
   // La prueba de un efecto guarda antes los avisos del formulario: pasa por la
   // misma cola para que la base canónica no quede desincronizada del backend.
-  const persistAlerts = (alerts: AppConfig['alerts']) =>
-    enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
+  const persistAlerts = (alerts: AppConfig['alerts'], options?: { emailTest: boolean }) =>
+    options?.emailTest
+      ? persistEmailTestAlerts(alerts, enqueueSave)
+      : enqueueSave(() => api.getConfig().then((current) => ({ ...current, alerts }))).then(() => undefined);
 
   // El selector de Idioma guarda por la misma cola que el resto de Ajustes y
   // también lo adopta en el borrador (ver `changeLocale` en i18n/use-locale).
@@ -2778,6 +2926,9 @@ export function Settings() {
                 drawerOpen={drawerOpen}
                 onSelectTab={selectTab}
                 onRefreshMinutes={(minutes) => set('refreshMinutes', minutes)}
+                onSessionEnv={(env) => set('sessionEnv', env)}
+                onWslDistro={(distro) => set('wslDistro', distro)}
+                platform={osFromUA(navigator.userAgent)}
               />
               <div className="q-drawer-scrim" data-open={drawerOpen || undefined} onClick={closeDrawer} aria-hidden="true" />
               <aside
@@ -2814,6 +2965,7 @@ export function Settings() {
           }
           codexInstall={codexInstaller}
           onCodexRecheck={cliRecheck}
+          sessionEnv={cfg.sessionEnv}
         />
       )}
       {!selAccount && (
@@ -2881,7 +3033,7 @@ export function Settings() {
 
           {section === 'alerts' && (
             <div className="q-grid-2">
-              <AlertsSection locale={locale} alerts={cfg.alerts} onAlerts={(patch) => set('alerts', patch)} onPersist={persistAlerts} onError={setSaved} />
+              <AlertsSection locale={locale} alerts={cfg.alerts} onAlerts={(patch) => set('alerts', patch)} onPersist={persistAlerts} onError={setSaved} secrets={secrets} onSecrets={loadSecrets} />
             </div>
           )}
 

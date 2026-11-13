@@ -56,7 +56,14 @@ export interface DetailState extends DetailPlacement {
 export interface DetailInteraction {
   revision: number;
   provider: string;
-  kind: 'enter' | 'leave' | 'hide';
+  /**
+   * - `enter`/`leave`: el puntero entró o salió del panel de detalle.
+   * - `hide`: el detalle pidió ser ocultado (el proveedor se marca como oculto).
+   * - `placement-failed`: un **hecho declarado**, no una orden: el detalle no
+   *   pudo colocarse (#250/S22). La tira decide qué hacer con él (hoy, lo
+   *   cierra como en un cierre normal); el detalle no manda sobre la tira.
+   */
+  kind: 'enter' | 'leave' | 'hide' | 'placement-failed';
 }
 
 export function isCurrentDetailInteraction(

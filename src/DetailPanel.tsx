@@ -12,7 +12,7 @@ import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
 import { samePlacement } from './lib/widget-placement';
-import { confirmDetailPlacement, retryDetailPlacement } from './detail-placement';
+import { confirmDetailPlacement, detailPlacementFailed, retryDetailPlacement } from './detail-placement';
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -139,8 +139,50 @@ export function DetailPanel() {
         // Only the confirmed (read-back) geometry reaches the cache; the requested
         // one never does (S3/D2).
         const cache = (confirmed: PhysicalBounds) => { lastAppliedRef.current = confirmed; lastAppliedReadBackRef.current = true; };
-        let retry = confirmDetailPlacement(await api.setDetailBounds(physical), cache);
+        /**
+         * Cierre seguro uniforme (#250/S22): el panel deja de estar colocado,
+         * se oculta y la tira se entera con un aviso. Lo usan las dos ramas
+         * que pueden agotar `read_failed`: el presupuesto de reintentos de
+         * una colocación (la primera apertura y el reajuste de un panel
+         * abierto comparten esa rama, se distinguen por `positionedRef`) y el
+         * reintento posterior al `show` (camino mixto, #250/S23).
+         */
+        const failSafe = async () => {
+          positionedRef.current = false;
+          setPositioned(false);
+          try {
+            await getCurrentWindow().hide();
+          } finally {
+            // El aviso a la tira no se pierde aunque la ocultación nativa
+            // falle: sin él la tira seguiría creyendo que el panel está
+            // abierto (#250/S22). Tras el `await` el trabajo puede haberse
+            // superado: el aviso sólo vale si el job sigue vigente (si no,
+            // otro job ya colocó el panel).
+            if (current() && !disposed) interact('placement-failed');
+          }
+        };
+        const report = await api.setDetailBounds(physical);
         if (!current() || disposed) return;
+        let retry = confirmDetailPlacement(report, cache);
+        // #250/S17: the native call could not be confirmed (`read_failed`), so the
+        // geometry never reached the window. The panel must not appear with the
+        // previous geometry nor with the factory one: the placement is asked
+        // again within the bounded budget, and if the budget runs out the panel
+        // stays hidden with nothing cached as confirmed. #250/S21: that includes
+        // a panel already open, which would keep the previous geometry, so it is
+        // hidden and no longer marked as placed.
+        if (detailPlacementFailed(report)) {
+          const retried = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
+          if (!current() || disposed || !retried) return;
+          retry = confirmDetailPlacement(retried, cache);
+          if (detailPlacementFailed(retried)) {
+            // El presupuesto se agotó: el panel no se queda visible con la
+            // geometría anterior (ni se muestra con la de fábrica) y la tira
+            // se entera (#250/S22).
+            await failSafe();
+            return;
+          }
+        }
         await clipSurfaceSafely(measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor), api.setSurfaceClip, console.warn, panel);
         if (!current() || disposed) return;
         positionedRef.current = true;
@@ -154,9 +196,17 @@ export function DetailPanel() {
         // (#215/#221). An exhausted budget stays soft: nothing is cached and the
         // opening already succeeded.
         if (retry) {
-          const report = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
-          if (!current() || disposed || !report) return;
-          confirmDetailPlacement(report, cache);
+          const confirmed = await retryDetailPlacement(physical, { place: api.setDetailBounds, isCurrent: () => !disposed && current() });
+          if (!current() || disposed || !confirmed) return;
+          confirmDetailPlacement(confirmed, cache);
+          // Camino mixto (#250/S23): la ventana se mostró (el informe blando
+          // `not_viewable` no es un fallo), pero los reintentos posteriores se
+          // agotaron con `read_failed`: el cierre seguro es el mismo que en
+          // las otras dos ramas.
+          if (detailPlacementFailed(confirmed)) {
+            await failSafe();
+            return;
+          }
         }
       }).catch(console.warn);
     };

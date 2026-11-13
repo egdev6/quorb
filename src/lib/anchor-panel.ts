@@ -136,4 +136,3 @@ export const REORDER_GUARD_MS = 400;
  */
 export const isReorderGesture = (lastReorderAt: number, now: number): boolean =>
   now - lastReorderAt < REORDER_GUARD_MS;
-
