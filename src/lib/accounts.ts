@@ -29,6 +29,7 @@ export const CLI_INSTALL: Partial<Record<AccountProvider, { name: string; cmd: s
   claude: { name: 'Claude Code', cmd: 'irm https://claude.ai/install.ps1 | iex', where: 'PowerShell' },
   codex: { name: 'Codex CLI', cmd: 'npm install -g @openai/codex', whereKey: 'settings.providers.cliMissing.terminal', needs: 'Node.js' },
   gemini: { name: 'Gemini CLI', cmd: 'npm install -g @google/gemini-cli', whereKey: 'settings.providers.cliMissing.terminal', needs: 'Node.js' },
+  grok: { name: 'Grok CLI', cmd: 'npm install -g @vibe-kit/grok-cli', whereKey: 'settings.providers.cliMissing.terminal', needs: 'Node.js' },
 };
 
 /** Carpeta por defecto (igual que `Account::session_dir`). */

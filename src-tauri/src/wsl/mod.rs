@@ -17,6 +17,7 @@ mod process;
 mod real;
 mod session;
 pub use mock::{MockWslAdapter, WslCall};
+pub use process::SCRIPT_COMMAND_V;
 pub use real::{build_wslenv_entry, RealWslAdapter, SESSION_ENV_ALLOWLIST};
 pub use session::{SessionEnv, SessionError, SessionResolver};
 
@@ -122,6 +123,46 @@ pub trait WslAdapter: Send + Sync {
         args: &[&str],
         env: &[(&str, &str)],
     ) -> Result<CommandOutput, WslError>;
+
+    /// ¿Existe `program` en el PATH de la distro? (#92)
+    ///
+    /// `command -v` es un BUILTIN de la shell: no se puede `exec` como
+    /// programa (`exec command -v …` sale con 127 en WSL real — hallazgo
+    /// del lab W3, 2026-10-30) y `run_command` toma un PROGRAMA en
+    /// `args[0]`. La sonda es el script constante `SCRIPT_COMMAND_V`
+    /// ejecutado por la shell del entorno (bash o sh, según la estrategia)
+    /// con el nombre del programa como DATO posicional (F14, doble
+    /// frontera): el host nunca interpola el nombre en un script.
+    ///
+    /// `false` significa «la CLI no está en la distro»: `command -v` de un
+    /// programa ausente sale con exit ≠ 0 y salida vacía — eso NO es un
+    /// fallo de WSL, y los errores del subsistema (classify) sí se
+    /// propagan.
+    ///
+    /// El default va por `run_command` (suficiente para el mock). Sobre el
+    /// adaptador REAL hay que implementarla sobre una PRIMITIVA DE SONDA
+    /// (exit code como parte de la respuesta): `run_scoped`, que usa
+    /// `run_command`, convierte cualquier exit ≠ 0 en `Err` y haría
+    /// inalcanzable el `Ok(false)`. `RealWslAdapter` la sobrescribe con
+    /// `control_raw` (revisión 2026-11-08).
+    fn program_available(
+        &self,
+        distro: &str,
+        shell: ShellStrategy,
+        program: &str,
+    ) -> Result<bool, WslError> {
+        let shell_bin = match shell {
+            ShellStrategy::BashLogin => "bash",
+            ShellStrategy::ShPosix => "sh",
+        };
+        let out = self.run_command(
+            distro,
+            shell,
+            &[shell_bin, "-c", SCRIPT_COMMAND_V, "quorb", program],
+            &[],
+        )?;
+        Ok(out.code == 0 && !out.stdout.trim().is_empty())
+    }
 
     /// Diagnóstico de los 4 estados (F6) con sondas separadas.
     /// `target` es la distro elegida (si hay): permite producir

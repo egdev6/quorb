@@ -189,7 +189,7 @@ Las API keys y la sesión de NaN se guardan en el almacén seguro del sistema (W
 
 La configuración y el historial se guardan en la carpeta de usuario de cada plataforma (`%APPDATA%\es.egdev.quorb` en Windows, `~/.config/es.egdev.quorb` en Linux). Quorb consulta directamente los endpoints de los proveedores; no requiere un backend separado. El historial cubre hasta 30 días.
 
-Para sesiones en WSL, configurad las rutas de credenciales en Ajustes como **rutas POSIX dentro de la distro** — el guest no puede leer `\\wsl.localhost\…` (UNC) ni `C:\…`; por ejemplo `/home/YOUR_USER/.codex/auth.json` para un usuario de WSL llamado `YOUR_USER`, y el comando de login `wsl codex login` o `wsl claude` según corresponda.
+Para sesiones en WSL, elegid la distro en Ajustes y configurad las rutas de credenciales como **rutas POSIX dentro de la distro** — el guest no puede leer `\\wsl.localhost\…` (UNC) ni `C:\…`; por ejemplo `/home/YOUR_USER/.codex/auth.json` para un usuario de WSL llamado `YOUR_USER`. Indicad el comando de login `codex login` o `claude` según corresponda; Quorb lo ejecuta dentro de la distro elegida. Un comando que ya incluya `wsl`, como `wsl codex login`, es solo para el modo host.
 
 ### Hoja de ruta
 

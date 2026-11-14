@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { emailDefaults, emailReady, patchEmail, persistEmailTestAlerts, sendEmailTest } from './lib/email';
 import type { EmailStatus } from './lib/types';
@@ -589,6 +589,55 @@ export function CliMissing({ provider, locale = 'es' }: { provider: AccountProvi
   );
 }
 
+/** Falta la CLI DENTRO de la distro WSL: instrucciones manuales del guest
+ *  (los instaladores de Windows no aplican ahí — revisión PR #92). */
+export function CliMissingWsl({ provider, locale = 'es', wslDistro }: { provider: AccountProvider; locale?: Locale; wslDistro?: string }) {
+  const how = CLI_INSTALL[provider];
+  if (!how) return null;
+  const distro = wslDistro?.trim();
+  // «Ubuntu-22.04» o vacío: el título no debe pegar el nombre sin separador.
+  const namedDistro = distro ? ` «${distro}»` : '';
+  const perProvider: Record<string, string> = {
+    claude: `curl -fsSL https://claude.ai/install.sh | bash`,
+    codex: `npm install -g @openai/codex`,
+    gemini: `npm install -g @google/gemini-cli`,
+    grok: `npm install -g @vibe-kit/grok-cli`,
+  };
+  const cmd = perProvider[provider] ?? '';
+  return (
+    <div className="eg-notice eg-notice--sm eg-notice--warning q-cli" role="status">
+      <span className="eg-notice__text">
+        <b>{t(locale, 'settings.providers.cliMissingWsl.title', { name: how.name, distro: namedDistro })}</b>{' '}
+        {t(locale, 'settings.providers.cliMissingWsl.body')}
+      </span>
+      {cmd && (
+        <span className="q-cli__cmd">
+          <code>{cmd}</code>
+          <CliCopyButton text={cmd} locale={locale} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Botón de copiar reutilizable para comandos (extraído de CliMissing). */
+function CliCopyButton({ text, locale }: { text: string; locale: Locale }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () =>
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  return (
+    <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={copy}>
+      {copied ? t(locale, 'settings.providers.cliMissing.copied') : t(locale, 'settings.providers.cliMissing.copy')}
+    </button>
+  );
+}
+
 /** Lo que necesita el paso de comprobación: lo guardado, las claves y si hay cambios sin guardar. */
 type HealthProps = {
   /** Config guardada: cuando cambia (al guardar) se vuelve a comprobar. */
@@ -758,24 +807,36 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
   );
 }
 
-/** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta. */
-function useCliSession(id: string, active: boolean): boolean {
-  const [connected, setConnected] = useState(false);
+/** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta.
+ *  Los sondeos fallidos se degradan a "no hay fichero confirmado" (revisión PR
+ *  #92, punto 11): jamás se muestra conectada por omisión. */
+function useCliSession(id: string, active: boolean, envKey: string): boolean {
+  const [connected, setConnected] = useState<boolean | null>(false);
   useEffect(() => {
     if (!active) {
       setConnected(false);
       return;
     }
+    // Entorno nuevo (host ↔ WSL o distro distinta): el resultado del sondeo
+    // anterior ya no vale. Se olvida el estado y se arranca un poller NUEVO,
+    // cuya generación descarta las respuestas en vuelo del anterior
+    // (revisión PR #253: dos sondeos solapados no comparten generación).
+    setConnected(null);
     // Presencia del fichero, no validez: al desmontar se para el sondeo y las
     // respuestas en vuelo se descartan (no marca conectada otra cuenta).
     const poller = createPresencePoller({
       exists: () => api.accountSessionFileExists(id),
+      // Un fallo de sondeo deja `null` (desconocido); jamás "conectada" por
+      // omisión (revisión PR #92, punto 11).
       onResult: setConnected,
     });
     poller.start();
     return () => poller.stop();
-  }, [id, active]);
-  return connected;
+  }, [id, active, envKey]);
+  // `null` (sondeo fallido o entorno recién cambiado) se degrada a "no hay
+  // fichero confirmado": la UI nunca muestra el botón "conectada" sin una
+  // prueba vigente del entorno actual.
+  return connected === true;
 }
 
 /**
@@ -794,6 +855,7 @@ function CliConnect({
   codexInstall,
   onCodexRecheck,
   sessionEnv = 'host',
+  wslDistro = '',
 }: {
   /** Idioma de los pasos. */
   locale: Locale;
@@ -810,11 +872,16 @@ function CliConnect({
   codexInstall: CodexInstallController;
   /** Relectura del CLI compartida con la raíz tras una instalación. */
   onCodexRecheck: () => void;
-  /** Entorno elegido (revisión PR #248): en WSL, detección y login siguen
-   *  siendo los de Windows hasta que aterrice #92. */
+  /** Entorno elegido (revisiones PR #248/#253): en WSL, detección y login
+   *  siguen siendo los de Windows hasta que aterrice #92; el sondeo de
+   *  presencia se reinicia al cambiar de entorno. */
   sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
-  const connected = useCliSession(id, persisted);
+  // El entorno del BORRADOR forma parte de la identidad del sondeo: al
+  // cambiarlo, el poller se reinicia con una generación nueva (PR #253).
+  const connected = useCliSession(id, persisted, `${sessionEnv}\u0000${wslDistro}`);
   const [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const connect = async () => {
@@ -847,11 +914,12 @@ function CliConnect({
       health={health}
       codexInstall={codexInstall}
       onCodexRecheck={onCodexRecheck}
+      sessionEnv={sessionEnv}
+      wslDistro={wslDistro}
       connected={connected}
       busy={busy}
       loginError={loginError}
       onConnect={connect}
-      sessionEnv={sessionEnv}
     />
   );
 }
@@ -874,6 +942,7 @@ export function CliConnectView({
   loginError,
   onConnect,
   sessionEnv = 'host',
+  wslDistro = '',
 }: {
   locale: Locale;
   id: string;
@@ -892,26 +961,30 @@ export function CliConnectView({
   /** Diagnóstico del último intento de login que falló. */
   loginError: string | null;
   onConnect: () => void;
-  /** Entorno elegido: en WSL, detección y login aún son los de Windows (#92). */
+  /** Entorno elegido (revisiones PR #92/#248): en WSL no se ofrecen los
+   *  instaladores de Windows y se avisa de que detección/login son los de
+   *  Windows hasta #92. */
   sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
+  const wsl = sessionEnv === 'wsl';
   return (
     <>
-      {sessionEnv === 'wsl' && (
-        <li>
-          {/* Hasta #92 la detección del CLI y el login abren el CLI de HOST:
-              no deben presentarse como si ya corrieran dentro de la distro
-              (revisión PR #248). */}
-          <span className="eg-notice eg-notice--sm eg-notice--warning q-steps__notice" role="status">
-            <span className="eg-notice__text">{t(locale, 'settings.providers.cliConnect.wslHostOnly')}</span>
-          </span>
-        </li>
-      )}
       {cliMissing && (
         <li>
-          <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
-          <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
-          {provider === 'codex' ? <CodexInstall locale={locale} controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+          {wsl ? (
+            // Instaladores de host (Codex asistido, comandos de Windows) NO
+            // aplican dentro de la distro: se ofrecen las instrucciones
+            // manuales del guest (revisión PR #92).
+            <CliMissingWsl provider={provider} locale={locale} wslDistro={wslDistro} />
+          ) : (
+            <>
+              <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
+              <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
+              {provider === 'codex' ? <CodexInstall locale={locale} controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+            </>
+          )}
         </li>
       )}
       <li data-done={connected || undefined}>
@@ -968,6 +1041,7 @@ export function AccountEditor({
   codexInstall,
   onCodexRecheck,
   sessionEnv = 'host',
+  wslDistro = '',
 }: {
   /** Idioma del editor. */
   locale: Locale;
@@ -988,9 +1062,12 @@ export function AccountEditor({
   /** Instalación asistida de Codex, compartida por la raíz y todas las cuentas. */
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
-  /** Entorno elegido (revisión PR #248): en WSL, detección y login son los de
-   *  Windows hasta #92. */
+  /** Entorno elegido (revisiones PR #248/#253): en WSL, detección y login
+   *  son los de Windows hasta #92; el sondeo de presencia se reinicia al
+   *  cambiar de entorno. */
   sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
   const appName = useAppName();
   const key = (k: SecretKey) => secretKey(k, a.id);
@@ -1026,7 +1103,7 @@ export function AccountEditor({
         </li>
 
         {session && (
-          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} />
+          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} wslDistro={wslDistro} />
         )}
 
         {a.provider === 'cursor' && (
@@ -1321,9 +1398,9 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
   onRefreshMinutes: (minutes: number) => void;
   onSessionEnv: (env: 'host' | 'wsl') => void;
   onWslDistro: (distro: string) => void;
-  /** Plataforma del proceso (UA): el modo WSL solo existe en Windows (revisión
-   *  PR #248, bloqueante). Fuera de Windows no se ofrece guardar WSL, que el
-   *  widget convertiría en un error de `wsl.exe` en cada refresco. */
+  /** Plataforma del proceso (UA): el modo WSL solo existe en Windows
+   *  (revisiones PR #92/#248). Fuera de Windows no se ofrece guardar WSL, que
+   *  el widget convertiría en un error de `wsl.exe` en cada refresco. */
   platform?: Os;
 }) {
   const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
@@ -1363,8 +1440,9 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
                 {t(locale, 'settings.providers.wslDistro')}
                 <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
                 <small className="eg-field__hint">
-                  {/* WSL sin distro se resuelve como HOST (config.rs; revisión PR
-                      #248): el campo lo dice hasta que se escribe una distro. */}
+                  {/* WSL sin distro se resuelve como HOST (config.rs;
+                      revisiones PR #92/#248): el campo lo dice hasta que se
+                      escribe una distro. */}
                   {cfg.wslDistro.trim() === ''
                     ? t(locale, 'settings.providers.wslDistroMissing')
                     : t(locale, 'settings.providers.wslDistroHint')}
@@ -2016,7 +2094,7 @@ export function SubscriptionPanel({
   onCodexRecheck,
 }: Pick<PanelProps, 'locale' | 'cfg' | 'set' | 'setVisibility' | 'healthFor'> & {
   p: 'claude' | 'codex' | 'gemini' | 'grok';
-  cli: Record<string, boolean>;
+  cli: Record<string, string>;
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
 }) {
@@ -2070,13 +2148,14 @@ export function SubscriptionPanel({
           id={p}
           provider={p}
           loginCommand={cfg[p].loginCommand}
-          cliMissing={cli[p] === false}
+          cliMissing={cli[p] === "missing"}
           persisted
           extra={false}
           health={healthFor(p, !cfg[p].enabled)}
           codexInstall={codexInstall}
           onCodexRecheck={onCodexRecheck}
           sessionEnv={cfg.sessionEnv}
+          wslDistro={cfg.wslDistro}
         />
       </ol>
       <details className="q-details">
@@ -2487,31 +2566,63 @@ export function Settings() {
   const [secrets, setSecrets] = useState<SecretStatus>({});
   // CLIs de login instalados (Claude Code, Codex, Gemini): se avisa antes de pulsar
   // «Iniciar sesión» y se detecta solo cuando se instala (cada 5 s o al volver a la ventana).
-  const [cli, setCli] = useState<Record<string, boolean>>({});
+  // Estado por proveedor: 'ready' | 'missing' | 'stopped' | 'error' (#92).
+  // Solo 'missing' propone instalar la CLI: una distro detenida (stopped) o
+  // un fallo de WSL (error) no se arreglan instalando nada.
+  const [cli, setCli] = useState<Record<string, string>>({});
+  // El ENTORNO DEL BORRADOR (host/WSL + distro) es el que se detecta (revisión
+  // PR #92, punto 10): `cli_status` refleja lo que el usuario ve, no la config
+  // persistida. Cambiar el entorno en el selector re-sondea; el objeto se
+  // memoiza para que un render no reinicie el sondeo.
+  const cliSessionEnv = cfg?.sessionEnv;
+  const cliWslDistro = cfg?.wslDistro;
+  const cliEnv = useMemo(
+    () => (cliSessionEnv === undefined ? undefined : { sessionEnv: cliSessionEnv, wslDistro: cliWslDistro ?? '' }),
+    [cliSessionEnv, cliWslDistro],
+  );
+  // Ref del entorno: el controlador de instalación de Codex se crea una sola
+  // vez y conserva la clausura del primer render; el recheck debe leer el
+  // entorno VIGENTE, no el de entonces.
+  const cliEnvRef = useRef(cliEnv);
+  cliEnvRef.current = cliEnv;
+  // UNA secuencia para TODAS las lecturas de `cli_status` — intervalo, foco y
+  // `cliRecheck` (revisión PR #253): solo la última petición lanzada escribe
+  // el estado, así una respuesta tardía no pisa la del entorno nuevo ni
+  // deshabilita «Guardar»/el login con un `missing` viejo.
+  const cliSeqRef = useRef(0);
+  const requestCliStatus = useCallback(() => {
+    const n = ++cliSeqRef.current;
+    return api
+      .cliStatus(cliEnvRef.current)
+      .then((st) => {
+        if (n === cliSeqRef.current) setCli(st);
+      })
+      .catch(() => {});
+  }, []);
   // Relectura puntual del CLI fuera del intervalo: la usa la instalación asistida
   // al terminar para habilitar el login sin depender de que la ventana siga abierta.
   const cliRecheck = useCallback(() => {
-    api
-      .cliStatus()
-      .then(setCli)
-      .catch(() => {});
-  }, []);
+    void requestCliStatus();
+  }, [requestCliStatus]);
   useEffect(() => {
     let alive = true;
-    const check = () =>
-      api
-        .cliStatus()
-        .then((st) => alive && setCli(st))
-        .catch(() => {});
+    // Entorno nuevo: el estado anterior es de otro sitio; no se muestra hasta
+    // que llegue la lectura vigente (y no puede bloquear el login entremedias).
+    setCli({});
+    const check = () => {
+      if (alive) void requestCliStatus();
+    };
     check();
     const t = window.setInterval(check, 5000);
     window.addEventListener('focus', check);
     return () => {
       alive = false;
+      // Descarta lo que esté en vuelo: solo la secuencia nueva escribe.
+      cliSeqRef.current += 1;
       window.clearInterval(t);
       window.removeEventListener('focus', check);
     };
-  }, []);
+  }, [cliEnv, requestCliStatus]);
   // Controlador de la instalación asistida de Codex: vive en la raíz de Ajustes
   // para seguir vivo si el aviso del CLI desaparece (o se desmonta) antes de que
   // resuelva la instalación. Nunca instala por sí solo: solo lee estado pasivo.
@@ -2846,7 +2957,18 @@ export function Settings() {
   const sectionDirty = (id: string) => {
     const acc = cfg.accounts.find((a) => a.id === id);
     const k = configKeyFor(acc?.provider ?? id);
-    return isConnectionDirty(acc, baseline?.accounts.find((a) => a.id === id), k ? cfg[k] : undefined, k ? baseline?.[k] : undefined);
+    // El entorno (host/WSL + distro) es parte de la conexión (revisión PR
+    // #92): cambiarlo y pulsar iniciar sesión sin guardar usaría el entorno
+    // guardado, no el que se ve.
+    const envOf = (c: typeof cfg) => ({ sessionEnv: c.sessionEnv, wslDistro: c.wslDistro });
+    return isConnectionDirty(
+      acc,
+      baseline?.accounts.find((a) => a.id === id),
+      k ? cfg[k] : undefined,
+      k ? baseline?.[k] : undefined,
+      envOf(cfg),
+      baseline ? envOf(baseline) : undefined,
+    );
   };
   const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save, locale });
   const panel = { locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor };
@@ -2957,7 +3079,9 @@ export function Settings() {
           onRemove={() => removeAccount(selAccount)}
           onSecrets={loadSecrets}
           health={healthFor(selAccount.id, !selAccount.enabled)}
-          cliMissing={cli[selAccount.provider] === false}
+          cliMissing={cli[selAccount.provider] === "missing"}
+          sessionEnv={cfg.sessionEnv}
+          wslDistro={cfg.wslDistro}
           loginCommand={
             selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini' || selAccount.provider === 'grok'
               ? cfg[selAccount.provider].loginCommand
@@ -2965,7 +3089,6 @@ export function Settings() {
           }
           codexInstall={codexInstaller}
           onCodexRecheck={cliRecheck}
-          sessionEnv={cfg.sessionEnv}
         />
       )}
       {!selAccount && (

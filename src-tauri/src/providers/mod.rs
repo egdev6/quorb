@@ -389,7 +389,12 @@ pub(crate) fn session_relative(kind: CliSessionKind) -> PathBuf {
 /// - Sin `config_dir` → la carpeta por defecto (`~/.quorb`) compuesta bajo
 ///   el home del entorno.
 /// En host devuelve la ruta de `credentials_file` de siempre.
-fn account_session_path(
+///
+/// La usan el fetch de la cuenta y el SONDEO de presencia (`account_session`,
+/// revisión PR #92): con `resolver` la ruta sale del ENTORNO elegido (el
+/// guest), no del disco del host — tras un login en WSL, sondear el host
+/// daría por buena una sesión de Windows sin relación.
+pub(crate) fn account_session_path(
     a: &Account,
     resolver: Option<&SessionResolver>,
 ) -> Result<Option<String>, String> {
