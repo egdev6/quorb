@@ -330,18 +330,18 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.refs[0].current = { dataset: {} };
     widgetEffects.refs[1].current = { dataset: {} };
     return {
-      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[5])!,
-      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[9]
-        && e.deps?.[1] === widgetEffects.states[5])!,
+      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[7])!,
+      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[11]
+        && e.deps?.[1] === widgetEffects.states[7])!,
       grip: grip!,
     };
   };
   const renderWidget = (dragging: boolean, autoHide = false, sf = geo.sf) => {
     // Hook slots belong to Widget (useDockReveal/useUpdaterMode are isolated above).
     widgetEffects.states[0] = autoHide ? { autoHide, accounts: [], nineRouter: { baseUrl: '' } } : null;
-    widgetEffects.states[5] = sf === geo.sf ? geo : { ...geo, sf };
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = dragging;
+    widgetEffects.states[7] = sf === geo.sf ? geo : { ...geo, sf };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = dragging;
     return commitWidget();
   };
   // Text scale (#228): the strip is measured in CSS px and placed in monitor units.
@@ -349,9 +349,9 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.textScale = scale;
     widgetEffects.phase = phase;
     widgetEffects.states[0] = null;
-    widgetEffects.states[5] = { ...geo, sf };
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = false;
+    widgetEffects.states[7] = { ...geo, sf };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = false;
     return commitWidget();
   };
   const placeScaled = async (scale: number, sf: number, phase: RevealPhase = 'open') => {
@@ -365,7 +365,7 @@ describe('Widget effect mutation ordering', () => {
       strip, win,
       bounds: widgetEffects.bounds.mock.calls[0]?.[0],
       clip: widgetEffects.clip.mock.calls[0]?.[0],
-      pos: widgetEffects.states[10],
+      pos: widgetEffects.states[12],
     };
   };
   const configureNative = () => {
@@ -428,9 +428,9 @@ describe('Widget effect mutation ordering', () => {
       id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
       message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport;
-    widgetEffects.states[1] = [report];
-    widgetEffects.states[7] = { providerId: 'a', anchored: true };
-    widgetEffects.states[8] = 30; // Orb centre in CSS px from the strip start.
+    widgetEffects.states[3] = [report];
+    widgetEffects.states[9] = { providerId: 'a', anchored: true };
+    widgetEffects.states[10] = 30; // Orb centre in CSS px from the strip start.
     renderScaled(scale, sf);
     const detail = widgetEffects.effects.find((e) => e.deps?.[0] === report)!;
     detail.run();
@@ -494,7 +494,7 @@ describe('Widget effect mutation ordering', () => {
     for (const handler of widgetEffects.listeners.get('widget-hidden') ?? []) handler();
     // La red de seguridad (2,5 s) muestra la ventana si el ciclo no llegó a
     // mostrarla: tampoco puede contradecir al usuario.
-    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 0 && e.run.toString().includes('setTimeout'));
+    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'));
     expect(safetyNet).toBeDefined();
     const cleanup = safetyNet!.run();
     await vi.advanceTimersByTimeAsync(2500);
@@ -510,7 +510,7 @@ describe('Widget effect mutation ordering', () => {
       setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     });
     renderWidget(false);
-    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 0 && e.run.toString().includes('setTimeout'));
+    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'));
     const cleanup = safetyNet!.run();
     await vi.advanceTimersByTimeAsync(2500);
     expect(widgetEffects.show).toHaveBeenCalledTimes(1);
@@ -585,7 +585,7 @@ describe('Widget effect mutation ordering', () => {
     const commitSnapIfReady = async () => {
       // Model React's post-pointerup commit once config and dragging state change.
       // Use Widget's actual placement effect to apply the resulting native bounds.
-      if (!snapCommitted && widgetEffects.states[9] === false && widgetEffects.patch.mock.calls.length > 0) {
+      if (!snapCommitted && widgetEffects.states[11] === false && widgetEffects.patch.mock.calls.length > 0) {
         const cleanup = commitWidget().placement.run();
         if (typeof cleanup === 'function') cleanupSnap = cleanup;
         snapCommitted = true;
@@ -688,7 +688,7 @@ describe('Widget effect mutation ordering', () => {
     const snap = nearestEdge(geo.area, 760 + 408 * expected, 40 * expected);
     expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: snap.edge, dockOffset: snap.offset });
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
   });
 
   it.each([
@@ -733,7 +733,7 @@ describe('Widget effect mutation ordering', () => {
     expect(earlyReads).toBe(0);
     expect(dispatched.size).toBe(2);
     expect(widgetEffects.setPosition.mock.calls.map(call => call[0].y)).toEqual([960, 860]);
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
     expect(widgetEffects.states[0]).toMatchObject({ dockEdge: 'bottom', dockOffset: 0.4 });
     const cleanup = commitWidget().placement.run();
     await flush();
@@ -759,7 +759,7 @@ describe('Widget effect mutation ordering', () => {
     await flush();
     expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch).not.toHaveBeenCalled();
-    if (cancel === 'new gesture') expect(widgetEffects.states[9]).toBe(true);
+    if (cancel === 'new gesture') expect(widgetEffects.states[11]).toBe(true);
   });
 
   it('does not let an old pointerup snap or clear a newer gesture', async () => {
@@ -774,7 +774,7 @@ describe('Widget effect mutation ordering', () => {
     releaseRead({ x: 760, y: 0 });
     await oldUp;
     await flush();
-    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[9] })
+    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[11] })
       .toEqual({ patches: 0, dragging: true });
     f.acceptFrame(1000, 8);
     await flush();
@@ -807,19 +807,19 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     if (failure === 'origin') {
-      expect(widgetEffects.states[9]).toBe(false);
+      expect(widgetEffects.states[11]).toBe(false);
     } else {
       f.acceptFrame(1000);
       await flush();
       await f.grip.onPointerUp(f.pointer(1000));
-      expect(widgetEffects.states[9]).toBe(false);
+      expect(widgetEffects.states[11]).toBe(false);
     }
     f.grip.onPointerDown(f.pointer(40, 8));
     await flush();
     f.acceptFrame(1000, 8);
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
     expect(widgetEffects.patch.mock.calls.at(-1)?.[0]).toMatchObject({ dockEdge: 'bottom' });
   });
 
@@ -836,7 +836,7 @@ describe('Widget effect mutation ordering', () => {
     expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
     expect(widgetEffects.setPosition.mock.calls[0][0]).toMatchObject({ x: 760, y: 960 });
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: 'bottom' });
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
   });
 
   it('cancels an unaccepted RAF at pointerup and ignores another pointer', async () => {
@@ -844,7 +844,7 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
-    expect(widgetEffects.states[9]).toBe(true);
+    expect(widgetEffects.states[11]).toBe(true);
     expect(widgetEffects.patch).not.toHaveBeenCalled();
     f.grip.onPointerMove(f.pointer(1000));
     expect(f.frames.size).toBe(1);
@@ -852,7 +852,7 @@ describe('Widget effect mutation ordering', () => {
     expect(f.frames.size).toBe(0);
     expect(widgetEffects.setPosition).not.toHaveBeenCalled();
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: 'top' });
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
   });
 
   it.each(['new gesture', 'unmount'])('ignores a snap response arriving after %s', async (cancel) => {
@@ -873,7 +873,7 @@ describe('Widget effect mutation ordering', () => {
     expect(widgetEffects.stateWrite).toHaveBeenCalledTimes(writes);
     expect(widgetEffects.states[0]).toBeNull();
     if (cancel === 'new gesture') {
-      expect(widgetEffects.states[9]).toBe(true);
+      expect(widgetEffects.states[11]).toBe(true);
       f.acceptFrame(1000, 8);
       await flush();
       await f.grip.onPointerUp(f.pointer(1000, 8));
@@ -971,9 +971,9 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[0] = { autoHide, accounts: [], nineRouter: { baseUrl: '' }, alerts: { threshold: 90 } };
-    widgetEffects.states[5] = geo;
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = false;
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = false;
     let tree: ReactNode = null;
     function CaptureStrip() { tree = Widget(); return tree; }
     renderToStaticMarkup(createElement(CaptureStrip));
@@ -992,8 +992,8 @@ describe('Widget effect mutation ordering', () => {
   it('closes the panel and frees the strip when the detail declares a placement failure (#250/S22)', async () => {
     const setTimeoutSpy = vi.fn();
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: setTimeoutSpy });
-    widgetEffects.states[7] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
-    widgetEffects.states[12] = true; // `collapsed`: la tira está replegada.
+    widgetEffects.states[9] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
+    widgetEffects.states[14] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
     // El puntero está dentro del detalle.
     widgetEffects.refs[10].current = true;
@@ -1006,12 +1006,12 @@ describe('Widget effect mutation ordering', () => {
     // Con el panel abierto, la tira está ocupada: el auto-ocultar la mantiene
     // visible y no programa el repliegue.
     autoHideEffect.run();
-    expect(widgetEffects.states[12]).toBe(false);
+    expect(widgetEffects.states[14]).toBe(false);
     expect(setTimeoutSpy).not.toHaveBeenCalled();
     // El detalle declara que no pudo colocarse...
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
     // ...y baja la presencia del detalle.
     expect(widgetEffects.refs[10].current).toBe(false);
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
@@ -1023,7 +1023,7 @@ describe('Widget effect mutation ordering', () => {
 
   it('ignores a placement failure notice from a stale detail session (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
-    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    widgetEffects.states[9] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
     widgetEffects.refs[10].current = true;
     listener.run();
@@ -1032,16 +1032,16 @@ describe('Widget effect mutation ordering', () => {
     expect(handlers.length).toBeGreaterThan(0);
     // Otra revisión: el aviso es viejo.
     for (const handler of handlers) handler({ payload: { revision: 4, provider: 'a', kind: 'placement-failed' } });
-    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
-    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
     expect(widgetEffects.refs[10].current).toBe(true);
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
-    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    widgetEffects.states[9] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
     widgetEffects.refs[10].current = true;
     listener.run();
@@ -1049,7 +1049,7 @@ describe('Widget effect mutation ordering', () => {
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
     expect(widgetEffects.refs[10].current).toBe(false);
   });
 
@@ -1063,12 +1063,12 @@ describe('Widget effect mutation ordering', () => {
       addEventListener: () => {}, removeEventListener: () => {},
     });
     // Un orbe visible: el puntero puede pasar por encima y agendar la apertura.
-    widgetEffects.states[1] = [{
+    widgetEffects.states[3] = [{
       id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
       message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport];
     // El panel está cerrado: la apertura del orbe queda pendiente.
-    widgetEffects.states[7] = { providerId: null, anchored: false };
+    widgetEffects.states[9] = { providerId: null, anchored: false };
     const { listener, tree } = renderStrip(false);
     const hover = findOrbHover(tree);
     expect(hover).toBeDefined();
@@ -1078,12 +1078,12 @@ describe('Widget effect mutation ordering', () => {
     expect(handlers.length).toBeGreaterThan(0);
     // El puntero pasa por encima del orbe: la apertura queda agendada...
     hover!({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 56, height: 56 }) } as HTMLElement);
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
     // ...y el detalle declara que no pudo colocarse.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // La apertura pendiente se cancela: el panel no se abre.
     await vi.advanceTimersByTimeAsync(2000);
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
   });
 });
 
@@ -1099,10 +1099,10 @@ describe('the localized placement reason', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[0] = { autoHide: true, locale, accounts: [], nineRouter: { baseUrl: '' } };
-    widgetEffects.states[5] = geo;
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[16] = failed;
-    widgetEffects.states[17] = failed ? 'size_refused' : null;
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[18] = failed;
+    widgetEffects.states[19] = failed ? 'size_refused' : null;
     return renderToStaticMarkup(createElement(Widget));
   };
 
