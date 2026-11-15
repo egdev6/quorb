@@ -46,6 +46,34 @@ function findOrbHover(node: ReactNode): ((el: HTMLElement) => void) | undefined 
   return findOrbHover(node.props.children);
 }
 
+/** The enter handler of an orb by id (real props of the tree). */
+function findOrbEnterById(node: ReactNode, id: string): ((el: HTMLElement) => void) | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const enter = findOrbEnterById(child, id);
+      if (enter) return enter;
+    }
+    return;
+  }
+  if (!isValidElement<{ report?: { id: string }; onPointerEnter?: (el: HTMLElement) => void; children?: ReactNode }>(node)) return;
+  if (node.props.report?.id === id && node.props.onPointerEnter) return node.props.onPointerEnter;
+  return findOrbEnterById(node.props.children, id);
+}
+
+/** The leave handler of the first orb of the strip (real props of the tree). */
+function findOrbLeave(node: ReactNode): (() => void) | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const leave = findOrbLeave(child);
+      if (leave) return leave;
+    }
+    return;
+  }
+  if (!isValidElement<{ onPointerLeave?: () => void; children?: ReactNode }>(node)) return;
+  if (node.props.onPointerLeave) return node.props.onPointerLeave;
+  return findOrbLeave(node.props.children);
+}
+
 type DockHandlers = {
   onMouseEnter(): void;
   onMouseLeave(): void;
@@ -1202,23 +1230,36 @@ describe('hover presence wiring', () => {
    * strip's `mouseenter`/`mouseleave` come from the rendered tree and the
    * detail's `enter`/`leave` from the listener the Widget registers.
    */
+  /** El orbe que el hit-test devuelve al soltar (#264/S23): aquí no hay layout. */
+  const hitOrb = { id: 'a' };
+
+  /** Un segundo orbe de la tira: el bloqueo tras reordenar no puede cubrir la tira entera (#264/S23). */
+  const reportB = {
+    id: 'b', name: 'B', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
+    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+  } as unknown as UsageReport;
+
   const wire = async (anchored = false, panel: PanelState = { providerId: 'a', anchored }) => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[0] = null;
-    widgetEffects.states[1] = [report];
+    widgetEffects.states[1] = [report, reportB];
     widgetEffects.states[5] = geo;
     widgetEffects.states[6] = { w: 400, h: 80 };
     widgetEffects.states[7] = panel;
     widgetEffects.states[9] = false;
     let dock: DockHandlers | undefined;
     let hover: ((el: HTMLElement) => void) | undefined;
+    let leave: (() => void) | undefined;
+    let enterB: ((el: HTMLElement) => void) | undefined;
     let orbs: OrbPointer[] = [];
     function CaptureWidget() {
       const tree = Widget();
       dock = findDock(tree); // Real handlers from the returned JSX, not copied logic.
       hover = findOrbHover(tree); // The orb's own `mouseenter`, the one that reads the hold.
+      leave = findOrbLeave(tree); // The orb's own `mouseleave`, the one that ends the hold.
+      enterB = findOrbEnterById(tree, 'b'); // The enter of the other orb of the strip.
       orbs = findOrbPointers(tree); // The orb's reorder handlers.
       return tree;
     }
@@ -1247,6 +1288,10 @@ describe('hover presence wiring', () => {
       dock: dock!,
       /** The orb's `mouseenter`: the only path that reads the reorder hold. */
       hover: hover!,
+      /** The orb's `mouseleave`: the path that ends the reorder hold. */
+      leave: leave!,
+      /** The enter of the other orb of the strip. */
+      enterB: enterB!,
       /** The reorder handlers of the orbs of the strip. */
       orbs,
       /** The effect that publishes the detail state (and its presence write). */
@@ -1268,6 +1313,12 @@ describe('hover presence wiring', () => {
       // The viewport of the strip: the reorder hold needs to know if the
       // pointer was released inside the window.
       innerWidth: 1920, innerHeight: 1080,
+    });
+    // #264/S23: el hit-test que lee el orbe bajo el puntero al soltar un orbe.
+    // En este arnés no hay layout, así que el orbe es fijo.
+    hitOrb.id = 'a';
+    vi.stubGlobal('document', {
+      elementFromPoint: () => ({ closest: () => ({ getAttribute: () => hitOrb.id }) }),
     });
   });
 
@@ -1631,6 +1682,50 @@ describe('hover presence wiring', () => {
       reorder(orbs);
       dock.onMouseLeave(); // La salida del DOM: Windows y macOS.
       await hoverAfterTheGuard(hover);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
+    // #264/S23: el bloqueo tras reordenar cubre un solo orbe, el que quedó
+    // bajo el puntero al soltar. Con el puntero sobre otro orbe, ese otro
+    // abre: reordenar un orbe no ciega la tira entera.
+    // #264/S23: el bloqueo tras reordenar cubre el orbe que quedó bajo el
+    // puntero, no la tira entera: otro orbe abre como siempre.
+    it('does not block the other orbs after a reorder (#264/S23)', async () => {
+      const { dock, enterB, orbs } = await wire();
+      dock.onMouseEnter();
+      reorder(orbs);
+      await vi.advanceTimersByTimeAsync(500);
+      enterB?.(orbElement as unknown as HTMLElement); // El hover del otro orbe.
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'b', anchored: false });
+    });
+
+    // #264/S28: el soltar quita la vista previa y aplica el orden nuevo, y eso
+    // mueve los orbes debajo del puntero. La salida del orbe bloqueado que
+    // provoca ese salto NO puede disolver el bloqueo: si lo disolviera, el
+    // `enter` diferido abriría el detalle solo sobre el orbe soltado (#222).
+    it('keeps the hold when the layout moves the orb at the drop (#264/S28, #222)', async () => {
+      const { dock, hover, leave, orbs } = await wire(false, NO_PANEL);
+      dock.onMouseEnter();
+      reorder(orbs);
+      leave?.(); // El salto de layout del soltar.
+      await hoverAfterTheGuard(hover);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    });
+
+    // #264/S23: el bloqueo se acaba cuando el puntero sale del orbe bloqueado
+    // y vuelve a entrar en él.
+    it('releases the hold when the pointer leaves the held orb and comes back (#264/S23)', async () => {
+      const { hover, leave, orbs } = await wire(false, NO_PANEL);
+      await vi.advanceTimersByTimeAsync(500);
+      reorder(orbs);
+      hover(orbElement as unknown as HTMLElement); // El enter del orbe bloqueado: no abre y lo confirma.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+      leave?.(); // El puntero sale de ese orbe.
+      await vi.advanceTimersByTimeAsync(500);
+      hover(orbElement as unknown as HTMLElement); // Vuelve a entrar: ahora sí abre.
+      await vi.advanceTimersByTimeAsync(400);
       expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
     });
   });

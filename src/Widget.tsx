@@ -28,6 +28,7 @@ import {
   type PanelState,
 } from './lib/anchor-panel';
 import { pointerInsideViewport } from './lib/pointer-viewport';
+import { holdOnDrop, onOrbEnter, onOrbLeave, orbIdAtPoint, NO_HOLD, type ReorderHold } from './lib/reorder-hold';
 import { createFocusTracker, FOCUS_EVENT, type OwnWindow } from './lib/anchor-focus';
 import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
@@ -319,7 +320,9 @@ export function Widget() {
   // La libera el modelo de presencia (#264/S19): cuando la presencia pasa de
   // `widget` a otro estado, el puntero dejó la tira. Solo frena la vía del
   // puntero; foco y clic no la consultan.
-  const reorderHold = useRef<boolean>(false);
+  // #264/S23: el bloqueo tras reordenar cubre un solo orbe: el que quedó
+  // bajo el puntero al soltar. Los demás orbes de la tira siguen abriendo.
+  const reorderHold = useRef<ReorderHold>(NO_HOLD);
   const openPeakRef = useRef<() => void>(() => {});
   const dragWork = useRef<Promise<void>>(Promise.resolve());
   const dragMounted = useRef(true);
@@ -344,7 +347,7 @@ export function Widget() {
     // the pointer on the strip (`widget` -> `widget`) does not, so the
     // detail's own closing effect does not reopen the panel right after a
     // reorder, with the pointer on the orb (#222).
-    if (previous === 'widget' && presence.target !== 'widget') reorderHold.current = false;
+    if (previous === 'widget' && presence.target !== 'widget') reorderHold.current = NO_HOLD;
   };
 
   /** A pointer transition reported by one of the two surfaces. */
@@ -987,7 +990,7 @@ export function Widget() {
         // says `outside` (the DOM `enter` of the strip can be lost, which is
         // the very case this change fixes). A reset leaves no stale hold, and
         // it cannot reopen the panel: it closes it.
-        reorderHold.current = false;
+        reorderHold.current = NO_HOLD;
         setPanel(closePanel());
       }));
       await add(listen(DETAIL_EVENTS.dismiss, () => {
@@ -1428,7 +1431,11 @@ export function Widget() {
         // la captura, la presencia del puntero queda desactualizada: se usan
         // las coordenadas.
         const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
-        reorderHold.current = inside;
+        // #264/S23: el orbe bloqueado es el que quedó bajo el puntero. En este
+        // instante el estado del ratón del navegador es el de antes del arrastre
+        // (la captura se tragó los movimientos) y el `target` del `pointerup`
+        // tampoco sirve, así que se pregunta al documento qué hay en el punto.
+        reorderHold.current = holdOnDrop(od?.id ?? null, inside ? orbIdAtPoint(e.clientX, e.clientY) : null);
       }
       if (od?.moved && reorder) {
         const next = reorder.order;
@@ -1536,7 +1543,12 @@ export function Widget() {
               order={reorder ? visualPos.get(r.id) : undefined}
               onHover={(el) => openFor(r.id, el)}
               onPointerEnter={(el) => {
-                if (!reorderHold.current) openFor(r.id, el);
+                const enter = onOrbEnter(reorderHold.current, r.id);
+                reorderHold.current = enter.hold;
+                if (!enter.blocked) openFor(r.id, el);
+              }}
+              onPointerLeave={() => {
+                reorderHold.current = onOrbLeave(reorderHold.current, r.id);
               }}
               onClick={(el) => anchorOn(r.id, el)}
               pointer={orbHandlers(r.id)}
