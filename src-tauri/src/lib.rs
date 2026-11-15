@@ -7,6 +7,7 @@ mod detail_geometry;
 mod email;
 mod history;
 mod i18n;
+mod installer_locale;
 mod login;
 mod model;
 mod providers;
@@ -37,7 +38,7 @@ mod windows_backdrop;
 mod wm_compat;
 pub mod wsl;
 
-use config::AppConfig;
+use config::{AppConfig, ConfigOrigin};
 use model::UsageReport;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,6 +53,9 @@ use tauri::{
 };
 use tauri::{PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+// En scope para el dispatch estático del adaptador en `account_session`
+// (el de `session_resolver` ya es `dyn` y no lo necesita).
+use wsl::WslAdapter;
 
 const WIDGET: &str = "widget";
 /// Selector de idioma del primer arranque (#235). Ventana aparte de la tira.
@@ -608,7 +612,7 @@ async fn session_resolver(
     match cfg.session_env() {
         wsl::SessionEnv::Host => Ok(None),
         wsl::SessionEnv::Wsl { distro } => {
-            // No despertar la distro en un sondeo (revisión PR #248): si no
+            // No despertar la distro en un sondeo (revisiones PR #248/#253): si no
             // está Running, el entorno está inaccesible y NO se lanzan
             // procesos del guest. `resolve_home` (SÍ despierta) solo se
             // alcanza con la distro en marcha.
@@ -626,7 +630,12 @@ async fn session_resolver(
                     home
                 }
             };
-            Ok(Some(wsl::SessionResolver::for_wsl(adapter, distro, home)))
+            Ok(Some(wsl::SessionResolver::for_wsl(
+                adapter,
+                distro,
+                home,
+                crate::i18n::locale_from_config(&cfg.locale),
+            )))
         }
     }
 }
@@ -906,10 +915,51 @@ async fn check_provider(
 
 /// ¿Está instalado el CLI de login de Claude, Codex y Gemini?
 /// `async` lo saca del hilo principal: consulta el PATH fresco del registro.
+/// `session_env`/`wsl_distro` (opcionales) son el ENTORNO DEL BORRADOR que
+/// muestra Ajustes (revisión PR #92, punto 10): si vienen, la detección
+/// consulta ese entorno y no la config persistida — así el aviso «falta la
+/// CLI» y el estado del botón responden a lo que el usuario ve, no a lo que
+/// quedó guardado. Sin override (p. ej. el widget), se usa la persistida.
 #[tauri::command(async)]
-fn cli_status(state: State<'_, AppState>) -> BTreeMap<String, bool> {
-    let cfg = state.config.lock().unwrap().clone();
-    login::cli_status(&cfg)
+async fn cli_status(
+    state: State<'_, AppState>,
+    session_env: Option<String>,
+    wsl_distro: Option<String>,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut cfg = state.config.lock().unwrap().clone();
+    if let Some(env) = session_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    {
+        cfg.session_env = if env == "wsl" {
+            crate::config::SessionEnvConfig::Wsl
+        } else {
+            crate::config::SessionEnvConfig::Host
+        };
+        cfg.wsl_distro = wsl_distro.unwrap_or_default();
+    }
+    // #92: la detección en WSL lanza procesos `wsl.exe` (enumeración + `command
+    // -v`), así que va en un hilo bloqueante: en el hilo del executor
+    // congelaría la UI (hasta 20 s de timeout por operación).
+    let map = tauri::async_runtime::spawn_blocking(move || {
+        let adapter = wsl::RealWslAdapter::new();
+        let distro = match cfg.session_env() {
+            wsl::SessionEnv::Wsl { distro } => Some(distro),
+            wsl::SessionEnv::Host => None,
+        };
+        let wsl = distro.as_deref().map(|d| login::WslLogin {
+            adapter: &adapter,
+            distro: d,
+        });
+        login::cli_status(&cfg, wsl)
+            .into_iter()
+            .map(|(p, s)| (p, s.as_str().to_string()))
+            .collect::<BTreeMap<_, _>>()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(map)
 }
 
 /// ¿Existe el fichero de sesión de una cuenta? `home` se inyecta para poder
@@ -918,38 +968,143 @@ fn account_session_file_found(cfg: &AppConfig, id: &str, home: &std::path::Path)
     providers::session_file(cfg, id, home).is_some_and(|p| p.is_file())
 }
 
-/// ¿Hay fichero de sesión del CLI para una cuenta adicional? `true` es presencia,
-/// no validez de la sesión.
+/// ¿Hay fichero de sesión del CLI para una cuenta? `true` es presencia, no
+/// validez de la sesión. Sigue al ENTORNO elegido (revisión PR #92): en WSL
+/// la sesión vive dentro de la distro y el sondeo debe consultarla ahí — el
+/// disco del host no ve la sesión del guest y, peor, daría por buena una
+/// sesión de Windows que no tiene relación con el entorno WSL.
 #[tauri::command]
-fn account_session(state: State<'_, AppState>, id: String) -> bool {
+async fn account_session(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let cfg = state.config.lock().unwrap().clone();
-    // En modo WSL este sondeo sigue mirando el HOST (hasta #92): devolver su
-    // resultado mostraría como «conectada» una sesión de Windows que no tiene
-    // relación con la distro (revisión PR #248). Sin la integración del guest
-    // no se confirma nada, y no se despierta la distro.
-    if matches!(cfg.session_env(), wsl::SessionEnv::Wsl { .. }) {
-        return false;
+    let adapter = std::sync::Arc::new(wsl::RealWslAdapter::new());
+    match cfg.session_env() {
+        wsl::SessionEnv::Host => Ok(account_session_file_found(&cfg, &id, &providers::home())),
+        wsl::SessionEnv::Wsl { distro } => {
+            // El SONDEO no despierta una distro detenida (contrato W1 §2,
+            // revisión PR #92): igual que la detección, se consulta el
+            // estado con `list_distributions` (no lanza nada) y solo se lee
+            // dentro del guest cuando está Running. Una distro apagada es
+            // «no hay sesión visible», no una excusa para despertarla cada
+            // 3 s desde Ajustes.
+            let running = tauri::async_runtime::spawn_blocking({
+                let adapter = adapter.clone();
+                let distro = distro.clone();
+                move || {
+                    adapter
+                        .list_distributions()
+                        .ok()
+                        .and_then(|ds| {
+                            ds.into_iter()
+                                .find(|d| wsl::distro_name_matches(&distro, &d.name))
+                        })
+                        .is_some_and(|d| matches!(d.state, wsl::DistroState::Running))
+                }
+            })
+            .await
+            .map_err(|e| format!("WSL: {e}"))?;
+            if !running {
+                return Ok(false);
+            }
+            let resolver = session_resolver(&cfg, adapter, &state.wsl_homes).await?;
+            let Some(r) = resolver else {
+                // Sin distro resuelta (p. ej. no configurada): nada que
+                // sondear; no caer al disco del host.
+                return Ok(false);
+            };
+            tauri::async_runtime::spawn_blocking(move || {
+                // Cuenta principal (id de proveedor) o adicional: la MISMA
+                // resolución del entorno (#91). Principal con
+                // `credentials_path` > ruta por defecto del guest.
+                let path: Result<Option<String>, String> =
+                    if let Some(a) = cfg.accounts.iter().find(|a| a.id == id) {
+                        crate::providers::account_session_path(a, Some(&r))
+                    } else {
+                        let kind = match id.as_str() {
+                            "claude" => Some(crate::providers::CliSessionKind::Claude),
+                            "codex" => Some(crate::providers::CliSessionKind::Codex),
+                            "gemini" => Some(crate::providers::CliSessionKind::Gemini),
+                            "grok" => Some(crate::providers::CliSessionKind::Grok),
+                            _ => None,
+                        };
+                        let Some(kind) = kind else {
+                            return Ok(false);
+                        };
+                        let c = match id.as_str() {
+                            "claude" => &cfg.claude,
+                            "codex" => &cfg.codex,
+                            "gemini" => &cfg.gemini,
+                            _ => &cfg.grok,
+                        };
+                        r.resolve(
+                            c.credentials_path.as_deref(),
+                            &r.default_path(crate::providers::session_relative(kind).as_path()),
+                        )
+                        .map(|p| Some(p.to_string_lossy().into_owned()))
+                        .map_err(|e| format!("WSL: {e:?}"))
+                    };
+                match path? {
+                    // Proveedor sin sesión CLI en este entorno.
+                    None => Ok(false),
+                    Some(path) => {
+                        use crate::wsl::SessionError;
+                        match r.read(std::path::Path::new(&path)) {
+                            Ok(_) => Ok(true),
+                            // Sin fichero en la distro: no hay sesión.
+                            Err(SessionError::Absent(_)) => Ok(false),
+                            // El guard de la distro también "lee" el fichero
+                            // de sesión; si falla de otra forma, no es
+                            // "conectada" — se informa para no dar por buena
+                            // una sesión que no se pudo comprobar.
+                            Err(e) => Err(format!("WSL: {e:?}")),
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|e| format!("WSL: {e}"))?
+        }
     }
-    account_session_file_found(&cfg, &id, &providers::home())
 }
 
 #[tauri::command]
-fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+async fn open_login(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     // Single-flight: si hay una apertura en curso para este id, no abrir
     // una segunda terminal (doble clic / reenvío del frontend).
     // `unwrap_or_else(into_inner)`: si otro hanco pánicara con el lock tomado,
     // el mutex queda envenenado y con `unwrap` todos los `open_login` futuros
     // paniquearían en cascada. Con `into_inner` seguimos operando el set.
-    let mut inflight = state
-        .login_in_flight
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    if !inflight.insert(provider.clone()) {
-        return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
+    // El guard del single-flight vive en un bloque propio: el comando es
+    // async y `MutexGuard` no es `Send`, así que debe morir antes del await.
+    {
+        let mut inflight = state
+            .login_in_flight
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !inflight.insert(provider.clone()) {
+            return Err("Ya hay una apertura de terminal en curso para esta cuenta. Si no se abrió, inténtalo de nuevo.".into());
+        }
     }
-    drop(inflight); // no mantener el lock mientras spawn_terminal corre
+    // Liberado el single-flight, el login corre fuera del executor.
     let cfg = state.config.lock().unwrap().clone();
-    let r = login::open(&provider, &cfg);
+    // #92: en WSL el login consulta la distro (y su home), así que son
+    // procesos bloqueantes: fuera del executor, en un hilo propio.
+    let provider_for_task = provider.clone();
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        let adapter = wsl::RealWslAdapter::new();
+        let distro = match cfg.session_env() {
+            wsl::SessionEnv::Wsl { distro } => Some(distro),
+            wsl::SessionEnv::Host => None,
+        };
+        let wsl = distro.as_deref().map(|d| login::WslLogin {
+            adapter: &adapter,
+            distro: d,
+        });
+        login::open(&provider_for_task, &cfg, wsl)
+    });
+    let r = match task.await {
+        Ok(r) => r,
+        Err(e) => Err(format!("No pude abrir la terminal: {e}")),
+    };
     state
         .login_in_flight
         .lock()
@@ -974,6 +1129,18 @@ async fn install_codex(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<codex_setup::CodexInstallResult, String> {
+    // #92: en modo WSL no se ofrece el instalador de Windows como solución a
+    // una CLI ausente dentro de la distro; la instalación automática en WSL
+    // queda fuera del alcance, y el login ya dirige a instalar allí.
+    let install_cfg = app.state::<AppState>().config.lock().unwrap().clone();
+    if matches!(install_cfg.session_env(), wsl::SessionEnv::Wsl { .. }) {
+        return Err(
+            "El modo WSL no usa el instalador de Codex de Windows: instala Codex dentro \
+             de la distro (p. ej. `sudo npm i -g @openai/codex`). La instalación automática \
+             en WSL queda fuera de alcance."
+                .to_string(),
+        );
+    }
     let label = window.label().to_string();
     if !codex_setup::settings_window_ok(&label) {
         return Err(codex_setup::MSG_WRONG_WINDOW.to_string());
@@ -1133,14 +1300,19 @@ fn migrate_legacy_dir(dir: &std::path::Path, file: &str) {
     }
 }
 
-/// Linux y macOS piden idioma antes de crear la UI principal; Windows no cambia.
-fn locale_picker_needed_on(os: &str, cfg: &AppConfig) -> bool {
-    matches!(os, "linux" | "macos") && !cfg.locale_selected
+/// Linux/macOS conservan su política; Windows sólo pregunta si faltaba la config.
+fn locale_picker_needed_on(os: &str, cfg: &AppConfig, origin: ConfigOrigin) -> bool {
+    !cfg.locale_selected
+        && match os {
+            "linux" | "macos" => true,
+            "windows" => origin == ConfigOrigin::Missing,
+            _ => false,
+        }
 }
 
 /// Gate de producción, compartido por setup y la prueba del target compilado.
-fn locale_picker_needed(cfg: &AppConfig) -> bool {
-    locale_picker_needed_on(std::env::consts::OS, cfg)
+fn locale_picker_needed(cfg: &AppConfig, origin: ConfigOrigin) -> bool {
+    locale_picker_needed_on(std::env::consts::OS, cfg, origin)
 }
 
 /// Destino de una segunda instancia: el selector abierto tiene prioridad (S14).
@@ -1389,7 +1561,12 @@ pub fn run() {
             migrate_legacy_dir(&config_dir, "config.json");
             migrate_legacy_dir(&data_dir, "history.json");
             let config_path = config_dir.join("config.json");
-            let cfg = config::load(&config_path);
+            // On Windows, a fresh install may carry the NSIS language choice (#233).
+            let (cfg, config_origin) = installer_locale::startup_config(
+                std::env::consts::OS,
+                &config_dir,
+                env!("CARGO_PKG_VERSION"),
+            );
             let http = reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .user_agent(concat!("quorb/", env!("CARGO_PKG_VERSION")))
@@ -1408,7 +1585,10 @@ pub fn run() {
                 wsl_homes: wsl::WslHomeCache::default(),
             });
             // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
-            let picker = locale_picker_needed(&app.state::<AppState>().config.lock().unwrap());
+            let picker = locale_picker_needed(
+                &app.state::<AppState>().config.lock().unwrap(),
+                config_origin,
+            );
             if picker {
                 open_locale_picker(app.handle())?;
             } else {
@@ -1530,44 +1710,143 @@ mod tests {
         assert_eq!(widget["create"], serde_json::json!(false));
     }
 
+    struct LocaleStartupFixture {
+        root: std::path::PathBuf,
+    }
+
+    impl LocaleStartupFixture {
+        fn new(tag: &str) -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "quorb-f1-locale-startup-{tag}-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            Self { root }
+        }
+
+        fn file(&self, name: &str) -> std::path::PathBuf {
+            self.root.join(name)
+        }
+    }
+
+    impl Drop for LocaleStartupFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     #[test]
     fn locale_picker_is_required_on_fresh_macos() {
         assert!(
-            locale_picker_needed_on("macos", &AppConfig::default()),
+            locale_picker_needed_on("macos", &AppConfig::default(), ConfigOrigin::Missing),
             "fresh macOS must show the locale picker before the main UI"
         );
     }
 
     #[test]
     fn locale_picker_platform_policy_preserves_existing_choices() {
-        let fresh = AppConfig::default();
-        let chosen = AppConfig {
-            locale_selected: true,
-            ..AppConfig::default()
-        };
-        for (os, needs_picker) in [
-            ("macos", true),
-            ("linux", true),
-            ("windows", false),
-            ("freebsd", false),
-        ] {
-            assert_eq!(locale_picker_needed_on(os, &fresh), needs_picker, "{os}");
-            assert!(!locale_picker_needed_on(os, &chosen), "{os}");
+        let fixture = LocaleStartupFixture::new("platform-policy");
+        let missing = fixture.file("missing.json");
+        let (fresh, fresh_origin) = config::load(&missing);
+        assert!(!missing.exists(), "loading must not create a config");
+
+        let chosen_path = fixture.file("chosen.json");
+        let mut chosen = fresh.clone();
+        chosen.choose_locale("en").unwrap();
+        config::save(&chosen_path, &chosen.sanitized()).unwrap();
+        let (chosen, chosen_origin) = config::load(&chosen_path);
+
+        for (os, needs_picker) in [("macos", true), ("linux", true), ("freebsd", false)] {
+            assert_eq!(
+                locale_picker_needed_on(os, &fresh, fresh_origin),
+                needs_picker,
+                "{os}"
+            );
         }
+        for os in ["macos", "linux", "windows", "freebsd"] {
+            assert!(!locale_picker_needed_on(os, &chosen, chosen_origin), "{os}");
+        }
+        assert!(
+            !missing.exists(),
+            "the startup gate must not persist a choice"
+        );
+    }
+
+    #[test]
+    fn locale_picker_windows_existing_configs_keep_their_startup_policy() {
+        let fixture = LocaleStartupFixture::new("windows-existing");
+        let unselected = serde_json::to_string(&AppConfig::default()).unwrap();
+        for (name, raw) in [
+            (
+                "selected.json",
+                r#"{"locale":"en","localeSelected":true,"refreshMinutes":12}"#,
+            ),
+            ("unselected.json", unselected.as_str()),
+            ("legacy.json", r#"{"locale":"en","refreshMinutes":12}"#),
+            ("corrupt.json", "{ not json"),
+        ] {
+            let path = fixture.file(name);
+            std::fs::write(&path, raw).unwrap();
+            let (cfg, origin) = config::load(&path);
+            assert_eq!(origin, ConfigOrigin::Existing, "{name}");
+            assert!(
+                !locale_picker_needed_on("windows", &cfg, origin),
+                "existing Windows configuration must retain its startup policy: {name}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), raw, "{name}");
+            if name == "unselected.json" {
+                assert!(!cfg.locale_selected);
+                for os in ["linux", "macos"] {
+                    assert!(locale_picker_needed_on(os, &cfg, origin), "{os}");
+                }
+            }
+        }
+
+        let unreadable = fixture.file("read-error.json");
+        std::fs::create_dir(&unreadable).unwrap();
+        let (cfg, origin) = config::load(&unreadable);
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert!(cfg.locale_selected);
+        assert!(!locale_picker_needed_on("windows", &cfg, origin));
+        assert!(unreadable.is_dir());
+        assert_eq!(std::fs::read_dir(&unreadable).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn locale_picker_is_required_on_windows_after_missing_config_load() {
+        let fixture = LocaleStartupFixture::new("windows-missing");
+        let path = fixture.file("config.json");
+        let (fresh, origin) = config::load(&path);
+        assert_eq!(origin, ConfigOrigin::Missing);
+        assert!(!fresh.locale_selected);
+        let needs_picker = locale_picker_needed_on("windows", &fresh, origin);
+        assert!(!path.exists(), "the decision must not create config.json");
+        assert!(
+            needs_picker,
+            "fresh Windows without an installer choice must show the shared locale picker"
+        );
     }
 
     #[test]
     fn locale_picker_production_gate_matches_compiled_target() {
         // Se ejercita el mismo gate que setup, no solo la tabla de plataformas.
         assert_eq!(
-            locale_picker_needed(&AppConfig::default()),
-            cfg!(any(target_os = "linux", target_os = "macos"))
+            locale_picker_needed(&AppConfig::default(), ConfigOrigin::Missing),
+            cfg!(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "windows"
+            ))
         );
         let chosen = AppConfig {
             locale_selected: true,
             ..AppConfig::default()
         };
-        assert!(!locale_picker_needed(&chosen));
+        assert!(!locale_picker_needed(&chosen, ConfigOrigin::Missing));
     }
 
     /// #227: la regla de KWin documentada en docs/build-linux.md §6.2 solo debe
@@ -1863,7 +2142,7 @@ mod tests {
         assert!(!account_session_file_found(&cfg, "openrouter:w1", &home));
     }
 
-    /// Revisión PR #248: el SONDEO no despierta una distro detenida. Con la
+    /// Revisiones PR #248/#253: el SONDEO no despierta una distro detenida. Con la
     /// distro Stopped, `session_resolver` devuelve error ANTES de `resolve_home`
     /// (que es quien lanzaría procesos del guest): la única llamada al
     /// adaptador es la enumeración (F4), que no despierta.
@@ -1897,7 +2176,7 @@ mod tests {
     }
 
     /// Con la distro Running, el resolvedor se construye y su home se cachea
-    /// (revisión PR #248: la transición detenida → en marcha vuelve a leer).
+    /// (revisiones PR #248/#253: la transición detenida → en marcha vuelve a leer).
     #[test]
     fn session_resolver_resolves_when_the_distro_is_running() {
         use crate::wsl::{distro, DistroState, MockWslAdapter, WslAdapter};
@@ -2134,5 +2413,56 @@ mod tests {
         assert_eq!(map.len(), 1);
         assert!(errors.is_empty());
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn locale_gate_handles_empty_and_non_utf8_existing_files() {
+        let fixture = LocaleStartupFixture::new("independent-invalid");
+        for (name, bytes) in [
+            ("empty", &b""[..]),
+            ("non-utf8", &b"\xff"[..]),
+            ("null", &b"null"[..]),
+        ] {
+            let path = fixture.file(name);
+            std::fs::write(&path, bytes).unwrap();
+            let (cfg, origin) = config::load(&path);
+            assert_eq!(origin, ConfigOrigin::Existing, "{name}");
+            assert_eq!(
+                cfg,
+                AppConfig {
+                    locale_selected: true,
+                    ..AppConfig::default()
+                }
+                .sanitized(),
+                "{name}"
+            );
+            for os in ["windows", "linux", "macos"] {
+                assert!(!locale_picker_needed_on(os, &cfg, origin), "{name}: {os}");
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+
+        let (fresh, origin) = config::load(&fixture.file("absent"));
+        for os in ["windows", "linux", "macos"] {
+            assert!(locale_picker_needed_on(os, &fresh, origin), "{os}");
+        }
+        assert!(!locale_picker_needed_on("freebsd", &fresh, origin));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_config_symlink_is_existing_not_fresh() {
+        let fixture = LocaleStartupFixture::new("dangling");
+        let path = fixture.file("config.json");
+        std::os::unix::fs::symlink(fixture.file("unavailable-config.json"), &path).unwrap();
+
+        let (cfg, origin) = config::load(&path);
+        assert_eq!(origin, ConfigOrigin::Existing);
+        assert_eq!(cfg, AppConfig::default().sanitized());
+        assert!(!locale_picker_needed_on("windows", &cfg, origin));
+        // Linux/macOS keep their previous policy for an absent readable target.
+        assert!(locale_picker_needed_on("linux", &cfg, origin));
+        assert!(locale_picker_needed_on("macos", &cfg, origin));
+        assert!(!fixture.file("unavailable-config.json").exists());
     }
 }

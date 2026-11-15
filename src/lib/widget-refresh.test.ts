@@ -66,6 +66,15 @@ describe('widget refresh discriminator', () => {
     expect(envKey(null)).toBe('');
   });
 
+  it('refreshes when the LANGUAGE changes, and not when it stays the same', () => {
+    // Revisión PR #272: el backend traduce los mensajes propios al hacer fetch
+    // y quedan en el informe; sin la locale en la clave el widget seguía
+    // mostrándolos en el idioma anterior hasta el siguiente sondeo.
+    const es = cfg({ locale: 'es' } as Partial<AppConfig>);
+    expect(needsRefresh(es, cfg({ locale: 'en' } as Partial<AppConfig>))).toBe(true);
+    expect(needsRefresh(es, cfg({ locale: 'es' } as Partial<AppConfig>))).toBe(false);
+  });
+
   it('handles a null previous config', () => {
     expect(dataKey(null)).toBe('');
     expect(needsRefresh(null, cfg())).toBe(true);

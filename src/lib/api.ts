@@ -60,8 +60,21 @@ export const api = {
    * `account_session` del backend.
    */
   accountSessionFileExists: (id: string) => invoke<boolean>('account_session', { id }),
-  /** CLIs de login instalados: `{ claude, codex, gemini }` */
-  cliStatus: () => invoke<Record<string, boolean>>('cli_status'),
+  /**
+   * CLIs de login por proveedor: `{ claude, codex, gemini, grok }`. Cada valor
+   * es `ready | missing | stopped | error` (#92): solo `missing` significa
+   * «instalar la CLI»; `stopped` (distro detenida) y `error` (WSL roto) no se
+   * arreglan instalando nada. `env` es el borrador visible en Ajustes
+   * (revisión PR #92, punto 10): si se pasa, la detección consulta ese
+   * entorno y no la config persistida.
+   */
+  cliStatus: (env?: { sessionEnv: 'host' | 'wsl'; wslDistro: string }) =>
+    invoke<Record<string, string>>('cli_status', {
+      // `null` explícito: el comando declara `Option<String>` y sin override
+      // detecta el entorno persistido (widget y llamadas antiguas).
+      sessionEnv: env?.sessionEnv ?? null,
+      wslDistro: env?.wslDistro ?? null,
+    }),
   /**
    * Estado pasivo de la instalación asistida de Codex CLI. Solo lee: nunca
    * ejecuta procesos, red ni escrituras. Comando `codex_setup_status`.

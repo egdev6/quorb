@@ -62,9 +62,161 @@ describe('isConnectionDirty', () => {
     expect(isConnectionDirty(undefined, undefined, { ...provider, credentialsPath: 'work.json' }, provider)).toBe(true);
     expect(isConnectionDirty(undefined, undefined, provider, provider)).toBe(false);
   });
+
+  // El entorno es parte de la conexión (revisión PR #92): cambiar de
+  // Windows a WSL — o de una distro a otra — sin guardar deja la sección
+  // sucia; el login usa lo GUARDADO, no lo que se ve en pantalla.
+  it('detects a sessionEnv switch from host to wsl', () => {
+    expect(
+      isConnectionDirty(
+        account,
+        account,
+        provider,
+        provider,
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+        { sessionEnv: 'host', wslDistro: '' },
+      ),
+    ).toBe(true);
+  });
+
+  it('detects a distro change inside wsl', () => {
+    expect(
+      isConnectionDirty(
+        account,
+        account,
+        provider,
+        provider,
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-24.04' },
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps an unchanged environment clean', () => {
+    expect(
+      isConnectionDirty(
+        account,
+        account,
+        provider,
+        provider,
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
+      ),
+    ).toBe(false);
+  });
 });
 
 describe('createPresencePoller', () => {
+  it.each(['result', 'rejection'] as const)('ignores a stale %s from an overlapping poll', async (stale) => {
+    const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
+    let tick!: () => void;
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
+      onResult,
+      setInterval: (fn) => { tick = fn; return 7; },
+      clearInterval: () => {},
+    });
+    poller.start();
+    tick();
+    expect(requests).toHaveLength(2);
+    requests[1].resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[true]]);
+    if (stale === 'result') requests[0].resolve(false);
+    else requests[0].reject(new Error('stale poll failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[true]]);
+    poller.stop();
+  });
+
+  it.each(['result', 'rejection'] as const)('notifies a completed %s while a newer poll is pending', async (outcome) => {
+    const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
+    let tick!: () => void;
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
+      onResult,
+      setInterval: (fn) => { tick = fn; return 7; },
+      clearInterval: () => {},
+    });
+    poller.start();
+    tick();
+    expect(requests).toHaveLength(2);
+    if (outcome === 'result') requests[0].resolve(false);
+    else requests[0].reject(new Error('poll failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    const first = outcome === 'result' ? false : null;
+    expect(onResult.mock.calls).toEqual([[first]]);
+    requests[1].reject(new Error('latest poll failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[first], [null]]);
+    poller.stop();
+  });
+
+  it('does not retain a confirmed session when consecutive slow checks fail', async () => {
+    const requests: { resolve: (found: boolean) => void; reject: (error: Error) => void }[] = [];
+    let tick!: () => void;
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
+      onResult,
+      setInterval: (fn) => { tick = fn; return 7; },
+      clearInterval: () => {},
+    });
+    const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+    poller.start();
+    requests[0].resolve(true);
+    await flush();
+    tick();
+    tick();
+    requests[1].reject(new Error('slow check failed'));
+    await flush();
+    tick();
+    requests[2].reject(new Error('slow check failed'));
+    await flush();
+    tick();
+    requests[3].reject(new Error('slow check failed'));
+    await flush();
+    poller.stop();
+    expect(requests).toHaveLength(5);
+    expect(onResult.mock.calls).toEqual([[true], [null], [null], [null]]);
+  });
+
+  it('discards old requests and timers after stop and restart', async () => {
+    const requests: ((found: boolean) => void)[] = [];
+    const ticks: (() => void)[] = [];
+    const cleared: number[] = [];
+    const exists = vi.fn(() => new Promise<boolean>((resolve) => requests.push(resolve)));
+    const onResult = vi.fn();
+    const poller = createPresencePoller({
+      exists,
+      onResult,
+      setInterval: (fn) => { ticks.push(fn); return ticks.length; },
+      clearInterval: (handle) => cleared.push(handle),
+    });
+    poller.start();
+    poller.stop();
+    poller.start();
+    expect(cleared).toEqual([1]);
+    ticks[0]();
+    expect(exists).toHaveBeenCalledTimes(2);
+    requests[0](false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).not.toHaveBeenCalled();
+    requests[1](true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult.mock.calls).toEqual([[true]]);
+    poller.stop();
+    expect(cleared).toEqual([1, 2]);
+  });
+
   it('comprueba al arrancar y notifica el resultado vigente', async () => {
     const onResult = vi.fn();
     const poller = createPresencePoller({ exists: async () => true, onResult, setInterval: () => 0, clearInterval: () => {} });
@@ -73,6 +225,35 @@ describe('createPresencePoller', () => {
     await Promise.resolve();
     expect(onResult).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith(true);
+    poller.stop();
+  });
+
+  it('notifica null cuando el sondeo falla (no conserva el último resultado)', async () => {
+    const onResult = vi.fn();
+    let tick: (() => void) | undefined;
+    let attempt = 0;
+    const poller = createPresencePoller({
+      exists: async () => {
+        attempt += 1;
+        if (attempt === 1) return true;
+        throw new Error('wsl caído');
+      },
+      onResult,
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
+      clearInterval: () => {},
+    });
+    poller.start();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledWith(true);
+    // Segunda comprobación que falla → `null` (desconocido), no `true` viejo.
+    tick?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledWith(null);
     poller.stop();
   });
 
@@ -129,20 +310,34 @@ describe('createPresencePoller', () => {
     poller.stop();
   });
 
-  it('un fallo al comprobar no tumba el sondeo', async () => {
+  it('un fallo al comprobar no tumba el sondeo ni conserva el resultado viejo', async () => {
     const onResult = vi.fn();
+    let tick: (() => void) | undefined;
+    let fails = 0;
     const poller = createPresencePoller({
       exists: async () => {
-        throw new Error('boom');
+        // El fallo solo ocurre una vez: el sondeo debe seguir tras él.
+        fails += 1;
+        if (fails === 1) throw new Error('boom');
+        return true;
       },
       onResult,
-      setInterval: () => 0,
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
       clearInterval: () => {},
     });
     poller.start();
     await Promise.resolve();
     await Promise.resolve();
-    expect(onResult).not.toHaveBeenCalled();
+    // El fallo se notifica como desconocido, no se traga en silencio.
+    expect(onResult).toHaveBeenCalledWith(null);
+    // Y el sondeo continúa: el siguiente tick vuelve a comprobar.
+    tick?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledWith(true);
     poller.stop();
   });
 });

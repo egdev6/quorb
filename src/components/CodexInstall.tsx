@@ -1,14 +1,16 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { CODEX_PACKAGE, codexInstallActions, codexInstallView, type CodexInstallAction, type CodexInstallController } from '../lib/codex-install';
+import { t } from '../i18n';
 
 import { ownedHomeDir, useAppName } from '../lib/app-identity';
+import type { Locale } from '../lib/types';
 
 /**
  * Sustituye al aviso de copia solo para Codex: ofrece la instalación asistida
  * (con confirmación nativa del backend) y el rechequeo. Los demás proveedores
  * mantienen su flujo de copiar e instalar a mano.
  */
-export function CodexInstall({ controller, onRecheck }: { controller: CodexInstallController; onRecheck: () => void }) {
+export function CodexInstall({ locale = 'es', controller, onRecheck }: { locale?: Locale; controller: CodexInstallController; onRecheck: () => void }) {
   const appName = useAppName();
   const targetFolder = `%USERPROFILE%\\${ownedHomeDir(appName)}\\tools\\codex-0.162.1`;
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
@@ -38,102 +40,102 @@ export function CodexInstall({ controller, onRecheck }: { controller: CodexInsta
       <span className="eg-notice__text">
         {view.kind === 'loading' && (
           <>
-            <b>Comprobando Codex CLI…</b> Quorb solo consulta el estado del equipo.
+            <b>{t(locale, 'settings.providers.codexInstall.loadingBold')}</b> {t(locale, 'settings.providers.codexInstall.loadingRest')}
           </>
         )}
         {view.kind === 'ready' && (
           <>
-            <b>Falta Codex CLI en este equipo.</b> Quorb puede instalarlo desde aquí: Windows pedirá confirmación antes de instalar nada.
+            <b>{t(locale, 'settings.providers.codexInstall.readyBold')}</b> {t(locale, 'settings.providers.codexInstall.readyRest')}
           </>
         )}
         {view.kind === 'installing' && (
           <>
-            <b>Instalando Codex CLI…</b> Confirma en la ventana de Windows si aparece. Puedes cancelar desde ahí.
+            <b>{t(locale, 'settings.providers.codexInstall.installingBold')}</b> {t(locale, 'settings.providers.codexInstall.installingRest')}
           </>
         )}
         {view.kind === 'installed' && view.justInstalled && (
           <>
-            <b>Codex CLI instalado.</b> La instalación no crea la sesión: usa «Iniciar sesión» cuando quieras.
+            <b>{t(locale, 'settings.providers.codexInstall.installedBold')}</b> {t(locale, 'settings.providers.codexInstall.installedRest')}
           </>
         )}
         {view.kind === 'installed' && !view.justInstalled && (
           <>
-            <b>Codex está instalado; revisa tu comando de login.</b> Quorb ya detecta el CLI en este equipo.
+            <b>{t(locale, 'settings.providers.codexInstall.installedStaleBold')}</b> {t(locale, 'settings.providers.codexInstall.installedStaleRest')}
           </>
         )}
         {view.kind === 'cancelled' && (
           <>
-            <b>Instalación cancelada.</b> No se cambió nada. Puedes intentarlo de nuevo.
+            <b>{t(locale, 'settings.providers.codexInstall.cancelledBold')}</b> {t(locale, 'settings.providers.codexInstall.cancelledRest')}
           </>
         )}
         {view.kind === 'busy' && (
           <>
-            <b>El instalador está trabajando en otra ventana.</b> Espera a que termine; Quorb lo detecta solo.
+            <b>{t(locale, 'settings.providers.codexInstall.busyBold')}</b> {t(locale, 'settings.providers.codexInstall.busyRest')}
           </>
         )}
         {view.kind === 'unsupported' && (
           <>
-            <b>Este sistema no permite la instalación asistida.</b> Está pensada para Windows; puedes instalarlo a mano y Quorb lo detectará.
+            <b>{t(locale, 'settings.providers.codexInstall.unsupportedBold')}</b> {t(locale, 'settings.providers.codexInstall.unsupportedRest')}
           </>
         )}
         {view.kind === 'no-node' && (
           <>
-            <b>No se detecta Node.js y npm.</b> Quorb solo comprueba que existan; la versión (Node.js 22 o superior) la valida el instalador al
-            confirmar. Instálalos y vuelve a comprobar.
+            <b>{t(locale, 'settings.providers.codexInstall.noNodeBold')}</b> {t(locale, 'settings.providers.codexInstall.noNodeRest')}
           </>
         )}
         {view.kind === 'error' && view.origin === 'read' && (
           <>
-            <b>No se pudo consultar el instalador.</b> {view.message} Vuelve a comprobar el estado.
+            <b>{t(locale, 'settings.providers.codexInstall.errorReadBold')}</b> {view.message} {t(locale, 'settings.providers.codexInstall.errorReadRest')}
           </>
         )}
         {view.kind === 'error' && view.origin !== 'read' && (
           <>
-            <b>No se pudo instalar Codex CLI.</b> {view.message} Puedes reintentarlo.
+            <b>{t(locale, 'settings.providers.codexInstall.errorInstallBold')}</b> {view.message} {t(locale, 'settings.providers.codexInstall.errorInstallRest')}
           </>
         )}
       </span>
       <span className="q-cli__cmd">
         {can('install') && (
           <button type="button" className="eg-btn eg-btn--primary eg-btn--sm" onClick={() => void controller.requestInstall()}>
-            Instalar Codex
+            {t(locale, 'settings.providers.codexInstall.install')}
           </button>
         )}
         {view.kind === 'installing' && (
           <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled>
-            Instalando…
+            {t(locale, 'settings.providers.codexInstall.installing')}
           </button>
         )}
         {can('retry') && (
           <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" onClick={() => void controller.requestInstall()}>
-            Reintentar
+            {t(locale, 'settings.providers.codexInstall.retry')}
           </button>
         )}
         {can('recheck') && (
           <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" onClick={recheck}>
-            Volver a comprobar
+            {t(locale, 'settings.providers.codexInstall.recheck')}
           </button>
         )}
         {can('copy') && (
           <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={copyCommand}>
-            Copiar orden
+            {t(locale, 'settings.providers.codexInstall.copy')}
           </button>
         )}
       </span>
       <details className="q-details">
-        <summary>Qué instala exactamente</summary>
+        <summary>{t(locale, 'settings.providers.codexInstall.detailsSummary')}</summary>
         <ul className="q-note">
           <li>
-            Paquete fijado: <code>{CODEX_PACKAGE}</code> desde el registro oficial de npm. No se instala «la última».
+            {t(locale, 'settings.providers.codexInstall.detailsPinnedBefore')}
+            <code>{CODEX_PACKAGE}</code>
+            {t(locale, 'settings.providers.codexInstall.detailsPinnedAfter')}
           </li>
           <li>
-            Carpeta de destino: <code>{targetFolder}</code>, dentro de la carpeta de Quorb. No se toca el npm global ni las variables de entorno.
+            {t(locale, 'settings.providers.codexInstall.detailsFolderBefore')}
+            <code>{targetFolder}</code>
+            {t(locale, 'settings.providers.codexInstall.detailsFolderAfter')}
           </li>
-          <li>Se ignoran los scripts de ciclo de vida del paquete y se valida la versión real antes de darlo por bueno.</li>
-          <li>
-            Antes de instalar, Quorb solo comprueba que Node.js y npm existan (sin ejecutarlos); la versión mínima se valida al confirmar la
-            instalación. No se instala Node ni se piden permisos de administrador.
-          </li>
+          <li>{t(locale, 'settings.providers.codexInstall.detailsScripts')}</li>
+          <li>{t(locale, 'settings.providers.codexInstall.detailsNode')}</li>
         </ul>
       </details>
     </div>

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { emailDefaults, emailReady, patchEmail, persistEmailTestAlerts, sendEmailTest } from './lib/email';
 import type { EmailStatus } from './lib/types';
@@ -244,7 +244,7 @@ export function SecretInput({ id, label, configured, onSaved, hint, locale = 'es
 }
 
 /** Conectar NaN Cloud como la CLI oficial: enlace de un solo uso enviado al correo. */
-function NanConnect({ connected, onChange, account }: { connected: boolean; onChange: () => void; account?: string }) {
+export function NanConnect({ locale = 'es', connected, onChange, account }: { locale?: Locale; connected: boolean; onChange: () => void; account?: string }) {
   const [email, setEmail] = useState('');
   const [link, setLink] = useState('');
   const [step, setStep] = useState<'email' | 'link'>('email');
@@ -266,7 +266,7 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
   if (connected) {
     return (
       <div className="q-inline">
-        <span className="eg-status eg-status--success">Cuenta de NaN Cloud conectada{msg ? ` · ${msg}` : ''}</span>
+        <span className="eg-status eg-status--success">{t(locale, 'settings.providers.nanConnect.connectedAccount')}{msg ? ` · ${msg}` : ''}</span>
         <button
           className="eg-btn eg-btn--destructive eg-btn--sm"
           disabled={busy}
@@ -277,7 +277,7 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
             })
           }
         >
-          Desconectar
+          {t(locale, 'settings.providers.nanConnect.disconnect')}
         </button>
       </div>
     );
@@ -285,10 +285,10 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
 
   return (
     <div className="eg-field">
-      <span className="eg-field__label">Conectar tu cuenta (recomendado)</span>
+      <span className="eg-field__label">{t(locale, 'settings.providers.nanConnect.label')}</span>
       {step === 'email' ? (
         <div className="q-inline">
-          <input type="email" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input type="email" placeholder={t(locale, 'settings.providers.nanConnect.emailPlaceholder')} value={email} onChange={(e) => setEmail(e.target.value)} />
           <button
             className="eg-btn eg-btn--primary"
             disabled={busy || !email.includes('@')}
@@ -296,11 +296,11 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
               run(async () => {
                 await api.nanLoginRequest(email);
                 setStep('link');
-                setMsg('Te hemos enviado un enlace. Cópialo (sin abrirlo) y pégalo aquí.');
+                setMsg(t(locale, 'settings.providers.nanConnect.linkSent'));
               })
             }
           >
-            Enviar enlace
+            {t(locale, 'settings.providers.nanConnect.sendLink')}
           </button>
         </div>
       ) : (
@@ -312,34 +312,31 @@ function NanConnect({ connected, onChange, account }: { connected: boolean; onCh
             onClick={() =>
               run(async () => {
                 const who = await api.nanLoginComplete(link, account);
-                setMsg(`Conectado como ${who}`);
+                setMsg(t(locale, 'settings.providers.nanConnect.connectedAs', { who }));
                 setLink('');
                 onChange();
               })
             }
           >
-            Conectar
+            {t(locale, 'settings.providers.connect')}
           </button>
           <button className="eg-btn eg-btn--ghost" disabled={busy} onClick={() => setStep('email')}>
-            Volver
+            {t(locale, 'settings.providers.nanConnect.back')}
           </button>
         </div>
       )}
-      <small className="eg-field__hint">
-        {msg ??
-          'Igual que «nan auth login --email»: NaN te manda un enlace de un solo uso. No lo abras en el navegador (se gastaría): cópialo y pégalo aquí. La sesión se guarda en el almacén de credenciales del sistema y da los mismos datos que tu dashboard.'}
-      </small>
+      <small className="eg-field__hint">{msg ?? t(locale, 'settings.providers.nanConnect.hint')}</small>
     </div>
   );
 }
 
 /** Muestra las respuestas en crudo de la API de NaN con tu key (para depurar). */
-function NanProbe() {
+export function NanProbe({ locale = 'es' }: { locale?: Locale } = {}) {
   const [out, setOut] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
     <details className="q-details">
-      <summary>Probar la API de NaN con la key</summary>
+      <summary>{t(locale, 'settings.providers.nanProbe.title')}</summary>
       <button
         className="eg-btn eg-btn--ghost"
         disabled={busy}
@@ -354,7 +351,7 @@ function NanProbe() {
           }
         }}
       >
-        {busy ? 'Consultando…' : 'Ver respuestas de /v1/models y /v1/usage'}
+        {busy ? t(locale, 'settings.providers.nanProbe.checking') : t(locale, 'settings.providers.nanProbe.run')}
       </button>
       {out && <pre className="q-pre">{out}</pre>}
     </details>
@@ -362,7 +359,7 @@ function NanProbe() {
 }
 
 /** Contraseña del dashboard de 9Router: se guarda y se prueba el login a la vez. */
-function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolean; baseUrl: string; onChange: () => void }) {
+export function NineRouterConnect({ locale = 'es', connected, baseUrl, onChange }: { locale?: Locale; connected: boolean; baseUrl: string; onChange: () => void }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -374,12 +371,12 @@ function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolea
     try {
       if (!value.trim()) {
         await api.nineRouterLogout();
-        setMsg('9Router desconectado');
+        setMsg(t(locale, 'settings.providers.nineRouterConnect.disconnectedMsg'));
       } else {
         // Prueba contra la URL del borrador: si el usuario cambió «Base URL» sin
         // guardar, el login debe ir a esa, no a la persistida (regresión punto 4).
         setOut(await api.nineRouterLogin(value, baseUrl));
-        setMsg('Conectado');
+        setMsg(t(locale, 'settings.providers.nineRouterConnect.connectedMsg'));
       }
       setPassword('');
       onChange();
@@ -392,28 +389,26 @@ function NineRouterConnect({ connected, baseUrl, onChange }: { connected: boolea
 
   return (
     <details className="q-details" open={!connected}>
-      <summary>{connected ? '9Router conectado · volver a conectar' : 'Conectar con el dashboard'}</summary>
+      <summary>{connected ? t(locale, 'settings.providers.nineRouterConnect.connectedSummary') : t(locale, 'settings.providers.nineRouterConnect.connectSummary')}</summary>
       <div className="q-inline">
         <input
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={connected ? '•••••••• (configurada)' : 'Contraseña del dashboard'}
+          placeholder={connected ? t(locale, 'settings.providers.nineRouterConnect.placeholderConfigured') : t(locale, 'settings.providers.nineRouterConnect.placeholderPassword')}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
         <button className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
-          Guardar y probar
+          {t(locale, 'settings.providers.nineRouterConnect.saveAndTest')}
         </button>
         {connected && (
-          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title="Desconectar 9Router">
-            Quitar
+          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title={t(locale, 'settings.providers.nineRouterConnect.removeTitle')}>
+            {t(locale, 'settings.providers.nineRouterConnect.remove')}
           </button>
         )}
       </div>
-      <small className="eg-field__hint">
-        {msg ?? 'La contraseña del dashboard de 9Router (por defecto «123456» hasta que la cambies). Se guarda en el almacén seguro del sistema.'}
-      </small>
+      <small className="eg-field__hint">{msg ?? t(locale, 'settings.providers.nineRouterConnect.hint')}</small>
       {out && <pre className="q-pre">{out}</pre>}
     </details>
   );
@@ -594,6 +589,55 @@ export function CliMissing({ provider, locale = 'es' }: { provider: AccountProvi
   );
 }
 
+/** Falta la CLI DENTRO de la distro WSL: instrucciones manuales del guest
+ *  (los instaladores de Windows no aplican ahí — revisión PR #92). */
+export function CliMissingWsl({ provider, locale = 'es', wslDistro }: { provider: AccountProvider; locale?: Locale; wslDistro?: string }) {
+  const how = CLI_INSTALL[provider];
+  if (!how) return null;
+  const distro = wslDistro?.trim();
+  // «Ubuntu-22.04» o vacío: el título no debe pegar el nombre sin separador.
+  const namedDistro = distro ? ` «${distro}»` : '';
+  const perProvider: Record<string, string> = {
+    claude: `curl -fsSL https://claude.ai/install.sh | bash`,
+    codex: `npm install -g @openai/codex`,
+    gemini: `npm install -g @google/gemini-cli`,
+    grok: `npm install -g @vibe-kit/grok-cli`,
+  };
+  const cmd = perProvider[provider] ?? '';
+  return (
+    <div className="eg-notice eg-notice--sm eg-notice--warning q-cli" role="status">
+      <span className="eg-notice__text">
+        <b>{t(locale, 'settings.providers.cliMissingWsl.title', { name: how.name, distro: namedDistro })}</b>{' '}
+        {t(locale, 'settings.providers.cliMissingWsl.body')}
+      </span>
+      {cmd && (
+        <span className="q-cli__cmd">
+          <code>{cmd}</code>
+          <CliCopyButton text={cmd} locale={locale} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Botón de copiar reutilizable para comandos (extraído de CliMissing). */
+function CliCopyButton({ text, locale }: { text: string; locale: Locale }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () =>
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  return (
+    <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={copy}>
+      {copied ? t(locale, 'settings.providers.cliMissing.copied') : t(locale, 'settings.providers.cliMissing.copy')}
+    </button>
+  );
+}
+
 /** Lo que necesita el paso de comprobación: lo guardado, las claves y si hay cambios sin guardar. */
 type HealthProps = {
   /** Config guardada: cuando cambia (al guardar) se vuelve a comprobar. */
@@ -763,24 +807,36 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
   );
 }
 
-/** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta. */
-function useCliSession(id: string, active: boolean): boolean {
-  const [connected, setConnected] = useState(false);
+/** ¿Hay sesión del CLI para esta cuenta? Se mira cada 3 s mientras está abierta.
+ *  Los sondeos fallidos se degradan a "no hay fichero confirmado" (revisión PR
+ *  #92, punto 11): jamás se muestra conectada por omisión. */
+function useCliSession(id: string, active: boolean, envKey: string): boolean {
+  const [connected, setConnected] = useState<boolean | null>(false);
   useEffect(() => {
     if (!active) {
       setConnected(false);
       return;
     }
+    // Entorno nuevo (host ↔ WSL o distro distinta): el resultado del sondeo
+    // anterior ya no vale. Se olvida el estado y se arranca un poller NUEVO,
+    // cuya generación descarta las respuestas en vuelo del anterior
+    // (revisión PR #253: dos sondeos solapados no comparten generación).
+    setConnected(null);
     // Presencia del fichero, no validez: al desmontar se para el sondeo y las
     // respuestas en vuelo se descartan (no marca conectada otra cuenta).
     const poller = createPresencePoller({
       exists: () => api.accountSessionFileExists(id),
+      // Un fallo de sondeo deja `null` (desconocido); jamás "conectada" por
+      // omisión (revisión PR #92, punto 11).
       onResult: setConnected,
     });
     poller.start();
     return () => poller.stop();
-  }, [id, active]);
-  return connected;
+  }, [id, active, envKey]);
+  // `null` (sondeo fallido o entorno recién cambiado) se degrada a "no hay
+  // fichero confirmado": la UI nunca muestra el botón "conectada" sin una
+  // prueba vigente del entorno actual.
+  return connected === true;
 }
 
 /**
@@ -799,6 +855,7 @@ function CliConnect({
   codexInstall,
   onCodexRecheck,
   sessionEnv = 'host',
+  wslDistro = '',
 }: {
   /** Idioma de los pasos. */
   locale: Locale;
@@ -815,11 +872,16 @@ function CliConnect({
   codexInstall: CodexInstallController;
   /** Relectura del CLI compartida con la raíz tras una instalación. */
   onCodexRecheck: () => void;
-  /** Entorno elegido (revisión PR #248): en WSL, detección y login siguen
-   *  siendo los de Windows hasta que aterrice #92. */
+  /** Entorno elegido (revisiones PR #248/#253): en WSL, detección y login
+   *  siguen siendo los de Windows hasta que aterrice #92; el sondeo de
+   *  presencia se reinicia al cambiar de entorno. */
   sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
-  const connected = useCliSession(id, persisted);
+  // El entorno del BORRADOR forma parte de la identidad del sondeo: al
+  // cambiarlo, el poller se reinicia con una generación nueva (PR #253).
+  const connected = useCliSession(id, persisted, `${sessionEnv}\u0000${wslDistro}`);
   const [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const connect = async () => {
@@ -852,11 +914,12 @@ function CliConnect({
       health={health}
       codexInstall={codexInstall}
       onCodexRecheck={onCodexRecheck}
+      sessionEnv={sessionEnv}
+      wslDistro={wslDistro}
       connected={connected}
       busy={busy}
       loginError={loginError}
       onConnect={connect}
-      sessionEnv={sessionEnv}
     />
   );
 }
@@ -879,6 +942,7 @@ export function CliConnectView({
   loginError,
   onConnect,
   sessionEnv = 'host',
+  wslDistro = '',
 }: {
   locale: Locale;
   id: string;
@@ -897,26 +961,30 @@ export function CliConnectView({
   /** Diagnóstico del último intento de login que falló. */
   loginError: string | null;
   onConnect: () => void;
-  /** Entorno elegido: en WSL, detección y login aún son los de Windows (#92). */
+  /** Entorno elegido (revisiones PR #92/#248): en WSL no se ofrecen los
+   *  instaladores de Windows y se avisa de que detección/login son los de
+   *  Windows hasta #92. */
   sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
+  const wsl = sessionEnv === 'wsl';
   return (
     <>
-      {sessionEnv === 'wsl' && (
-        <li>
-          {/* Hasta #92 la detección del CLI y el login abren el CLI de HOST:
-              no deben presentarse como si ya corrieran dentro de la distro
-              (revisión PR #248). */}
-          <span className="eg-notice eg-notice--sm eg-notice--warning q-steps__notice" role="status">
-            <span className="eg-notice__text">{t(locale, 'settings.providers.cliConnect.wslHostOnly')}</span>
-          </span>
-        </li>
-      )}
       {cliMissing && (
         <li>
-          <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
-          <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
-          {provider === 'codex' ? <CodexInstall controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+          {wsl ? (
+            // Instaladores de host (Codex asistido, comandos de Windows) NO
+            // aplican dentro de la distro: se ofrecen las instrucciones
+            // manuales del guest (revisión PR #92).
+            <CliMissingWsl provider={provider} locale={locale} wslDistro={wslDistro} />
+          ) : (
+            <>
+              <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
+              <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
+              {provider === 'codex' ? <CodexInstall locale={locale} controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+            </>
+          )}
         </li>
       )}
       <li data-done={connected || undefined}>
@@ -973,6 +1041,7 @@ export function AccountEditor({
   codexInstall,
   onCodexRecheck,
   sessionEnv = 'host',
+  wslDistro = '',
 }: {
   /** Idioma del editor. */
   locale: Locale;
@@ -993,9 +1062,12 @@ export function AccountEditor({
   /** Instalación asistida de Codex, compartida por la raíz y todas las cuentas. */
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
-  /** Entorno elegido (revisión PR #248): en WSL, detección y login son los de
-   *  Windows hasta #92. */
+  /** Entorno elegido (revisiones PR #248/#253): en WSL, detección y login
+   *  son los de Windows hasta #92; el sondeo de presencia se reinicia al
+   *  cambiar de entorno. */
   sessionEnv?: 'host' | 'wsl';
+  /** Distro WSL elegida (informativa en las instrucciones del guest). */
+  wslDistro?: string;
 }) {
   const appName = useAppName();
   const key = (k: SecretKey) => secretKey(k, a.id);
@@ -1031,7 +1103,7 @@ export function AccountEditor({
         </li>
 
         {session && (
-          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} />
+          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} wslDistro={wslDistro} />
         )}
 
         {a.provider === 'cursor' && (
@@ -1089,7 +1161,7 @@ export function AccountEditor({
           <>
             <li data-done={has('nan_session') || has('nan_api_key') || undefined}>
               <b>{t(locale, 'settings.providers.accountEditor.nanTitle')}</b>
-              <NanConnect account={a.id} connected={has('nan_session')} onChange={onSecrets} />
+              <NanConnect locale={locale} account={a.id} connected={has('nan_session')} onChange={onSecrets} />
               <SecretInput locale={locale} id={key('nan_api_key')} label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')} configured={has('nan_api_key')} onSaved={onSecrets} />
             </li>
             <li data-done>
@@ -1326,9 +1398,9 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
   onRefreshMinutes: (minutes: number) => void;
   onSessionEnv: (env: 'host' | 'wsl') => void;
   onWslDistro: (distro: string) => void;
-  /** Plataforma del proceso (UA): el modo WSL solo existe en Windows (revisión
-   *  PR #248, bloqueante). Fuera de Windows no se ofrece guardar WSL, que el
-   *  widget convertiría en un error de `wsl.exe` en cada refresco. */
+  /** Plataforma del proceso (UA): el modo WSL solo existe en Windows
+   *  (revisiones PR #92/#248). Fuera de Windows no se ofrece guardar WSL, que
+   *  el widget convertiría en un error de `wsl.exe` en cada refresco. */
   platform?: Os;
 }) {
   const providerCard = (p: (typeof PROVIDER_TABS)[number]) => (
@@ -1368,8 +1440,9 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
                 {t(locale, 'settings.providers.wslDistro')}
                 <input type="text" value={cfg.wslDistro} placeholder="Ubuntu-22.04" onChange={(e) => onWslDistro(e.target.value)} />
                 <small className="eg-field__hint">
-                  {/* WSL sin distro se resuelve como HOST (config.rs; revisión PR
-                      #248): el campo lo dice hasta que se escribe una distro. */}
+                  {/* WSL sin distro se resuelve como HOST (config.rs;
+                      revisiones PR #92/#248): el campo lo dice hasta que se
+                      escribe una distro. */}
                   {cfg.wslDistro.trim() === ''
                     ? t(locale, 'settings.providers.wslDistroMissing')
                     : t(locale, 'settings.providers.wslDistroHint')}
@@ -2021,7 +2094,7 @@ export function SubscriptionPanel({
   onCodexRecheck,
 }: Pick<PanelProps, 'locale' | 'cfg' | 'set' | 'setVisibility' | 'healthFor'> & {
   p: 'claude' | 'codex' | 'gemini' | 'grok';
-  cli: Record<string, boolean>;
+  cli: Record<string, string>;
   codexInstall: CodexInstallController;
   onCodexRecheck: () => void;
 }) {
@@ -2075,13 +2148,14 @@ export function SubscriptionPanel({
           id={p}
           provider={p}
           loginCommand={cfg[p].loginCommand}
-          cliMissing={cli[p] === false}
+          cliMissing={cli[p] === "missing"}
           persisted
           extra={false}
           health={healthFor(p, !cfg[p].enabled)}
           codexInstall={codexInstall}
           onCodexRecheck={onCodexRecheck}
           sessionEnv={cfg.sessionEnv}
+          wslDistro={cfg.wslDistro}
         />
       </ol>
       <details className="q-details">
@@ -2279,6 +2353,209 @@ export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecre
   );
 }
 
+/** Paneles de APIs y conexiones NaN/9Router (T2c slice 2 C2, #66). Extraídos de
+ *  `Settings()` para poder renderizarlos en pruebas de i18n. Los títulos son marcas
+ *  y no se traducen; tampoco `Base URL` ni los rótulos de consolas de terceros. */
+export function OpenRouterPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.openrouter.kicker')} title="OpenRouter">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
+      <p className="q-note">{t(locale, 'settings.providers.panels.openrouter.note')}</p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.openrouter_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.apiKey')}</b>
+          <SecretInput
+            locale={locale}
+            id="openrouter_api_key"
+            label={t(locale, 'settings.providers.apiKey')}
+            configured={!!secrets.openrouter_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>.</>}
+          />
+        </li>
+        <HealthStep id="openrouter" {...healthFor('openrouter', !cfg.openrouter.enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
+export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.nan.kicker')} title="NaN Builders">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
+      <p className="q-note">
+        {t(locale, 'settings.providers.panels.nan.noteBefore')} <code>/v1/usage</code> {t(locale, 'settings.providers.panels.nan.noteAfter')} <Link href={LINKS.nanDocs}>Docs</Link>
+      </p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets.nan_session || !!secrets.nan_api_key || undefined}>
+          <b>{t(locale, 'settings.providers.panels.nan.stepTitle')}</b>
+          <NanConnect locale={locale} connected={!!secrets.nan_session} onChange={loadSecrets} />
+          <SecretInput
+            locale={locale}
+            id="nan_api_key"
+            label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')}
+            configured={!!secrets.nan_api_key}
+            onSaved={loadSecrets}
+            hint={<>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.nanKeys}>cloud.nan.builders</Link> › API Keys</>}
+          />
+        </li>
+        <li data-done>
+          <b>{t(locale, 'settings.providers.planLabel')}</b>
+          <Field label={t(locale, 'settings.providers.planLabel')}>
+            <select value={cfg.nan.plan} onChange={(e) => set('nan', { plan: e.target.value })}>
+              <option value="community">nan_community</option>
+              <option value="member">nan_member</option>
+              <option value="premium">GLM Premium</option>
+            </select>
+          </Field>
+        </li>
+        <HealthStep id="nan" {...healthFor('nan', !cfg.nan.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.nan.advancedSummary')}</summary>
+        <Field label="Base URL">
+          <input type="text" spellCheck={false} value={cfg.nan.baseUrl} onChange={(e) => set('nan', { baseUrl: e.target.value })} />
+        </Field>
+        <Field label={t(locale, 'settings.providers.panels.nan.billingDayLabel')} hint={t(locale, 'settings.providers.panels.nan.billingDayHint')}>
+          <input type="number" min={1} max={28} value={cfg.nan.billingDay} onChange={(e) => set('nan', { billingDay: Number(e.target.value) || 1 })} />
+        </Field>
+        <NanProbe locale={locale} />
+        <Field label={t(locale, 'settings.providers.panels.nan.usageEndpointLabel')} hint={t(locale, 'settings.providers.panels.nan.usageEndpointHint')}>
+          <input type="text" spellCheck={false} value={cfg.nan.usageUrl ?? ''} onChange={(e) => set('nan', { usageUrl: strOrNull(e.target.value) })} />
+        </Field>
+        <div className="q-cols">
+          <Field label={t(locale, 'settings.providers.panels.nan.pointerUsedLabel')} hint={t(locale, 'settings.providers.panels.nan.pointerUsedHint')}>
+            <input type="text" spellCheck={false} value={cfg.nan.usedPointer ?? ''} onChange={(e) => set('nan', { usedPointer: strOrNull(e.target.value) })} />
+          </Field>
+          <Field label={t(locale, 'settings.providers.panels.nan.pointerLimitLabel')} hint={t(locale, 'settings.providers.panels.nan.pointerLimitHint')}>
+            <input type="text" spellCheck={false} value={cfg.nan.limitPointer ?? ''} onChange={(e) => set('nan', { limitPointer: strOrNull(e.target.value) })} />
+          </Field>
+        </div>
+        <Field label={t(locale, 'settings.providers.panels.nan.usageLabelField')}>
+          <input type="text" value={cfg.nan.usageLabel ?? ''} placeholder={t(locale, 'settings.providers.panels.nan.usageLabelPlaceholder')} onChange={(e) => set('nan', { usageLabel: strOrNull(e.target.value) })} />
+        </Field>
+      </details>
+    </Section>
+  );
+}
+
+export function NineRouterPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.nineRouter.kicker')} title="9Router">
+      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={cfg.nineRouter.enabled} onChange={(v) => setVisibility('nine_router', v)} />
+      <p className="q-note">
+        {t(locale, 'settings.providers.panels.nineRouter.noteBefore')} <b>9Router</b> {t(locale, 'settings.providers.panels.nineRouter.noteAfter')}
+      </p>
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.nineRouter.stepsAria')}>
+        <li data-done={!!secrets.nine_router_password || undefined}>
+          <b>{t(locale, 'settings.providers.panels.nineRouter.connectTitle')}</b>
+          <NineRouterConnect locale={locale} connected={!!secrets.nine_router_password} baseUrl={cfg.nineRouter.baseUrl} onChange={loadSecrets} />
+        </li>
+        <li data-done>
+          <b>{t(locale, 'settings.providers.panels.nineRouter.periodTitle')}</b>
+          <Field label={t(locale, 'settings.providers.panels.nineRouter.periodLabel')} hint={t(locale, 'settings.providers.panels.nineRouter.periodHint')}>
+            <select value={cfg.nineRouter.period} onChange={(e) => set('nineRouter', { period: e.target.value as NineRouterPeriod })}>
+              <option value="today">{t(locale, 'settings.providers.panels.nineRouter.periodToday')}</option>
+              <option value="24h">{t(locale, 'settings.providers.panels.nineRouter.period24h')}</option>
+              <option value="7d">{t(locale, 'settings.providers.panels.nineRouter.period7d')}</option>
+              <option value="30d">{t(locale, 'settings.providers.panels.nineRouter.period30d')}</option>
+              <option value="60d">{t(locale, 'settings.providers.panels.nineRouter.period60d')}</option>
+              <option value="all">{t(locale, 'settings.providers.panels.nineRouter.periodAll')}</option>
+            </select>
+          </Field>
+          <Toggle
+            label={t(locale, 'settings.providers.panels.nineRouter.subprovidersToggle')}
+            checked={cfg.nineRouter.showSubProviders}
+            onChange={(v) => set('nineRouter', { showSubProviders: v })}
+          />
+          <Field label={t(locale, 'settings.providers.panels.nineRouter.minSpendLabel')} hint={t(locale, 'settings.providers.panels.nineRouter.minSpendHint')}>
+            <input
+              type="number"
+              min={0}
+              step="0.5"
+              value={cfg.nineRouter.minSpendUsd}
+              onChange={(e) => set('nineRouter', { minSpendUsd: Math.max(0, Number(e.target.value) || 0) })}
+            />
+          </Field>
+          <Field label={t(locale, 'settings.providers.panels.nineRouter.budgetLabel')} hint={t(locale, 'settings.providers.panels.nineRouter.budgetHint')}>
+            <input
+              type="number"
+              min={0}
+              step="1"
+              value={cfg.nineRouter.monthlyBudgetUsd ?? ''}
+              onChange={(e) => set('nineRouter', { monthlyBudgetUsd: strOrNull(e.target.value) == null ? null : Number(e.target.value) })}
+            />
+          </Field>
+        </li>
+        <HealthStep id="nine_router" {...healthFor('nine_router', !cfg.nineRouter.enabled)} />
+      </ol>
+      <details className="q-details">
+        <summary>{t(locale, 'settings.providers.panels.nineRouter.advancedSummary')}</summary>
+        <Field label="Base URL" hint={t(locale, 'settings.providers.panels.nineRouter.baseUrlHint')}>
+          <input type="text" spellCheck={false} value={cfg.nineRouter.baseUrl} onChange={(e) => set('nineRouter', { baseUrl: e.target.value })} />
+        </Field>
+      </details>
+      {(() => {
+        // Suborbes de 9Router ocultados desde el widget: se pueden recuperar aquí.
+        const hidden = hiddenNineRouterIds(cfg.hiddenProviders);
+        if (hidden.length === 0) return null;
+        return (
+          <div className="eg-field">
+            <span className="eg-field__label">{t(locale, 'settings.providers.panels.nineRouter.hiddenTitle')}</span>
+            <div className="q-chips">
+              {hidden.map((id) => (
+                <button key={id} type="button" className="eg-chip" onClick={() => set('hiddenProviders', revealIds(cfg.hiddenProviders, [id]))}>
+                  {nineRouterSubName(id)} · {t(locale, 'settings.providers.panels.nineRouter.hiddenShow')}
+                </button>
+              ))}
+            </div>
+            <small className="eg-field__hint">{t(locale, 'settings.providers.panels.nineRouter.hiddenHint')}</small>
+          </div>
+        );
+      })()}
+    </Section>
+  );
+}
+
+export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor, tab }: PanelProps & { tab: 'anthropic_api' | 'openai_api' }) {
+  const k = tab === 'anthropic_api' ? 'anthropicApi' : 'openaiApi';
+  const secret: SecretKey = tab === 'anthropic_api' ? 'anthropic_admin_key' : 'openai_admin_key';
+  return (
+    <Section kicker={t(locale, 'settings.providers.panels.adminApi.kicker')} title={tab === 'anthropic_api' ? 'Anthropic API' : 'OpenAI API'}>
+      <Toggle label={t(locale, 'settings.providers.panels.adminApi.showSpend')} checked={isAccountVisible(cfg, tab, cfg[k].enabled)} onChange={(v) => setVisibility(tab, v)} />
+      <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
+        <li data-done={!!secrets[secret] || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.adminKey')}</b>
+          <SecretInput
+            locale={locale}
+            id={secret}
+            label={tab === 'anthropic_api' ? 'Admin API key (sk-ant-admin…)' : t(locale, 'settings.providers.accountEditor.adminKey')}
+            configured={!!secrets[secret]}
+            onSaved={loadSecrets}
+            hint={
+              tab === 'anthropic_api' ? (
+                <>
+                  {t(locale, 'settings.providers.panels.adminApi.anthropicHintBefore')} <Link href={LINKS.anthropicAdmin}>Admin key</Link>{' '}
+                  {t(locale, 'settings.providers.panels.adminApi.anthropicHintAfter')}
+                </>
+              ) : (
+                <>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openaiAdmin}>Organization › Admin keys</Link>.</>
+              )
+            }
+          />
+        </li>
+        <li data-done={cfg[k].monthlyBudgetUsd != null || undefined}>
+          <b>{t(locale, 'settings.providers.accountEditor.budgetTitle')}</b>
+          <Field label={t(locale, 'settings.providers.accountEditor.budgetLabel')}>
+            <input type="number" min={0} step="any" value={cfg[k].monthlyBudgetUsd ?? ''} onChange={(e) => set(k, { monthlyBudgetUsd: numOrNull(e.target.value) })} />
+          </Field>
+        </li>
+        <HealthStep id={tab} {...healthFor(tab, !cfg[k].enabled)} />
+      </ol>
+    </Section>
+  );
+}
+
 
 export function Settings() {
   const appName = useAppName();
@@ -2289,31 +2566,63 @@ export function Settings() {
   const [secrets, setSecrets] = useState<SecretStatus>({});
   // CLIs de login instalados (Claude Code, Codex, Gemini): se avisa antes de pulsar
   // «Iniciar sesión» y se detecta solo cuando se instala (cada 5 s o al volver a la ventana).
-  const [cli, setCli] = useState<Record<string, boolean>>({});
+  // Estado por proveedor: 'ready' | 'missing' | 'stopped' | 'error' (#92).
+  // Solo 'missing' propone instalar la CLI: una distro detenida (stopped) o
+  // un fallo de WSL (error) no se arreglan instalando nada.
+  const [cli, setCli] = useState<Record<string, string>>({});
+  // El ENTORNO DEL BORRADOR (host/WSL + distro) es el que se detecta (revisión
+  // PR #92, punto 10): `cli_status` refleja lo que el usuario ve, no la config
+  // persistida. Cambiar el entorno en el selector re-sondea; el objeto se
+  // memoiza para que un render no reinicie el sondeo.
+  const cliSessionEnv = cfg?.sessionEnv;
+  const cliWslDistro = cfg?.wslDistro;
+  const cliEnv = useMemo(
+    () => (cliSessionEnv === undefined ? undefined : { sessionEnv: cliSessionEnv, wslDistro: cliWslDistro ?? '' }),
+    [cliSessionEnv, cliWslDistro],
+  );
+  // Ref del entorno: el controlador de instalación de Codex se crea una sola
+  // vez y conserva la clausura del primer render; el recheck debe leer el
+  // entorno VIGENTE, no el de entonces.
+  const cliEnvRef = useRef(cliEnv);
+  cliEnvRef.current = cliEnv;
+  // UNA secuencia para TODAS las lecturas de `cli_status` — intervalo, foco y
+  // `cliRecheck` (revisión PR #253): solo la última petición lanzada escribe
+  // el estado, así una respuesta tardía no pisa la del entorno nuevo ni
+  // deshabilita «Guardar»/el login con un `missing` viejo.
+  const cliSeqRef = useRef(0);
+  const requestCliStatus = useCallback(() => {
+    const n = ++cliSeqRef.current;
+    return api
+      .cliStatus(cliEnvRef.current)
+      .then((st) => {
+        if (n === cliSeqRef.current) setCli(st);
+      })
+      .catch(() => {});
+  }, []);
   // Relectura puntual del CLI fuera del intervalo: la usa la instalación asistida
   // al terminar para habilitar el login sin depender de que la ventana siga abierta.
   const cliRecheck = useCallback(() => {
-    api
-      .cliStatus()
-      .then(setCli)
-      .catch(() => {});
-  }, []);
+    void requestCliStatus();
+  }, [requestCliStatus]);
   useEffect(() => {
     let alive = true;
-    const check = () =>
-      api
-        .cliStatus()
-        .then((st) => alive && setCli(st))
-        .catch(() => {});
+    // Entorno nuevo: el estado anterior es de otro sitio; no se muestra hasta
+    // que llegue la lectura vigente (y no puede bloquear el login entremedias).
+    setCli({});
+    const check = () => {
+      if (alive) void requestCliStatus();
+    };
     check();
     const t = window.setInterval(check, 5000);
     window.addEventListener('focus', check);
     return () => {
       alive = false;
+      // Descarta lo que esté en vuelo: solo la secuencia nueva escribe.
+      cliSeqRef.current += 1;
       window.clearInterval(t);
       window.removeEventListener('focus', check);
     };
-  }, []);
+  }, [cliEnv, requestCliStatus]);
   // Controlador de la instalación asistida de Codex: vive en la raíz de Ajustes
   // para seguir vivo si el aviso del CLI desaparece (o se desmonta) antes de que
   // resuelva la instalación. Nunca instala por sí solo: solo lee estado pasivo.
@@ -2648,7 +2957,18 @@ export function Settings() {
   const sectionDirty = (id: string) => {
     const acc = cfg.accounts.find((a) => a.id === id);
     const k = configKeyFor(acc?.provider ?? id);
-    return isConnectionDirty(acc, baseline?.accounts.find((a) => a.id === id), k ? cfg[k] : undefined, k ? baseline?.[k] : undefined);
+    // El entorno (host/WSL + distro) es parte de la conexión (revisión PR
+    // #92): cambiarlo y pulsar iniciar sesión sin guardar usaría el entorno
+    // guardado, no el que se ve.
+    const envOf = (c: typeof cfg) => ({ sessionEnv: c.sessionEnv, wslDistro: c.wslDistro });
+    return isConnectionDirty(
+      acc,
+      baseline?.accounts.find((a) => a.id === id),
+      k ? cfg[k] : undefined,
+      k ? baseline?.[k] : undefined,
+      envOf(cfg),
+      baseline ? envOf(baseline) : undefined,
+    );
   };
   const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save, locale });
   const panel = { locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor };
@@ -2759,7 +3079,9 @@ export function Settings() {
           onRemove={() => removeAccount(selAccount)}
           onSecrets={loadSecrets}
           health={healthFor(selAccount.id, !selAccount.enabled)}
-          cliMissing={cli[selAccount.provider] === false}
+          cliMissing={cli[selAccount.provider] === "missing"}
+          sessionEnv={cfg.sessionEnv}
+          wslDistro={cfg.wslDistro}
           loginCommand={
             selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini' || selAccount.provider === 'grok'
               ? cfg[selAccount.provider].loginCommand
@@ -2767,7 +3089,6 @@ export function Settings() {
           }
           codexInstall={codexInstaller}
           onCodexRecheck={cliRecheck}
-          sessionEnv={cfg.sessionEnv}
         />
       )}
       {!selAccount && (
@@ -2783,207 +3104,17 @@ export function Settings() {
       {tab === 'copilot' && <CopilotPanel {...panel} />}
 
       {tab === 'minimax' && <MiniMaxPanel {...panel} />}
-      {tab === 'openrouter' && (
-        <Section kicker="Pago por uso · API oficial" title="OpenRouter">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
-          <p className="q-note">Gasto del mes y de hoy, límite de la key (si tiene) y saldo de la cuenta.</p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.openrouter_api_key || undefined}>
-              <b>API key</b>
-              <SecretInput
-                locale={locale}
-                id="openrouter_api_key"
-                label="API key"
-                configured={!!secrets.openrouter_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>.</>}
-              />
-            </li>
-            <HealthStep id="openrouter" {...healthFor('openrouter', !cfg.openrouter.enabled)} />
-          </ol>
-        </Section>
-      )}
+      {tab === 'openrouter' && <OpenRouterPanel {...panel} />}
 
       {tab === 'zai' && <ZaiPanel {...panel} />}
 
       {tab === 'opencode_go' && <OpenCodeGoPanel {...panel} />}
 
-      {tab === 'nan' && (
-        <Section kicker="Suscripción · cuenta o API key" title="NaN Builders">
-          <Toggle label="Mostrar en el widget" checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
-          <p className="q-note">
-            Con la cuenta conectada ves lo mismo que en tu dashboard: tokens usados frente a la cuota de cada modelo, cuándo se reinicia y la serie
-            diaria. Sin cuenta, la API key usa <code>/v1/usage</code> y las cuotas publicadas. <Link href={LINKS.nanDocs}>Docs</Link>
-          </p>
-          <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-            <li data-done={!!secrets.nan_session || !!secrets.nan_api_key || undefined}>
-              <b>Conecta tu cuenta o pega una API key</b>
-              <NanConnect connected={!!secrets.nan_session} onChange={loadSecrets} />
-              <SecretInput
-                locale={locale}
-                id="nan_api_key"
-                label="API key (alternativa)"
-                configured={!!secrets.nan_api_key}
-                onSaved={loadSecrets}
-                hint={<>Créala en <Link href={LINKS.nanKeys}>cloud.nan.builders</Link> › API Keys</>}
-              />
-            </li>
-            <li data-done>
-              <b>Plan</b>
-              <Field label="Plan">
-                <select value={cfg.nan.plan} onChange={(e) => set('nan', { plan: e.target.value })}>
-                  <option value="community">nan_community</option>
-                  <option value="member">nan_member</option>
-                  <option value="premium">GLM Premium</option>
-                </select>
-              </Field>
-            </li>
-            <HealthStep id="nan" {...healthFor('nan', !cfg.nan.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · URL, facturación y endpoint de consumo</summary>
-            <Field label="Base URL">
-              <input type="text" spellCheck={false} value={cfg.nan.baseUrl} onChange={(e) => set('nan', { baseUrl: e.target.value })} />
-            </Field>
-            <Field label="Día de inicio de facturación" hint="Solo para GLM 5.3 (cuenta por periodo de Stripe) cuando usas la API key.">
-              <input type="number" min={1} max={28} value={cfg.nan.billingDay} onChange={(e) => set('nan', { billingDay: Number(e.target.value) || 1 })} />
-            </Field>
-            <NanProbe />
-            <Field label="Endpoint de consumo · URL" hint="Se llama con tu key como Bearer y debe devolver JSON.">
-              <input type="text" spellCheck={false} value={cfg.nan.usageUrl ?? ''} onChange={(e) => set('nan', { usageUrl: strOrNull(e.target.value) })} />
-            </Field>
-            <div className="q-cols">
-              <Field label="JSON Pointer · usado" hint="p. ej. /usage/used_tokens">
-                <input type="text" spellCheck={false} value={cfg.nan.usedPointer ?? ''} onChange={(e) => set('nan', { usedPointer: strOrNull(e.target.value) })} />
-              </Field>
-              <Field label="JSON Pointer · límite" hint="p. ej. /usage/quota_tokens">
-                <input type="text" spellCheck={false} value={cfg.nan.limitPointer ?? ''} onChange={(e) => set('nan', { limitPointer: strOrNull(e.target.value) })} />
-              </Field>
-            </div>
-            <Field label="Etiqueta">
-              <input type="text" value={cfg.nan.usageLabel ?? ''} placeholder="Consumo" onChange={(e) => set('nan', { usageLabel: strOrNull(e.target.value) })} />
-            </Field>
-          </details>
-        </Section>
-      )}
+      {tab === 'nan' && <NanPanel {...panel} />}
 
-      {tab === 'nine_router' && (
-        <Section kicker="Pasarela local · uso agregado" title="9Router">
-            <Toggle
-              label="Mostrar en el widget"
-              checked={cfg.nineRouter.enabled}
-              onChange={(v) => setVisibility('nine_router', v)}
-            />
-          <p className="q-note">
-            Quorb lee el uso y el gasto que <b>9Router</b> ya registra en tu equipo: peticiones, tokens y coste por proveedor del periodo. Además del
-            orbe agregado, cada proveedor que haya visto (Claude, Kiro, GLM…) aparece como su propia cuenta.
-          </p>
-          <ol className="q-steps" aria-label="Cómo conectar 9Router">
-            <li data-done={!!secrets.nine_router_password || undefined}>
-              <b>Conecta tu dashboard local</b>
-              <NineRouterConnect connected={!!secrets.nine_router_password} baseUrl={cfg.nineRouter.baseUrl} onChange={loadSecrets} />
-            </li>
-            <li data-done>
-              <b>Periodo y desglose</b>
-              <Field label="Periodo de uso" hint="Rango que muestra el orbe y su historial.">
-                <select value={cfg.nineRouter.period} onChange={(e) => set('nineRouter', { period: e.target.value as NineRouterPeriod })}>
-                  <option value="today">Hoy</option>
-                  <option value="24h">Últimas 24 h</option>
-                  <option value="7d">Últimos 7 días</option>
-                  <option value="30d">Últimos 30 días</option>
-                  <option value="60d">Últimos 60 días</option>
-                  <option value="all">Todo</option>
-                </select>
-              </Field>
-              <Toggle
-                label="Mostrar cada sub-proveedor como su propia cuenta"
-                checked={cfg.nineRouter.showSubProviders}
-                onChange={(v) => set('nineRouter', { showSubProviders: v })}
-              />
-              <Field label="Gasto mínimo por sub-proveedor (USD)" hint="No muestra un sub-orbe hasta que su gasto en el periodo supere esta cifra. 0 = cualquiera que gaste.">
-                <input
-                  type="number"
-                  min={0}
-                  step="0.5"
-                  value={cfg.nineRouter.minSpendUsd}
-                  onChange={(e) => set('nineRouter', { minSpendUsd: Math.max(0, Number(e.target.value) || 0) })}
-                />
-              </Field>
-              <Field label="Presupuesto (USD)" hint="Opcional: pinta la barra de gasto del periodo frente al tope que pongas.">
-                <input
-                  type="number"
-                  min={0}
-                  step="1"
-                  value={cfg.nineRouter.monthlyBudgetUsd ?? ''}
-                  onChange={(e) => set('nineRouter', { monthlyBudgetUsd: strOrNull(e.target.value) == null ? null : Number(e.target.value) })}
-                />
-              </Field>
-            </li>
-            <HealthStep id="nine_router" {...healthFor('nine_router', !cfg.nineRouter.enabled)} />
-          </ol>
-          <details className="q-details">
-            <summary>Avanzado · dirección del servidor</summary>
-            <Field label="Base URL" hint="Dónde escucha 9Router (por defecto http://localhost:20128).">
-              <input type="text" spellCheck={false} value={cfg.nineRouter.baseUrl} onChange={(e) => set('nineRouter', { baseUrl: e.target.value })} />
-            </Field>
-          </details>
-          {(() => {
-            // Suborbes de 9Router ocultados desde el widget: se pueden recuperar aquí.
-            const hidden = hiddenNineRouterIds(cfg.hiddenProviders);
-            if (hidden.length === 0) return null;
-            return (
-              <div className="eg-field">
-                <span className="eg-field__label">Suborbes ocultos de 9Router</span>
-                <div className="q-chips">
-                  {hidden.map((id) => (
-                    <button key={id} type="button" className="eg-chip" onClick={() => set('hiddenProviders', revealIds(cfg.hiddenProviders, [id]))}>
-                      {nineRouterSubName(id)} · mostrar
-                    </button>
-                  ))}
-                </div>
-                <small className="eg-field__hint">Los ocultaste desde su panel en la tira. Pulsa para volver a mostrarlos.</small>
-              </div>
-            );
-          })()}
-        </Section>
-      )}
+      {tab === 'nine_router' && <NineRouterPanel {...panel} />}
 
-      {(tab === 'anthropic_api' || tab === 'openai_api') &&
-        (() => {
-          const k = tab === 'anthropic_api' ? 'anthropicApi' : 'openaiApi';
-          const secret: SecretKey = tab === 'anthropic_api' ? 'anthropic_admin_key' : 'openai_admin_key';
-          return (
-            <Section kicker="Pago por uso · Admin key" title={tab === 'anthropic_api' ? 'Anthropic API' : 'OpenAI API'}>
-              <Toggle label="Mostrar gasto del mes" checked={isAccountVisible(cfg, tab, cfg[k].enabled)} onChange={(v) => setVisibility(tab, v)} />
-              <ol className="q-steps" aria-label="Cómo conectar la cuenta">
-                <li data-done={!!secrets[secret] || undefined}>
-                  <b>Admin key</b>
-                  <SecretInput
-                    locale={locale}
-                    id={secret}
-                    label={tab === 'anthropic_api' ? 'Admin API key (sk-ant-admin…)' : 'Admin key'}
-                    configured={!!secrets[secret]}
-                    onSaved={loadSecrets}
-                    hint={
-                      tab === 'anthropic_api' ? (
-                        <>Las APIs de coste no admiten OAuth: hace falta una <Link href={LINKS.anthropicAdmin}>Admin key</Link> (solo lectura de la organización).</>
-                      ) : (
-                        <>Créala en <Link href={LINKS.openaiAdmin}>Organization › Admin keys</Link>.</>
-                      )
-                    }
-                  />
-                </li>
-                <li data-done={cfg[k].monthlyBudgetUsd != null || undefined}>
-                  <b>Presupuesto mensual (opcional)</b>
-                  <Field label="USD al mes">
-                    <input type="number" min={0} step="any" value={cfg[k].monthlyBudgetUsd ?? ''} onChange={(e) => set(k, { monthlyBudgetUsd: numOrNull(e.target.value) })} />
-                  </Field>
-                </li>
-                <HealthStep id={tab} {...healthFor(tab, !cfg[k].enabled)} />
-              </ol>
-            </Section>
-          );
-        })()}
+      {(tab === 'anthropic_api' || tab === 'openai_api') && <AdminApiPanel {...panel} tab={tab} />}
         </>
       )}
                   </InDrawer.Provider>

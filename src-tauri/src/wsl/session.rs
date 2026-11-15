@@ -18,6 +18,7 @@
 //!   disco; ninguno importa el valor a otro lado.
 
 use super::{guest_path_problem, join_guest_path, WslAdapter, WslError};
+use crate::i18n::Locale;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -76,19 +77,33 @@ pub struct SessionResolver {
     adapter: Arc<dyn WslAdapter>,
     /// Home del entorno elegido: el del host, o el del usuario de la distro.
     home: PathBuf,
+    /// Locale de la app: los mensajes de sesión (`Absent`, `Unreadable`)
+    /// nacen en el idioma activo (L4, #66).
+    locale: Locale,
 }
 
 impl SessionResolver {
     /// `home` es el home del entorno: el del host en modo host, o el del
     /// usuario por defecto de la distro (lo resuelve `resolve_home`).
-    pub fn new(env: SessionEnv, adapter: Arc<dyn WslAdapter>, home: PathBuf) -> Self {
-        SessionResolver { env, adapter, home }
+    /// `locale` traduce los mensajes de sesión al idioma activo.
+    pub fn new(
+        env: SessionEnv,
+        adapter: Arc<dyn WslAdapter>,
+        home: PathBuf,
+        locale: Locale,
+    ) -> Self {
+        SessionResolver {
+            env,
+            adapter,
+            home,
+            locale,
+        }
     }
 
     /// Resolvedor del entorno host: lee del disco local con el home del host.
     /// El `adapter` no se usa en este modo (queda por si el entorno cambia).
-    pub fn for_host(adapter: Arc<dyn WslAdapter>, home: PathBuf) -> Self {
-        SessionResolver::new(SessionEnv::Host, adapter, home)
+    pub fn for_host(adapter: Arc<dyn WslAdapter>, home: PathBuf, locale: Locale) -> Self {
+        SessionResolver::new(SessionEnv::Host, adapter, home, locale)
     }
 
     /// Resolvedor de la distro elegida (#91): la sesión se resuelve y se lee
@@ -98,8 +113,13 @@ impl SessionResolver {
     /// `resolve_home` (F7): este constructor no hace I/O, así que puede
     /// fallar quien lo llama con un mensaje acorde al contexto (la UI, la
     /// línea de comandos) en vez de un error genérico de WSL.
-    pub fn for_wsl(adapter: Arc<dyn WslAdapter>, distro: String, home: PathBuf) -> Self {
-        SessionResolver::new(SessionEnv::Wsl { distro }, adapter, home)
+    pub fn for_wsl(
+        adapter: Arc<dyn WslAdapter>,
+        distro: String,
+        home: PathBuf,
+        locale: Locale,
+    ) -> Self {
+        SessionResolver::new(SessionEnv::Wsl { distro }, adapter, home, locale)
     }
 
     /// El home del entorno elegido.
@@ -162,23 +182,30 @@ impl SessionResolver {
         match &self.env {
             SessionEnv::Host => {
                 if !path.is_file() {
-                    return Err(SessionError::Absent(format!(
-                        "No encuentro credenciales en {}",
-                        path.display()
+                    return Err(SessionError::Absent(crate::i18n::credentials_not_found_at(
+                        self.locale,
+                        &path.display().to_string(),
                     )));
                 }
                 std::fs::read_to_string(path).map_err(|e| {
-                    SessionError::Unreadable(format!("No puedo leer {}: {e}", path.display()))
+                    SessionError::Unreadable(crate::i18n::cannot_read(
+                        self.locale,
+                        &path.display().to_string(),
+                        &e.to_string(),
+                    ))
                 })
             }
             SessionEnv::Wsl { distro } => match self.adapter.read_file(distro, path) {
                 Ok(contents) => Ok(contents),
                 // El fichero no existe en la distro: es un "necesita login",
                 // no un fallo de WSL.
-                Err(WslError::FileNotFound(_)) => Err(SessionError::Absent(format!(
-                    "No encuentro credenciales en {distro}: {}",
-                    path.display()
-                ))),
+                Err(WslError::FileNotFound(_)) => Err(SessionError::Absent(
+                    crate::i18n::credentials_not_found_in_distro(
+                        self.locale,
+                        distro,
+                        &path.display().to_string(),
+                    ),
+                )),
                 // Distro desconocida / WSL sin instalar: el fallo es del
                 // subsistema, y la acción correcta es distinta de "login".
                 Err(e) => Err(SessionError::Wsl(e)),
@@ -200,8 +227,10 @@ impl SessionResolver {
         let display = path.display().to_string();
         match tokio::task::spawn_blocking(move || me.read(&path)).await {
             Ok(result) => result,
-            Err(e) => Err(SessionError::Unreadable(format!(
-                "No puedo leer {display}: {e}"
+            Err(e) => Err(SessionError::Unreadable(crate::i18n::cannot_read(
+                self.locale,
+                &display,
+                &e.to_string(),
             ))),
         }
     }
@@ -219,6 +248,7 @@ mod tests {
             SessionEnv::Host,
             mock.clone(),
             PathBuf::from("/home/hostuser"),
+            Locale::Es,
         );
         let f = std::env::temp_dir().join("quorb-session-host-test.json");
         std::fs::write(&f, b"{}").expect("escribe fixture");
@@ -233,9 +263,26 @@ mod tests {
             SessionEnv::Host,
             mock.clone(),
             PathBuf::from("/home/hostuser"),
+            Locale::Es,
         );
         let missing = PathBuf::from("/no/existe/quorb-creds.json");
         assert!(matches!(r.read(&missing), Err(SessionError::Absent(_))));
+    }
+
+    /// L4 (#66): el mensaje de «sin credenciales» nace en la locale del
+    /// resolvedor — inglés cuando la app está en `en`, con la ruta literal.
+    #[test]
+    fn absent_messages_follow_the_resolver_locale() {
+        let mock = Arc::new(MockWslAdapter::new());
+        let host =
+            SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"), Locale::En);
+        let missing = PathBuf::from("/no/existe/quorb-creds-en.json");
+        assert_eq!(
+            host.read(&missing),
+            Err(SessionError::Absent(
+                "No credentials found in /no/existe/quorb-creds-en.json".into()
+            ))
+        );
     }
 
     /// #91 (camino 1): el MISMO path significa dos cosas según el entorno — en
@@ -252,13 +299,15 @@ mod tests {
             "{\"origen\":\"distro\"}".to_string(),
         );
 
-        let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
+        let host =
+            SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"), Locale::Es);
         assert_eq!(host.read(&path).expect("lee host"), "{\"origen\":\"host\"}");
 
         let wsl = SessionResolver::for_wsl(
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         assert_eq!(
             wsl.read(&path).expect("lee distro"),
@@ -277,12 +326,14 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         assert_eq!(
             wsl.default_path(guest_relative(&[".claude", ".credentials.json"]).as_path()),
             PathBuf::from("/home/user/.claude/.credentials.json")
         );
-        let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
+        let host =
+            SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"), Locale::Es);
         assert_eq!(
             host.default_path(guest_relative(&[".codex", "auth.json"]).as_path()),
             PathBuf::from("/home/hostuser/.codex/auth.json")
@@ -300,6 +351,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         for relative in [
             ".claude/.credentials.json",
@@ -330,6 +382,7 @@ mod tests {
             },
             mock.clone(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let contents = r
             .read(Path::new("/home/user/.claude/.credentials.json"))
@@ -351,6 +404,7 @@ mod tests {
             },
             mock.clone(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         // El fichero de Claude no está en la distro: "necesita login", no
         // un fallo de WSL.
@@ -371,6 +425,7 @@ mod tests {
             },
             mock.clone(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let err = r
             .read(Path::new("/home/user/.claude/.credentials.json"))
@@ -385,6 +440,7 @@ mod tests {
             SessionEnv::Host,
             mock.clone(),
             PathBuf::from("/home/hostuser"),
+            Locale::Es,
         );
         let p = r
             .resolve(
@@ -402,6 +458,7 @@ mod tests {
             SessionEnv::Host,
             mock.clone(),
             PathBuf::from("/home/hostuser"),
+            Locale::Es,
         );
         let p = r
             .resolve(Some("   "), Path::new("/home/u/default.json"))
@@ -420,6 +477,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         for bad in [
             r"\\wsl.localhost\Ubuntu\home\user\.claude\.credentials.json",
@@ -442,7 +500,8 @@ mod tests {
             )
             .is_ok());
         // En host, la ruta explícita de Windows sigue siendo válida (legado).
-        let host = SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"));
+        let host =
+            SessionResolver::for_host(mock.clone(), PathBuf::from("/home/hostuser"), Locale::Es);
         assert_eq!(
             host.resolve(
                 Some(r"C:\Users\yo\.claude\.credentials.json"),
@@ -468,6 +527,7 @@ mod tests {
             mock.clone(),
             "Ubuntu-22.04".into(),
             PathBuf::from("/home/user"),
+            Locale::Es,
         );
         let path = PathBuf::from("/home/user/.claude/.credentials.json");
         let rt = tokio::runtime::Builder::new_current_thread()
