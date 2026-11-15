@@ -177,6 +177,17 @@ const liveRatio = (fallback: number) => {
   return Number.isFinite(ratio) && ratio > 0 ? ratio : fallback;
 };
 
+/**
+ * Cancels the close of the panel and forgets its id (#264/S21).
+ *
+ * With the id gone, "is a close pending?" can be answered: an exit that
+ * repeats while a close is already running must not push that close back.
+ */
+function cancelClose(timer: { current: number | undefined }) {
+  window.clearTimeout(timer.current);
+  timer.current = undefined;
+}
+
 export function Widget() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [reports, setReports] = useState<UsageReport[]>([]);
@@ -290,10 +301,10 @@ export function Widget() {
       scheduleClose: () => {
         // Direct close timer: never gated by the DOM-only presence, which is
         // exactly what gets stuck on macOS.
-        window.clearTimeout(closeTimer.current);
-        closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
+        cancelClose(closeTimer);
+        armClose(CLOSE_DELAY);
       },
-      cancelClose: () => window.clearTimeout(closeTimer.current),
+      cancelClose: () => cancelClose(closeTimer),
     }),
   ).current;
   const shown = useRef(false);
@@ -337,11 +348,18 @@ export function Widget() {
   /** A pointer transition reported by one of the two surfaces. */
   const applyHover = (event: HoverTransition) => {
     const at = Date.now();
-    const next = nextPointerTarget(hoverPresence(), { ...event, at });
+    const previous = hoverPresence();
+    const next = nextPointerTarget(previous, { ...event, at });
+    // #264/S21: an exit that arrives with the pointer already outside and a
+    // close already running does not re-arm it: the close that is running is
+    // the one that closes the panel, and re-arming it would push the close
+    // back by another 280 ms. With no close pending the exit still arms it:
+    // that is the recovery of a close that was cancelled on the way.
+    if (previous.target === 'outside' && next.target === 'outside' && closeTimer.current !== undefined) return;
     setHoverPresence(next);
     // The close is armed only while the pointer is outside both surfaces.
     if (shouldArmClose(next.target)) scheduleClose();
-    else window.clearTimeout(closeTimer.current);
+    else cancelClose(closeTimer);
   };
 
   const edge: Edge = config && isEdge(config.dockEdge) ? config.dockEdge : 'top';
@@ -868,8 +886,20 @@ export function Widget() {
   }, [active, geo, stripSize, textScale, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
 
   // ───── panel al pasar el ratón ─────
+  /**
+   * Arms the close of the panel and keeps the id of the timer (#264/S21):
+   * with the id, "is a close pending?" can be answered.
+   */
+  const armClose = (delay: number) => {
+    const id = window.setTimeout(() => {
+      if (closeTimer.current === id) closeTimer.current = undefined;
+      setPanel((current) => (panelHoldsOpen(current) ? current : closePanel()));
+    }, delay);
+    closeTimer.current = id;
+  };
+
   const cancelTimers = () => {
-    window.clearTimeout(closeTimer.current);
+    cancelClose(closeTimer);
     window.clearTimeout(openTimer.current);
   };
 
@@ -994,7 +1024,7 @@ export function Widget() {
       if (disposed) return;
       setPanel((current) => {
         if (!panelHoldsOpen(current)) return current;
-        window.clearTimeout(closeTimer.current);
+        cancelClose(closeTimer);
         window.clearTimeout(openTimer.current);
         return closePanel();
       });
@@ -1021,7 +1051,7 @@ export function Widget() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      window.clearTimeout(closeTimer.current);
+      cancelClose(closeTimer);
       window.clearTimeout(openTimer.current);
       setPanel(closePanel());
     };
@@ -1081,7 +1111,7 @@ export function Widget() {
       setAnchorRel(relOf(el));
       setPanel((current) => hoverPanel(current, top.id));
       // Si no pasas el ratón por encima, se cierra solo (salvo que se anclara).
-      closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), 8000);
+      armClose(8000);
     }, 80);
   };
 
@@ -1089,7 +1119,7 @@ export function Widget() {
     cancelTimers();
     // Con el panel anclado, el puntero no lo cierra (#170).
     if (panel.anchored) return;
-    closeTimer.current = window.setTimeout(() => setPanel((current) => (panelHoldsOpen(current) ? current : closePanel())), CLOSE_DELAY);
+    armClose(CLOSE_DELAY);
   };
 
   // Muestreo nativo de presencia (#154): mientras el popup esté abierto, la

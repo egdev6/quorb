@@ -1481,6 +1481,79 @@ describe('hover presence wiring', () => {
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
   });
 
+  // #264/S21: un `leave` que se repite con la presencia ya en `outside` no
+  // debe rearmar el cierre: el cierre que está corriendo es el que cierra el
+  // panel, y rearmarlo lo atrasaría otros 280 ms.
+  it('closes the panel 280 ms after the first exit when the exit repeats (#264/S21)', async () => {
+    const { dock } = await wire();
+    dock.onMouseEnter();
+    dock.onMouseLeave(); // La salida arma el cierre.
+    await vi.advanceTimersByTimeAsync(200);
+    dock.onMouseLeave(); // La salida que se repite no lo rearma.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S21: da igual cuántas salidas lleguen: el cierre sigue siendo el de
+  // la primera.
+  it('closes the panel 280 ms after the first exit when five exits repeat (#264/S21)', async () => {
+    const { dock } = await wire();
+    dock.onMouseEnter();
+    for (let i = 0; i < 5; i++) {
+      dock.onMouseLeave();
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    await vi.advanceTimersByTimeAsync(50);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S21: entrar a una superficie cancela el cierre, así que la salida
+  // que llega después de esa entrada es una salida nueva: arranca su propio
+  // cierre de 280 ms.
+  it('restarts the close after an entry between two exits (#264/S21)', async () => {
+    const { dock, detail } = await wire();
+    dock.onMouseEnter();
+    dock.onMouseLeave(); // t0: el cierre se arma.
+    await vi.advanceTimersByTimeAsync(100);
+    detail('enter'); // t0+100: el puntero entra al detalle: el cierre se cancela.
+    await vi.advanceTimersByTimeAsync(100);
+    detail('leave'); // t0+200: el puntero sale: el cierre se arma de nuevo.
+    await vi.advanceTimersByTimeAsync(279);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S21: si no hay ningún cierre pendiente, la salida lo arma. Es el
+  // camino de recuperación: el cierre se puede cancelar por el camino (el
+  // hover del orbe o el foco del teclado cancelan los timers) y la presencia
+  // queda en `outside`; la salida que llega después tiene que cerrar.
+  it('arms the close when an exit arrives with no close pending (#264/S21)', async () => {
+    const { dock, hover } = await wire();
+    const orbElement = { getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }) };
+    dock.onMouseEnter();
+    dock.onMouseLeave(); // La salida arma el cierre.
+    await vi.advanceTimersByTimeAsync(50);
+    hover(orbElement as unknown as HTMLElement); // El hover del orbe cancela los timers.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    dock.onMouseLeave(); // Ya no hay cierre pendiente: esta salida lo arma.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S21: lo mismo por el relé nativo (#264/S16): la salida que se
+  // repite no rearma el cierre.
+  it('closes the panel 280 ms after the first exit when the exit repeats by the native relay (#264/S21)', async () => {
+    const { native } = await wire();
+    native('widget', 'enter');
+    native('widget', 'leave'); // La salida arma el cierre.
+    await vi.advanceTimersByTimeAsync(200);
+    native('widget', 'leave'); // La salida que se repite no lo rearma.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
   // #264/S19: el bloqueo del hover tras reordenar (#222/#240) lo libera el
   // único escritor del modelo de presencia: cuando la presencia pasa de
   // `widget` a otro estado, el puntero dejó la tira. Antes lo liberaba sólo
