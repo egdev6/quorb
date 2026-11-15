@@ -46,9 +46,12 @@ function findOrbHover(node: ReactNode): ((el: HTMLElement) => void) | undefined 
 
 // Capture the real Widget effect callbacks while SSR supplies its hook scope.
 // No DOM renderer, Tauri runtime, or native-order assumptions are involved.
+// Ref slots: useWidgetStartup consumes refs[0] (generation) before Widget's
+// own refs, so the drag/detail refs below start at 1 (#271, revisión).
 const widgetEffects = vi.hoisted(() => ({
   states: [] as unknown[], stateIndex: 0,
   refs: [] as { current: unknown }[], refIndex: 0,
+  getConfig: vi.fn(), openSettings: vi.fn(),
   effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
   bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
@@ -97,6 +100,8 @@ vi.mock('./api', () => ({ api: {
   setSurfaceClip: widgetEffects.clip,
   patchConfig: widgetEffects.patch,
   cancelWidgetPlacement: widgetEffects.cancel,
+  getConfig: widgetEffects.getConfig,
+  openSettings: widgetEffects.openSettings,
 } }));
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -335,8 +340,9 @@ describe('Widget effect mutation ordering', () => {
       return tree;
     }
     renderToStaticMarkup(createElement(CaptureWidget));
-    widgetEffects.refs[0].current = { dataset: {} };
+    // Refs de Widget: [0]=generation (hook), [1]=stripRef, [2]=peekRef (#271).
     widgetEffects.refs[1].current = { dataset: {} };
+    widgetEffects.refs[2].current = { dataset: {} };
     return {
       placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[7])!,
       drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[11]
@@ -986,7 +992,7 @@ describe('Widget effect mutation ordering', () => {
     function CaptureStrip() { tree = Widget(); return tree; }
     renderToStaticMarkup(createElement(CaptureStrip));
     // La sesión de detalle vigente: revisión 5, proveedor 'a'.
-    widgetEffects.refs[7].current = { revision: 5, report: { id: 'a' } };
+    widgetEffects.refs[8].current = { revision: 5, report: { id: 'a' } };
     // Cada prueba usa sus propios listeners.
     widgetEffects.listeners.delete('detail-interaction');
     widgetEffects.listeners.delete('detail-dismiss');
@@ -1004,7 +1010,7 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[14] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
     // El puntero está dentro del detalle.
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[11].current = true;
     // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
     // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
     listener.run();
@@ -1021,7 +1027,7 @@ describe('Widget effect mutation ordering', () => {
     // ...la tira cierra el panel...
     expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
     // ...y baja la presencia del detalle.
-    expect(widgetEffects.refs[10].current).toBe(false);
+    expect(widgetEffects.refs[11].current).toBe(false);
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
     const after = renderStrip(true);
@@ -1033,7 +1039,7 @@ describe('Widget effect mutation ordering', () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[9] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[11].current = true;
     listener.run();
     await flush();
     const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
@@ -1044,21 +1050,21 @@ describe('Widget effect mutation ordering', () => {
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
     expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
-    expect(widgetEffects.refs[10].current).toBe(true);
+    expect(widgetEffects.refs[11].current).toBe(true);
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[9] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = true;
+    widgetEffects.refs[11].current = true;
     listener.run();
     await flush();
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
     expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
-    expect(widgetEffects.refs[10].current).toBe(false);
+    expect(widgetEffects.refs[11].current).toBe(false);
   });
 
   // El cierre pedido por el detalle es idéntico al cierre normal: también
@@ -1180,5 +1186,161 @@ describe('the localized placement reason', () => {
     expect(html).toContain('class="peek"');
     expect(html).toContain('aria-label="Mostrar Quorb"');
     widgetEffects.phase = undefined;
+  });
+});
+
+// Cableado real de Widget respecto al arranque de la configuración (#271,
+// precisión 3 revisada): a diferencia de `use-widget-startup.test.ts` (que lee
+// los slots del hook), aquí se renderiza el Widget completo con los hooks
+// mockeados y se comprueba qué expone la primera muestra: ausencia de
+// «Cargando…»/«Ajustes» en pending, nombres en inglés al resolver, fallo
+// definitivo con «Reintentar» + tools en `es`, un error ajeno que no rompe el
+// neutro, y la colocación normal (efecto real) mostrando antes del temporizador.
+describe('Widget startup wiring (#271, revisión)', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  const flush = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
+  /** Renderiza el Widget completo y devuelve el HTML SSR actual. */
+  const renderHtml = () => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    return renderToStaticMarkup(createElement(Widget));
+  };
+  /** `window` de Node para el temporizador de la red de seguridad. */
+  const useFakeWindowTimers = () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+    });
+  };
+  const configureNative = () => {
+    widgetEffects.bounds.mockResolvedValue(undefined);
+    widgetEffects.clip.mockResolvedValue(undefined);
+    // Tanto la red de seguridad (`showStripIfVisible`) como la colocación
+    // normal hacen `await getCurrentWindow().show()`; sin resolución el mock
+    // devuelve `undefined` y el `.catch` de la red de seguridad explota.
+    widgetEffects.show.mockResolvedValue(undefined);
+    widgetEffects.innerSize.mockResolvedValue({ width: 400, height: 80 });
+    vi.stubGlobal('getComputedStyle', () => ({
+      borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
+      borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
+    }));
+    // El efecto de colocación mide el surface montado; los refs se llenan en
+    // el render de SSR, aquí los simulamos para que `measureSurfaceClip` pueda
+    // leer los radios.
+    widgetEffects.refs[1] ??= { current: null }; // stripRef
+    widgetEffects.refs[1].current = { dataset: {} };
+    widgetEffects.refs[2] ??= { current: null }; // peekRef
+    widgetEffects.refs[2].current = { dataset: {} };
+    setDragMode('native');
+  };
+  /** Config pendiente: estado base para todos los casos. */
+  const pendingStates = () => {
+    widgetEffects.states[0] = null; // config pendiente
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    // `Widget` inicialmente marca la red de seguridad como ya pasada; lo que
+    // queremos probar es el efecto de colocación mostrando antes del timer.
+    widgetEffects.refs[24] ??= { current: false }; // shown (refs[0] = generation del hook)
+    widgetEffects.refs[24].current = false;
+  };
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    widgetEffects.phase = undefined;
+    resetDragMode();
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('pending + safety net: show() fires and the first render has no Cargando/Ajustes; resolving to en shows English names', async () => {
+    useFakeWindowTimers();
+    widgetEffects.show.mockResolvedValue(undefined);
+    let resolveConfig!: (c: unknown) => void;
+    widgetEffects.getConfig.mockReturnValue(new Promise((res) => { resolveConfig = res; }));
+    pendingStates();
+    const first = renderHtml();
+    // Neutro sin texto localizado, aunque el idioma guardado sea inglés.
+    expect(first).toContain('strip__pending');
+    expect(first).not.toContain('Cargando');
+    expect(first).not.toContain('Ajustes');
+
+    // Ejecutar la carga (getConfig pendiente) y la red de seguridad de 2,5 s.
+    const load = widgetEffects.effects.find((e) => e.run.toString().includes('getConfig'))!;
+    const safety = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'))!;
+    const cleanupLoad = load.run();
+    const cleanupTimer = safety.run();
+    await vi.advanceTimersByTimeAsync(2600);
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+
+    // La config en inglés llega: nombres localizados al re-render.
+    resolveConfig({ locale: 'en', accounts: [], nineRouter: { baseUrl: '' } });
+    await flush();
+    const second = renderHtml();
+    expect(second).toContain('title="Settings"');
+    expect(second).not.toContain('Ajustes');
+    expect(second).not.toContain('Cargando');
+    if (typeof cleanupLoad === 'function') cleanupLoad();
+    if (typeof cleanupTimer === 'function') cleanupTimer();
+  });
+
+  it('definitive config failure shows Reintentar with the tools named in es', async () => {
+    useFakeWindowTimers();
+    widgetEffects.getConfig.mockRejectedValue(new Error('sin backend'));
+    pendingStates();
+    renderHtml();
+    const load = widgetEffects.effects.find((e) => e.run.toString().includes('getConfig'))!;
+    load.run();
+    // Cinco reintentos con backoff: avanzamos suficiente para agotarlos.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(widgetEffects.states[1]).toBe(true); // configFailed
+    const html = renderHtml();
+    expect(html).toContain('Reintentar');
+    expect(html).toContain('title="sin backend"');
+    // Herramientas accesibles con el locale de fallback (`es`).
+    expect(html).toContain('title="Ajustes"');
+  });
+
+  it('an unrelated usage error while pending does not break the neutral state', () => {
+    pendingStates();
+    widgetEffects.states[6] = 'boom'; // error genérico (refresco/arrastre)
+    const html = renderHtml();
+    expect(html).toContain('strip__pending');
+    expect(html).not.toContain('Cargando');
+    expect(html).not.toContain('Ajustes');
+    expect(html).not.toContain('Reintentar');
+  });
+
+  it('normal placement showing before the timer keeps the neutral state and does not show twice', async () => {
+    configureNative();
+    useFakeWindowTimers();
+    widgetEffects.getConfig.mockReturnValue(new Promise(() => {})); // pendiente
+    pendingStates();
+    widgetEffects.states[11] = false; // dragging
+    renderHtml();
+    // La colocación normal muestra la ventana (efecto real, no solo el timer).
+    const placement = widgetEffects.effects.find((e) => e.deps?.[0] === widgetEffects.states[7])!;
+    const cleanup = placement.run();
+    await flush();
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+    // La red de seguridad llega después: no vuelve a mostrar.
+    const safety = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'))!;
+    const cleanupTimer = safety.run();
+    await vi.advanceTimersByTimeAsync(2600);
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+    // La neutralidad sigue vigente pese a que la ventana ya es visible.
+    const html = renderHtml();
+    expect(html).toContain('strip__pending');
+    expect(html).not.toContain('Cargando');
+    expect(html).not.toContain('Ajustes');
+    if (typeof cleanup === 'function') cleanup();
+    if (typeof cleanupTimer === 'function') cleanupTimer();
   });
 });

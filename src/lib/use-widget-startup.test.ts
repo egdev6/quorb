@@ -179,6 +179,29 @@ describe('useWidgetStartup wiring (#271)', () => {
     expect(onConfigChange).toHaveBeenCalledWith({ locale: 'en' });
   });
 
+  it('a late startup read does not overwrite a newer config applied by config-changed (race)', async () => {
+    useFakeWindowTimers();
+    // El arranque queda pendiente; mientras tanto `config-changed` lee y aplica
+    // una config más nueva.
+    const startup = deferred();
+    state.getConfig
+      .mockReturnValueOnce(startup.promise)      // arranque (lento)
+      .mockResolvedValueOnce({ locale: 'en' });  // config-changed (llega antes)
+    const p = probe();
+    p.load.run();
+
+    const changed = state.listeners.get('config-changed')![0];
+    await changed();
+    await flush();
+    expect(p.read().config).toEqual({ locale: 'en' });
+
+    // El arranque resuelve DESPUÉS con una config vieja: no debe pisarla.
+    startup.resolve({ locale: 'es' });
+    await flush();
+    expect(p.read().config).toEqual({ locale: 'en' });
+    expect(p.read().configFailed).toBe(false);
+  });
+
   it('placement showing before the timer does not change pending neutrality', async () => {
     useFakeWindowTimers();
     const d = deferred();

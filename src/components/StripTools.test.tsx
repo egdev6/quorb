@@ -7,12 +7,13 @@
 // pendiente» se cubre en el test del cableado (el padre no monta StripTools).
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { UpdaterMode } from '../lib/updater-policy';
 import { StripTools } from './StripTools';
 
 const props = (locale: 'es' | 'en', over: Partial<Parameters<typeof StripTools>[0]> = {}) => ({
   locale,
   loading: false,
-  updaterMode: 'native',
+  updaterMode: 'native' as UpdaterMode,
   update: { phase: 'idle' } as const,
   onRefresh: () => {},
   onOpenSettings: () => {},

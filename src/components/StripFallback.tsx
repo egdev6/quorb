@@ -22,7 +22,8 @@ export type StripFallbackState = 'pending' | 'ready' | 'failed';
 export function StripFallback({ state, error, busy, locale, onRetry, onConfigure }: {
   /** Estado del arranque de la configuración (#271). */
   state: StripFallbackState;
-  /** Texto crudo del fallo definitivo de config (solo se usa en `failed`). */
+  /** Último error visible: el de config en `failed`, o un error de uso
+   *  (refresco/arrastre) en `ready`. En `pending` se ignora (neutro). */
   error: string | null;
   /** Refresco en curso (solo `ready`: la config ya está, el idioma es seguro). */
   busy: boolean;
@@ -35,9 +36,20 @@ export function StripFallback({ state, error, busy, locale, onRetry, onConfigure
     // guardado, así que la primera muestra no puede emitir cadenas localizadas.
     return <span className="strip__pending" aria-hidden="true" />;
   }
-  if (state === 'failed') {
+  // El fallo se muestra, no se oculta: con la config cargada, un error de uso
+  // (refresco, arrastre…) sin orbes visibles ofrece «Reintentar» con el error
+  // como tooltip; en el fallo definitivo de config también. (Ya retornamos en
+  // `pending` arriba, así que aquí `state` solo puede ser `ready` o `failed`.)
+  if (error) {
     return (
       <button className="btn btn--accent btn--sm" onClick={onRetry} title={error ?? undefined}>
+        {t(locale, 'widget.retry')}
+      </button>
+    );
+  }
+  if (state === 'failed') {
+    return (
+      <button className="btn btn--accent btn--sm" onClick={onRetry}>
         {t(locale, 'widget.retry')}
       </button>
     );

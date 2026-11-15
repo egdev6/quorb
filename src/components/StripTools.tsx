@@ -8,13 +8,14 @@
 // localizados se emiten SIEMPRE (el padre garantiza que hay idioma seguro).
 import { t } from '../i18n';
 import type { Locale } from '../lib/types';
+import type { UpdaterMode } from '../lib/updater-policy';
 import type { UpdatePhase } from '../lib/updater';
 import type { ReactNode } from 'react';
 
 export function StripTools({ locale, loading, updaterMode, update, onRefresh, onOpenSettings, onStartUpdate, icons }: {
   locale: Locale;
   loading: boolean;
-  updaterMode: string;
+  updaterMode: UpdaterMode;
   update: UpdatePhase;
   onRefresh: () => void;
   onOpenSettings: () => void;

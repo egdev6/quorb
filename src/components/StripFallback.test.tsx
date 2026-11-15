@@ -57,4 +57,24 @@ describe('StripFallback i18n (SSR)', () => {
     expect(html).toContain('Retry');
     expect(html).toContain('title="config unreachable"');
   });
+
+  // Revisión PR #271 (defecto 1): con la config ya cargada (`ready`), un error
+  // de uso (refresco, arrastre…) sin orbes visibles se muestra con «Reintentar»
+  // y el error como tooltip; no se cae a «Configurar».
+  it('ready with a usage error shows Retry with the error, not Configure', () => {
+    for (const locale of ['es', 'en'] as const) {
+      const html = renderToStaticMarkup(<StripFallback {...props(locale)} state="ready" error="refresh blew up" />);
+      expect(html, `ready+error es: ${locale}`).toContain(locale === 'es' ? 'Reintentar' : 'Retry');
+      expect(html, `ready+error title: ${locale}`).toContain('title="refresh blew up"');
+      expect(html, `ready+error no configurar: ${locale}`).not.toContain(locale === 'es' ? 'Configurar' : 'Configure');
+    }
+  });
+
+  // Revisión PR #271 (menor): el fallo definitivo sin tooltip crudo sigue
+  // ofreciendo «Reintentar» (el error de un reintento manual llega por `error`).
+  it('failed without a raw error still offers Retry', () => {
+    const html = renderToStaticMarkup(<StripFallback {...props('en')} state="failed" />);
+    expect(html).toContain('Retry');
+    expect(html).not.toContain('title=');
+  });
 });

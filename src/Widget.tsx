@@ -186,7 +186,12 @@ export function Widget() {
   const clearReportsOnEnvChange = useCallback((c: AppConfig) => {
     // La limpieza de informes al cambiar de entorno es de Widget (#248); el
     // hook aplica la config y avisa aquí (también para `config-changed`).
+    // El ref se actualiza de forma SINCRONA (revisión PR #271): `retryStartup`
+    // y `patchConfig` hacen `applyConfig(...)` y luego leen `configRef` en el
+    // mismo turno (`refresh`, alertas, locale); un efecto posterior al render
+    // llegaría tarde.
     const prev = configRef.current;
+    configRef.current = c;
     if (prev && envKey(prev) !== envKey(c)) {
       reportsRef.current = [];
       setReports([]);
@@ -251,6 +256,10 @@ export function Widget() {
   const detailInsideRef = useRef(false);
   const insideRef = useRef(false);
   const configRef = useRef<AppConfig | null>(null);
+  /** Última config que el efecto `[config, refresh]` ya procesó: `configRef`
+   *  se sobrescribe de forma síncrona en cada `applyConfig`, así que aquí se
+   *  guarda el valor anterior para decidir si hay que volver a pedir datos. */
+  const appliedConfigRef = useRef<AppConfig | null>(null);
   const reportsRef = useRef<UsageReport[]>([]);
   const geoRef = useRef<Geo | null>(null);
   const inFlight = useRef(false);
@@ -427,13 +436,16 @@ export function Widget() {
     };
   }, [refresh]);
 
-  // `config-changed` altera `config` (vía el hook): mantener `configRef` al
-  // día (lo leen `refresh`/`runAlerts`) y refrescar solo si la config nueva
-  // obliga a pedir datos (revisión PR #271: el cambio de idioma no dispara una
-  // lectura de proveedores, pero sí re-renderiza la UI).
+  // `config-changed` altera `config` (vía el hook): `configRef` ya se mantiene
+  // al día de forma SINCRONA en `clearReportsOnEnvChange` (leído por
+  // `refresh`/`runAlerts` justo después de un `applyConfig`). Este efecto solo
+  // refresca si la config nueva obliga a pedir datos (revisión PR #271: el
+  // cambio de idioma no dispara una lectura de proveedores, pero sí
+  // re-renderiza la UI). `appliedConfigRef` guarda el último valor que este
+  // efecto ya procesó (configRef ya está sobrescrito al llegar aquí).
   useEffect(() => {
-    const prev = configRef.current;
-    configRef.current = config;
+    const prev = appliedConfigRef.current;
+    appliedConfigRef.current = config;
     if (prev && config && needsRefresh(prev, config)) refresh();
   }, [config, refresh]);
 
@@ -1389,7 +1401,11 @@ export function Widget() {
           {visible.length === 0 && (
             <StripFallback
               state={configFailed ? 'failed' : config != null ? 'ready' : 'pending'}
-              error={configFailed ? configError : null}
+              // En `ready` el error genérico de uso (refresco/arrastre) se
+              // muestra, no se oculta; en `failed` el error de un reintento
+              // manual (`setError`) tiene prioridad sobre el error de config
+              // viejo (revisión PR #271).
+              error={configFailed ? (error ?? configError) : error}
               busy={loading}
               locale={locale}
               onRetry={retryStartup}

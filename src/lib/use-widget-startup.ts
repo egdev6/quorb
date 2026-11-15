@@ -16,7 +16,7 @@
 //   `onReadyToShow` inyectable: el hook no conoce Tauri, `Widget` pasa el
 //   callback real (visible si no está oculta por el usuario, #179). Mantiene la
 //   protección de arranque sin retrasar `show()` ni tocar la colocación.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
 import { retryWithBackoff, STARTUP_RETRY } from './startup';
@@ -50,8 +50,14 @@ export function useWidgetStartup(options: WidgetStartupOptions = {}): WidgetStar
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [configFailed, setConfigFailed] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
+  // Generación de config: aplicar una config (o empezar una lectura nueva)
+  // invalida las lecturas en vuelo iniciadas antes, de modo que un `getConfig`
+  // del arranque que resuelve tarde no pise una config más nueva aplicada por
+  // `config-changed` o por un reintento manual (revisión PR #271).
+  const generation = useRef(0);
 
   const applyConfig = useCallback((next: AppConfig) => {
+    generation.current += 1;
     setConfig(next);
     // Config válida: deja de estar pendiente y despeja el fallo definitivo.
     setConfigFailed(false);
@@ -63,23 +69,27 @@ export function useWidgetStartup(options: WidgetStartupOptions = {}): WidgetStar
   useEffect(() => {
     let alive = true;
     const controller = new AbortController();
+    const startedAt = generation.current;
     // Solo el fallo del PRIMER getConfig (reintentos agotados) es «fallo
     // definitivo»: los fallos posteriores de config-changed no deben sacar al
     // widget del estado pendiente (revisión PR #271, precisión 1).
     retryWithBackoff(() => api.getConfig(), { ...STARTUP_RETRY, signal: controller.signal })
       .then((c) => {
-        if (alive && !controller.signal.aborted) applyConfig(c);
+        if (alive && generation.current === startedAt) applyConfig(c);
       })
       .catch((e: unknown) => {
-        if (alive && !controller.signal.aborted) {
+        if (alive && generation.current === startedAt) {
           setConfigFailed(true);
           setConfigError(e instanceof Error ? e.message : String(e));
         }
       });
     const off = listen('config-changed', () => {
+      const startedAt = generation.current;
       api
         .getConfig()
-        .then(applyConfig)
+        .then((c) => {
+          if (generation.current === startedAt) applyConfig(c);
+        })
         .catch(() => {
           /* la próxima lectura (o el reintento manual) lo resuelve */
         });
