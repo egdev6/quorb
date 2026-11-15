@@ -13,6 +13,8 @@ mod model;
 mod providers;
 mod secrets;
 mod uninstall;
+// TEMPORAL (diagnóstico): traza de visibilidad de la tira en Windows.
+mod visibility_trace;
 // El módulo se compila también en Windows/macOS (el comando se invoca siempre),
 // pero allí sus piezas de Linux no se usan: sin avisos de código muerto.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -224,7 +226,7 @@ fn wayland_shortcut_warning(label: &str, text: &str) -> String {
 
 fn on_shortcut(app: &AppHandle, action: &str) {
     match action {
-        "toggle" => toggle_widget(app),
+        "toggle" => toggle_widget(app, "shortcut"),
         "open_peak" => {
             if let Some(w) = app.get_webview_window(WIDGET) {
                 let _ = w.show();
@@ -1264,8 +1266,10 @@ fn hide_detail(app: &AppHandle) {
     let _ = app.emit_to(DETAIL, "detail-state", None::<()>);
 }
 
-fn toggle_widget(app: &AppHandle) {
+fn toggle_widget(app: &AppHandle, origin: &str) {
     if let Some(w) = app.get_webview_window(WIDGET) {
+        // TEMPORAL (diagnóstico): quién alternó la tira y con qué estado.
+        visibility_trace::trace(app, &format!("toggle-{origin}-before"), &w);
         if w.is_visible().unwrap_or(false) {
             let _ = w.hide();
             hide_detail(app);
@@ -1278,6 +1282,8 @@ fn toggle_widget(app: &AppHandle) {
             // su deduplicación no vuelve a pedirla.
             let _ = app.emit_to(WIDGET, "widget-shown", ());
         }
+        // TEMPORAL (diagnóstico): el estado resultante de la alternancia.
+        visibility_trace::trace(app, &format!("toggle-{origin}-after"), &w);
     }
 }
 
@@ -1372,12 +1378,24 @@ fn choose_locale(app: AppHandle, state: State<'_, AppState>, locale: String) -> 
         app.exit(1);
         return Err(e.to_string());
     }
+    start_visibility_trace(&app);
     Ok(())
 }
 
 /// Crea la superficie principal: tira, detalle, overlay, bandeja y atajos.
 /// Lee la configuración del estado. `setup` la llama en el arranque normal; el
 /// selector de primer arranque (#235) la llamará tras la elección de idioma.
+/// TEMPORAL (diagnóstico): en Windows, vigila el estado de la tira desde el
+/// arranque. En otras plataformas no se llama (el módulo se compila igual).
+fn start_visibility_trace(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    visibility_trace::start(app.clone());
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+    }
+}
+
 fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
     let cfg = app.state::<AppState>().config.lock().unwrap().clone();
     let window_config = app
@@ -1481,7 +1499,7 @@ fn build_tray(app: &AppHandle, locale: i18n::Locale) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "toggle" => toggle_widget(app),
+            "toggle" => toggle_widget(app, "tray-menu"),
             "refresh" => {
                 let _ = app.emit("refresh-now", ());
             }
@@ -1498,7 +1516,7 @@ fn build_tray(app: &AppHandle, locale: i18n::Locale) -> tauri::Result<()> {
                 ..
             } = event
             {
-                toggle_widget(tray.app_handle());
+                toggle_widget(tray.app_handle(), "tray-click");
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -1593,12 +1611,33 @@ pub fn run() {
                 open_locale_picker(app.handle())?;
             } else {
                 start_main_ui(app.handle())?;
+                start_visibility_trace(&app.handle().clone());
             }
             Ok(())
         })
         .on_window_event(|window, event| {
             #[cfg(target_os = "windows")]
             windows_backdrop::on_window_event(window, event);
+            // TEMPORAL (diagnóstico): cada evento nativo de la tira, con el
+            // estado resultante. Es lo que distingue un hide de la app de un
+            // cambio que hizo Windows.
+            if window.label() == WIDGET {
+                let name = match event {
+                    WindowEvent::Focused(_) => "ev-focus",
+                    WindowEvent::Resized(_) => "ev-resize",
+                    WindowEvent::Moved(_) => "ev-move",
+                    WindowEvent::ScaleFactorChanged { .. } => "ev-scale",
+                    WindowEvent::CloseRequested { .. } => "ev-close",
+                    WindowEvent::Destroyed => "ev-destroyed",
+                    WindowEvent::ThemeChanged(_) => "ev-theme",
+                    _ => "",
+                };
+                if !name.is_empty() {
+                    if let Some(web) = window.app_handle().get_webview_window(WIDGET) {
+                        visibility_trace::trace(window.app_handle(), name, &web);
+                    }
+                }
+            }
             // El foco de nuestras propias ventanas (#170): el panel anclado se
             // suelta cuando el foco sale de las dos (la tira y el detalle).
             // Es un evento de ventana nativo, no del DOM: llega igual en X11,
@@ -1613,6 +1652,10 @@ pub fn run() {
             if window.label() == WIDGET {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    // TEMPORAL (diagnóstico): un cierre externo (Alt+F4) oculta la tira.
+                    if let Some(web) = window.app_handle().get_webview_window(WIDGET) {
+                        visibility_trace::trace(window.app_handle(), "close-requested", &web);
+                    }
                     let _ = window.hide();
                     hide_detail(window.app_handle());
                     let _ = window.app_handle().emit_to(WIDGET, "widget-hidden", ());
