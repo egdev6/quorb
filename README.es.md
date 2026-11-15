@@ -30,6 +30,7 @@ Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de t
 | macOS 15+ · Apple Silicon (M1+) | [Descargar .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
 
 Ejecutad el instalador de Windows, o abrid el DMG de macOS y copiad Quorb a Aplicaciones.
+Desde la release posterior a v0.8.0, un instalador interactivo de Windows puede preguntar primero Español o English, continuar en ese idioma y abrir una instalación nueva de Quorb en él; las instalaciones nuevas por MSI o silenciosas lo preguntan en el primer inicio de Quorb. Las actualizaciones automáticas nunca muestran el diálogo de idioma, y las actualizaciones y reinstalaciones conservan el idioma guardado, que podéis cambiar en Ajustes.
 La release macOS usa firma Developer ID y notarización de Apple; las actualizaciones son **manuales**.
 La primera descarga por navegador, cuarentena, instalación y GUI en un Mac real siguen pendientes en [#118](https://github.com/egdev6/quorb/issues/118); no retiréis la cuarentena para eludir un aviso.
 Estos enlaces apuntan a **v0.8.0**; consultad [todas las releases](https://github.com/egdev6/quorb/releases) para otras versiones.
@@ -188,7 +189,7 @@ Las API keys y la sesión de NaN se guardan en el almacén seguro del sistema (W
 
 La configuración y el historial se guardan en la carpeta de usuario de cada plataforma (`%APPDATA%\es.egdev.quorb` en Windows, `~/.config/es.egdev.quorb` en Linux). Quorb consulta directamente los endpoints de los proveedores; no requiere un backend separado. El historial cubre hasta 30 días.
 
-Para sesiones en WSL, configurad las rutas de credenciales en Ajustes como **rutas POSIX dentro de la distro** — el guest no puede leer `\\wsl.localhost\…` (UNC) ni `C:\…`; por ejemplo `/home/YOUR_USER/.codex/auth.json` para un usuario de WSL llamado `YOUR_USER`, y el comando de login `wsl codex login` o `wsl claude` según corresponda.
+Para sesiones en WSL, elegid la distro en Ajustes y configurad las rutas de credenciales como **rutas POSIX dentro de la distro** — el guest no puede leer `\\wsl.localhost\…` (UNC) ni `C:\…`; por ejemplo `/home/YOUR_USER/.codex/auth.json` para un usuario de WSL llamado `YOUR_USER`. Indicad el comando de login `codex login` o `claude` según corresponda; Quorb lo ejecuta dentro de la distro elegida. Un comando que ya incluya `wsl`, como `wsl codex login`, es solo para el modo host.
 
 ### Hoja de ruta
 

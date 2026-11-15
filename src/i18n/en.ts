@@ -271,6 +271,10 @@ export const en = {
         copy: 'Copy',
         copied: 'Copied',
       },
+      cliMissingWsl: {
+        title: '{name} is missing inside the WSL distro{distro}.',
+        body: 'The session host is WSL: Windows installers do not apply. Install it inside the distro (for example, in a WSL terminal) and press "Sign in" again.',
+      },
       showInWidget: 'Show in the widget',
       checkTitle: 'Check',
       apiKey: 'API key',
@@ -292,7 +296,6 @@ export const en = {
         signIn: 'Sign in',
         saveAndSignIn: 'Save and sign in',
         checkAuto: 'It runs on its own as soon as you save and sign in.',
-        wslHostOnly: 'WSL mode: for now the CLI detection and this login use the Windows CLI. Reading the session inside the distro arrives with #92.',
       },
       accountEditor: {
         kicker: 'Additional account',

@@ -30,6 +30,7 @@ Your AI quotas, always in sight: usage, remaining capacity and spending across y
 | macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
 
 Run the Windows installer, or open the macOS DMG and copy Quorb to Applications.
+From the release after v0.8.0, an interactive Windows installer can ask for Español or English, continue in that language and open a fresh install of Quorb in it; new MSI or silent installations ask on Quorb's first start instead. Automatic updates never show the language dialog, and updates and reinstalls keep your saved language, which you can change in Settings.
 The macOS release uses Developer ID signing and Apple notarization; updates are **manual**.
 First browser download, quarantine, installation and GUI checks on a real Mac remain pending in [#118](https://github.com/egdev6/quorb/issues/118); do not remove quarantine to bypass a warning.
 These links are pinned to **v0.8.0**; see [all releases](https://github.com/egdev6/quorb/releases) for other versions.
@@ -186,7 +187,7 @@ API keys and the NaN session are stored in the system's secure store (Windows Cr
 
 Configuration and history are stored under the platform user directory (`%APPDATA%\es.egdev.quorb` on Windows, `~/.config/es.egdev.quorb` on Linux). Quorb calls provider endpoints directly; no separate backend is required. History covers up to 30 days.
 
-For WSL sessions, configure the credential file paths in Settings as **POSIX paths inside the distro** — the guest cannot read `\\wsl.localhost\…` (UNC) or `C:\…` paths; for example `/home/YOUR_USER/.codex/auth.json` for a WSL user named `YOUR_USER`, and set the login command to `wsl codex login` or `wsl claude` as appropriate.
+For WSL sessions, select the distro in Settings and configure credential file paths as **POSIX paths inside the distro** — the guest cannot read `\\wsl.localhost\…` (UNC) or `C:\…` paths; for example `/home/YOUR_USER/.codex/auth.json` for a WSL user named `YOUR_USER`. Set the login command to `codex login` or `claude` as appropriate; Quorb runs it inside the selected distro. An explicitly wrapped command such as `wsl codex login` is only for host mode.
 
 ### Roadmap
 

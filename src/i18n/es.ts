@@ -283,6 +283,10 @@ export const es = {
         copy: 'Copiar',
         copied: 'Copiado',
       },
+      cliMissingWsl: {
+        title: 'Falta {name} dentro de la distro WSL{distro}.',
+        body: 'El entorno de sesión es WSL: los instaladores de Windows no aplican. Instálalo dentro de la distro (por ejemplo, en una terminal de WSL) y vuelve a pulsar «Iniciar sesión».',
+      },
       // Trozos que comparten los pasos por CLI, el editor de cuentas y los paneles
       // por proveedor (T2c slice 2 C1, #66).
       showInWidget: 'Mostrar en el widget',
@@ -308,7 +312,6 @@ export const es = {
         signIn: 'Iniciar sesión',
         saveAndSignIn: 'Guardar e iniciar sesión',
         checkAuto: 'Se hace sola en cuanto guardes e inicies sesión.',
-        wslHostOnly: 'Modo WSL: por ahora la detección del CLI y este login usan el CLI de Windows. Leer la sesión dentro de la distro llega con #92.',
       },
       // Editor de una cuenta adicional (`AccountEditor`). Los nombres de plan con
       // cifra (`Pro · 300`), las opciones de producto (`nan_community`, `GLM Premium`)

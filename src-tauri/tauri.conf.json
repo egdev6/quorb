@@ -71,7 +71,9 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "installerHooks": "installer/hooks.nsh"
+        "installerHooks": "installer/hooks.nsh",
+        "languages": ["English", "Spanish"],
+        "displayLanguageSelector": true
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

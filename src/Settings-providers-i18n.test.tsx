@@ -502,4 +502,23 @@ describe('Provider cards: aria-current and aria-expanded follow the selection (S
     expect(count(html, 'aria-current="false"')).toBe(cards(html));
     expect(count(html, 'aria-expanded="false"')).toBe(cards(html));
   });
+
+  // El selector de entorno (host/WSL + distro) SIEMPRE abre el login hacia
+  // `wsl.exe` y las sesiones del guest: solo existe en Windows (revisión PR
+  // #92). Fuera de Windows no se renderiza la etiqueta ni el campo.
+  it('hides the session environment selector outside Windows', () => {
+    for (const platform of ['macos', 'linux'] as const) {
+      const html = card('es', 'claude', true, platform);
+      expect(html).not.toContain('Sesión de los CLIs');
+      expect(html).not.toContain('Distro WSL');
+      expect(html).not.toContain('sessionEnv');
+    }
+  });
+
+  it('renders the session environment selector on Windows', () => {
+    const html = card('es', 'claude', true, 'windows');
+    expect(html).toContain('Sesión de los CLIs');
+    // El campo de distro solo aparece en modo WSL (el helper cfg usa host).
+    expect(html).not.toContain('Distro WSL');
+  });
 });
