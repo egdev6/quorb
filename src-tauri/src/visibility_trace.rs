@@ -50,10 +50,16 @@ pub(crate) fn should_log(previous: Option<&str>, next: &str) -> bool {
 ///   `-32000,-32000`).
 /// - `visible=1 min=0 onMonitor=1`: la ventana existe y está en su sitio,
 ///   así que lo que falla es que otra ventana la tapa o está cloaked.
+/// - `topmost=0`: perdió el «siempre encima» y otra ventana pudo taparla.
+/// - `cloaked≠0`: DWM la oculta aunque `WS_VISIBLE` siga puesto (por ejemplo,
+///   otro escritorio virtual).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn format_reading(
     visible: u8,
     min: u8,
     focus: u8,
+    topmost: u8,
+    cloaked: u32,
     pos: &str,
     size: &str,
     scale: f64,
@@ -61,7 +67,7 @@ pub(crate) fn format_reading(
     monitors: usize,
 ) -> String {
     format!(
-        "visible={visible} min={min} focus={focus} pos={pos} size={size} scale={scale} onMonitor={} monitors={monitors}",
+        "visible={visible} min={min} focus={focus} topmost={topmost} cloaked={cloaked} pos={pos} size={size} scale={scale} onMonitor={} monitors={monitors}",
         on_monitor as u8
     )
 }
@@ -94,6 +100,7 @@ pub(crate) fn snapshot(w: &WebviewWindow) -> String {
     let visible = w.is_visible().map(|v| v as u8).unwrap_or(2);
     let min = w.is_minimized().map(|v| v as u8).unwrap_or(2);
     let focus = w.is_focused().map(|v| v as u8).unwrap_or(2);
+    let (topmost, cloaked) = native_layering(w);
     let pos = w.outer_position().ok();
     let size = w.outer_size().ok();
     let scale = w.scale_factor().unwrap_or(0.0);
@@ -119,12 +126,46 @@ pub(crate) fn snapshot(w: &WebviewWindow) -> String {
         visible,
         min,
         focus,
+        topmost,
+        cloaked,
         &pos,
         &size,
         scale,
         on_monitor,
         monitors.len(),
     )
+}
+
+/// El estado que `is_visible()` no ve: el «siempre encima» (`WS_EX_TOPMOST`)
+/// y el cloaking de DWM (`DWMWA_CLOAKED`). `2`/`u32::MAX` = no se pudo leer.
+#[cfg(target_os = "windows")]
+fn native_layering(w: &WebviewWindow) -> (u8, u32) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TOPMOST};
+    let Ok(raw) = w.hwnd() else {
+        return (2, u32::MAX);
+    };
+    let hwnd = HWND(raw.0 as _);
+    // SAFETY: lecturas sin efectos sobre un HWND propio y vivo.
+    let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    let topmost = (ex & WS_EX_TOPMOST.0 != 0) as u8;
+    let mut cloaked: u32 = 0;
+    // SAFETY: el buffer es un u32 del tamaño que pide DWMWA_CLOAKED.
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+    };
+    (topmost, if read.is_ok() { cloaked } else { u32::MAX })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_layering(_w: &WebviewWindow) -> (u8, u32) {
+    (2, u32::MAX)
 }
 
 /// Escribe una línea con el origen de la acción y el estado actual.
@@ -182,11 +223,13 @@ mod tests {
 
     #[test]
     fn the_reading_names_every_state_that_explains_the_symptom() {
-        let reading = format_reading(1, 0, 1, "1300,60", "420x44", 1.25, true, 2);
+        let reading = format_reading(1, 0, 1, 1, 0, "1300,60", "420x44", 1.25, true, 2);
         for (key, value) in [
             ("visible", "1"),
             ("min", "0"),
             ("focus", "1"),
+            ("topmost", "1"),
+            ("cloaked", "0"),
             ("pos", "1300,60"),
             ("size", "420x44"),
             ("onMonitor", "1"),
@@ -203,8 +246,10 @@ mod tests {
     fn an_unknown_reading_is_visible_as_unknown() {
         // `2` = la lectura falló. Un `false` disfrazado de `0` haría indistinguible
         // un hide de la app de un fallo al preguntar.
-        let reading = format_reading(2, 2, 2, "", "", 0.0, false, 0);
+        let reading = format_reading(2, 2, 2, 2, u32::MAX, "", "", 0.0, false, 0);
         assert!(reading.contains("visible=2"));
+        assert!(reading.contains("topmost=2"));
+        assert!(reading.contains(&format!("cloaked={}", u32::MAX)));
         assert!(reading.contains("min=2"));
         assert!(reading.contains("onMonitor=0"));
     }
