@@ -1427,6 +1427,17 @@ export function Widget() {
         // las coordenadas.
         const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
         reorderHold.current = inside;
+        if (inside) {
+          // #264/S21: el puntero queda sobre la tira. Con la captura del
+          // puntero la entrada se puede perder y la presencia queda en
+          // `outside`: sin esta escritura el bloqueo del hover (lo suelta la
+          // transición `widget` → otro) quedaría puesto hasta la siguiente
+          // entrada y salida. La escritura no suelta el bloqueo: no es una
+          // transición fuera de `widget` (#222).
+          setHoverPresence({ target: 'widget', at: Date.now() });
+          // El puntero está sobre la tira: no hay ningún cierre pendiente.
+          cancelClose(closeTimer);
+        }
       }
       if (od?.moved && reorder) {
         const next = reorder.order;
