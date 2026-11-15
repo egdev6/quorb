@@ -53,7 +53,8 @@ pub(crate) fn forward_pointer_events(window: &WebviewWindow, label: &'static str
         // Sin estas máscaras GTK no entrega `enter`/`leave` a la ventana.
         let masks = gtk::gdk::EventMask::ENTER_NOTIFY_MASK | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK;
         // El toplevel GTK de la ventana: lo que GTK entrega a la ventana.
-        if let Ok(gtk_window) = gtk_win.gtk_window() {
+        let gtk_window = gtk_win.gtk_window();
+        if let Ok(gtk_window) = &gtk_window {
             gtk_window.add_events(masks);
             gtk_window.connect_enter_notify_event({
                 let app = app.clone();
@@ -89,6 +90,13 @@ pub(crate) fn forward_pointer_events(window: &WebviewWindow, label: &'static str
                     gtk::glib::Propagation::Proceed
                 }
             });
+        } else if let Err(e) = &gtk_window {
+            // Sin ventana GTK esta ventana no tiene relé nativo: lo avisa
+            // para que el fallo no sea silencioso (#264/S20).
+            log::warn!(
+                "Relé de puntero: no pude enganchar GTK en {label}: {e}. \
+                 Esta ventana sigue decidiendo con los eventos del DOM."
+            );
         }
     });
     if let Err(e) = outcome {
