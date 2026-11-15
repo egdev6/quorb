@@ -544,6 +544,10 @@ export function Widget() {
 
   const autoHide = config?.autoHide ?? false;
   const showHandle = autoHide || phase !== 'open';
+  // Idioma seguro para controles accesibles (#271): `pending` (config pendiente
+  // y sin fallo definitivo) no monta botones sin nombre. El peek y las tools
+  // solo se montan con config válida o fallo definitivo (locale `es`).
+  const configKnown = config != null || configFailed;
   useEffect(() => {
     if (!autoHide) {
       setCollapsed(false);
@@ -1317,11 +1321,11 @@ export function Widget() {
         scheduleClose();
       }}
     >
-      {showHandle && <button
+      {showHandle && configKnown && <button
         ref={peekRef}
         type="button"
         className="peek"
-        aria-label={config != null ? (placementFailed ? `${t(locale, 'widget.retryShow')}${placementReasonText ? `: ${placementReasonText}` : ''}` : t(locale, 'widget.show')) : undefined}
+        aria-label={configFailed ? t(locale, 'widget.show') : (placementFailed ? `${t(locale, 'widget.retryShow')}${placementReasonText ? `: ${placementReasonText}` : ''}` : t(locale, 'widget.show'))}
         title={placementFailed ? placementReasonText ?? undefined : undefined}
         aria-controls="quorb-strip"
         aria-hidden={phase === 'open' && !peekFocused || undefined}
@@ -1397,7 +1401,7 @@ export function Widget() {
         {/* Las herramientas solo se montan con idioma seguro: mientras la config
             está pendiente no hay botones sin nombre accesible (#271, precisión
             2). En el fallo definitivo se montan con el locale por defecto. */}
-        {(config != null || configFailed) && (
+        {configKnown && (
           <StripTools
             locale={locale}
             loading={loading}

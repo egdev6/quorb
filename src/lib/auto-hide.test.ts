@@ -297,6 +297,14 @@ describe('auto-hide reveal integration', () => {
     expect(widget).not.toContain('const PEEK = 5;');
   });
 
+  it('gates the peek on a known locale so it is never a button without an accessible name while config is pending (#271)', () => {
+    // Mientras la config está pendiente (o falla sin idioma) el botón peek no se
+    // monta: no queda un botón activo sin nombre accesible. Con idioma seguro (o
+    // fallo definitivo en `es`) sí se monta con su aria-label.
+    expect(widget).toContain('showHandle && configKnown &&');
+    expect(widget).toContain("aria-label={configFailed ? t(locale, 'widget.show')");
+  });
+
   it('moves and resizes the widget atomically before revealing the strip', () => {
     expect(widget).toContain('await api.setWidgetBounds(physical)');
     expect(widget).toContain('markPrepared(phase)');
@@ -1141,5 +1149,36 @@ describe('the localized placement reason', () => {
     const en = markup('en', false);
     expect(en).toContain('aria-label="Show Quorb"');
     expect(en).not.toContain('data-placement-reason');
+  });
+
+  // #271 (precisión 2): el peek es un botón activo; mientras la config está
+  // pendiente no debe montarse sin nombre accesible. Se monta con `autoHide`
+  // activo y fase colapsada para aislar el gate de `configKnown`.
+  it('hides the peek entirely while the config is pending (no button without a name)', () => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.phase = 'hidden';
+    widgetEffects.states[0] = null; // config pendiente
+    widgetEffects.states[7] = { ...geo, sf: 1 };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    const html = renderToStaticMarkup(createElement(Widget));
+    expect(html).not.toContain('class="peek"');
+    widgetEffects.phase = undefined;
+  });
+
+  it('shows the peek with an accessible name in the default locale once the config load fails definitively', () => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.phase = 'hidden';
+    widgetEffects.states[0] = null; // config sigue null
+    widgetEffects.states[1] = true; // configFailed
+    widgetEffects.states[7] = { ...geo, sf: 1 };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    const html = renderToStaticMarkup(createElement(Widget));
+    expect(html).toContain('class="peek"');
+    expect(html).toContain('aria-label="Mostrar Quorb"');
+    widgetEffects.phase = undefined;
   });
 });
