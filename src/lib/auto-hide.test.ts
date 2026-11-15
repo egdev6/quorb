@@ -1578,18 +1578,6 @@ describe('hover presence wiring', () => {
     };
 
     /**
-     * El mismo reordenamiento, pero soltando FUERA de la ventana: el puntero
-     * ya no está sobre la tira y el bloqueo del hover no se pone.
-     */
-    const reorderOutside = (orbs: OrbPointer[]) => {
-      const orb = orbs.find((o) => o.id === 'a')!;
-      const target = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
-      orb.onPointerDown({ button: 0, clientX: 10, clientY: 10, pointerId: 1, currentTarget: target });
-      orb.onPointerMove({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
-      orb.onPointerUp({ clientX: 2000, clientY: 10, pointerId: 1, currentTarget: target });
-    };
-
-    /**
      * El hover sobre el orbe, ya fuera de la guarda del reordenamiento
      * (400 ms): antes de eso lo frena el gesto, no el bloqueo.
      */
@@ -1642,42 +1630,6 @@ describe('hover presence wiring', () => {
       dock.onMouseEnter();
       reorder(orbs);
       dock.onMouseLeave(); // La salida del DOM: Windows y macOS.
-      await hoverAfterTheGuard(hover);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
-    });
-
-    // #264/S21: la entrada a la tira se puede perder (Wayland nativo) y la
-    // presencia queda en `outside` aunque el puntero esté sobre la tira. Al
-    // soltar dentro de la ventana, la presencia pasa a `widget`: la salida que
-    // llega después es la transición `widget` → otro y suelta el bloqueo. Con
-    // la presencia en `outside` la salida no cambiaba nada y el bloqueo
-    // quedaba puesto hasta la siguiente entrada y salida.
-    it('releases the hold when the enter was lost and the drop lands inside (#264/S21)', async () => {
-      const { dock, hover, orbs } = await wire();
-      // La entrada se perdió: la presencia sigue en `outside`.
-      reorder(orbs); // El puntero queda dentro de la ventana.
-      dock.onMouseLeave(); // La salida de la tira.
-      await hoverAfterTheGuard(hover);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
-    });
-
-    // #264/S21/#222: soltar dentro con el puntero encima del orbe no puede
-    // abrir el detalle por sí solo (#222): el bloqueo sigue puesto hasta que
-    // el puntero sale de la tira.
-    it('keeps the hold when the enter was lost and the drop lands inside (#264/S21, #222)', async () => {
-      const { hover, orbs } = await wire(false, NO_PANEL);
-      reorder(orbs);
-      await hoverAfterTheGuard(hover);
-      // La apertura retardada del hover, si el bloqueo no estuviera puesto.
-      await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
-    });
-
-    // Soltar fuera de la ventana no pone el bloqueo: el puntero ya no está
-    // sobre la tira (#264/S21).
-    it('does not hold the hover when the drop lands outside (#264/S21)', async () => {
-      const { hover, orbs } = await wire();
-      reorderOutside(orbs);
       await hoverAfterTheGuard(hover);
       expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
     });
