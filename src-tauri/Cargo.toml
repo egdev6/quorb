@@ -72,7 +72,7 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 # El aviso del relé nativo de cruces (#264/S20): sin backend de log la
-# advertencia no se imprime todavía, pero el fallo deja de ser silencioso.
+# advertencia no se imprime todavía; queda lista para cuando se inicialice uno.
 log = "0.4"
 
 # Solo Linux: la prueba en vivo del ciclo (#179) con un webview real.

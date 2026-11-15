@@ -268,7 +268,9 @@ export function Widget() {
    *
    * It is a capability detection, not a per-OS branch: on Windows and macOS
    * no native crossing ever arrives, so both flags stay false and the DOM
-   * keeps deciding exactly as before.
+   * keeps deciding the presence. It does so through the shared model (with
+   * its 250 ms stale-leave rule), not through the `insideRef` flag that
+   * `main` used there, so it is not identical to what `main` did.
    *
    * It is declared after `hoverAtRef` so that it does not shift the ref
    * indexes the test harness reads.
@@ -1463,8 +1465,10 @@ export function Widget() {
       onMouseLeave={() => {
         // #264/S19: the release of the reorder hold is not here any more: it
         // is the presence model's, and it happens when the presence leaves
-        // `widget`. When the native relay is in charge the DOM does not reach
-        // the model (#264/S18), and the native exit of the strip does.
+        // `widget`. When the native relay of THIS surface is in charge, its
+        // DOM events do not reach the model and the native exit of the strip
+        // does (#264/S20); a surface without a relay keeps deciding with its
+        // own DOM events.
         // The native crossing of this surface wins when it exists (#264/S20).
         if (nativeCrossingsRef.current.widget) return;
         applyHover({ surface: 'widget', kind: 'leave' });

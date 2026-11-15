@@ -11,9 +11,12 @@
  * never depends on one flag that one surface owns:
  *
  * - `widget enter` -> `widget`
- * - `widget leave` -> `outside`
+ * - `widget leave` -> `outside` (when the pointer was on the strip)
  * - `detail enter` -> `detail`
- * - `detail leave` -> `outside`
+ * - `detail leave` -> `outside` (when the pointer was on the detail)
+ *
+ * A `leave` from the surface that does NOT hold the pointer is not a plain
+ * transition: invariants 2 and 3 below decide it.
  *
  * The close timer is armed only while the target is `outside`.
  *
@@ -23,9 +26,10 @@
  *    therefore invalidates the strip's presence even when the strip's
  *    `mouseleave` never arrives, and the strip's presence is derived from the
  *    model instead of being a flag of its own.
- * 2. A `leave` only clears the surface it belongs to. A `leave` from the
- *    other surface does not clear it: the pointer is on that other surface,
- *    not on the one that reported the leave.
+ * 2. A `leave` only clears the surface it belongs to. Within the window of
+ *    invariant 3, a `leave` from the other surface does not clear it: the
+ *    pointer is on that other surface, not on the one that reported the
+ *    leave.
  * 3. That `leave` is not ignored forever (#264/S13). When it arrives long
  *    after the evidence of the surface that holds the pointer, it is the only
  *    evidence left and it is authority: the pointer is outside. The
