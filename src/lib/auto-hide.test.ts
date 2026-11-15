@@ -1427,6 +1427,45 @@ describe('hover presence wiring', () => {
     expect(widgetEffects.states[7]).toEqual(NO_PANEL);
   });
 
+  // #264/S20: la precedencia nativa es POR SUPERFICIE. Con un solo booleano,
+  // el primer cruce nativo de cualquier superficie apagaba el DOM de las dos:
+  // si el relé se engancha a la tira pero no al detalle, el detalle perdía su
+  // entrada y su salida por el DOM y ya no las recuperaba.
+  it('keeps the detail open when the native relay only covers the strip (#264/S20)', async () => {
+    const { detail, native } = await wire();
+    native('widget', 'enter'); // El relé nativo cubre la tira.
+    native('widget', 'leave'); // El puntero salió de la tira: el cierre se arma.
+    // El puntero entró al detalle, que no tiene relé: su entrada llega por el DOM.
+    detail('enter');
+    await vi.advanceTimersByTimeAsync(280);
+    // Con el puntero sobre el detalle el panel no se cierra.
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
+  // #264/S20: el detalle sin relé conserva su salida por el DOM: si el relé
+  // se enganchó a la tira pero no al detalle, la salida del detalle es la
+  // única evidencia del puntero y tiene que armar el cierre.
+  it('closes the detail with the DOM leave of a surface without a native relay (#264/S20)', async () => {
+    const { detail, native } = await wire();
+    native('widget', 'enter'); // El relé nativo cubre la tira.
+    detail('enter'); // El detalle, sin relé, avisa su entrada por el DOM.
+    detail('leave'); // Y su salida por el DOM: el cierre se arma.
+    await vi.advanceTimersByTimeAsync(280);
+    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+  });
+
+  // #264/S20: el espejo del anterior. El relé cubre el detalle y no la tira:
+  // la entrada y la salida de la tira las sigue decidiendo el DOM.
+  it('keeps the detail open when the pointer returns to the strip that has no native relay (#264/S20)', async () => {
+    const { dock, native } = await wire();
+    native('detail', 'enter'); // El relé nativo cubre el detalle.
+    native('detail', 'leave'); // El puntero salió del detalle: el cierre se arma.
+    dock.onMouseEnter(); // El puntero vuelve a la tira, que no tiene relé: por el DOM.
+    await vi.advanceTimersByTimeAsync(280);
+    // Con el puntero sobre la tira el panel no se cierra.
+    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+  });
+
   // #170/#223: que un panel anclado siga abierto es intencional. El modelo
   // decide el cierre por hover, así que tiene que respetar esa salida: con el
   // panel anclado, salir de las dos superficies no arma ningún cierre.

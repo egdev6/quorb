@@ -240,22 +240,29 @@ export function Widget() {
    */
   const hoverAtRef = useRef(0);
   /**
-   * Whether the native relay has already reported a crossing (#264).
+   * Whether the native relay has already reported a crossing, per surface
+   * (#264/S20).
    *
    * The native crossings and the DOM `enter`/`leave` describe the same
    * crossing, and when both arrive the second one re-arms the close and
    * delays it. The native one is the authority as soon as it exists: from
-   * the first crossing on, the DOM stops deciding the presence of the two
-   * surfaces, for the rest of the session.
+   * the first crossing of a surface on, the DOM stops deciding the presence
+   * of THAT surface.
+   *
+   * The precedence is per surface because the relay is hooked per window:
+   * if it reaches the strip but not the detail, the detail keeps deciding
+   * with its own DOM events. With a single flag the first native crossing
+   * of any surface silenced the DOM of the two, and a surface without a
+   * relay lost its exit for good (#264/S20).
    *
    * It is a capability detection, not a per-OS branch: on Windows and macOS
-   * no native crossing ever arrives, so the DOM keeps deciding exactly as
-   * before.
+   * no native crossing ever arrives, so both flags stay false and the DOM
+   * keeps deciding exactly as before.
    *
    * It is declared after `hoverAtRef` so that it does not shift the ref
    * indexes the test harness reads.
    */
-  const nativeCrossingsRef = useRef(false);
+  const nativeCrossingsRef = useRef<{ widget: boolean; detail: boolean }>({ widget: false, detail: false });
   const configRef = useRef<AppConfig | null>(null);
   const reportsRef = useRef<UsageReport[]>([]);
   const geoRef = useRef<Geo | null>(null);
@@ -912,13 +919,13 @@ export function Widget() {
           // The pointer cannot be in both windows at once: the detail's
           // presence invalidates the strip's, even if the strip's
           // `mouseleave` never arrives (Wayland native drops it).
-          // The native crossing wins when it exists (#264).
-          if (!nativeCrossingsRef.current) applyHover({ surface: 'detail', kind: 'enter' });
+          // The native crossing of this surface wins when it exists (#264/S20).
+          if (!nativeCrossingsRef.current.detail) applyHover({ surface: 'detail', kind: 'enter' });
         } else if (payload.kind === 'leave') {
           // The detail's own `leave` arms the close: it does not depend on a
           // flag that only the strip owns.
-          // The native crossing wins when it exists (#264).
-          if (!nativeCrossingsRef.current) applyHover({ surface: 'detail', kind: 'leave' });
+          // The native crossing of this surface wins when it exists (#264/S20).
+          if (!nativeCrossingsRef.current.detail) applyHover({ surface: 'detail', kind: 'leave' });
         } else if (payload.kind === 'hide') {
           cancelTimers();
           setPanel(closePanel());
@@ -932,9 +939,11 @@ export function Widget() {
       // alimenta el mismo modelo, sin reglas nuevas.
       await add(listen<PointerSurfacePayload>(POINTER_SURFACE_EVENT, ({ payload }) => {
         if (disposed) return;
-        // The native crossing is the authority as soon as it exists (#264):
-        // from here on the DOM stops deciding the presence.
-        nativeCrossingsRef.current = true;
+        // The native crossing is the authority as soon as it exists for that
+        // surface (#264/S20): from here on the DOM stops deciding the
+        // presence of THAT surface. The relay is hooked per window, so a
+        // surface without a relay keeps deciding with its DOM events.
+        nativeCrossingsRef.current[payload.surface] = true;
         applyHover({ surface: payload.surface, kind: payload.kind });
       }));
       await add(listen(DETAIL_EVENTS.widgetHidden, () => {
@@ -1417,8 +1426,8 @@ export function Widget() {
       onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
       style={{ '--panel-alpha': String(opacity), '--ring-1': ring1, '--ring-2': ring2, '--ring-3': ring3 } as CSSProperties}
       onMouseEnter={() => {
-        // The native crossing wins when it exists (#264).
-        if (nativeCrossingsRef.current) return;
+        // The native crossing of this surface wins when it exists (#264/S20).
+        if (nativeCrossingsRef.current.widget) return;
         applyHover({ surface: 'widget', kind: 'enter' });
       }}
       onMouseLeave={() => {
@@ -1426,8 +1435,8 @@ export function Widget() {
         // is the presence model's, and it happens when the presence leaves
         // `widget`. When the native relay is in charge the DOM does not reach
         // the model (#264/S18), and the native exit of the strip does.
-        // The native crossing wins when it exists (#264).
-        if (nativeCrossingsRef.current) return;
+        // The native crossing of this surface wins when it exists (#264/S20).
+        if (nativeCrossingsRef.current.widget) return;
         applyHover({ surface: 'widget', kind: 'leave' });
       }}
     >
