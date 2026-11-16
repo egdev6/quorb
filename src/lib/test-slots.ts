@@ -103,19 +103,28 @@ export const STARTUP_STATES = [
   { name: 'configError', initial: null },
 ] as const satisfies readonly SlotSpec[];
 
-/** Construye `nombre → índice` desde un array ordenado (única fuente). */
-function indexByName<T extends readonly SlotSpec[]>(specs: T): Record<T[number]['name'], number> {
-  return Object.fromEntries(specs.map((s, i) => [s.name, i])) as Record<T[number]['name'], number>;
+/** Construye `nombre → índice` desde uno o más arrays ordenados (única fuente). */
+function buildSlotIndex(groups: readonly (readonly SlotSpec[])[]): Record<string, number> {
+  const index: Record<string, number> = {};
+  for (const specs of groups) {
+    for (const [i, spec] of specs.entries()) {
+      // Un nombre repetido (dentro de una tabla o entre estados/refs al
+      // fusionarlos en `SLOT`) sobrescribiría el índice en silencio y los
+      // tests leerían el slot equivocado (#286).
+      if (spec.name in index) {
+        throw new Error(`Nombre de slot duplicado: '${spec.name}'. Revisa src/lib/test-slots.ts.`);
+      }
+      index[spec.name] = i;
+    }
+  }
+  return index;
 }
 
 /** `SLOT.shown`, `SLOT.geo`, `SLOT.stripRef`… → índice posicional en el mock. */
-export const SLOT = {
-  ...indexByName(WIDGET_STATES),
-  ...indexByName(WIDGET_REFS),
-};
+export const SLOT = buildSlotIndex([WIDGET_STATES, WIDGET_REFS]);
 
 /** Índices del probe del hook (separados: el hook no monta Widget). */
-export const STARTUP_SLOT = indexByName(STARTUP_STATES);
+export const STARTUP_SLOT = buildSlotIndex([STARTUP_STATES]);
 
 export const WIDGET_STATE_COUNT = WIDGET_STATES.length;
 export const WIDGET_REF_COUNT = WIDGET_REFS.length;
