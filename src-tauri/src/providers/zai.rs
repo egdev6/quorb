@@ -175,6 +175,7 @@ fn window_meter(limit: &Value, id: &str, label: &str, window: i64) -> Meter {
         unit: None,
         resets_at: next_reset(limit),
         window_seconds: Some(window),
+        quota_source: None,
     }
 }
 
@@ -210,6 +211,7 @@ fn base_meter(limit: &Value, id: &str, label: &str, unit: &str, window: Option<i
         unit: Some(unit.into()),
         resets_at: next_reset(limit),
         window_seconds: window,
+        quota_source: None,
     }
 }
 

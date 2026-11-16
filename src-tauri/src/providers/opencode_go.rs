@@ -241,6 +241,7 @@ fn parse_usage(v: &Value) -> Parsed {
                     unit: None,
                     resets_at,
                     window_seconds,
+                    quota_source: None,
                 });
             }
         }

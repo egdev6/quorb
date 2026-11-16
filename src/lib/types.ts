@@ -14,6 +14,13 @@ export interface Meter {
   resetsAt: string | null;
   /** Duración de la ventana en segundos (5 h, 7 días, mes…) */
   windowSeconds: number | null;
+  /**
+   * Base contra la que se midió este medidor, declarada por el proveedor. El frente la
+   * trata como texto opaco: solo le importa si cambió entre dos lecturas (el porcentaje
+   * bajó porque cambió el denominador, no porque la cuota se reiniciara). Sin base, el
+   * medidor se compara siempre.
+   */
+  quotaSource?: string;
 }
 
 export interface Spend {

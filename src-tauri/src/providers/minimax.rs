@@ -232,6 +232,7 @@ pub(crate) fn parse(plan: &Value, balance: Option<&Value>, payg_configured: bool
                     .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
                     .map(|at| at.to_rfc3339()),
                 window_seconds: start.zip(end).map(|(s, e)| e - s),
+                quota_source: None,
             });
         }
     }
@@ -249,6 +250,7 @@ pub(crate) fn parse(plan: &Value, balance: Option<&Value>, payg_configured: bool
             unit: Some("USD".into()),
             resets_at: None,
             window_seconds: None,
+            quota_source: None,
         });
     }
 
