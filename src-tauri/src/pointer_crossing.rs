@@ -91,11 +91,10 @@ pub(crate) fn forward_pointer_events(window: &WebviewWindow, label: &'static str
                 }
             });
         } else if let Err(e) = &gtk_window {
-            // Sin ventana GTK esta ventana no tiene relé nativo: lo avisa con
-            // `log::warn!`. Mientras no se inicialice un backend de log el
-            // aviso no se imprime, así que en la práctica el fallo sigue
-            // siendo silencioso (#264/S20).
-            log::warn!(
+            // Sin ventana GTK esta ventana no tiene relé nativo: lo avisa por
+            // stderr, como el fallo de enganche de abajo. El proyecto no tiene
+            // backend de logs, así que `eprintln!` es el aviso (#264/S20).
+            eprintln!(
                 "Relé de puntero: no pude enganchar GTK en {label}: {e}. \
                  Esta ventana sigue decidiendo con los eventos del DOM."
             );

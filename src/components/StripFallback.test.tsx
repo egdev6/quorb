@@ -7,23 +7,23 @@ import { StripFallback } from './StripFallback';
 
 const props = (locale: 'es' | 'en') => ({
   locale,
+  state: 'ready' as const,
   error: null as string | null,
   busy: false,
-  ready: true,
   onRetry: () => {},
   onConfigure: () => {},
 });
 
 describe('StripFallback i18n (SSR)', () => {
   it('renders the Spanish fallbacks verbatim for es', () => {
-    expect(renderToStaticMarkup(<StripFallback {...props('es')} error="sin red" />), 'error → Reintentar').toContain('Reintentar');
+    expect(renderToStaticMarkup(<StripFallback {...props('es')} state="failed" error="sin red" />), 'failed → Reintentar').toContain('Reintentar');
     expect(renderToStaticMarkup(<StripFallback {...props('es')} busy />), 'busy → Cargando…').toContain('Cargando…');
     expect(renderToStaticMarkup(<StripFallback {...props('es')} />), 'ready → Configurar').toContain('Configurar');
-    expect(renderToStaticMarkup(<StripFallback {...props('es')} error="sin red" />)).not.toContain('Retry');
+    expect(renderToStaticMarkup(<StripFallback {...props('es')} state="failed" error="sin red" />)).not.toContain('Retry');
   });
 
   it('renders the English fallbacks when the locale is en', () => {
-    expect(renderToStaticMarkup(<StripFallback {...props('en')} error="no network" />), 'error → Retry').toContain('Retry');
+    expect(renderToStaticMarkup(<StripFallback {...props('en')} state="failed" error="no network" />), 'failed → Retry').toContain('Retry');
     expect(renderToStaticMarkup(<StripFallback {...props('en')} busy />), 'busy → Loading…').toContain('Loading…');
     expect(renderToStaticMarkup(<StripFallback {...props('en')} />), 'ready → Configure').toContain('Configure');
     expect(renderToStaticMarkup(<StripFallback {...props('en')} busy />)).not.toContain('Cargando');
@@ -31,8 +31,50 @@ describe('StripFallback i18n (SSR)', () => {
 
   it('shows the retry title with the raw error text in both locales', () => {
     for (const locale of ['es', 'en'] as const) {
-      const html = renderToStaticMarkup(<StripFallback {...props(locale)} error="sin red" />);
+      const html = renderToStaticMarkup(<StripFallback {...props(locale)} state="failed" error="sin red" />);
       expect(html).toContain('title="sin red"');
     }
+  });
+
+  // Precisión 1 (#271): mientras la config está pendiente, el neutro gana
+  // incluso si hay un error ajeno (refresco/arrastre); solo `failed` muestra
+  // el fallback explícito.
+  it('pending is neutral: no localized text, even with an unrelated error', () => {
+    for (const locale of ['es', 'en'] as const) {
+      const html = renderToStaticMarkup(<StripFallback {...props(locale)} state="pending" error="boom" />);
+      expect(html, `pending neutral: ${locale}`).not.toContain('Cargando');
+      expect(html, `pending neutral: ${locale}`).not.toContain('Loading');
+      expect(html, `pending neutral: ${locale}`).not.toContain('Reintentar');
+      expect(html, `pending neutral: ${locale}`).not.toContain('Retry');
+      expect(html, `pending neutral: ${locale}`).not.toContain('Configurar');
+      expect(html, `pending neutral: ${locale}`).not.toContain('Configure');
+      expect(html).toContain('strip__pending');
+    }
+  });
+
+  it('failed is explicit even with an unrelated busy state', () => {
+    const html = renderToStaticMarkup(<StripFallback {...props('en')} state="failed" error="config unreachable" busy />);
+    expect(html).toContain('Retry');
+    expect(html).toContain('title="config unreachable"');
+  });
+
+  // Revisión PR #271 (defecto 1): con la config ya cargada (`ready`), un error
+  // de uso (refresco, arrastre…) sin orbes visibles se muestra con «Reintentar»
+  // y el error como tooltip; no se cae a «Configurar».
+  it('ready with a usage error shows Retry with the error, not Configure', () => {
+    for (const locale of ['es', 'en'] as const) {
+      const html = renderToStaticMarkup(<StripFallback {...props(locale)} state="ready" error="refresh blew up" />);
+      expect(html, `ready+error es: ${locale}`).toContain(locale === 'es' ? 'Reintentar' : 'Retry');
+      expect(html, `ready+error title: ${locale}`).toContain('title="refresh blew up"');
+      expect(html, `ready+error no configurar: ${locale}`).not.toContain(locale === 'es' ? 'Configurar' : 'Configure');
+    }
+  });
+
+  // Revisión PR #271 (menor): el fallo definitivo sin tooltip crudo sigue
+  // ofreciendo «Reintentar» (el error de un reintento manual llega por `error`).
+  it('failed without a raw error still offers Retry', () => {
+    const html = renderToStaticMarkup(<StripFallback {...props('en')} state="failed" />);
+    expect(html).toContain('Retry');
+    expect(html).not.toContain('title=');
   });
 });
