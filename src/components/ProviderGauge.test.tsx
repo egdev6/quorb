@@ -98,14 +98,14 @@ describe('ProviderGauge popup focus', () => {
 });
 
 describe('ProviderGauge pointer-only enter', () => {
-  function gauge(onPointerEnter?: (el: HTMLElement) => void) {
+  function gauge(onPointerEnter?: (el: HTMLElement) => void, onPointerLeave?: (el: HTMLElement) => void) {
     vi.stubGlobal('navigator', { userAgent: 'X11; Linux x86_64' });
     const onHover = vi.fn();
     const report: UsageReport = {
       id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
       meters: [], spend: null, message: null, action: null, fetchedAt: '',
     };
-    const button = ProviderGauge({ report, small: false, size: 60, active: false, onHover, onPointerEnter });
+    const button = ProviderGauge({ report, small: false, size: 60, active: false, onHover, onPointerEnter, onPointerLeave });
     const target = { matches: vi.fn(() => true) };
     return { button, event: { currentTarget: target }, onHover, target };
   }
@@ -125,6 +125,47 @@ describe('ProviderGauge pointer-only enter', () => {
     const { button, event, onHover, target } = gauge();
     button.props.onMouseEnter(event);
     expect(onHover).toHaveBeenCalledWith(target);
+  });
+
+  // #264/S23: la salida del puntero por el orbe es la que termina el bloqueo
+  // tras reordenar, así que tiene su propio camino (no el del hover).
+  it('routes mouseleave to onPointerLeave', () => {
+    const onPointerLeave = vi.fn();
+    const { button, event } = gauge(undefined, onPointerLeave);
+    button.props.onMouseLeave(event);
+    expect(onPointerLeave).toHaveBeenCalledWith(event.currentTarget);
+  });
+
+  it('does nothing on mouseleave when onPointerLeave is not given', () => {
+    const { button, event } = gauge();
+    expect(() => button.props.onMouseLeave(event)).not.toThrow();
+  });
+});
+
+describe('ProviderGauge visual order', () => {
+  // #264/L18: la vista previa del reordenamiento se cuenta con la propiedad
+  // CSS `order`; el DOM no se reordena, así que el orbe necesita su posición
+  // visual sin tocar su contrato (props, foco, puntero).
+  const report: UsageReport = {
+    id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
+    meters: [], spend: null, message: null, action: null, fetchedAt: '',
+  };
+  const gauge = (order?: number) =>
+    renderToStaticMarkup(
+      <ProviderGauge report={report} small={false} size={60} active={false} onHover={() => {}} order={order} />,
+    );
+
+  it('applies the visual position as the CSS order', () => {
+    const html = gauge(2);
+    expect(html).toContain('order:2');
+    // El resto del contrato del orbe no cambia.
+    expect(html).toContain('class="orb eg-gauge"');
+    expect(html).toContain('data-id="claude"');
+  });
+
+  it('omits the CSS order when there is no preview', () => {
+    const style = gauge().match(/style="([^"]*)"/)?.[1] ?? '';
+    expect(style).not.toContain('order:');
   });
 });
 

@@ -69,8 +69,11 @@ export const WIDGET_REFS = [
   { name: 'detailStateRef', initial: null },
   { name: 'detailReadyRef', initial: false },
   { name: 'detailRevision', initial: SKIP },  // Date.now()
-  { name: 'detailInsideRef', initial: false },
-  { name: 'insideRef', initial: false },
+  // #264/S32 (merge de #275): el puntero del detalle ya no se lee por ref,
+  // lo comunica el propio detalle por eventos. Tres refs nuevas del Widget:
+  { name: 'hoverRef', initial: 'outside' },
+  { name: 'hoverAtRef', initial: 0 },
+  { name: 'nativeCrossingsRef', initial: SKIP },  // { widget: false, detail: false }
   { name: 'configRef', initial: null },
   { name: 'appliedConfigRef', initial: null },
   { name: 'reportsRef', initial: [] },
@@ -87,7 +90,7 @@ export const WIDGET_REFS = [
   { name: 'drag', initial: null },
   { name: 'orbDrag', initial: null },
   { name: 'lastReorderAt', initial: 0 },
-  { name: 'reorderHold', initial: false },
+  { name: 'reorderHold', initial: SKIP },     // NO_HOLD (ReorderHold, #264/S23)
   { name: 'openPeakRef', initial: SKIP },     // () => {}
   { name: 'dragWork', initial: SKIP },        // Promise.resolve()
   { name: 'dragMounted', initial: true },

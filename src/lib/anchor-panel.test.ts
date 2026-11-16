@@ -12,7 +12,6 @@ import {
   NO_PANEL,
   panelHoldsOpen,
   type PanelState,
-  REORDER_GUARD_MS,
 } from './anchor-panel';
 
 describe('the anchored panel state', () => {
@@ -80,11 +79,13 @@ describe('the reorder guard', () => {
     // El clic llega después de soltar: la guarda es lo que lo frena, no el
     // umbral de 6 px (que ya se consumió en `pointerup`).
     expect(isReorderGesture(1000, 1000)).toBe(true);
-    expect(isReorderGesture(1000, 1000 + REORDER_GUARD_MS - 1)).toBe(true);
+    // La ventana son 300 ms (#264/S23), con literales: el test no sigue a la
+    // constante de producción.
+    expect(isReorderGesture(1000, 1299)).toBe(true);
   });
 
   it('lets the click anchor once the guard has passed', () => {
-    expect(isReorderGesture(1000, 1000 + REORDER_GUARD_MS)).toBe(false);
+    expect(isReorderGesture(1000, 1300)).toBe(false);
   });
 
   it('does not treat a click without a reorder as a reorder gesture', () => {
