@@ -618,6 +618,7 @@ export const en = {
       error: 'Error',
       needsLogin: 'Signed out',
       unconfigured: 'Not set up',
+      noCurrentReading: 'No current reading',
     },
     action: {
       login: 'Sign in',

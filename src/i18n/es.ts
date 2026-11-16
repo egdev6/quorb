@@ -643,6 +643,7 @@ export const es = {
       error: 'Error',
       needsLogin: 'Sin sesión',
       unconfigured: 'Sin configurar',
+      noCurrentReading: 'Sin lectura actual',
     },
     action: {
       login: 'Iniciar sesión',
