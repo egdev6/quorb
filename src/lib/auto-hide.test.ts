@@ -9,6 +9,7 @@ import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
 import { physicalPanelBounds } from './detail-panel';
 import type { UsageReport } from './types';
+import { SLOT, SKIP, WIDGET_REFS, WIDGET_STATE_COUNT, WIDGET_REF_COUNT, WIDGET_STATES } from './test-slots';
 
 type GripHandlers = {
   onPointerDown(event: ReactPointerEvent<HTMLSpanElement>): void;
@@ -50,6 +51,15 @@ function findOrbHover(node: ReactNode): ((el: HTMLElement) => void) | undefined 
 // own refs, so the drag/detail refs below start at 1 (#271, revisión).
 const widgetEffects = vi.hoisted(() => ({
   states: [] as unknown[], stateIndex: 0,
+  // Iniciales que Widget pasa a cada useState/useRef, en orden de render.
+  // El test de coherencia (#286) los compara contra la tabla de slots.
+  stateInitials: [] as unknown[], refInitials: [] as unknown[],
+  // Recuentos esperados de la tabla de slots (#286): el mock no puede importar
+  // el módulo (hoisting), así que el test los inyecta aquí ANTES de renderizar
+  // (`widgetEffects.expectedStateCount = WIDGET_STATE_COUNT`). Si un render
+  // crea más hooks de los declarados, el guard estalla en el punto exacto.
+  expectedStateCount: null as number | null,
+  expectedRefCount: null as number | null,
   refs: [] as { current: unknown }[], refIndex: 0,
   getConfig: vi.fn(), openSettings: vi.fn(),
   effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
@@ -67,6 +77,14 @@ vi.mock('react', async (importOriginal) => {
     ...react,
     useState: ((initial?: unknown) => {
       const index = widgetEffects.stateIndex++;
+      widgetEffects.stateInitials.push(initial);
+      // Disparidad temprana con la tabla de slots (#286): si el render crea
+      // más useState de los declarados, falla aquí, en el punto exacto.
+      // Los recuentos se inyectan desde el test (el factory no puede importar).
+      const expected = widgetEffects.expectedStateCount;
+      if (expected != null && index >= expected) {
+        throw new Error(`El Widget crea más useState (${index + 1}) de los que declara la tabla de slots (#286). Actualiza src/lib/test-slots.ts.`);
+      }
       const value = index in widgetEffects.states ? widgetEffects.states[index]
         : typeof initial === 'function' ? initial() : initial;
       // Commit state explicitly in tests, but preserve the actual updater result.
@@ -78,6 +96,11 @@ vi.mock('react', async (importOriginal) => {
     }) as typeof react.useState,
     useRef: ((initial: unknown) => {
       const index = widgetEffects.refIndex++;
+      widgetEffects.refInitials.push(initial);
+      const expected = widgetEffects.expectedRefCount;
+      if (expected != null && index >= expected) {
+        throw new Error(`El Widget crea más useRef (${index + 1}) de los que declara la tabla de slots (#286). Actualiza src/lib/test-slots.ts.`);
+      }
       return widgetEffects.refs[index] ??= { current: initial };
     }) as typeof react.useRef,
     useEffect: ((run, deps) => { widgetEffects.effects.push({ run, deps }); }) as typeof react.useEffect,
@@ -119,6 +142,15 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
   emitTo: vi.fn(),
 }));
+
+// Recuentos esperados de la tabla de slots (#286): el mock no puede importar
+// `test-slots` (hoisting de `vi.mock`), así que el test los inyecta en el
+// objeto hoisted. El guard NO se activa globalmente: los componentes de los
+// orbs (ProviderLogo tiene un `useState` para el fallback de imagen rota)
+// añaden hooks suyos cuando hay informes visibles, así que un Widget CON datos
+// consume más hooks que el Widget vacío de la tabla. El test de coherencia
+// activa el guard sobre un render sin orbs, donde la secuencia es exactamente
+// la declarada en `test-slots.ts`.
 
 describe('auto-hide geometry and phases', () => {
   it.each(['top', 'bottom', 'left', 'right'] as Edge[])('keeps only a centered semicircle inside the strip on %s', (edge) => {
@@ -343,31 +375,31 @@ describe('Widget effect mutation ordering', () => {
     }
     renderToStaticMarkup(createElement(CaptureWidget));
     // Refs de Widget: [0]=generation (hook), [1]=stripRef, [2]=peekRef (#271).
-    widgetEffects.refs[1].current = { dataset: {} };
-    widgetEffects.refs[2].current = { dataset: {} };
+    widgetEffects.refs[SLOT.stripRef].current = { dataset: {} };
+    widgetEffects.refs[SLOT.peekRef].current = { dataset: {} };
     return {
-      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[7])!,
-      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[11]
-        && e.deps?.[1] === widgetEffects.states[7])!,
+      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[SLOT.geo])!,
+      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[SLOT.dragging]
+        && e.deps?.[1] === widgetEffects.states[SLOT.geo])!,
       grip: grip!,
     };
   };
   const renderWidget = (dragging: boolean, autoHide = false, sf = geo.sf) => {
     // Hook slots belong to Widget (useDockReveal/useUpdaterMode are isolated above).
-    widgetEffects.states[0] = autoHide ? { autoHide, accounts: [], nineRouter: { baseUrl: '' } } : null;
-    widgetEffects.states[7] = sf === geo.sf ? geo : { ...geo, sf };
-    widgetEffects.states[8] = { w: 400, h: 80 };
-    widgetEffects.states[11] = dragging;
+    widgetEffects.states[SLOT.config] = autoHide ? { autoHide, accounts: [], nineRouter: { baseUrl: '' } } : null;
+    widgetEffects.states[SLOT.geo] = sf === geo.sf ? geo : { ...geo, sf };
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.dragging] = dragging;
     return commitWidget();
   };
   // Text scale (#228): the strip is measured in CSS px and placed in monitor units.
   const renderScaled = (scale: number, sf: number, phase: RevealPhase = 'open') => {
     widgetEffects.textScale = scale;
     widgetEffects.phase = phase;
-    widgetEffects.states[0] = null;
-    widgetEffects.states[7] = { ...geo, sf };
-    widgetEffects.states[8] = { w: 400, h: 80 };
-    widgetEffects.states[11] = false;
+    widgetEffects.states[SLOT.config] = null;
+    widgetEffects.states[SLOT.geo] = { ...geo, sf };
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.dragging] = false;
     return commitWidget();
   };
   const placeScaled = async (scale: number, sf: number, phase: RevealPhase = 'open') => {
@@ -381,7 +413,7 @@ describe('Widget effect mutation ordering', () => {
       strip, win,
       bounds: widgetEffects.bounds.mock.calls[0]?.[0],
       clip: widgetEffects.clip.mock.calls[0]?.[0],
-      pos: widgetEffects.states[12],
+      pos: widgetEffects.states[SLOT.pos],
     };
   };
   const configureNative = () => {
@@ -444,9 +476,9 @@ describe('Widget effect mutation ordering', () => {
       id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
       message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport;
-    widgetEffects.states[3] = [report];
-    widgetEffects.states[9] = { providerId: 'a', anchored: true };
-    widgetEffects.states[10] = 30; // Orb centre in CSS px from the strip start.
+    widgetEffects.states[SLOT.reports] = [report];
+    widgetEffects.states[SLOT.panel] = { providerId: 'a', anchored: true };
+    widgetEffects.states[SLOT.anchorRel] = 30; // Orb centre in CSS px from the strip start.
     renderScaled(scale, sf);
     const detail = widgetEffects.effects.find((e) => e.deps?.[0] === report)!;
     detail.run();
@@ -601,7 +633,7 @@ describe('Widget effect mutation ordering', () => {
     const commitSnapIfReady = async () => {
       // Model React's post-pointerup commit once config and dragging state change.
       // Use Widget's actual placement effect to apply the resulting native bounds.
-      if (!snapCommitted && widgetEffects.states[11] === false && widgetEffects.patch.mock.calls.length > 0) {
+      if (!snapCommitted && widgetEffects.states[SLOT.dragging] === false && widgetEffects.patch.mock.calls.length > 0) {
         const cleanup = commitWidget().placement.run();
         if (typeof cleanup === 'function') cleanupSnap = cleanup;
         snapCommitted = true;
@@ -614,7 +646,7 @@ describe('Widget effect mutation ordering', () => {
       await up;
       await flush();
       await commitSnapIfReady();
-      const canonical = widgetEffects.states[0] as { dockEdge: Edge; dockOffset: number };
+      const canonical = widgetEffects.states[SLOT.config] as { dockEdge: Edge; dockOffset: number };
       expect({ earlyReads, earlySnaps, edge: canonical.dockEdge, offset: canonical.dockOffset, nativePosition })
         .toEqual({
           earlyReads: delayBeforeDispatch ? 0 : 1,
@@ -704,7 +736,7 @@ describe('Widget effect mutation ordering', () => {
     const snap = nearestEdge(geo.area, 760 + 408 * expected, 40 * expected);
     expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: snap.edge, dockOffset: snap.offset });
-    expect(widgetEffects.states[11]).toBe(false);
+    expect(widgetEffects.states[SLOT.dragging]).toBe(false);
   });
 
   it.each([
@@ -749,8 +781,8 @@ describe('Widget effect mutation ordering', () => {
     expect(earlyReads).toBe(0);
     expect(dispatched.size).toBe(2);
     expect(widgetEffects.setPosition.mock.calls.map(call => call[0].y)).toEqual([960, 860]);
-    expect(widgetEffects.states[11]).toBe(false);
-    expect(widgetEffects.states[0]).toMatchObject({ dockEdge: 'bottom', dockOffset: 0.4 });
+    expect(widgetEffects.states[SLOT.dragging]).toBe(false);
+    expect(widgetEffects.states[SLOT.config]).toMatchObject({ dockEdge: 'bottom', dockOffset: 0.4 });
     const cleanup = commitWidget().placement.run();
     await flush();
     expect(f.position()).toEqual({ x: 568, y: 1000 });
@@ -775,7 +807,7 @@ describe('Widget effect mutation ordering', () => {
     await flush();
     expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch).not.toHaveBeenCalled();
-    if (cancel === 'new gesture') expect(widgetEffects.states[11]).toBe(true);
+    if (cancel === 'new gesture') expect(widgetEffects.states[SLOT.dragging]).toBe(true);
   });
 
   it('does not let an old pointerup snap or clear a newer gesture', async () => {
@@ -790,7 +822,7 @@ describe('Widget effect mutation ordering', () => {
     releaseRead({ x: 760, y: 0 });
     await oldUp;
     await flush();
-    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[11] })
+    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[SLOT.dragging] })
       .toEqual({ patches: 0, dragging: true });
     f.acceptFrame(1000, 8);
     await flush();
@@ -823,19 +855,19 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     if (failure === 'origin') {
-      expect(widgetEffects.states[11]).toBe(false);
+      expect(widgetEffects.states[SLOT.dragging]).toBe(false);
     } else {
       f.acceptFrame(1000);
       await flush();
       await f.grip.onPointerUp(f.pointer(1000));
-      expect(widgetEffects.states[11]).toBe(false);
+      expect(widgetEffects.states[SLOT.dragging]).toBe(false);
     }
     f.grip.onPointerDown(f.pointer(40, 8));
     await flush();
     f.acceptFrame(1000, 8);
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
-    expect(widgetEffects.states[11]).toBe(false);
+    expect(widgetEffects.states[SLOT.dragging]).toBe(false);
     expect(widgetEffects.patch.mock.calls.at(-1)?.[0]).toMatchObject({ dockEdge: 'bottom' });
   });
 
@@ -852,7 +884,7 @@ describe('Widget effect mutation ordering', () => {
     expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
     expect(widgetEffects.setPosition.mock.calls[0][0]).toMatchObject({ x: 760, y: 960 });
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: 'bottom' });
-    expect(widgetEffects.states[11]).toBe(false);
+    expect(widgetEffects.states[SLOT.dragging]).toBe(false);
   });
 
   it('cancels an unaccepted RAF at pointerup and ignores another pointer', async () => {
@@ -860,7 +892,7 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
-    expect(widgetEffects.states[11]).toBe(true);
+    expect(widgetEffects.states[SLOT.dragging]).toBe(true);
     expect(widgetEffects.patch).not.toHaveBeenCalled();
     f.grip.onPointerMove(f.pointer(1000));
     expect(f.frames.size).toBe(1);
@@ -868,7 +900,7 @@ describe('Widget effect mutation ordering', () => {
     expect(f.frames.size).toBe(0);
     expect(widgetEffects.setPosition).not.toHaveBeenCalled();
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: 'top' });
-    expect(widgetEffects.states[11]).toBe(false);
+    expect(widgetEffects.states[SLOT.dragging]).toBe(false);
   });
 
   it.each(['new gesture', 'unmount'])('ignores a snap response arriving after %s', async (cancel) => {
@@ -887,13 +919,13 @@ describe('Widget effect mutation ordering', () => {
     await oldUp;
     await flush();
     expect(widgetEffects.stateWrite).toHaveBeenCalledTimes(writes);
-    expect(widgetEffects.states[0]).toBeNull();
+    expect(widgetEffects.states[SLOT.config]).toBeNull();
     if (cancel === 'new gesture') {
-      expect(widgetEffects.states[11]).toBe(true);
+      expect(widgetEffects.states[SLOT.dragging]).toBe(true);
       f.acceptFrame(1000, 8);
       await flush();
       await f.grip.onPointerUp(f.pointer(1000, 8));
-      expect(widgetEffects.states[0]).toMatchObject({ dockEdge: 'bottom' });
+      expect(widgetEffects.states[SLOT.config]).toMatchObject({ dockEdge: 'bottom' });
     }
   });
 
@@ -986,15 +1018,15 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
-    widgetEffects.states[0] = { autoHide, accounts: [], nineRouter: { baseUrl: '' }, alerts: { threshold: 90 } };
-    widgetEffects.states[7] = geo;
-    widgetEffects.states[8] = { w: 400, h: 80 };
-    widgetEffects.states[11] = false;
+    widgetEffects.states[SLOT.config] = { autoHide, accounts: [], nineRouter: { baseUrl: '' }, alerts: { threshold: 90 } };
+    widgetEffects.states[SLOT.geo] = geo;
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.dragging] = false;
     let tree: ReactNode = null;
     function CaptureStrip() { tree = Widget(); return tree; }
     renderToStaticMarkup(createElement(CaptureStrip));
     // La sesión de detalle vigente: revisión 5, proveedor 'a'.
-    widgetEffects.refs[8].current = { revision: 5, report: { id: 'a' } };
+    widgetEffects.refs[SLOT.detailStateRef].current = { revision: 5, report: { id: 'a' } };
     // Cada prueba usa sus propios listeners.
     widgetEffects.listeners.delete('detail-interaction');
     widgetEffects.listeners.delete('detail-dismiss');
@@ -1008,11 +1040,11 @@ describe('Widget effect mutation ordering', () => {
   it('closes the panel and frees the strip when the detail declares a placement failure (#250/S22)', async () => {
     const setTimeoutSpy = vi.fn();
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: setTimeoutSpy });
-    widgetEffects.states[9] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
-    widgetEffects.states[14] = true; // `collapsed`: la tira está replegada.
+    widgetEffects.states[SLOT.panel] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
+    widgetEffects.states[SLOT.collapsed] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
     // El puntero está dentro del detalle.
-    widgetEffects.refs[11].current = true;
+    widgetEffects.refs[SLOT.detailInsideRef].current = true;
     // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
     // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
     listener.run();
@@ -1022,14 +1054,14 @@ describe('Widget effect mutation ordering', () => {
     // Con el panel abierto, la tira está ocupada: el auto-ocultar la mantiene
     // visible y no programa el repliegue.
     autoHideEffect.run();
-    expect(widgetEffects.states[14]).toBe(false);
+    expect(widgetEffects.states[SLOT.collapsed]).toBe(false);
     expect(setTimeoutSpy).not.toHaveBeenCalled();
     // El detalle declara que no pudo colocarse...
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
-    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: false });
     // ...y baja la presencia del detalle.
-    expect(widgetEffects.refs[11].current).toBe(false);
+    expect(widgetEffects.refs[SLOT.detailInsideRef].current).toBe(false);
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
     const after = renderStrip(true);
@@ -1039,34 +1071,34 @@ describe('Widget effect mutation ordering', () => {
 
   it('ignores a placement failure notice from a stale detail session (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
-    widgetEffects.states[9] = { providerId: 'a', anchored: true };
+    widgetEffects.states[SLOT.panel] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[11].current = true;
+    widgetEffects.refs[SLOT.detailInsideRef].current = true;
     listener.run();
     await flush();
     const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
     expect(handlers.length).toBeGreaterThan(0);
     // Otra revisión: el aviso es viejo.
     for (const handler of handlers) handler({ payload: { revision: 4, provider: 'a', kind: 'placement-failed' } });
-    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: true });
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
-    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
-    expect(widgetEffects.refs[11].current).toBe(true);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.refs[SLOT.detailInsideRef].current).toBe(true);
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
-    widgetEffects.states[9] = { providerId: 'a', anchored: true };
+    widgetEffects.states[SLOT.panel] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[11].current = true;
+    widgetEffects.refs[SLOT.detailInsideRef].current = true;
     listener.run();
     await flush();
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
-    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
-    expect(widgetEffects.refs[11].current).toBe(false);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.refs[SLOT.detailInsideRef].current).toBe(false);
   });
 
   // El cierre pedido por el detalle es idéntico al cierre normal: también
@@ -1079,12 +1111,12 @@ describe('Widget effect mutation ordering', () => {
       addEventListener: () => {}, removeEventListener: () => {},
     });
     // Un orbe visible: el puntero puede pasar por encima y agendar la apertura.
-    widgetEffects.states[3] = [{
+    widgetEffects.states[SLOT.reports] = [{
       id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
       message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport];
     // El panel está cerrado: la apertura del orbe queda pendiente.
-    widgetEffects.states[9] = { providerId: null, anchored: false };
+    widgetEffects.states[SLOT.panel] = { providerId: null, anchored: false };
     const { listener, tree } = renderStrip(false);
     const hover = findOrbHover(tree);
     expect(hover).toBeDefined();
@@ -1094,12 +1126,12 @@ describe('Widget effect mutation ordering', () => {
     expect(handlers.length).toBeGreaterThan(0);
     // El puntero pasa por encima del orbe: la apertura queda agendada...
     hover!({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 56, height: 56 }) } as HTMLElement);
-    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: false });
     // ...y el detalle declara que no pudo colocarse.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // La apertura pendiente se cancela: el panel no se abre.
     await vi.advanceTimersByTimeAsync(2000);
-    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: false });
   });
 });
 
@@ -1114,11 +1146,11 @@ describe('the localized placement reason', () => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
-    widgetEffects.states[0] = { autoHide: true, locale, accounts: [], nineRouter: { baseUrl: '' } };
-    widgetEffects.states[7] = geo;
-    widgetEffects.states[8] = { w: 400, h: 80 };
-    widgetEffects.states[18] = failed;
-    widgetEffects.states[19] = failed ? 'size_refused' : null;
+    widgetEffects.states[SLOT.config] = { autoHide: true, locale, accounts: [], nineRouter: { baseUrl: '' } };
+    widgetEffects.states[SLOT.geo] = geo;
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.placementFailed] = failed;
+    widgetEffects.states[SLOT.placementReason] = failed ? 'size_refused' : null;
     return renderToStaticMarkup(createElement(Widget));
   };
 
@@ -1167,9 +1199,9 @@ describe('the localized placement reason', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.phase = 'hidden';
-    widgetEffects.states[0] = null; // config pendiente
-    widgetEffects.states[7] = { ...geo, sf: 1 };
-    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.config] = null; // config pendiente
+    widgetEffects.states[SLOT.geo] = { ...geo, sf: 1 };
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
     const html = renderToStaticMarkup(createElement(Widget));
     expect(html).not.toContain('class="peek"');
     widgetEffects.phase = undefined;
@@ -1180,10 +1212,10 @@ describe('the localized placement reason', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.phase = 'hidden';
-    widgetEffects.states[0] = null; // config sigue null
-    widgetEffects.states[1] = true; // configFailed
-    widgetEffects.states[7] = { ...geo, sf: 1 };
-    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.config] = null; // config sigue null
+    widgetEffects.states[SLOT.configFailed] = true; // configFailed
+    widgetEffects.states[SLOT.geo] = { ...geo, sf: 1 };
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
     const html = renderToStaticMarkup(createElement(Widget));
     expect(html).toContain('class="peek"');
     expect(html).toContain('aria-label="Mostrar Quorb"');
@@ -1233,21 +1265,21 @@ describe('Widget startup wiring (#271, revisión)', () => {
     // El efecto de colocación mide el surface montado; los refs se llenan en
     // el render de SSR, aquí los simulamos para que `measureSurfaceClip` pueda
     // leer los radios.
-    widgetEffects.refs[1] ??= { current: null }; // stripRef
-    widgetEffects.refs[1].current = { dataset: {} };
-    widgetEffects.refs[2] ??= { current: null }; // peekRef
-    widgetEffects.refs[2].current = { dataset: {} };
+    widgetEffects.refs[SLOT.stripRef] ??= { current: null }; // stripRef
+    widgetEffects.refs[SLOT.stripRef].current = { dataset: {} };
+    widgetEffects.refs[SLOT.peekRef] ??= { current: null }; // peekRef
+    widgetEffects.refs[SLOT.peekRef].current = { dataset: {} };
     setDragMode('native');
   };
   /** Config pendiente: estado base para todos los casos. */
   const pendingStates = () => {
-    widgetEffects.states[0] = null; // config pendiente
-    widgetEffects.states[7] = geo;
-    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[SLOT.config] = null; // config pendiente
+    widgetEffects.states[SLOT.geo] = geo;
+    widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
     // `Widget` inicialmente marca la red de seguridad como ya pasada; lo que
     // queremos probar es el efecto de colocación mostrando antes del timer.
-    widgetEffects.refs[24] ??= { current: false }; // shown (refs[0] = generation del hook)
-    widgetEffects.refs[24].current = false;
+    widgetEffects.refs[SLOT.shown] ??= { current: false }; // shown (refs[0] = generation del hook)
+    widgetEffects.refs[SLOT.shown].current = false;
   };
 
   afterEach(() => {
@@ -1302,7 +1334,7 @@ describe('Widget startup wiring (#271, revisión)', () => {
     // Cinco reintentos con backoff: avanzamos suficiente para agotarlos.
     await vi.advanceTimersByTimeAsync(60_000);
     await flush();
-    expect(widgetEffects.states[1]).toBe(true); // configFailed
+    expect(widgetEffects.states[SLOT.configFailed]).toBe(true); // configFailed
     const html = renderHtml();
     expect(html).toContain('Reintentar');
     expect(html).toContain('title="sin backend"');
@@ -1312,7 +1344,7 @@ describe('Widget startup wiring (#271, revisión)', () => {
 
   it('an unrelated usage error while pending does not break the neutral state', () => {
     pendingStates();
-    widgetEffects.states[6] = 'boom'; // error genérico (refresco/arrastre)
+    widgetEffects.states[SLOT.error] = 'boom'; // error genérico (refresco/arrastre)
     const html = renderHtml();
     expect(html).toContain('strip__pending');
     expect(html).not.toContain('Cargando');
@@ -1325,10 +1357,10 @@ describe('Widget startup wiring (#271, revisión)', () => {
     useFakeWindowTimers();
     widgetEffects.getConfig.mockReturnValue(new Promise(() => {})); // pendiente
     pendingStates();
-    widgetEffects.states[11] = false; // dragging
+    widgetEffects.states[SLOT.dragging] = false; // dragging
     renderHtml();
     // La colocación normal muestra la ventana (efecto real, no solo el timer).
-    const placement = widgetEffects.effects.find((e) => e.deps?.[0] === widgetEffects.states[7])!;
+    const placement = widgetEffects.effects.find((e) => e.deps?.[0] === widgetEffects.states[SLOT.geo])!;
     const cleanup = placement.run();
     await flush();
     expect(widgetEffects.show).toHaveBeenCalledTimes(1);
@@ -1344,5 +1376,39 @@ describe('Widget startup wiring (#271, revisión)', () => {
     expect(html).not.toContain('Ajustes');
     if (typeof cleanup === 'function') cleanup();
     if (typeof cleanupTimer === 'function') cleanupTimer();
+  });
+
+  // Coherencia de la tabla de slots (#286): el render de Widget SIN orbs (sin
+  // datos → sin ProviderLogo) consume EXACTAMENTE los useState/useRef
+  // declarados, en orden de ejecución y con los iniciales esperados. Añadir o
+  // reordenar un hook en Widget.tsx (o en useWidgetStartup) rompe este test y
+  // obliga a tocar solo test-slots.ts. Los componentes de los orbs quedan
+  // fuera a propósito: añaden hooks propios, así que la tabla declara el
+  // mínimo del propio Widget.
+  it('Widget consumes exactly the declared slots, in order, with matching initials (#286)', () => {
+    widgetEffects.expectedStateCount = WIDGET_STATE_COUNT;
+    widgetEffects.expectedRefCount = WIDGET_REF_COUNT;
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.stateInitials = [];
+    widgetEffects.refInitials = [];
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    try {
+      renderToStaticMarkup(createElement(Widget));
+    } finally {
+      widgetEffects.expectedStateCount = null;
+      widgetEffects.expectedRefCount = null;
+    }
+    expect(widgetEffects.stateIndex).toBe(WIDGET_STATE_COUNT);
+    expect(widgetEffects.refIndex).toBe(WIDGET_REF_COUNT);
+    WIDGET_STATES.forEach((spec, i) => {
+      if (spec.initial === SKIP) return;
+      expect(widgetEffects.stateInitials[i], `initial de estado ${spec.name}`).toEqual(spec.initial);
+    });
+    WIDGET_REFS.forEach((spec, i) => {
+      if (spec.initial === SKIP) return;
+      expect(widgetEffects.refInitials[i], `initial de ref ${spec.name}`).toEqual(spec.initial);
+    });
   });
 });
