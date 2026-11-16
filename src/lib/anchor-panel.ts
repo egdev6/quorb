@@ -128,7 +128,7 @@ export const createPanelCoordinator = (
  * que el umbral de 6 px (`orbDrag.moved`) no llega al clic: lo que lo frena es
  * esta ventana, que empieza al soltar.
  */
-export const REORDER_GUARD_MS = 400;
+export const REORDER_GUARD_MS = 300;
 
 /**
  * True cuando el gesto sobre el orbe fue un arrastre de reordenación y no un

@@ -23,6 +23,17 @@ describe('order', () => {
     expect(dropIndex([10, 50, 90], 200)).toBe(3);
   });
 
+  // #264/L18: durante el arrastre el DOM conserva el orden guardado (mover un
+  // nodo libera la captura del puntero), así que los centros llegan en el
+  // orden del DOM, que no es el visual. El índice lo decide la posición.
+  it('finds the drop index from centers that are not in visual order', () => {
+    expect(dropIndex([90, 10, 50], 20)).toBe(1);
+    expect(dropIndex([90, 10, 50], 60)).toBe(2);
+    expect(dropIndex([90, 10, 50], 200)).toBe(3);
+    expect(dropIndex([50, 90, 10], 60)).toBe(2);
+    expect(dropIndex([50, 90, 10], 5)).toBe(0);
+  });
+
   it('resolves the official usage URL for main and scoped ids', () => {
     expect(officialUsageUrl('openrouter')).toBe(OFFICIAL_USAGE_URL.openrouter);
     expect(officialUsageUrl('openrouter:abc123')).toBe(OFFICIAL_USAGE_URL.openrouter);
