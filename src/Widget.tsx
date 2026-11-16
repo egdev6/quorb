@@ -1087,7 +1087,9 @@ export function Widget() {
 
   // `Escape` cierra el panel (#170): lo atiende la tira, que tiene el foco
   // desde el clic que ancló. Cancela también cualquier apertura pendiente.
-  useEffect(() => {
+  // El efecto lleva nombre: el arnés lo busca por nombre y no por el texto de
+  // su fuente (#279/S19), que se rompe con cualquier refactor.
+  const onEscapeKey = () => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       // #279: Escape durante un arrastre cancela el reordenamiento: la vista
@@ -1098,13 +1100,14 @@ export function Widget() {
         orbDrag.current = null;
         setReorder(null);
       }
-      cancelClose(closeTimer);
-      window.clearTimeout(openTimer.current);
+      cancelTimers();
       setPanel(closePanel());
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  };
+
+  useEffect(onEscapeKey, []);
 
   /** La posición del panel respecto de la tira, según el orbe. */
   const relOf = (el: HTMLElement): number => {
@@ -1255,7 +1258,8 @@ export function Widget() {
     };
   }, []);
 
-  useEffect(() => {
+  // El efecto lleva nombre: el arnés lo busca por nombre (#279/S19).
+  const dragMountLifecycle = () => {
     dragMounted.current = true;
     return () => {
       cancelTimers();
@@ -1263,7 +1267,9 @@ export function Widget() {
       if (drag.current) cancelAnimationFrame(drag.current.raf);
       drag.current = null;
     };
-  }, []);
+  };
+
+  useEffect(dragMountLifecycle, []);
 
   // La red de seguridad (mostrar la ventana a los 2,5 s si sigue pendiente)
   // vive en `useWidgetStartup` (#271): el hook llama `onReadyToShow` y aquí se
@@ -1419,6 +1425,63 @@ export function Widget() {
     }
   };
 
+  /**
+   * Descarta la vista previa del reordenamiento: el DOM conserva el orden
+   * guardado, así que con la propiedad CSS `order` basta con quitarla.
+   */
+  const discardReorderPreview = () => setReorder(null);
+
+  /**
+   * Libera la captura del puntero del orbe. Con la captura puesta el
+   * navegador se traga los movimientos; al liberarla, re-sincroniza el hover.
+   */
+  const releaseOrbCapture = (e: PointerEvent<HTMLButtonElement>) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ya liberado */
+    }
+  };
+
+  /**
+   * Termina el gesto de arrastre de un orbe: un solo punto de verdad para lo
+   * que pasa cuando el gesto acaba (#279).
+   *
+   * `commit`: la suelta normal — se guarda el orden.
+   * `abort` : la cancelación del sistema (el gesto ya lo terminó el
+   *   navegador) — se descarta la vista previa y no se guarda nada.
+   */
+  const finishOrbDrag = (e: PointerEvent<HTMLButtonElement>, mode: 'commit' | 'abort') => {
+    const od = orbDrag.current;
+    orbDrag.current = null;
+    releaseOrbCapture(e);
+    // Un gesto que no se movió es un clic normal: no hay reordenamiento.
+    if (!od?.moved) return;
+    if (mode === 'abort') {
+      // La vista previa se descarta: el DOM conserva el orden guardado, así
+      // que con la propiedad CSS `order` basta con quitarla. No se persiste
+      // nada y no se arma el bloqueo del reordenamiento: no hubo
+      // reordenamiento (#279/S5, S14).
+      discardReorderPreview();
+      return;
+    }
+    lastReorderAt.current = Date.now();
+    // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
+    // la captura, la presencia del puntero queda desactualizada: se usan
+    // las coordenadas.
+    const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
+    // #264/S23: el orbe bloqueado es el que quedó bajo el puntero. En este
+    // instante el estado del ratón del navegador es el de antes del arrastre
+    // (la captura se tragó los movimientos) y el `target` del `pointerup`
+    // tampoco sirve, así que se pregunta al documento qué hay en el punto.
+    reorderHold.current = holdOnDrop(od.id, inside ? orbIdAtPoint(e.clientX, e.clientY) : null);
+    if (reorder) {
+      const next = reorder.order;
+      discardReorderPreview();
+      patchConfig({ providerOrder: next }).catch((err) => setError(String(err)));
+    }
+  };
+
   // ───── reordenar círculos arrastrándolos ─────
   const orbHandlers = (id: string) => ({
     onPointerDown: (e: PointerEvent<HTMLButtonElement>) => {
@@ -1451,49 +1514,14 @@ export function Widget() {
       setReorder({ id, order: [...nextVisible, ...full.filter((x) => !nextVisible.includes(x))] });
     },
     onPointerUp: (e: PointerEvent<HTMLButtonElement>) => {
-      const od = orbDrag.current;
-      orbDrag.current = null;
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        /* ya liberado */
-      }
-      if (od?.moved) {
-        lastReorderAt.current = Date.now();
-        // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
-        // la captura, la presencia del puntero queda desactualizada: se usan
-        // las coordenadas.
-        const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
-        // #264/S23: el orbe bloqueado es el que quedó bajo el puntero. En este
-        // instante el estado del ratón del navegador es el de antes del arrastre
-        // (la captura se tragó los movimientos) y el `target` del `pointerup`
-        // tampoco sirve, así que se pregunta al documento qué hay en el punto.
-        reorderHold.current = holdOnDrop(od?.id ?? null, inside ? orbIdAtPoint(e.clientX, e.clientY) : null);
-      }
-      if (od?.moved && reorder) {
-        const next = reorder.order;
-        setReorder(null);
-        patchConfig({ providerOrder: next }).catch((err) => setError(String(err)));
-      }
+      finishOrbDrag(e, 'commit');
     },
     // #279: una cancelación del sistema (pérdida de la captura, un gesto
     // interrumpido, la ventana que pierde el foco) no es una suelta: descarta
     // la vista previa y deja el orden guardado como estaba. Antes `pointercancel`
     // iba al mismo handler que `pointerup` y confirmaba el reordenamiento.
     onPointerCancel: (e: PointerEvent<HTMLButtonElement>) => {
-      const od = orbDrag.current;
-      orbDrag.current = null;
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        /* ya liberado */
-      }
-      if (!od?.moved) return;
-      // La vista previa se descarta: el DOM conserva el orden guardado, así
-      // que con la propiedad CSS `order` basta con quitarla. No se persiste
-      // nada y no se arma el bloqueo del reordenamiento: no hubo
-      // reordenamiento (#279/S5, S14).
-      setReorder(null);
+      finishOrbDrag(e, 'abort');
     },
   });
 

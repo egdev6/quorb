@@ -120,7 +120,7 @@ const widgetEffects = vi.hoisted(() => ({
   states: [] as unknown[], stateIndex: 0,
   refs: [] as { current: unknown }[], refIndex: 0,
   getConfig: vi.fn(), openSettings: vi.fn(),
-  effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
+  effects: [] as { run: () => void | (() => void); deps?: readonly unknown[]; name?: string }[],
   bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
   cancel: vi.fn(async () => {}),
@@ -148,7 +148,11 @@ vi.mock('react', async (importOriginal) => {
       const index = widgetEffects.refIndex++;
       return widgetEffects.refs[index] ??= { current: initial };
     }) as typeof react.useRef,
-    useEffect: ((run, deps) => { widgetEffects.effects.push({ run, deps }); }) as typeof react.useEffect,
+    useEffect: ((run, deps) => {
+      // El nombre del efecto: el arnés lo busca por nombre y no por el texto
+      // de su fuente, que se rompe con cualquier refactor (#279/S19).
+      widgetEffects.effects.push({ run, deps, name: (run as { name?: string }).name });
+    }) as typeof react.useEffect,
     useLayoutEffect: (() => {}) as typeof react.useLayoutEffect,
   };
 });
@@ -740,7 +744,7 @@ describe('Widget effect mutation ordering', () => {
       grip.onPointerMove(pointer(screenY, pointerId));
       runFrame();
     };
-    const unmount = widgetEffects.effects.find(e => e.deps?.length === 0 && e.run.toString().includes('cancelTimers'))!.run();
+    const unmount = widgetEffects.effects.find(e => e.name === 'dragMountLifecycle')!.run();
     return {
       grip, pointer, acceptFrame, runFrame, frames, position: () => position, unmount,
       applyPosition: (next: { x: number; y: number }) => { position = { x: next.x, y: next.y }; },
@@ -2196,8 +2200,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       const { tree } = render(null);
       drag(tree);
       expect(widgetEffects.states[21]).not.toBeNull();
-      const escape = widgetEffects.effects.find((e) => e.run.toString().includes('keydown')
-        && e.run.toString().includes('Escape'));
+      // El efecto se busca por nombre (#279/S19): el texto de su fuente se
+      // rompe con cualquier refactor. Y el handler es el que registró la
+      // tira, que el arnés intercepta (#279).
+      const escape = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
       escape!.run();
       keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
       expect(widgetEffects.patch).not.toHaveBeenCalled();
