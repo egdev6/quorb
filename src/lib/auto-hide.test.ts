@@ -303,11 +303,13 @@ describe('auto-hide reveal integration', () => {
   });
 
   it('gates the peek on a known locale so it is never a button without an accessible name while config is pending (#271)', () => {
-    // Mientras la config está pendiente (o falla sin idioma) el botón peek no se
-    // monta: no queda un botón activo sin nombre accesible. Con idioma seguro (o
-    // fallo definitivo en `es`) sí se monta con su aria-label.
+    // Mientras la config está pendiente el botón peek no se monta: no queda un
+    // botón activo sin nombre accesible. Con idioma seguro (config cargada o
+    // fallo definitivo en `es`) sí se monta, con el ternario original de
+    // `placementFailed` (el gate `configKnown` garantiza el idioma, revisión
+    // PR #282: no se pierde el motivo del fallo de ubicación en `failed`).
     expect(widget).toContain('showHandle && configKnown &&');
-    expect(widget).toContain("aria-label={configFailed ? t(locale, 'widget.show')");
+    expect(widget).toContain("aria-label={placementFailed ? `${t(locale, 'widget.retryShow')}");
   });
 
   it('moves and resizes the widget atomically before revealing the strip', () => {

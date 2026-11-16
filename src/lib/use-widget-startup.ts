@@ -67,35 +67,37 @@ export function useWidgetStartup(options: WidgetStartupOptions = {}): WidgetStar
 
   // Carga de la config: reintentos en el arranque + `config-changed`.
   useEffect(() => {
-    let alive = true;
     const controller = new AbortController();
     const startedAt = generation.current;
     // Solo el fallo del PRIMER getConfig (reintentos agotados) es «fallo
     // definitivo»: los fallos posteriores de config-changed no deben sacar al
     // widget del estado pendiente (revisión PR #271, precisión 1).
+    // `controller.signal.aborted` es el único guard de desmontaje: abortar el
+    // retry rechaza la promesa en vuelo, y los callbacks lo consultan en vez
+    // de mantener un flag `alive` paralelo (revisión PR #271, menor).
     retryWithBackoff(() => api.getConfig(), { ...STARTUP_RETRY, signal: controller.signal })
       .then((c) => {
-        if (alive && generation.current === startedAt) applyConfig(c);
+        if (controller.signal.aborted || generation.current !== startedAt) return;
+        applyConfig(c);
       })
       .catch((e: unknown) => {
-        if (alive && generation.current === startedAt) {
-          setConfigFailed(true);
-          setConfigError(e instanceof Error ? e.message : String(e));
-        }
+        if (controller.signal.aborted || generation.current !== startedAt) return;
+        setConfigFailed(true);
+        setConfigError(e instanceof Error ? e.message : String(e));
       });
     const off = listen('config-changed', () => {
       const startedAt = generation.current;
       api
         .getConfig()
         .then((c) => {
-          if (generation.current === startedAt) applyConfig(c);
+          if (controller.signal.aborted || generation.current !== startedAt) return;
+          applyConfig(c);
         })
         .catch(() => {
           /* la próxima lectura (o el reintento manual) lo resuelve */
         });
     });
     return () => {
-      alive = false;
       controller.abort();
       off.then((f) => f());
     };

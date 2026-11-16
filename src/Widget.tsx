@@ -1337,7 +1337,7 @@ export function Widget() {
         ref={peekRef}
         type="button"
         className="peek"
-        aria-label={configFailed ? t(locale, 'widget.show') : (placementFailed ? `${t(locale, 'widget.retryShow')}${placementReasonText ? `: ${placementReasonText}` : ''}` : t(locale, 'widget.show'))}
+        aria-label={placementFailed ? `${t(locale, 'widget.retryShow')}${placementReasonText ? `: ${placementReasonText}` : ''}` : t(locale, 'widget.show')}
         title={placementFailed ? placementReasonText ?? undefined : undefined}
         aria-controls="quorb-strip"
         aria-hidden={phase === 'open' && !peekFocused || undefined}
@@ -1368,7 +1368,7 @@ export function Widget() {
       >
         <span
           className="strip__grip"
-          title={config != null ? t(locale, 'widget.dragHint') : undefined}
+          title={configKnown ? t(locale, 'widget.dragHint') : undefined}
           onPointerDown={onGripDown}
           onPointerMove={onGripMove}
           onPointerUp={onGripUp}
