@@ -33,8 +33,17 @@ export interface ReorderHold {
 /** No hold: the hover opens every orb. */
 export const NO_HOLD: ReorderHold = { orbIds: [], confirmed: false };
 
-/** The hold that a drop starts: the dragged orb and the one under the pointer. */
+/**
+ * The hold that a drop starts: the dragged orb and the one under the pointer.
+ *
+ * Without an orb under the pointer there is nothing to hold: the drop landed
+ * on a gap of the strip or outside it. The deferred `enter` only ever arrives
+ * on the orb that was under the pointer (#264/S27), so there is no `enter` to
+ * stop; and a hold with no orb under the pointer would block an orb the
+ * pointer is not on, with nothing left to release it (#264/S30, S31).
+ */
 export function holdOnDrop(draggedId: string | null, underId: string | null): ReorderHold {
+  if (!underId) return NO_HOLD;
   const orbIds: string[] = [];
   for (const id of [draggedId, underId]) {
     if (id && !orbIds.includes(id)) orbIds.push(id);

@@ -1062,14 +1062,15 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[7] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
     widgetEffects.states[12] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
-    // El puntero está dentro del detalle.
-    widgetEffects.refs[10].current = 'detail';
     // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
     // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
     listener.run();
     await flush();
     const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
     expect(handlers.length).toBeGreaterThan(0);
+    // El puntero está dentro del detalle: lo dice el propio detalle, no un
+    // hook leído por posición (#264/S32).
+    for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'enter' } });
     // Con el panel abierto, la tira está ocupada: el auto-ocultar la mantiene
     // visible y no programa el repliegue.
     autoHideEffect.run();
@@ -1079,8 +1080,7 @@ describe('Widget effect mutation ordering', () => {
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
     expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
-    // ...y el detalle ya no cuenta como superficie bajo el puntero.
-    expect(widgetEffects.refs[10].current).toBe('outside');
+    // ...y la tira queda libre: el auto-ocultar puede replegarla (abajo).
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
     const after = renderStrip(true);
@@ -1092,32 +1092,35 @@ describe('Widget effect mutation ordering', () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[7] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = 'detail';
     listener.run();
     await flush();
     const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
     expect(handlers.length).toBeGreaterThan(0);
+    // El puntero está dentro del detalle: lo dice el propio detalle, no un
+    // hook leído por posición (#264/S32).
+    for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'enter' } });
     // Otra revisión: el aviso es viejo.
     for (const handler of handlers) handler({ payload: { revision: 4, provider: 'a', kind: 'placement-failed' } });
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
     expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
-    expect(widgetEffects.refs[10].current).toBe('detail');
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
     widgetEffects.states[7] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
-    widgetEffects.refs[10].current = 'detail';
     listener.run();
     await flush();
+    const handlers = widgetEffects.listeners.get('detail-interaction') ?? [];
+    // El puntero está dentro del detalle: lo dice el propio detalle, no un
+    // hook leído por posición (#264/S32).
+    for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'enter' } });
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
     expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
-    expect(widgetEffects.refs[10].current).toBe('outside');
   });
 
   // El cierre pedido por el detalle es idéntico al cierre normal: también
@@ -1318,7 +1321,9 @@ describe('hover presence wiring', () => {
     // En este arnés no hay layout, así que el orbe es fijo.
     hitOrb.id = 'a';
     vi.stubGlobal('document', {
-      elementFromPoint: () => ({ closest: () => ({ getAttribute: () => hitOrb.id }) }),
+      // Un hit-test sin orbe (el puntero sobre el fondo de la tira) devuelve
+      // `null`: no hay orbe bajo el puntero (#264/S31).
+      elementFromPoint: () => ({ closest: () => (hitOrb.id ? { getAttribute: () => hitOrb.id } : null) }),
     });
   });
 
@@ -1618,19 +1623,20 @@ describe('hover presence wiring', () => {
 
     /**
      * Reordena de verdad: arrastra el orbe y lo suelta encima de la tira.
-     * Es lo que pone el bloqueo del hover (#222).
+     * Es lo que pone el bloqueo del hover (#222). `dropX` es dónde se suelta:
+     * dentro de la tira, o afuera (el puntero sale de la ventana).
      */
-    const reorder = (orbs: OrbPointer[]) => {
+    const reorder = (orbs: OrbPointer[], dropX = 40) => {
       const orb = orbs.find((o) => o.id === 'a')!;
       const target = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
       orb.onPointerDown({ button: 0, clientX: 10, clientY: 10, pointerId: 1, currentTarget: target });
       orb.onPointerMove({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
-      orb.onPointerUp({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerUp({ clientX: dropX, clientY: 10, pointerId: 1, currentTarget: target });
     };
 
     /**
      * El hover sobre el orbe, ya fuera de la guarda del reordenamiento
-     * (400 ms): antes de eso lo frena el gesto, no el bloqueo.
+     * (300 ms): antes de eso lo frena el gesto, no el bloqueo.
      */
     const hoverAfterTheGuard = async (hover: (el: HTMLElement) => void) => {
       await vi.advanceTimersByTimeAsync(500);
@@ -1713,6 +1719,33 @@ describe('hover presence wiring', () => {
       expect(widgetEffects.states[7]).toEqual(NO_PANEL);
     });
 
+    // #264/S30: soltar fuera de la tira no deja bloqueo. En Linux la salida
+    // de la tira puede llegar antes que el `pointerup`, así que la presencia
+    // ya está en `outside` y la regla de la transición no vuelve a disparar:
+    // un bloqueo armado ahí no lo libera nadie.
+    it('does not hold an orb when the drop lands outside the strip (#264/S30)', async () => {
+      const { dock, hover, orbs } = await wire(false, NO_PANEL);
+      dock.onMouseEnter();
+      reorder(orbs, 5000); // El puntero suelta fuera de la ventana de la tira.
+      await hoverAfterTheGuard(hover);
+      // La apertura retardada del hover: sin bloqueo, el detalle abre.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
+    // #264/S31: soltar en un hueco de la tira tampoco deja bloqueo: no hay
+    // orbe bajo el puntero, así que no hay `enter` diferido que frenar.
+    it('does not hold an orb when the drop lands on a gap (#264/S31)', async () => {
+      const { dock, hover, orbs } = await wire(false, NO_PANEL);
+      hitOrb.id = ''; // El puntero quedó sobre el fondo de la tira.
+      dock.onMouseEnter();
+      reorder(orbs);
+      await hoverAfterTheGuard(hover);
+      // La apertura retardada del hover: sin bloqueo, el detalle abre.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
+
     // #264/S23: el bloqueo se acaba cuando el puntero sale del orbe bloqueado
     // y vuelve a entrar en él.
     it('releases the hold when the pointer leaves the held orb and comes back (#264/S23)', async () => {
@@ -1757,7 +1790,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
   // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above):
   // 0 config, 1 reports, 5 geo, 6 stripSize, 19 reorder. Ref slots: 6 orbsRef,
   // 26 orbDrag.
-  const render = (reorder: { id: string; order: string[] } | null) => {
+  //
+  // La vista previa se pasa como entrada del render; las pruebas no leen ese
+  // slot por posición: lo buscan por su forma (#264/S32).
+  const render = (reorder?: { id: string; order: string[] } | null) => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
@@ -1769,13 +1805,25 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     widgetEffects.states[5] = geo;
     widgetEffects.states[6] = { w: 400, h: 80 };
     widgetEffects.states[9] = false;
-    widgetEffects.states[19] = reorder;
+    if (reorder !== undefined) widgetEffects.states[19] = reorder;
     let tree: ReactNode = null;
     function CaptureWidget() { tree = Widget(); return tree; }
     const markup = renderToStaticMarkup(createElement(CaptureWidget));
     return { markup, tree: tree! };
   };
   const markup = (reorder: { id: string; order: string[] } | null) => render(reorder).markup;
+
+  /**
+   * La vista previa del reordenamiento, encontrada por su forma y no por la
+   * posición del hook: reordenar los hooks no puede romper la prueba
+   * (#264/S32).
+   */
+  const preview = () => widgetEffects.states.find(
+    (s): s is { id: string; order: string[] } =>
+      !!s && typeof s === 'object' && !Array.isArray(s)
+      && typeof (s as { id?: unknown }).id === 'string'
+      && Array.isArray((s as { order?: unknown }).order),
+  );
 
   afterEach(() => {
     widgetEffects.states = [];
@@ -1835,14 +1883,16 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     });
     // El puntero cae entre 'c' (centro 130) y 'b' (centro 230).
     dragged.onPointerMove({ clientX: 150, clientY: 30 });
-    expect(widgetEffects.states[19]).toEqual({ id: 'a', order: ['c', 'a', 'b'] });
+    // El estado visible de la vista previa: el `order` de CSS de cada orbe. El
+    // DOM sigue en a, b, c y la vista previa los deja en c, a, b.
+    const { tree: after, markup: previewed } = render();
+    expect(orbs(previewed).map((o) => o.order)).toEqual(['1', '2', '0']);
     // Mover el puntero sólo cambia la vista previa: todavía no se persiste nada.
     expect(widgetEffects.patch).not.toHaveBeenCalled();
 
     // El gesto termina con el `onPointerUp` del orbe. Los handlers son
     // cierres del render que los creó, así que el que suelta tiene que ser el
     // del render nuevo, con la vista previa ya escrita.
-    const { tree: after } = render(widgetEffects.states[19] as { id: string; order: string[] });
     const dropped = findOrbPointers(after).find((o) => o.id === 'a')!;
     dropped.onPointerUp({
       clientX: 150, clientY: 30, pointerId: 1,
@@ -1851,7 +1901,8 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     // Lo que se guarda es el orden visual (c, a, b), no el del DOM (a, b, c).
     expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch).toHaveBeenCalledWith({ providerOrder: ['c', 'a', 'b'] });
-    // Al soltar se limpia la vista previa.
-    expect(widgetEffects.states[19]).toBeNull();
+    // Al soltar se limpia la vista previa: los orbes vuelven al orden guardado.
+    expect(preview()).toBeUndefined();
+    expect(orbs(render().markup).map((o) => o.order)).toEqual([undefined, undefined, undefined]);
   });
 });

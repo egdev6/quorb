@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { holdOnDrop, NO_HOLD, onOrbEnter, onOrbLeave, orbIdAtPoint } from './reorder-hold';
 
 describe('the reorder hold covers one orb (#264/S23, S28)', () => {
-  it('starts with the dragged orb', () => {
-    expect(holdOnDrop('a', null)).toEqual({ orbIds: ['a'], confirmed: false });
+  it('holds nothing when the pointer is not on an orb (#264/S30, S31)', () => {
+    // El puntero quedó en un hueco de la tira o fuera de ella: no hay orbe
+    // bajo el puntero, así que no hay `enter` diferido que frenar y nada que
+    // bloquear.
+    expect(holdOnDrop('a', null)).toEqual(NO_HOLD);
   });
 
   it('covers the orb under the pointer too, when it is another one', () => {
@@ -15,13 +18,13 @@ describe('the reorder hold covers one orb (#264/S23, S28)', () => {
   });
 
   it('blocks the held orb', () => {
-    const entered = onOrbEnter(holdOnDrop('a', null), 'a');
+    const entered = onOrbEnter(holdOnDrop('a', 'a'), 'a');
     expect(entered.blocked).toBe(true);
     expect(entered.hold.confirmed).toBe(true);
   });
 
   it('lets the other orbs open', () => {
-    expect(onOrbEnter(holdOnDrop('a', null), 'b').blocked).toBe(false);
+    expect(onOrbEnter(holdOnDrop('a', 'a'), 'b').blocked).toBe(false);
   });
 
   it('ends the hold when the pointer enters another orb, once it was confirmed', () => {
@@ -35,7 +38,7 @@ describe('the reorder hold covers one orb (#264/S23, S28)', () => {
     // El salto de layout del soltar puede poner otro orbe bajo el puntero: esa
     // entrada no disuelve el bloqueo, porque todavía no se vio al puntero
     // sobre el orbe bloqueado (#264/S28).
-    const hold = holdOnDrop('a', null);
+    const hold = holdOnDrop('a', 'a');
     const entered = onOrbEnter(hold, 'b');
     expect(entered.hold).toEqual(hold);
     expect(entered.blocked).toBe(false);
@@ -49,7 +52,7 @@ describe('the reorder hold covers one orb (#264/S23, S28)', () => {
     // El salto de layout del soltar saca al orbe de debajo del puntero y
     // dispara su salida: si esa salida disolviera el bloqueo, el `enter`
     // diferido abriría el detalle solo sobre el orbe soltado (#222).
-    const hold = holdOnDrop('a', null);
+    const hold = holdOnDrop('a', 'a');
     expect(onOrbLeave(hold, 'a')).toEqual(hold);
   });
 
@@ -59,6 +62,16 @@ describe('the reorder hold covers one orb (#264/S23, S28)', () => {
 
   it('blocks nothing without a hold', () => {
     expect(onOrbEnter(NO_HOLD, 'a')).toEqual({ hold: NO_HOLD, blocked: false });
+  });
+
+  // #264/S31: soltar en un hueco no deja bloqueo. El caso que señaló el
+  // mantenedor: entrar en otro orbe no liberaba el bloqueo y al volver al
+  // arrastrado quedaba bloqueado.
+  it('a gap drop does not block an orb after the pointer visited another orb', () => {
+    let h = holdOnDrop('a', null);
+    h = onOrbEnter(h, 'b').hold;
+    h = onOrbLeave(h, 'b');
+    expect(onOrbEnter(h, 'a').blocked).toBe(false);
   });
 });
 
