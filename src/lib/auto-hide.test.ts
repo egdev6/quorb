@@ -113,9 +113,12 @@ function findDock(node: ReactNode): DockHandlers | undefined {
 
 // Capture the real Widget effect callbacks while SSR supplies its hook scope.
 // No DOM renderer, Tauri runtime, or native-order assumptions are involved.
+// Ref slots: useWidgetStartup consumes refs[0] (generation) before Widget's
+// own refs, so the drag/detail refs below start at 1 (#271, revisión).
 const widgetEffects = vi.hoisted(() => ({
   states: [] as unknown[], stateIndex: 0,
   refs: [] as { current: unknown }[], refIndex: 0,
+  getConfig: vi.fn(), openSettings: vi.fn(),
   effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
   bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
@@ -164,6 +167,8 @@ vi.mock('./api', () => ({ api: {
   setSurfaceClip: widgetEffects.clip,
   patchConfig: widgetEffects.patch,
   cancelWidgetPlacement: widgetEffects.cancel,
+  getConfig: widgetEffects.getConfig,
+  openSettings: widgetEffects.openSettings,
 } }));
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -364,6 +369,16 @@ describe('auto-hide reveal integration', () => {
     expect(widget).not.toContain('const PEEK = 5;');
   });
 
+  it('gates the peek on a known locale so it is never a button without an accessible name while config is pending (#271)', () => {
+    // Mientras la config está pendiente el botón peek no se monta: no queda un
+    // botón activo sin nombre accesible. Con idioma seguro (config cargada o
+    // fallo definitivo en `es`) sí se monta, con el ternario original de
+    // `placementFailed` (el gate `configKnown` garantiza el idioma, revisión
+    // PR #282: no se pierde el motivo del fallo de ubicación en `failed`).
+    expect(widget).toContain('showHandle && configKnown &&');
+    expect(widget).toContain("aria-label={placementFailed ? `${t(locale, 'widget.retryShow')}");
+  });
+
   it('moves and resizes the widget atomically before revealing the strip', () => {
     expect(widget).toContain('await api.setWidgetBounds(physical)');
     expect(widget).toContain('markPrepared(phase)');
@@ -394,21 +409,22 @@ describe('Widget effect mutation ordering', () => {
       return tree;
     }
     renderToStaticMarkup(createElement(CaptureWidget));
-    widgetEffects.refs[0].current = { dataset: {} };
+    // Refs de Widget: [0]=generation (hook), [1]=stripRef, [2]=peekRef (#271).
     widgetEffects.refs[1].current = { dataset: {} };
+    widgetEffects.refs[2].current = { dataset: {} };
     return {
-      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[5])!,
-      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[9]
-        && e.deps?.[1] === widgetEffects.states[5])!,
+      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[7])!,
+      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[11]
+        && e.deps?.[1] === widgetEffects.states[7])!,
       grip: grip!,
     };
   };
   const renderWidget = (dragging: boolean, autoHide = false, sf = geo.sf) => {
     // Hook slots belong to Widget (useDockReveal/useUpdaterMode are isolated above).
     widgetEffects.states[0] = autoHide ? { autoHide, accounts: [], nineRouter: { baseUrl: '' } } : null;
-    widgetEffects.states[5] = sf === geo.sf ? geo : { ...geo, sf };
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = dragging;
+    widgetEffects.states[7] = sf === geo.sf ? geo : { ...geo, sf };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = dragging;
     return commitWidget();
   };
   // Text scale (#228): the strip is measured in CSS px and placed in monitor units.
@@ -416,9 +432,9 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.textScale = scale;
     widgetEffects.phase = phase;
     widgetEffects.states[0] = null;
-    widgetEffects.states[5] = { ...geo, sf };
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = false;
+    widgetEffects.states[7] = { ...geo, sf };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = false;
     return commitWidget();
   };
   const placeScaled = async (scale: number, sf: number, phase: RevealPhase = 'open') => {
@@ -432,7 +448,7 @@ describe('Widget effect mutation ordering', () => {
       strip, win,
       bounds: widgetEffects.bounds.mock.calls[0]?.[0],
       clip: widgetEffects.clip.mock.calls[0]?.[0],
-      pos: widgetEffects.states[10],
+      pos: widgetEffects.states[12],
     };
   };
   const configureNative = () => {
@@ -495,9 +511,9 @@ describe('Widget effect mutation ordering', () => {
       id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
       message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport;
-    widgetEffects.states[1] = [report];
-    widgetEffects.states[7] = { providerId: 'a', anchored: true };
-    widgetEffects.states[8] = 30; // Orb centre in CSS px from the strip start.
+    widgetEffects.states[3] = [report];
+    widgetEffects.states[9] = { providerId: 'a', anchored: true };
+    widgetEffects.states[10] = 30; // Orb centre in CSS px from the strip start.
     renderScaled(scale, sf);
     const detail = widgetEffects.effects.find((e) => e.deps?.[0] === report)!;
     detail.run();
@@ -561,7 +577,7 @@ describe('Widget effect mutation ordering', () => {
     for (const handler of widgetEffects.listeners.get('widget-hidden') ?? []) handler();
     // La red de seguridad (2,5 s) muestra la ventana si el ciclo no llegó a
     // mostrarla: tampoco puede contradecir al usuario.
-    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 0 && e.run.toString().includes('setTimeout'));
+    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'));
     expect(safetyNet).toBeDefined();
     const cleanup = safetyNet!.run();
     await vi.advanceTimersByTimeAsync(2500);
@@ -577,7 +593,7 @@ describe('Widget effect mutation ordering', () => {
       setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     });
     renderWidget(false);
-    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 0 && e.run.toString().includes('setTimeout'));
+    const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'));
     const cleanup = safetyNet!.run();
     await vi.advanceTimersByTimeAsync(2500);
     expect(widgetEffects.show).toHaveBeenCalledTimes(1);
@@ -652,7 +668,7 @@ describe('Widget effect mutation ordering', () => {
     const commitSnapIfReady = async () => {
       // Model React's post-pointerup commit once config and dragging state change.
       // Use Widget's actual placement effect to apply the resulting native bounds.
-      if (!snapCommitted && widgetEffects.states[9] === false && widgetEffects.patch.mock.calls.length > 0) {
+      if (!snapCommitted && widgetEffects.states[11] === false && widgetEffects.patch.mock.calls.length > 0) {
         const cleanup = commitWidget().placement.run();
         if (typeof cleanup === 'function') cleanupSnap = cleanup;
         snapCommitted = true;
@@ -755,7 +771,7 @@ describe('Widget effect mutation ordering', () => {
     const snap = nearestEdge(geo.area, 760 + 408 * expected, 40 * expected);
     expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: snap.edge, dockOffset: snap.offset });
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
   });
 
   it.each([
@@ -800,7 +816,7 @@ describe('Widget effect mutation ordering', () => {
     expect(earlyReads).toBe(0);
     expect(dispatched.size).toBe(2);
     expect(widgetEffects.setPosition.mock.calls.map(call => call[0].y)).toEqual([960, 860]);
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
     expect(widgetEffects.states[0]).toMatchObject({ dockEdge: 'bottom', dockOffset: 0.4 });
     const cleanup = commitWidget().placement.run();
     await flush();
@@ -826,7 +842,7 @@ describe('Widget effect mutation ordering', () => {
     await flush();
     expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
     expect(widgetEffects.patch).not.toHaveBeenCalled();
-    if (cancel === 'new gesture') expect(widgetEffects.states[9]).toBe(true);
+    if (cancel === 'new gesture') expect(widgetEffects.states[11]).toBe(true);
   });
 
   it('does not let an old pointerup snap or clear a newer gesture', async () => {
@@ -841,7 +857,7 @@ describe('Widget effect mutation ordering', () => {
     releaseRead({ x: 760, y: 0 });
     await oldUp;
     await flush();
-    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[9] })
+    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[11] })
       .toEqual({ patches: 0, dragging: true });
     f.acceptFrame(1000, 8);
     await flush();
@@ -874,19 +890,19 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     if (failure === 'origin') {
-      expect(widgetEffects.states[9]).toBe(false);
+      expect(widgetEffects.states[11]).toBe(false);
     } else {
       f.acceptFrame(1000);
       await flush();
       await f.grip.onPointerUp(f.pointer(1000));
-      expect(widgetEffects.states[9]).toBe(false);
+      expect(widgetEffects.states[11]).toBe(false);
     }
     f.grip.onPointerDown(f.pointer(40, 8));
     await flush();
     f.acceptFrame(1000, 8);
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
     expect(widgetEffects.patch.mock.calls.at(-1)?.[0]).toMatchObject({ dockEdge: 'bottom' });
   });
 
@@ -903,7 +919,7 @@ describe('Widget effect mutation ordering', () => {
     expect(widgetEffects.setPosition).toHaveBeenCalledTimes(1);
     expect(widgetEffects.setPosition.mock.calls[0][0]).toMatchObject({ x: 760, y: 960 });
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: 'bottom' });
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
   });
 
   it('cancels an unaccepted RAF at pointerup and ignores another pointer', async () => {
@@ -911,7 +927,7 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
-    expect(widgetEffects.states[9]).toBe(true);
+    expect(widgetEffects.states[11]).toBe(true);
     expect(widgetEffects.patch).not.toHaveBeenCalled();
     f.grip.onPointerMove(f.pointer(1000));
     expect(f.frames.size).toBe(1);
@@ -919,7 +935,7 @@ describe('Widget effect mutation ordering', () => {
     expect(f.frames.size).toBe(0);
     expect(widgetEffects.setPosition).not.toHaveBeenCalled();
     expect(widgetEffects.patch.mock.calls[0][0]).toMatchObject({ dockEdge: 'top' });
-    expect(widgetEffects.states[9]).toBe(false);
+    expect(widgetEffects.states[11]).toBe(false);
   });
 
   it.each(['new gesture', 'unmount'])('ignores a snap response arriving after %s', async (cancel) => {
@@ -940,7 +956,7 @@ describe('Widget effect mutation ordering', () => {
     expect(widgetEffects.stateWrite).toHaveBeenCalledTimes(writes);
     expect(widgetEffects.states[0]).toBeNull();
     if (cancel === 'new gesture') {
-      expect(widgetEffects.states[9]).toBe(true);
+      expect(widgetEffects.states[11]).toBe(true);
       f.acceptFrame(1000, 8);
       await flush();
       await f.grip.onPointerUp(f.pointer(1000, 8));
@@ -1038,14 +1054,14 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[0] = { autoHide, accounts: [], nineRouter: { baseUrl: '' }, alerts: { threshold: 90 } };
-    widgetEffects.states[5] = geo;
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = false;
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = false;
     let tree: ReactNode = null;
     function CaptureStrip() { tree = Widget(); return tree; }
     renderToStaticMarkup(createElement(CaptureStrip));
     // La sesión de detalle vigente: revisión 5, proveedor 'a'.
-    widgetEffects.refs[7].current = { revision: 5, report: { id: 'a' } };
+    widgetEffects.refs[8].current = { revision: 5, report: { id: 'a' } };
     // Cada prueba usa sus propios listeners.
     widgetEffects.listeners.delete('detail-interaction');
     widgetEffects.listeners.delete('detail-dismiss');
@@ -1059,8 +1075,8 @@ describe('Widget effect mutation ordering', () => {
   it('closes the panel and frees the strip when the detail declares a placement failure (#250/S22)', async () => {
     const setTimeoutSpy = vi.fn();
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: setTimeoutSpy });
-    widgetEffects.states[7] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
-    widgetEffects.states[12] = true; // `collapsed`: la tira está replegada.
+    widgetEffects.states[9] = { providerId: 'a', anchored: true }; // Panel abierto y anclado.
+    widgetEffects.states[14] = true; // `collapsed`: la tira está replegada.
     const { listener, autoHideEffect } = renderStrip(true);
     // El cleanup del efecto llama a `emitTo(...).catch(...)` y el doble del
     // arnés devuelve `undefined`: el efecto se deja vivo a propósito.
@@ -1074,12 +1090,12 @@ describe('Widget effect mutation ordering', () => {
     // Con el panel abierto, la tira está ocupada: el auto-ocultar la mantiene
     // visible y no programa el repliegue.
     autoHideEffect.run();
-    expect(widgetEffects.states[12]).toBe(false);
+    expect(widgetEffects.states[14]).toBe(false);
     expect(setTimeoutSpy).not.toHaveBeenCalled();
     // El detalle declara que no pudo colocarse...
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
     // ...y la tira queda libre: el auto-ocultar puede replegarla (abajo).
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
@@ -1090,7 +1106,7 @@ describe('Widget effect mutation ordering', () => {
 
   it('ignores a placement failure notice from a stale detail session (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
-    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    widgetEffects.states[9] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
     listener.run();
     await flush();
@@ -1101,15 +1117,15 @@ describe('Widget effect mutation ordering', () => {
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'enter' } });
     // Otra revisión: el aviso es viejo.
     for (const handler of handlers) handler({ payload: { revision: 4, provider: 'a', kind: 'placement-failed' } });
-    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
     // Otro proveedor: la sesión ya no es la vigente.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'other', kind: 'placement-failed' } });
-    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
   });
 
   it('still closes the panel when the backend dismisses the detail (#250/S22)', async () => {
     vi.stubGlobal('window', { clearTimeout: vi.fn(), setTimeout: vi.fn() });
-    widgetEffects.states[7] = { providerId: 'a', anchored: true };
+    widgetEffects.states[9] = { providerId: 'a', anchored: true };
     const { listener } = renderStrip(false);
     listener.run();
     await flush();
@@ -1120,7 +1136,7 @@ describe('Widget effect mutation ordering', () => {
     const dismiss = widgetEffects.listeners.get('detail-dismiss') ?? [];
     expect(dismiss.length).toBeGreaterThan(0);
     for (const handler of dismiss) handler();
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
   });
 
   // El cierre pedido por el detalle es idéntico al cierre normal: también
@@ -1133,12 +1149,12 @@ describe('Widget effect mutation ordering', () => {
       addEventListener: () => {}, removeEventListener: () => {},
     });
     // Un orbe visible: el puntero puede pasar por encima y agendar la apertura.
-    widgetEffects.states[1] = [{
+    widgetEffects.states[3] = [{
       id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
       message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport];
     // El panel está cerrado: la apertura del orbe queda pendiente.
-    widgetEffects.states[7] = { providerId: null, anchored: false };
+    widgetEffects.states[9] = { providerId: null, anchored: false };
     const { listener, tree } = renderStrip(false);
     const hover = findOrbHover(tree);
     expect(hover).toBeDefined();
@@ -1148,12 +1164,12 @@ describe('Widget effect mutation ordering', () => {
     expect(handlers.length).toBeGreaterThan(0);
     // El puntero pasa por encima del orbe: la apertura queda agendada...
     hover!({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 56, height: 56 }) } as HTMLElement);
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
     // ...y el detalle declara que no pudo colocarse.
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // La apertura pendiente se cancela: el panel no se abre.
     await vi.advanceTimersByTimeAsync(2000);
-    expect(widgetEffects.states[7]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[9]).toEqual({ providerId: null, anchored: false });
   });
 });
 
@@ -1162,17 +1178,19 @@ describe('the localized placement reason', () => {
     area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
     screen: { x: 0, y: 0, width: 1920, height: 1080 },
   };
-  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above):
-  // 0 config, 5 geo, 6 stripSize, 16 placementFailed, 17 placementReason.
+  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above);
+  // `useWidgetStartup` toma los tres primeros: 0 config, 1 configFailed,
+  // 2 configError. Después: 7 geo, 8 stripSize, 18 placementFailed,
+  // 19 placementReason.
   const markup = (locale: 'es' | 'en' = 'es', failed = true) => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[0] = { autoHide: true, locale, accounts: [], nineRouter: { baseUrl: '' } };
-    widgetEffects.states[5] = geo;
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[16] = failed;
-    widgetEffects.states[17] = failed ? 'size_refused' : null;
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[18] = failed;
+    widgetEffects.states[19] = failed ? 'size_refused' : null;
     return renderToStaticMarkup(createElement(Widget));
   };
 
@@ -1212,6 +1230,193 @@ describe('the localized placement reason', () => {
     expect(en).toContain('aria-label="Show Quorb"');
     expect(en).not.toContain('data-placement-reason');
   });
+
+  // #271 (precisión 2): el peek es un botón activo; mientras la config está
+  // pendiente no debe montarse sin nombre accesible. Se monta con `autoHide`
+  // activo y fase colapsada para aislar el gate de `configKnown`.
+  it('hides the peek entirely while the config is pending (no button without a name)', () => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.phase = 'hidden';
+    widgetEffects.states[0] = null; // config pendiente
+    widgetEffects.states[7] = { ...geo, sf: 1 };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    const html = renderToStaticMarkup(createElement(Widget));
+    expect(html).not.toContain('class="peek"');
+    widgetEffects.phase = undefined;
+  });
+
+  it('shows the peek with an accessible name in the default locale once the config load fails definitively', () => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    widgetEffects.phase = 'hidden';
+    widgetEffects.states[0] = null; // config sigue null
+    widgetEffects.states[1] = true; // configFailed
+    widgetEffects.states[7] = { ...geo, sf: 1 };
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    const html = renderToStaticMarkup(createElement(Widget));
+    expect(html).toContain('class="peek"');
+    expect(html).toContain('aria-label="Mostrar Quorb"');
+    widgetEffects.phase = undefined;
+  });
+});
+
+// Cableado real de Widget respecto al arranque de la configuración (#271,
+// precisión 3 revisada): a diferencia de `use-widget-startup.test.ts` (que lee
+// los slots del hook), aquí se renderiza el Widget completo con los hooks
+// mockeados y se comprueba qué expone la primera muestra: ausencia de
+// «Cargando…»/«Ajustes» en pending, nombres en inglés al resolver, fallo
+// definitivo con «Reintentar» + tools en `es`, un error ajeno que no rompe el
+// neutro, y la colocación normal (efecto real) mostrando antes del temporizador.
+describe('Widget startup wiring (#271, revisión)', () => {
+  const geo = {
+    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  };
+  const flush = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
+  /** Renderiza el Widget completo y devuelve el HTML SSR actual. */
+  const renderHtml = () => {
+    widgetEffects.stateIndex = 0;
+    widgetEffects.refIndex = 0;
+    widgetEffects.effects = [];
+    return renderToStaticMarkup(createElement(Widget));
+  };
+  /** `window` de Node para el temporizador de la red de seguridad. */
+  const useFakeWindowTimers = () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+    });
+  };
+  const configureNative = () => {
+    widgetEffects.bounds.mockResolvedValue(undefined);
+    widgetEffects.clip.mockResolvedValue(undefined);
+    // Tanto la red de seguridad (`showStripIfVisible`) como la colocación
+    // normal hacen `await getCurrentWindow().show()`; sin resolución el mock
+    // devuelve `undefined` y el `.catch` de la red de seguridad explota.
+    widgetEffects.show.mockResolvedValue(undefined);
+    widgetEffects.innerSize.mockResolvedValue({ width: 400, height: 80 });
+    vi.stubGlobal('getComputedStyle', () => ({
+      borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
+      borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
+    }));
+    // El efecto de colocación mide el surface montado; los refs se llenan en
+    // el render de SSR, aquí los simulamos para que `measureSurfaceClip` pueda
+    // leer los radios.
+    widgetEffects.refs[1] ??= { current: null }; // stripRef
+    widgetEffects.refs[1].current = { dataset: {} };
+    widgetEffects.refs[2] ??= { current: null }; // peekRef
+    widgetEffects.refs[2].current = { dataset: {} };
+    setDragMode('native');
+  };
+  /** Config pendiente: estado base para todos los casos. */
+  const pendingStates = () => {
+    widgetEffects.states[0] = null; // config pendiente
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    // `Widget` inicialmente marca la red de seguridad como ya pasada; lo que
+    // queremos probar es el efecto de colocación mostrando antes del timer.
+    widgetEffects.refs[24] ??= { current: false }; // shown (refs[0] = generation del hook)
+    widgetEffects.refs[24].current = false;
+  };
+
+  afterEach(() => {
+    widgetEffects.states = [];
+    widgetEffects.refs = [];
+    widgetEffects.effects = [];
+    widgetEffects.phase = undefined;
+    resetDragMode();
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('pending + safety net: show() fires and the first render has no Cargando/Ajustes; resolving to en shows English names', async () => {
+    useFakeWindowTimers();
+    widgetEffects.show.mockResolvedValue(undefined);
+    let resolveConfig!: (c: unknown) => void;
+    widgetEffects.getConfig.mockReturnValue(new Promise((res) => { resolveConfig = res; }));
+    pendingStates();
+    const first = renderHtml();
+    // Neutro sin texto localizado, aunque el idioma guardado sea inglés.
+    expect(first).toContain('strip__pending');
+    expect(first).not.toContain('Cargando');
+    expect(first).not.toContain('Ajustes');
+
+    // Ejecutar la carga (getConfig pendiente) y la red de seguridad de 2,5 s.
+    const load = widgetEffects.effects.find((e) => e.run.toString().includes('getConfig'))!;
+    const safety = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'))!;
+    const cleanupLoad = load.run();
+    const cleanupTimer = safety.run();
+    await vi.advanceTimersByTimeAsync(2600);
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+
+    // La config en inglés llega: nombres localizados al re-render.
+    resolveConfig({ locale: 'en', accounts: [], nineRouter: { baseUrl: '' } });
+    await flush();
+    const second = renderHtml();
+    expect(second).toContain('title="Settings"');
+    expect(second).not.toContain('Ajustes');
+    expect(second).not.toContain('Cargando');
+    if (typeof cleanupLoad === 'function') cleanupLoad();
+    if (typeof cleanupTimer === 'function') cleanupTimer();
+  });
+
+  it('definitive config failure shows Reintentar with the tools named in es', async () => {
+    useFakeWindowTimers();
+    widgetEffects.getConfig.mockRejectedValue(new Error('sin backend'));
+    pendingStates();
+    renderHtml();
+    const load = widgetEffects.effects.find((e) => e.run.toString().includes('getConfig'))!;
+    load.run();
+    // Cinco reintentos con backoff: avanzamos suficiente para agotarlos.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(widgetEffects.states[1]).toBe(true); // configFailed
+    const html = renderHtml();
+    expect(html).toContain('Reintentar');
+    expect(html).toContain('title="sin backend"');
+    // Herramientas accesibles con el locale de fallback (`es`).
+    expect(html).toContain('title="Ajustes"');
+  });
+
+  it('an unrelated usage error while pending does not break the neutral state', () => {
+    pendingStates();
+    widgetEffects.states[6] = 'boom'; // error genérico (refresco/arrastre)
+    const html = renderHtml();
+    expect(html).toContain('strip__pending');
+    expect(html).not.toContain('Cargando');
+    expect(html).not.toContain('Ajustes');
+    expect(html).not.toContain('Reintentar');
+  });
+
+  it('normal placement showing before the timer keeps the neutral state and does not show twice', async () => {
+    configureNative();
+    useFakeWindowTimers();
+    widgetEffects.getConfig.mockReturnValue(new Promise(() => {})); // pendiente
+    pendingStates();
+    widgetEffects.states[11] = false; // dragging
+    renderHtml();
+    // La colocación normal muestra la ventana (efecto real, no solo el timer).
+    const placement = widgetEffects.effects.find((e) => e.deps?.[0] === widgetEffects.states[7])!;
+    const cleanup = placement.run();
+    await flush();
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+    // La red de seguridad llega después: no vuelve a mostrar.
+    const safety = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'))!;
+    const cleanupTimer = safety.run();
+    await vi.advanceTimersByTimeAsync(2600);
+    expect(widgetEffects.show).toHaveBeenCalledTimes(1);
+    // La neutralidad sigue vigente pese a que la ventana ya es visible.
+    const html = renderHtml();
+    expect(html).toContain('strip__pending');
+    expect(html).not.toContain('Cargando');
+    expect(html).not.toContain('Ajustes');
+    if (typeof cleanup === 'function') cleanup();
+    if (typeof cleanupTimer === 'function') cleanupTimer();
+  });
 });
 
 // #250 (S16): the close decision follows the pointer presence model, never a
@@ -1247,11 +1452,11 @@ describe('hover presence wiring', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[0] = null;
-    widgetEffects.states[1] = [report, reportB];
-    widgetEffects.states[5] = geo;
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[7] = panel;
-    widgetEffects.states[9] = false;
+    widgetEffects.states[3] = [report, reportB];
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[9] = panel;
+    widgetEffects.states[11] = false;
     let dock: DockHandlers | undefined;
     let hover: ((el: HTMLElement) => void) | undefined;
     let leave: (() => void) | undefined;
@@ -1341,9 +1546,9 @@ describe('hover presence wiring', () => {
     detail('enter'); // The detail window reports the pointer inside it.
     // The strip's `mouseleave` never arrives: Wayland native drops it.
     detail('leave'); // The detail window reports the pointer left it.
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   it('closes the detail when the strip reports leave and the pointer is outside both surfaces', async () => {
@@ -1351,7 +1556,7 @@ describe('hover presence wiring', () => {
     dock.onMouseEnter();
     dock.onMouseLeave();
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   it('keeps the detail open while the pointer is inside it', async () => {
@@ -1360,7 +1565,7 @@ describe('hover presence wiring', () => {
     dock.onMouseLeave(); // Arms the close.
     detail('enter'); // The detail cancels it.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
   });
 
   it('keeps the detail open when the pointer returns to the strip', async () => {
@@ -1369,17 +1574,17 @@ describe('hover presence wiring', () => {
     detail('leave'); // Arms the close.
     dock.onMouseEnter(); // The strip cancels it.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
   });
 
   it('releases the strip presence when the detail reports enter', async () => {
     const { dock, detail } = await wire();
     dock.onMouseEnter();
-    expect(widgetEffects.states[11]).toBe(true); // The strip knows the pointer is on it.
+    expect(widgetEffects.states[13]).toBe(true); // The strip knows the pointer is on it.
     detail('enter');
     // The pointer cannot be in the two windows at once: the strip's presence
     // is invalid, so its auto-hide is not frozen any more.
-    expect(widgetEffects.states[11]).toBe(false);
+    expect(widgetEffects.states[13]).toBe(false);
   });
 
   // #264/S13: la salida de la tira que llega mucho después de la evidencia
@@ -1395,7 +1600,7 @@ describe('hover presence wiring', () => {
     await vi.advanceTimersByTimeAsync(3000);
     dock.onMouseLeave();
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S14: la misma salida pegada al gesto (pocos ms) es el resto de ese
@@ -1406,7 +1611,7 @@ describe('hover presence wiring', () => {
     detail('enter');
     dock.onMouseLeave(); // Pega al `enter` del detalle: mismo gesto.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
   });
 
   // #264/S16: GTK entrega el `leave` de la ventana del detalle aunque
@@ -1417,9 +1622,9 @@ describe('hover presence wiring', () => {
     dock.onMouseEnter();
     detail('enter'); // El DOM sí entrega la entrada al detalle.
     native('detail', 'leave'); // La salida llega sólo por el relé nativo.
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S16: la entrada nativa es la misma evidencia que la del DOM: si el
@@ -1431,10 +1636,10 @@ describe('hover presence wiring', () => {
     detail('enter');
     detail('leave'); // Arma el cierre.
     await vi.advanceTimersByTimeAsync(100);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
     native('detail', 'enter'); // El puntero vuelve: el cierre se cancela.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
   });
 
   // #264/S16: la salida nativa de la tira también cierra: es la misma
@@ -1444,7 +1649,7 @@ describe('hover presence wiring', () => {
     dock.onMouseEnter();
     native('widget', 'leave'); // La salida de la tira llega por el relé nativo.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264: el nativo manda cuando existe. En cuanto llega el primer cruce
@@ -1457,7 +1662,7 @@ describe('hover presence wiring', () => {
     await vi.advanceTimersByTimeAsync(100);
     dock.onMouseLeave(); // El DOM también avisa, más tarde: ya no manda.
     await vi.advanceTimersByTimeAsync(180); // 280 ms desde la salida nativa.
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264 (R2): en Wayland puede llegar `enter nativo → leave nativo → enter
@@ -1469,7 +1674,7 @@ describe('hover presence wiring', () => {
     native('detail', 'leave'); // Y sale (nativo): el cierre se arma.
     detail('enter'); // El DOM avisa la entrada tarde: ya no manda.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264: sin ningún cruce nativo el DOM sigue decidiendo la presencia, que
@@ -1480,7 +1685,7 @@ describe('hover presence wiring', () => {
     detail('enter');
     detail('leave'); // Sólo el DOM: el cierre se arma y el panel se cierra.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S20: la precedencia nativa es POR SUPERFICIE. Con un solo booleano,
@@ -1495,7 +1700,7 @@ describe('hover presence wiring', () => {
     detail('enter');
     await vi.advanceTimersByTimeAsync(280);
     // Con el puntero sobre el detalle el panel no se cierra.
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
   });
 
   // #264/S20: el detalle sin relé conserva su salida por el DOM: si el relé
@@ -1507,7 +1712,7 @@ describe('hover presence wiring', () => {
     detail('enter'); // El detalle, sin relé, avisa su entrada por el DOM.
     detail('leave'); // Y su salida por el DOM: el cierre se arma.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S20: el espejo del anterior. El relé cubre el detalle y no la tira:
@@ -1519,7 +1724,7 @@ describe('hover presence wiring', () => {
     dock.onMouseEnter(); // El puntero vuelve a la tira, que no tiene relé: por el DOM.
     await vi.advanceTimersByTimeAsync(280);
     // Con el puntero sobre la tira el panel no se cierra.
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
   });
 
   // #170/#223: que un panel anclado siga abierto es intencional. El modelo
@@ -1534,7 +1739,7 @@ describe('hover presence wiring', () => {
     // Más que el retardo de cierre: si el guard del anclaje desapareciera, el
     // timer se armaría y el panel se cerraría solo.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: true });
+    expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: true });
   });
 
   // #264/S21: un `leave` que se repite con la presencia ya en `outside` no
@@ -1547,7 +1752,7 @@ describe('hover presence wiring', () => {
     await vi.advanceTimersByTimeAsync(200);
     dock.onMouseLeave(); // La salida que se repite no lo rearma.
     await vi.advanceTimersByTimeAsync(100);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S21: da igual cuántas salidas lleguen: el cierre sigue siendo el de
@@ -1560,7 +1765,7 @@ describe('hover presence wiring', () => {
       await vi.advanceTimersByTimeAsync(50);
     }
     await vi.advanceTimersByTimeAsync(50);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S21: entrar a una superficie cancela el cierre, así que la salida
@@ -1575,9 +1780,9 @@ describe('hover presence wiring', () => {
     await vi.advanceTimersByTimeAsync(100);
     detail('leave'); // t0+200: el puntero sale: el cierre se arma de nuevo.
     await vi.advanceTimersByTimeAsync(279);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
     await vi.advanceTimersByTimeAsync(1);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S21: si no hay ningún cierre pendiente, la salida lo arma. Es el
@@ -1592,10 +1797,10 @@ describe('hover presence wiring', () => {
     await vi.advanceTimersByTimeAsync(50);
     hover(orbElement as unknown as HTMLElement); // El hover del orbe cancela los timers.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toMatchObject({ providerId: 'a' });
+    expect(widgetEffects.states[9]).toMatchObject({ providerId: 'a' });
     dock.onMouseLeave(); // Ya no hay cierre pendiente: esta salida lo arma.
     await vi.advanceTimersByTimeAsync(280);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S21: lo mismo por el relé nativo (#264/S16): la salida que se
@@ -1607,7 +1812,7 @@ describe('hover presence wiring', () => {
     await vi.advanceTimersByTimeAsync(200);
     native('widget', 'leave'); // La salida que se repite no lo rearma.
     await vi.advanceTimersByTimeAsync(100);
-    expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+    expect(widgetEffects.states[9]).toEqual(NO_PANEL);
   });
 
   // #264/S19: el bloqueo del hover tras reordenar (#222/#240) lo libera el
@@ -1651,7 +1856,7 @@ describe('hover presence wiring', () => {
       reorder(orbs); // El reordenamiento bloquea el hover (#222).
       native('widget', 'leave'); // La salida llega sólo por el relé nativo.
       await hoverAfterTheGuard(hover);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
 
     // El puntero pasa de la tira al detalle: ya no está en la tira, así que
@@ -1662,7 +1867,7 @@ describe('hover presence wiring', () => {
       reorder(orbs);
       detail('enter'); // El puntero entra al detalle.
       await hoverAfterTheGuard(hover);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
 
     // #222: el detalle se cierra con el puntero encima del orbe (justo al
@@ -1677,7 +1882,7 @@ describe('hover presence wiring', () => {
       await hoverAfterTheGuard(hover);
       // La apertura retardada del hover, si el bloqueo no estuviera puesto.
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+      expect(widgetEffects.states[9]).toEqual(NO_PANEL);
     });
 
     // Sin cruce nativo (Windows y macOS) la salida del DOM sigue siendo la
@@ -1688,7 +1893,7 @@ describe('hover presence wiring', () => {
       reorder(orbs);
       dock.onMouseLeave(); // La salida del DOM: Windows y macOS.
       await hoverAfterTheGuard(hover);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
 
     // #264/S23: el bloqueo tras reordenar cubre un solo orbe, el que quedó
@@ -1702,7 +1907,7 @@ describe('hover presence wiring', () => {
       reorder(orbs);
       await vi.advanceTimersByTimeAsync(500);
       enterB?.(orbElement as unknown as HTMLElement); // El hover del otro orbe.
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'b', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'b', anchored: false });
     });
 
     // #264/S28: el soltar quita la vista previa y aplica el orden nuevo, y eso
@@ -1716,7 +1921,7 @@ describe('hover presence wiring', () => {
       leave?.(); // El salto de layout del soltar.
       await hoverAfterTheGuard(hover);
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+      expect(widgetEffects.states[9]).toEqual(NO_PANEL);
     });
 
     // #264/S30: soltar fuera de la tira no deja bloqueo. En Linux la salida
@@ -1730,7 +1935,7 @@ describe('hover presence wiring', () => {
       await hoverAfterTheGuard(hover);
       // La apertura retardada del hover: sin bloqueo, el detalle abre.
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
 
     // #264/S31: soltar en un hueco de la tira tampoco deja bloqueo: no hay
@@ -1743,7 +1948,7 @@ describe('hover presence wiring', () => {
       await hoverAfterTheGuard(hover);
       // La apertura retardada del hover: sin bloqueo, el detalle abre.
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
 
     // #264/S23: el bloqueo se acaba cuando el puntero sale del orbe bloqueado
@@ -1754,12 +1959,12 @@ describe('hover presence wiring', () => {
       reorder(orbs);
       hover(orbElement as unknown as HTMLElement); // El enter del orbe bloqueado: no abre y lo confirma.
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual(NO_PANEL);
+      expect(widgetEffects.states[9]).toEqual(NO_PANEL);
       leave?.(); // El puntero sale de ese orbe.
       await vi.advanceTimersByTimeAsync(500);
       hover(orbElement as unknown as HTMLElement); // Vuelve a entrar: ahora sí abre.
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
   });
 });
@@ -1787,9 +1992,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       order: m[0].match(/style="([^"]*)"/)?.[1]?.match(/(?:^|;)\s*order:\s*(\d+)/)?.[1],
     }));
 
-  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above):
-  // 0 config, 1 reports, 5 geo, 6 stripSize, 19 reorder. Ref slots: 6 orbsRef,
-  // 26 orbDrag.
+  // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above);
+  // `useWidgetStartup` toma los tres primeros (0 config, 1 configFailed,
+  // 2 configError). Después: 3 reports, 7 geo, 8 stripSize, 21 reorder.
+  // Ref slots: 0 generation (useWidgetStartup), 7 orbsRef, 27 orbDrag.
   //
   // La vista previa se pasa como entrada del render; las pruebas no leen ese
   // slot por posición: lo buscan por su forma (#264/S32).
@@ -1801,11 +2007,11 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       providerOrder: ['a', 'b', 'c'], hiddenProviders: [], accounts: [], nineRouter: { baseUrl: '' },
       alerts: { threshold: 90 },
     };
-    widgetEffects.states[1] = [report('a'), report('b'), report('c')];
-    widgetEffects.states[5] = geo;
-    widgetEffects.states[6] = { w: 400, h: 80 };
-    widgetEffects.states[9] = false;
-    if (reorder !== undefined) widgetEffects.states[19] = reorder;
+    widgetEffects.states[3] = [report('a'), report('b'), report('c')];
+    widgetEffects.states[7] = geo;
+    widgetEffects.states[8] = { w: 400, h: 80 };
+    widgetEffects.states[11] = false;
+    if (reorder !== undefined) widgetEffects.states[21] = reorder;
     let tree: ReactNode = null;
     function CaptureWidget() { tree = Widget(); return tree; }
     const markup = renderToStaticMarkup(createElement(CaptureWidget));
@@ -1870,7 +2076,7 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
     // El DOM sigue el orden guardado (a, b, c) con las posiciones de la vista
     // previa: a en la ranura 0, c en la 1 y b en la 2.
-    widgetEffects.refs[6].current = {
+    widgetEffects.refs[7].current = {
       querySelectorAll: () => [
         { dataset: { id: 'a' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 60 }) },
         { dataset: { id: 'b' }, getBoundingClientRect: () => ({ left: 200, top: 0, width: 60, height: 60 }) },

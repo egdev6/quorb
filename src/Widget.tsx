@@ -13,9 +13,10 @@ import { contains, isEdge, isVertical, nearestEdge, panelHeightLimit, stripRect,
 import { ORB_SIZE, type AppConfig, type UsageReport } from './lib/types';
 import { checkForUpdate, emitUpdateAvailable, installUpdate, shouldNotifyUpdate, startUpdatePolling, updateErrorText, type UpdatePhase } from './lib/updater';
 import { useUpdaterMode } from './lib/useUpdater';
-import { retryWithBackoff, STARTUP_RETRY, USAGE_RETRY } from './lib/startup';
+import { retryWithBackoff, USAGE_RETRY } from './lib/startup';
 import { createSessionMonitor } from './lib/session-monitor';
 import { envKey, needsRefresh } from './lib/widget-refresh';
+import { useWidgetStartup } from './lib/use-widget-startup';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
 import { placementOutcome, readPlacementWithRetries, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 import {
@@ -56,6 +57,7 @@ import { detectWindowManager } from './lib/wm-detect';
 import { t } from './i18n';
 import { localeFrom } from './i18n/use-locale';
 import { StripFallback } from './components/StripFallback';
+import { StripTools } from './components/StripTools';
 
 const CLOSE_DELAY = 280;
 /**
@@ -190,7 +192,43 @@ function cancelClose(timer: { current: number | undefined }) {
 }
 
 export function Widget() {
-  const [config, setConfig] = useState<AppConfig | null>(null);
+  // Callbacks ESTABLES para `useWidgetStartup` (revisión PR #271): si se
+  // pasaran inline, `onReadyToShow`/`onConfigChange` cambiarían de identidad en
+  // cada render y `useWidgetStartup` re-ejecutaría sus efectos — reiniciando la
+  // red de seguridad de 2,5 s y el retry de `getConfig` en cada re-render
+  // (justo lo que hace falta evitar en un arranque lento).
+  const showStripIfVisible = useCallback(() => {
+    // La visibilidad es del usuario (#179): una tira oculta desde la bandeja
+    // no se vuelve a mostrar por nuestra cuenta, ni siquiera por la red de
+    // seguridad. `shown`/`hiddenByUser` son refs estables: sin closure stale.
+    if (!shown.current && !hiddenByUser.current) {
+      shown.current = true;
+      getCurrentWindow().show().catch(() => {});
+    }
+  }, []);
+  const clearReportsOnEnvChange = useCallback((c: AppConfig) => {
+    // La limpieza de informes al cambiar de entorno es de Widget (#248); el
+    // hook aplica la config y avisa aquí (también para `config-changed`).
+    // El ref se actualiza de forma SINCRONA (revisión PR #271): `retryStartup`
+    // y `patchConfig` hacen `applyConfig(...)` y luego leen `configRef` en el
+    // mismo turno (`refresh`, alertas, locale); un efecto posterior al render
+    // llegaría tarde.
+    const prev = configRef.current;
+    configRef.current = c;
+    if (prev && envKey(prev) !== envKey(c)) {
+      reportsRef.current = [];
+      setReports([]);
+    }
+  }, []);
+
+  // Arranque de la configuración (#271): config pendiente → estado neutro;
+  // reintentos agotados → fallo definitivo; red de seguridad de 2,5 s para
+  // `show()` (el hook es puro; `Widget` decide la visibilidad real).
+  const { config, configFailed, configError, applyConfig } = useWidgetStartup({
+    onReadyToShow: showStripIfVisible,
+    onConfigChange: clearReportsOnEnvChange,
+  });
+
   const [reports, setReports] = useState<UsageReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -278,6 +316,10 @@ export function Widget() {
    */
   const nativeCrossingsRef = useRef<{ widget: boolean; detail: boolean }>({ widget: false, detail: false });
   const configRef = useRef<AppConfig | null>(null);
+  /** Última config que el efecto `[config, refresh]` ya procesó: `configRef`
+   *  se sobrescribe de forma síncrona en cada `applyConfig`, así que aquí se
+   *  guarda el valor anterior para decidir si hay que volver a pedir datos. */
+  const appliedConfigRef = useRef<AppConfig | null>(null);
   const reportsRef = useRef<UsageReport[]>([]);
   const geoRef = useRef<Geo | null>(null);
   const inFlight = useRef(false);
@@ -448,21 +490,10 @@ export function Widget() {
     }
   }, [runAlerts]);
 
-  const applyConfig = useCallback((c: AppConfig) => {
-    const prev = configRef.current;
-    // Cambio de entorno (host ↔ WSL, o de distro): los informes actuales son
-    // del otro entorno y no valen (revisión PR #248). Se vacían para que no se
-    // muestren datos del host como si fueran de la distro (y al revés).
-    if (prev && envKey(prev) !== envKey(c)) {
-      reportsRef.current = [];
-      setReports([]);
-    }
-    configRef.current = c;
-    setConfig(c);
-  }, []);
-
   const patchConfig = useCallback(
     async (patch: WidgetPatch) => {
+      // El hook aplica la config (y avisa vía `onConfigChange` para la
+      // limpieza de informes por cambio de entorno, #248).
       applyConfig(await api.patchConfig(patch));
     },
     [applyConfig],
@@ -483,25 +514,12 @@ export function Widget() {
   }, [applyConfig, refresh]);
 
   useEffect(() => {
-    // La ventana puede montar antes de que el backend registre su estado: sin
-    // reintento la config no llega y la tira queda vacía o en una posición
-    // arbitraria hasta un refresco manual. Cancelable al desmontar.
-    const controller = new AbortController();
-    retryWithBackoff(() => api.getConfig(), { ...STARTUP_RETRY, signal: controller.signal })
-      .then((c) => {
-        if (!controller.signal.aborted) applyConfig(c);
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(String(e));
-      });
+    // El retry del primer `getConfig` y el listener `config-changed` viven en
+    // `useWidgetStartup` (#271). Aquí quedan los eventos de la ventana.
+    // `config-changed` vuelve a leer la config (el hook aplica el nuevo
+    // `config`); este efecto detecta ese cambio y refresca solo si cambió
+    // algo que obliga a pedir datos (mover la tira o cambiar colores no).
     const unlisten = [
-      listen('config-changed', async () => {
-        const prev = configRef.current;
-        const next = await api.getConfig();
-        applyConfig(next);
-        // Mover la tira o cambiar colores no debe disparar peticiones a los proveedores.
-        if (needsRefresh(prev, next)) refresh();
-      }),
       listen('refresh-now', () => refresh()),
       listen('open-peak', () => openPeakRef.current()),
       // La visibilidad de la tira es del usuario (#179): cuando la oculta
@@ -517,10 +535,22 @@ export function Widget() {
       }),
     ];
     return () => {
-      controller.abort();
       unlisten.forEach((p) => p.then((f) => f()));
     };
-  }, [refresh, applyConfig]);
+  }, [refresh]);
+
+  // `config-changed` altera `config` (vía el hook): `configRef` ya se mantiene
+  // al día de forma SINCRONA en `clearReportsOnEnvChange` (leído por
+  // `refresh`/`runAlerts` justo después de un `applyConfig`). Este efecto solo
+  // refresca si la config nueva obliga a pedir datos (revisión PR #271: el
+  // cambio de idioma no dispara una lectura de proveedores, pero sí
+  // re-renderiza la UI). `appliedConfigRef` guarda el último valor que este
+  // efecto ya procesó (configRef ya está sobrescrito al llegar aquí).
+  useEffect(() => {
+    const prev = appliedConfigRef.current;
+    appliedConfigRef.current = config;
+    if (prev && config && needsRefresh(prev, config)) refresh();
+  }, [config, refresh]);
 
   // Al desmontar, corta cualquier reintento de uso pendiente (sin setState tardío).
   useEffect(() => () => refreshAbort.current?.abort(), []);
@@ -641,6 +671,10 @@ export function Widget() {
 
   const autoHide = config?.autoHide ?? false;
   const showHandle = autoHide || phase !== 'open';
+  // Idioma seguro para controles accesibles (#271): `pending` (config pendiente
+  // y sin fallo definitivo) no monta botones sin nombre. El peek y las tools
+  // solo se montan con config válida o fallo definitivo (locale `es`).
+  const configKnown = config != null || configFailed;
   useEffect(() => {
     if (!autoHide) {
       setCollapsed(false);
@@ -1223,19 +1257,10 @@ export function Widget() {
     };
   }, []);
 
-  // Red de seguridad: si algo falla al medir/colocar, mostramos igualmente la ventana.
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      // La visibilidad es del usuario (#179): una tira oculta desde la bandeja
-      // no se vuelve a mostrar por nuestra cuenta, ni siquiera por la red de
-      // seguridad.
-      if (!shown.current && !hiddenByUser.current) {
-        shown.current = true;
-        getCurrentWindow().show().catch(() => {});
-      }
-    }, 2500);
-    return () => window.clearTimeout(t);
-  }, []);
+  // La red de seguridad (mostrar la ventana a los 2,5 s si sigue pendiente)
+  // vive en `useWidgetStartup` (#271): el hook llama `onReadyToShow` y aquí se
+  // respeta la visibilidad del usuario (#179). La colocación normal también
+  // muestra la ventana (ver el efecto de colocación), sin depender de esto.
 
   // ───── arrastrar la tira y soltar con imán al borde más cercano ─────
   const enqueueDrag = (job: () => Promise<void>) => {
@@ -1481,7 +1506,7 @@ export function Widget() {
         applyHover({ surface: 'widget', kind: 'leave' });
       }}
     >
-      {showHandle && <button
+      {showHandle && configKnown && <button
         ref={peekRef}
         type="button"
         className="peek"
@@ -1516,7 +1541,7 @@ export function Widget() {
       >
         <span
           className="strip__grip"
-          title={t(locale, 'widget.dragHint')}
+          title={configKnown ? t(locale, 'widget.dragHint') : undefined}
           onPointerDown={onGripDown}
           onPointerMove={onGripMove}
           onPointerUp={onGripUp}
@@ -1555,33 +1580,36 @@ export function Widget() {
             />
           ))}
           {visible.length === 0 && (
-            <StripFallback error={error} busy={loading} ready={config != null} locale={locale} onRetry={retryStartup} onConfigure={() => api.openSettings()} />
+            <StripFallback
+              state={configFailed ? 'failed' : config != null ? 'ready' : 'pending'}
+              // En `ready` el error genérico de uso (refresco/arrastre) se
+              // muestra, no se oculta; en `failed` el error de un reintento
+              // manual (`setError`) tiene prioridad sobre el error de config
+              // viejo (revisión PR #271).
+              error={configFailed ? (error ?? configError) : error}
+              busy={loading}
+              locale={locale}
+              onRetry={retryStartup}
+              onConfigure={() => api.openSettings()}
+            />
           )}
         </div>
 
-        <div className="strip__tools">
-          {updaterMode === 'native' && (update.phase === 'available' || update.phase === 'installing') && (
-            <button
-              className="icon-btn icon-btn--update"
-              data-spin={update.phase === 'installing' || undefined}
-              onClick={startUpdate}
-              disabled={update.phase === 'installing'}
-              title={
-                update.phase === 'installing'
-                  ? t(locale, 'widget.updatingTo', { version: update.info.version, detail: update.progress != null ? ` · ${update.progress} %` : '…' })
-                  : t(locale, 'widget.updateTo', { version: update.info.version })
-              }
-            >
-              {Icon.update}
-            </button>
-          )}
-          <button className="icon-btn" data-spin={loading || undefined} onClick={refresh} title={t(locale, 'widget.refreshNow')}>
-            {Icon.refresh}
-          </button>
-          <button className="icon-btn" onClick={() => api.openSettings()} title={t(locale, 'widget.settings')}>
-            {Icon.gear}
-          </button>
-        </div>
+        {/* Las herramientas solo se montan con idioma seguro: mientras la config
+            está pendiente no hay botones sin nombre accesible (#271, precisión
+            2). En el fallo definitivo se montan con el locale por defecto. */}
+        {configKnown && (
+          <StripTools
+            locale={locale}
+            loading={loading}
+            updaterMode={updaterMode}
+            update={update}
+            onRefresh={refresh}
+            onOpenSettings={() => api.openSettings()}
+            onStartUpdate={startUpdate}
+            icons={{ update: Icon.update, refresh: Icon.refresh, gear: Icon.gear }}
+          />
+        )}
       </div>
 
     </div>
