@@ -401,7 +401,7 @@ pub(crate) fn parse_usage(v: &Value) -> Vec<Meter> {
             unit: Some("créditos".into()),
             resets_at: None,
             window_seconds: None,
-            quota_source: None,
+            ..Default::default()
         });
     }
     out

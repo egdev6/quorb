@@ -549,7 +549,7 @@ fn build_main(
             unit: Some("USD".into()),
             resets_at: None,
             window_seconds: None,
-            quota_source: None,
+            ..Default::default()
         });
     }
     meters.push(Meter {
@@ -561,7 +561,7 @@ fn build_main(
         unit: Some("tokens".into()),
         resets_at: None,
         window_seconds: None,
-        quota_source: None,
+        ..Default::default()
     });
 
     let providers = stats
@@ -627,7 +627,7 @@ fn parse_provider(entry: &Value) -> Parsed {
         unit: Some("tokens".into()),
         resets_at: None,
         window_seconds: None,
-        quota_source: None,
+        ..Default::default()
     }];
     let spend = Some(Spend {
         amount: cost,

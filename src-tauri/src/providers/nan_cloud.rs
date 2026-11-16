@@ -9,7 +9,7 @@
 
 use super::net_error;
 use crate::model::{Daily, Meter};
-use chrono::{DateTime, Months, NaiveDate, Utc};
+use chrono::{DateTime, Months, NaiveDate, NaiveTime, Utc};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -208,18 +208,14 @@ pub(crate) fn cookie_header(jar: &BTreeMap<String, String>) -> String {
         .join("; ")
 }
 
-/// Los medidores de la sesión: los modelos con cuota y sin consumo todavía no se cuentan
-/// (la sesión enseña el consumo de los modelos en uso). La ruta de API key sí los enseña:
-/// una asignación sin consumo es una asignación, no la ausencia de cuota.
+/// Los medidores de la sesión: los que trae el payload del panel, tal cual.
+///
+/// Un modelo con cuota y consumo cero se declara al 0 %: una asignación sin consumo es
+/// una asignación, no la ausencia de cuota. Es el mismo criterio que el camino de
+/// cuenta (la API key), así que las dos rutas no descartan la cuota de la cuenta.
 fn session_meters(v: &Value) -> (Vec<Meter>, Vec<Dropped>) {
     let ParsedQuota { meters, dropped } = parse_quota(v);
-    (
-        meters
-            .into_iter()
-            .filter(|m| m.used.unwrap_or(0.0) > 0.0)
-            .collect(),
-        dropped,
-    )
+    (meters, dropped)
 }
 
 /// Un modelo que el payload trajo y que no se pudo declarar, con el motivo.
@@ -243,6 +239,10 @@ pub(crate) const NO_TOKENS_USED: &str = "sin tokensUsed";
 pub(crate) const CAP_NOT_POSITIVE: &str = "cap <= 0";
 /// El consumo del modelo es negativo: el payload está malformado.
 pub(crate) const NEGATIVE_TOKENS_USED: &str = "tokensUsed negativo";
+/// El payload no trajo el nombre del modelo: sin nombre no hay modelo que medir.
+pub(crate) const NO_MODEL: &str = "sin model";
+/// El payload no trajo un fin de periodo legible: sin fin no hay ventana ni reinicio.
+pub(crate) const INVALID_PERIOD_END: &str = "periodEnd inválido";
 
 /// El resultado de leer el payload de cuota: los medidores que se pudieron declarar y
 /// los modelos que el payload trajo y no se pudieron declarar.
@@ -256,10 +256,7 @@ pub(crate) struct ParsedQuota {
 /// Un medidor por modelo con tokens usados (ordenados por %, el mayor primero), y los
 /// modelos del payload que no se pudieron declarar, con su motivo.
 pub(crate) fn parse_quota(v: &Value) -> ParsedQuota {
-    let period_start = v
-        .get("periodStart")
-        .and_then(Value::as_str)
-        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+    let period_start = parse_period_start(v.get("periodStart"));
     let mut out: Vec<Meter> = vec![];
     let mut dropped: Vec<Dropped> = vec![];
     for m in v
@@ -268,11 +265,16 @@ pub(crate) fn parse_quota(v: &Value) -> ParsedQuota {
         .into_iter()
         .flatten()
     {
-        // Sin nombre no hay modelo que nombrar: el payload no dice de qué modelo se trata.
+        // Sin nombre no hay modelo que nombrar: el payload no dice de qué modelo se
+        // trata. No se pierde en silencio: entra en los descartados con su motivo.
         let Some(model) = m.get("model").and_then(Value::as_str) else {
+            dropped.push(Dropped {
+                model: String::new(),
+                reason: NO_MODEL,
+            });
             continue;
         };
-        let Some(used) = m.get("tokensUsed").and_then(Value::as_f64) else {
+        let Some(used) = m.get("tokensUsed").and_then(number) else {
             dropped.push(Dropped {
                 model: model.to_string(),
                 reason: NO_TOKENS_USED,
@@ -289,7 +291,7 @@ pub(crate) fn parse_quota(v: &Value) -> ParsedQuota {
         // Denominator: `cap` is the allowance the account got for the current period,
         // the same number the dashboard shows as "Allowance per billing period". A
         // prorated first period arrives prorated, so it needs no special case.
-        let Some(limit) = m.get("cap").and_then(Value::as_f64) else {
+        let Some(limit) = m.get("cap").and_then(number) else {
             dropped.push(Dropped {
                 model: model.to_string(),
                 reason: NO_CAP,
@@ -303,25 +305,37 @@ pub(crate) fn parse_quota(v: &Value) -> ParsedQuota {
             });
             continue;
         }
-        let end = m
+        // Sin fin de periodo no hay reinicio ni ventana: eso no es un tope con periodo,
+        // así que el modelo se descarta con su motivo (y el informe degrada).
+        let Some(end) = m
             .get("periodEnd")
             .and_then(Value::as_str)
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|d| d.with_timezone(&Utc));
+            .map(|d| d.with_timezone(&Utc))
+        else {
+            dropped.push(Dropped {
+                model: model.to_string(),
+                reason: INVALID_PERIOD_END,
+            });
+            continue;
+        };
         // Mensual: desde periodStart. Periodo de facturación (glm5.3): un mes antes del fin.
         // `periodStart` es una FECHA (el día del inicio del periodo) y `periodEnd` es un
         // INSTANTE con hora: el inicio real del periodo es ese día a la MISMA hora del
         // fin de ese modelo (la cuenta de verdad factura del 5 al 5 a las 22:15:31).
+        // Si `periodStart` trae su propia hora, esa es la del inicio.
         //
         // `windowHours` es la ventana móvil del modelo: sólo cuenta si trae un NÚMERO.
         // La clave ausente y la clave con valor `null` son lo mismo (no hay ventana):
         // con `null` la ventana sale de "fin menos un mes" en vez de la del periodo de la
         // cuenta.
         let has_window = m.get("windowHours").and_then(Value::as_f64).is_some();
-        let start = match (end, period_start) {
-            (Some(e), Some(d)) if !has_window => Some(d.and_time(e.time()).and_utc().min(e)),
-            (Some(e), _) => e.checked_sub_months(Months::new(1)),
-            _ => None,
+        let start = match period_start {
+            Some((date, time)) if !has_window => {
+                let time = time.unwrap_or_else(|| end.time());
+                Some(date.and_time(time).and_utc().min(end))
+            }
+            _ => end.checked_sub_months(Months::new(1)),
         };
         out.push(Meter {
             id: format!("model:{model}"),
@@ -330,9 +344,9 @@ pub(crate) fn parse_quota(v: &Value) -> ParsedQuota {
             used: Some(used),
             limit: Some(limit),
             unit: Some("tokens".into()),
-            resets_at: end.map(|e| e.to_rfc3339()),
-            window_seconds: match (start, end) {
-                (Some(s), Some(e)) if e > s => Some((e - s).num_seconds()),
+            resets_at: Some(end.to_rfc3339()),
+            window_seconds: match start {
+                Some(s) if end > s => Some((end - s).num_seconds()),
                 _ => None,
             },
             quota_source: None,
@@ -347,6 +361,30 @@ pub(crate) fn parse_quota(v: &Value) -> ParsedQuota {
         meters: out,
         dropped,
     }
+}
+
+/// Un número del payload: puede venir como número JSON o como texto (el proveedor
+/// escribe las dos formas). Lo que no es un número, no lo es.
+fn number(v: &Value) -> Option<f64> {
+    if let Some(n) = v.as_f64() {
+        return Some(n);
+    }
+    v.as_str()?.trim().parse::<f64>().ok()
+}
+
+/// El inicio del periodo: puede venir como fecha (el día) o como fecha con hora (el
+/// instante). Con sólo fecha, la hora del inicio es la del fin de ese modelo (la
+/// cuenta de verdad factura del 5 al 5 a las 22:15:31); con fecha y hora, esa es la
+/// hora del inicio.
+fn parse_period_start(v: Option<&Value>) -> Option<(NaiveDate, Option<NaiveTime>)> {
+    let s = v?.as_str()?.trim();
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        let dt = dt.with_timezone(&Utc);
+        return Some((dt.date_naive(), Some(dt.time())));
+    }
+    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .ok()
+        .map(|d| (d, None))
 }
 
 /// Tokens por día (todas las familias de modelo sumadas) de `timeSeries`.
@@ -508,16 +546,40 @@ mod tests {
     }
 
     #[test]
-    fn the_session_path_skips_the_models_with_no_consumption() {
-        // The session shows the consumption of the models in use: a model with an
-        // allowance and no consumption yet does not appear there.
+    fn the_session_path_declares_the_models_with_no_consumption() {
+        // La sesión declara lo que trae el payload: un modelo con cuota y consumo cero es
+        // una asignación, no la ausencia de cuota. Se muestra al 0 %, igual que en el
+        // camino de cuenta (no se descarta).
         let v = json!({"periodStart": "2026-10-01", "models": [
             {"model": "glm5.3", "tokensUsed": 0, "cap": 3000000000u64, "periodEnd": "2026-11-01T00:00:00Z"},
             {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"}
         ]});
         let (meters, dropped) = session_meters(&v);
-        assert_eq!(meters.len(), 1);
+        assert_eq!(meters.len(), 2);
         assert_eq!(meters[0].id, "model:deepseek-v4-flash");
+        let glm = meters
+            .iter()
+            .find(|m| m.id == "model:glm5.3")
+            .expect("el modelo con cuota y consumo cero se declara");
+        assert_eq!(glm.used, Some(0.0));
+        assert_eq!(glm.percent, Some(0.0));
+        assert_eq!(glm.limit, Some(3e9));
+        assert!(dropped.is_empty());
+    }
+
+    #[test]
+    fn the_session_path_shows_a_quota_with_no_consumption_at_zero() {
+        // Sesión con un único modelo con cuota y consumo 0: el medidor existe y está al
+        // 0 %. Antes desaparecía, y con él la cuota que la cuenta tiene asignada.
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "glm5.3-flash", "tokensUsed": 0, "cap": 500000000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let (meters, dropped) = session_meters(&v);
+        assert_eq!(meters.len(), 1);
+        assert_eq!(meters[0].id, "model:glm5.3-flash");
+        assert_eq!(meters[0].used, Some(0.0));
+        assert_eq!(meters[0].percent, Some(0.0));
+        assert_eq!(meters[0].limit, Some(5e8));
         assert!(dropped.is_empty());
     }
 
@@ -618,6 +680,62 @@ mod tests {
         assert_eq!(parsed.dropped[1].reason, NO_TOKENS_USED);
         assert_eq!(parsed.dropped[2].model, "mimo-v2.6-flash");
         assert_eq!(parsed.dropped[2].reason, CAP_NOT_POSITIVE);
+    }
+
+    #[test]
+    fn a_model_without_a_name_is_reported_and_not_lost() {
+        // Un modelo sin `model` no se pierde en silencio: entra en la lista de los
+        // descartados con su motivo, para que el informe degrade y lo nombre.
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let parsed = parse_quota(&v);
+        assert!(parsed.meters.is_empty());
+        assert_eq!(parsed.dropped.len(), 1);
+        assert_eq!(parsed.dropped[0].reason, "sin model");
+    }
+
+    #[test]
+    fn a_model_with_an_invalid_period_end_is_reported() {
+        // Un `periodEnd` ilegible deja el medidor sin reinicio ni ventana: eso no es un
+        // tope con periodo, así que se descarta con su motivo (y el informe degrada).
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": 1000, "cap": 1000000000u64, "periodEnd": "no es una fecha"}
+        ]});
+        let parsed = parse_quota(&v);
+        assert!(parsed.meters.is_empty());
+        assert_eq!(parsed.dropped.len(), 1);
+        assert_eq!(parsed.dropped[0].model, "deepseek-v4-flash");
+        assert_eq!(parsed.dropped[0].reason, "periodEnd inválido");
+    }
+
+    #[test]
+    fn a_numeric_string_is_a_valid_consumption() {
+        // `"tokensUsed": "1000"` es el número escrito como texto: el payload SÍ trae el
+        // consumo, así que el modelo no se descarta (el motivo "sin tokensUsed" era
+        // incorrecto: el dato estaba).
+        let v = json!({"periodStart": "2026-10-01", "models": [
+            {"model": "deepseek-v4-flash", "tokensUsed": "1000", "cap": 1000000000u64, "periodEnd": "2026-11-01T00:00:00Z"}
+        ]});
+        let parsed = parse_quota(&v);
+        assert!(parsed.dropped.is_empty());
+        assert_eq!(parsed.meters.len(), 1);
+        assert_eq!(parsed.meters[0].used, Some(1000.0));
+        assert!((parsed.meters[0].percent.unwrap() - 0.0001).abs() < 0.00001);
+    }
+
+    #[test]
+    fn the_period_start_can_bring_its_own_time() {
+        // `periodStart` con fecha Y hora es el instante del inicio del periodo. Con
+        // inicio el 20/11 y fin el 05/12 la ventana son 15 días, no los 30 que salían
+        // de "fin menos un mes" (el `NaiveDate` no leía la hora).
+        let v = json!({"periodStart": "2026-11-20T00:00:00Z", "models": [
+            {"model": "glm5.3-flash", "tokensUsed": 1000, "cap": 500000000u64, "periodEnd": "2026-12-05T00:00:00Z"}
+        ]});
+        let m = meters(&v);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].window_seconds, Some(15 * 86400));
+        assert_eq!(m[0].resets_at.as_deref(), Some("2026-12-05T00:00:00+00:00"));
     }
 
     #[test]

@@ -172,19 +172,22 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     //    número que el panel muestra como "Allowance per billing period"), así que cuota,
     //    consumo y fechas salen del mismo payload: la cabecera y los medidores no
     //    muestran periodos distintos.
-    let account = nan_cloud::fetch_account_quota(http, &key)
-        .await
-        .ok()
-        .map(|payload| nan_cloud::parse_quota(&payload));
-    let (account_meters, dropped) = match account {
-        Some(nan_cloud::ParsedQuota { meters, dropped }) => (Some(meters), dropped),
-        None => (None, Vec::new()),
-    };
+    //    `Some` (el panel respondió) y `None` (el panel no respondió) son dos cosas: un
+    //    payload válido SIN modelos no es un endpoint caído. El motivo de la caída se
+    //    guarda: no es lo mismo un 401 que un timeout, y el mensaje lo dice.
+    let (account_meters, dropped, account_failure) =
+        match nan_cloud::fetch_account_quota(http, &key).await {
+            Ok(payload) => {
+                let parsed = nan_cloud::parse_quota(&payload);
+                (Some(parsed.meters), parsed.dropped, None)
+            }
+            Err(e) => (None, Vec::new(), Some(cloud_failure(e))),
+        };
 
     // Los medidores de CUOTA del informe: van aparte porque el informe puede ser MIXTO
     // (los medidores extra y los de rate limit, sin los de cuota).
     let mut quota: Vec<Meter> = Vec::new();
-    if let Some(meters) = account_meters.filter(|m| !m.is_empty()) {
+    if let Some(meters) = account_meters {
         // 3. La cuota de la cuenta manda: no se lee `/v1/usage` (mide el consumo de esta
         //    key, de otro periodo) ni se usa `billing_day` (el periodo es el del payload).
         let declared = declare(Some(meters), &dropped, None, &quotas, now, cfg.billing_day);
@@ -195,11 +198,22 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
             Ok(pages) => {
                 let declared = declare_usage(&pages, &dropped, &quotas, now, cfg.billing_day);
                 declared.apply(&mut report, &mut quota);
+                // El motivo por el que se cayó la cuota de la cuenta va en el mensaje:
+                // no es lo mismo un 401 que un timeout.
+                if let Some(reason) = &account_failure {
+                    report.message = Some(join_message(
+                        report.message.take(),
+                        &format!("la cuota de la cuenta no respondió ({reason})"),
+                    ));
+                }
             }
             Err(e) => {
                 report.status = Status::Warning;
                 let mut message =
                     format!("No pude leer /v1/usage ({e}). {}", plan_quota(&cfg.plan));
+                if let Some(reason) = &account_failure {
+                    message = format!("{message} · la cuota de la cuenta no respondió ({reason})");
+                }
                 if !dropped.is_empty() {
                     message = format!("{message} · {}", dropped_note(&dropped));
                 }
@@ -574,7 +588,13 @@ pub(crate) fn nan_meters(
     billing_day: u32,
 ) -> (Vec<Meter>, QuotaSource, String) {
     // The account quota carries quota, usage and period dates in the same payload.
-    if let Some(meters) = account_meters.filter(|m| !m.is_empty()) {
+    // `Some` means the panel answered: an account payload WITHOUT models is not a
+    // failed endpoint, so the published quotas are not used as a fallback (those
+    // allowances may not exist for this account).
+    if let Some(meters) = account_meters {
+        if meters.is_empty() {
+            return (Vec::new(), QuotaSource::Account, NO_ACCOUNT_MODELS.into());
+        }
         let total: f64 = meters.iter().filter_map(|m| m.used).sum();
         let header = usage_message(total, QuotaSource::Account);
         return (
@@ -664,6 +684,11 @@ pub(crate) fn declare(
         declared.status = Status::Warning;
         declared.header = format!("{} · {}", declared.header, dropped_note(dropped));
     }
+    // Nunca `ok` sin medidores: así los datos anteriores quedan como desactualizados en
+    // vez de borrarse en silencio.
+    if declared.meters.is_empty() && declared.status == Status::Ok {
+        declared.status = Status::Warning;
+    }
     declared
 }
 
@@ -694,7 +719,13 @@ fn usage_message(total: f64, source: QuotaSource) -> String {
 fn dropped_note(dropped: &[nan_cloud::Dropped]) -> String {
     let names: Vec<String> = dropped
         .iter()
-        .map(|d| format!("{} ({})", d.model, d.reason))
+        .map(|d| {
+            if d.model.is_empty() {
+                format!("({})", d.reason)
+            } else {
+                format!("{} ({})", d.model, d.reason)
+            }
+        })
         .collect();
     format!(
         "el payload trajo {} modelo(s) sin datos completos: {}",
@@ -729,6 +760,15 @@ fn session_meters_with_basis(meters: Vec<Meter>) -> Vec<Meter> {
     declare_basis(meters, QuotaSource::Account)
 }
 
+/// El motivo por el que se cayó la cuota de la cuenta: no es lo mismo un 401 que un
+/// timeout, y el mensaje del informe lo dice.
+fn cloud_failure(e: nan_cloud::CloudError) -> String {
+    match e {
+        nan_cloud::CloudError::Expired => "el panel de NaN rechazó la API key (401)".into(),
+        nan_cloud::CloudError::Other(e) => e,
+    }
+}
+
 /// Une dos partes del mensaje del informe.
 fn join_message(first: Option<String>, second: &str) -> String {
     match first {
@@ -740,12 +780,21 @@ fn join_message(first: Option<String>, second: &str) -> String {
 /// Estado del informe según de dónde salió la cuota: la de la cuenta va en `ok`; una cuota
 /// publicada o ninguna cuota son avisos. Nunca `ok` sin medidores: así los datos anteriores
 /// quedan como desactualizados en vez de borrarse en silencio.
+///
+/// OJO: el aviso de `QuotaSource::None` es un estado NUEVO (antes ese caso salía en
+/// `ok`): cambia lo que se ve cuando el proveedor no da datos de consumo, y por eso el
+/// mensaje lo explica en vez de dejar un informe vacío y limpio.
 fn status_for(source: QuotaSource) -> Status {
     match source {
         QuotaSource::Account => Status::Ok,
         QuotaSource::Published | QuotaSource::None => Status::Warning,
     }
 }
+
+/// El payload de la cuenta respondió y no declaró ningún modelo con cuota: no es un
+/// endpoint caído (no se recurre a la cuota publicada), es una cuenta sin topes por
+/// modelo que mostrar.
+const NO_ACCOUNT_MODELS: &str = "La cuenta no declara cuotas por modelo.";
 
 fn compact(n: f64) -> String {
     match n {
@@ -772,7 +821,9 @@ fn plan_quota(plan: &str) -> &'static str {
     match plan {
         "premium" => "Plan: GLM 5.3.",
         "community" => "Plan de comunidad (prioridad de cola).",
-        _ => "Plan: cluster sin contador · DeepSeek V4-Flash.",
+        // El cluster de DeepSeek tiene tope por modelo en la cuenta (1 B en la cuenta
+        // real): el texto no puede decir que ese modelo no tiene contador.
+        _ => "Plan: cluster con cuota por modelo · DeepSeek V4-Flash.",
     }
 }
 
@@ -1054,6 +1105,54 @@ mod tests {
         assert_eq!(deepseek.used, Some(0.0));
         assert_eq!(deepseek.percent, Some(0.0));
         assert_eq!(deepseek.limit, Some(1e9));
+    }
+
+    #[test]
+    fn an_account_payload_without_models_is_not_the_published_fallback() {
+        // Un payload válido SIN modelos no es un endpoint caído: la cuota publicada no
+        // se usa (esos topes pueden no existir para esta cuenta). `Some(vacío)` y
+        // `None` son dos cosas distintas.
+        let (meters, source, header) =
+            nan_meters(Some(Vec::new()), None, &published_quotas(), now(), 1);
+        assert_eq!(source, QuotaSource::Account);
+        assert!(meters.is_empty());
+        assert!(
+            header.contains("no declara cuotas por modelo"),
+            "el mensaje dice que la cuenta no declara cuotas: {header}"
+        );
+    }
+
+    #[test]
+    fn an_account_payload_without_models_degrades_the_report() {
+        // Sin medidores de cuota el informe no va en `ok`: nunca `ok` sin medidores,
+        // para que los datos anteriores no se borren en silencio.
+        let declared = declare(Some(Vec::new()), &[], None, &published_quotas(), now(), 1);
+        assert_eq!(declared.status, Status::Warning);
+        assert!(declared.meters.is_empty());
+    }
+
+    #[test]
+    fn the_failure_reason_names_what_happened() {
+        // No es lo mismo un 401 que un timeout: el motivo de la caída va en el mensaje.
+        assert!(
+            cloud_failure(nan_cloud::CloudError::Expired).contains("401"),
+            "el 401 se dice"
+        );
+        assert_eq!(
+            cloud_failure(nan_cloud::CloudError::Other(
+                "HTTP 500 en /api/usage/quota".into()
+            )),
+            "HTTP 500 en /api/usage/quota"
+        );
+    }
+
+    #[test]
+    fn the_plan_text_does_not_claim_that_deepseek_has_no_counter() {
+        // La cuenta trae un tope de 1 B para DeepSeek: el texto del plan no puede
+        // decir que ese modelo no tiene contador.
+        let text = plan_quota("member");
+        assert!(!text.contains("sin contador"), "{text}");
+        assert!(text.contains("DeepSeek V4-Flash"), "{text}");
     }
 
     #[test]
