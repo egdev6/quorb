@@ -356,7 +356,7 @@ export function Widget() {
   /** El usuario ocultó la tira desde la bandeja: la visibilidad es suya (#179). */
   const hiddenByUser = useRef(false);
   const drag = useRef<{ sx: number; sy: number; start: PhysicalPosition | null; scale: number; raf: number; pointerId: number; ending: boolean } | null>(null);
-  const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  const orbDrag = useRef<{ id: string; x: number; y: number; moved: boolean; cancelled: boolean } | null>(null);
   const lastReorderAt = useRef(0);
   // Tras reordenar, el hover no abre hasta que el puntero salga de la tira (#222).
   // La libera el modelo de presencia (#264/S19): cuando la presencia pasa de
@@ -1095,10 +1095,15 @@ export function Widget() {
       // #279: Escape durante un arrastre cancela el reordenamiento: la vista
       // previa se descarta y el orden guardado queda como estaba. Antes sólo
       // cerraba el panel y el gesto seguía vivo.
+      //
+      // El gesto no termina aquí —el botón sigue apretado y la captura
+      // puesta—, así que se **marca** cancelado en vez de borrarse: la suelta
+      // que viene después lo trata como una suelta sin persistencia, con las
+      // defensas del `click` de la cola y del `enter` diferido (#279/S16).
       const od = orbDrag.current;
-      if (od?.moved) {
-        orbDrag.current = null;
-        setReorder(null);
+      if (od) {
+        orbDrag.current = { ...od, cancelled: true };
+        if (od.moved) discardReorderPreview();
       }
       cancelTimers();
       setPanel(closePanel());
@@ -1448,34 +1453,45 @@ export function Widget() {
    * que pasa cuando el gesto acaba (#279).
    *
    * `commit`: la suelta normal — se guarda el orden.
+   * `cancel`: el usuario lo canceló (Escape) pero el gesto físico sigue vivo:
+   *   el navegador va a despachar el `click` de la cola y el `enter` diferido,
+   *   así que quedan las mismas defensas que en una suelta, sin persistir.
    * `abort` : la cancelación del sistema (el gesto ya lo terminó el
    *   navegador) — se descarta la vista previa y no se guarda nada.
    */
-  const finishOrbDrag = (e: PointerEvent<HTMLButtonElement>, mode: 'commit' | 'abort') => {
+  const finishOrbDrag = (e: PointerEvent<HTMLButtonElement>, mode: 'commit' | 'cancel' | 'abort') => {
     const od = orbDrag.current;
     orbDrag.current = null;
-    releaseOrbCapture(e);
-    // Un gesto que no se movió es un clic normal: no hay reordenamiento.
-    if (!od?.moved) return;
+    const wasDrag = od?.moved === true;
+    const wasCancelled = od?.cancelled === true;
     if (mode === 'abort') {
-      // La vista previa se descarta: el DOM conserva el orden guardado, así
-      // que con la propiedad CSS `order` basta con quitarla. No se persiste
-      // nada y no se arma el bloqueo del reordenamiento: no hubo
-      // reordenamiento (#279/S5, S14).
-      discardReorderPreview();
+      // La cancelación del sistema: el navegador ya terminó el gesto, así que
+      // no hay `click` de la cola ni `enter` diferido que blindar. La vista
+      // previa se descarta y nada más (#279/S5, S14).
+      if (wasDrag) discardReorderPreview();
+      releaseOrbCapture(e);
       return;
     }
-    lastReorderAt.current = Date.now();
-    // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
-    // la captura, la presencia del puntero queda desactualizada: se usan
-    // las coordenadas.
-    const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
-    // #264/S23: el orbe bloqueado es el que quedó bajo el puntero. En este
-    // instante el estado del ratón del navegador es el de antes del arrastre
-    // (la captura se tragó los movimientos) y el `target` del `pointerup`
-    // tampoco sirve, así que se pregunta al documento qué hay en el punto.
-    reorderHold.current = holdOnDrop(od.id, inside ? orbIdAtPoint(e.clientX, e.clientY) : null);
-    if (reorder) {
+    // El gesto termina físicamente: el navegador va a despachar el `click` de
+    // la cola y el `enter` diferido, así que van blindados (#279/S16). Un
+    // gesto que ni se movió ni fue cancelado es un clic normal y no toca
+    // nada (#279/S18).
+    if (wasDrag || wasCancelled) lastReorderAt.current = Date.now();
+    if (wasDrag) {
+      // `.dock` es `inset: 0`: dentro de la ventana es dentro de la tira. Con
+      // la captura, la presencia del puntero queda desactualizada: se usan
+      // las coordenadas.
+      const inside = pointerInsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
+      // #264/S23: el orbe bloqueado es el que quedó bajo el puntero. En este
+      // instante el estado del ratón del navegador es el de antes del arrastre
+      // (la captura se tragó los movimientos) y el `target` del `pointerup`
+      // tampoco sirve, así que se pregunta al documento qué hay en el punto.
+      reorderHold.current = holdOnDrop(od?.id ?? null, inside ? orbIdAtPoint(e.clientX, e.clientY) : null);
+    }
+    // La captura se libera después de blindar: al liberarla el navegador
+    // re-sincroniza el hover (#264, odd/tasks/222-reorder-reopen.md).
+    releaseOrbCapture(e);
+    if (mode === 'commit' && wasDrag && reorder) {
       const next = reorder.order;
       discardReorderPreview();
       patchConfig({ providerOrder: next }).catch((err) => setError(String(err)));
@@ -1486,12 +1502,14 @@ export function Widget() {
   const orbHandlers = (id: string) => ({
     onPointerDown: (e: PointerEvent<HTMLButtonElement>) => {
       if (e.button !== 0) return;
-      orbDrag.current = { id, x: e.clientX, y: e.clientY, moved: false };
+      orbDrag.current = { id, x: e.clientX, y: e.clientY, moved: false, cancelled: false };
       e.currentTarget.setPointerCapture(e.pointerId);
     },
     onPointerMove: (e: PointerEvent<HTMLButtonElement>) => {
       const od = orbDrag.current;
       if (!od || od.id !== id) return;
+      // Un gesto cancelado con Escape no mueve más la vista previa (#279/S16).
+      if (od.cancelled) return;
       if (!od.moved && Math.hypot(e.clientX - od.x, e.clientY - od.y) < 6) return;
       if (!od.moved) {
         od.moved = true;
@@ -1514,7 +1532,10 @@ export function Widget() {
       setReorder({ id, order: [...nextVisible, ...full.filter((x) => !nextVisible.includes(x))] });
     },
     onPointerUp: (e: PointerEvent<HTMLButtonElement>) => {
-      finishOrbDrag(e, 'commit');
+      // El modo lo decide el gesto: si el usuario lo canceló con Escape, la
+      // suelta no persiste el orden pero sí blinda el `click` de la cola y el
+      // `enter` diferido (#279/S16).
+      finishOrbDrag(e, orbDrag.current?.cancelled ? 'cancel' : 'commit');
     },
     // #279: una cancelación del sistema (pérdida de la captura, un gesto
     // interrumpido, la ventana que pierde el foco) no es una suelta: descarta
