@@ -1056,6 +1056,14 @@ export function Widget() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // #279: Escape durante un arrastre cancela el reordenamiento: la vista
+      // previa se descarta y el orden guardado queda como estaba. Antes sólo
+      // cerraba el panel y el gesto seguía vivo.
+      const od = orbDrag.current;
+      if (od?.moved) {
+        orbDrag.current = null;
+        setReorder(null);
+      }
       cancelClose(closeTimer);
       window.clearTimeout(openTimer.current);
       setPanel(closePanel());
@@ -1442,6 +1450,25 @@ export function Widget() {
         setReorder(null);
         patchConfig({ providerOrder: next }).catch((err) => setError(String(err)));
       }
+    },
+    // #279: una cancelación del sistema (pérdida de la captura, un gesto
+    // interrumpido, la ventana que pierde el foco) no es una suelta: descarta
+    // la vista previa y deja el orden guardado como estaba. Antes `pointercancel`
+    // iba al mismo handler que `pointerup` y confirmaba el reordenamiento.
+    onPointerCancel: (e: PointerEvent<HTMLButtonElement>) => {
+      const od = orbDrag.current;
+      orbDrag.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ya liberado */
+      }
+      if (!od?.moved) return;
+      // La vista previa se descarta: el DOM conserva el orden guardado, así
+      // que con la propiedad CSS `order` basta con quitarla. No se persiste
+      // nada y no se arma el bloqueo del reordenamiento: no hubo
+      // reordenamiento (#279/S5, S14).
+      setReorder(null);
     },
   });
 

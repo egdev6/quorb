@@ -84,6 +84,7 @@ type OrbPointer = {
   onPointerDown(event: unknown): void;
   onPointerMove(event: unknown): void;
   onPointerUp(event: unknown): void;
+  onPointerCancel(event: unknown): void;
 };
 
 /** The reorder handlers of every orb of the strip (real props of the tree). */
@@ -1728,6 +1729,23 @@ describe('hover presence wiring', () => {
       await vi.advanceTimersByTimeAsync(400);
       expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
     });
+
+    // #279: una cancelación no deja el bloqueo del reordenamiento puesto: no
+    // hubo reordenamiento, así que el hover sigue abriendo. Antes la
+    // cancelación pasaba por el handler de la suelta y armaba el bloqueo.
+    it('does not block the hover after a cancelled drag (#279)', async () => {
+      const { dock, hover, orbs } = await wire(false, NO_PANEL);
+      dock.onMouseEnter();
+      const orb = orbs.find((o) => o.id === 'a')!;
+      const target = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
+      orb.onPointerDown({ button: 0, clientX: 10, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerMove({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerCancel?.({ pointerId: 1, currentTarget: target });
+      await hoverAfterTheGuard(hover);
+      // El hover con el panel cerrado espera el `OPEN_DELAY` antes de abrir.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+    });
   });
 });
 
@@ -1853,5 +1871,99 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     expect(widgetEffects.patch).toHaveBeenCalledWith({ providerOrder: ['c', 'a', 'b'] });
     // Al soltar se limpia la vista previa.
     expect(widgetEffects.states[19]).toBeNull();
+  });
+
+  // #279: cancelar el arrastre no confirma el reordenamiento. `pointercancel`
+  // iba al mismo handler que `pointerup`, así que una cancelación del sistema
+  // (pérdida de la captura, un gesto interrumpido, la ventana que pierde el
+  // foco) guardaba el orden de la vista previa como definitivo.
+  describe('a cancelled reorder does not confirm the order (#279)', () => {
+    /** Los handlers de `keydown` que registró la tira. */
+    const keydown: ((e: KeyboardEvent) => void)[] = [];
+
+    beforeEach(() => {
+      keydown.length = 0;
+      vi.stubGlobal('window', {
+        setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+        innerWidth: 1920, innerHeight: 1080,
+        // #279: Escape cancela el reordenamiento y la tira atiende el teclado
+        // en la ventana, así que el arnés guarda el handler.
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => {
+          if (type === 'keydown') keydown.push(fn);
+        },
+        removeEventListener: () => {},
+      });
+      widgetEffects.patch.mockImplementation(async (patch: { providerOrder: string[] }) => ({
+        accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+      }));
+    });
+
+    /** La tira de tres orbes con las posiciones que decide la vista previa. */
+    const strip = () => {
+      widgetEffects.refs[6].current = {
+        querySelectorAll: () => [
+          { dataset: { id: 'a' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 60 }) },
+          { dataset: { id: 'b' }, getBoundingClientRect: () => ({ left: 200, top: 0, width: 60, height: 60 }) },
+          { dataset: { id: 'c' }, getBoundingClientRect: () => ({ left: 100, top: 0, width: 60, height: 60 }) },
+        ],
+      };
+    };
+
+    /** Arrastra el orbe 'a': la vista previa queda escrita. */
+    const drag = (tree: ReactNode) => {
+      strip();
+      const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
+      dragged.onPointerDown({
+        button: 0, clientX: 30, clientY: 30, pointerId: 1,
+        currentTarget: { setPointerCapture: () => {} },
+      });
+      dragged.onPointerMove({ clientX: 150, clientY: 30 });
+      return dragged;
+    };
+
+    // Un `pointercancel` durante el arrastre deja el orden guardado sin cambios.
+    it('does not save the order when the drag is cancelled (#279)', () => {
+      const { tree } = render(null);
+      const dragged = drag(tree);
+      expect(widgetEffects.states[19]).not.toBeNull();
+      dragged.onPointerCancel?.({
+        pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      expect(widgetEffects.patch).not.toHaveBeenCalled();
+      expect(widgetEffects.states[19]).toBeNull();
+    });
+
+    // Escape durante el arrastre restaura el orden original.
+    it('does not save the order when Escape cancels the drag (#279)', () => {
+      const { tree } = render(null);
+      drag(tree);
+      expect(widgetEffects.states[19]).not.toBeNull();
+      const escape = widgetEffects.effects.find((e) => e.run.toString().includes('keydown')
+        && e.run.toString().includes('Escape'));
+      escape!.run();
+      keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
+      expect(widgetEffects.patch).not.toHaveBeenCalled();
+      expect(widgetEffects.states[19]).toBeNull();
+    });
+
+    // Soltar normalmente sigue guardando el nuevo orden: la separación de la
+    // cancelación no puede romper la suelta.
+    it('still saves the order when the orb is dropped (#279)', () => {
+      const { tree } = render(null);
+      drag(tree);
+      const preview = widgetEffects.states[19] as { id: string; order: string[] };
+      // Los handlers son cierres del render que los creó: el que suelta tiene
+      // que ser el del render nuevo, con la vista previa ya escrita.
+      const { tree: after } = render(preview);
+      const dropped = findOrbPointers(after).find((o) => o.id === 'a')!;
+      dropped.onPointerUp({
+        clientX: 150, clientY: 30, pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
+      expect(widgetEffects.patch).toHaveBeenCalledWith({ providerOrder: preview.order });
+      expect(widgetEffects.states[19]).toBeNull();
+    });
   });
 });
