@@ -193,3 +193,38 @@ Corte de la entrega: el candidato completo contra `upstream/main` son 1.350 lín
 - L59: **La cadena es secuencial, no paralela: (a) → (b) → (c). Corrección a L56.** La forma de `#245` (ramas paralelas colgando de una base común) funciona cuando las porciones son **independientes por construcción**, que fue el caso de `#245` (secretos, remitente, ajustes, automático, tests, ayuda, docs: siete temas que no se pisan). Las de `#261` **no lo son**: (b) y (c) refinan el mismo flujo que (a) reescribe. La evidencia: `declare()` (`nan.rs:775-782`) recibe el régimen como primer parámetro y ramifica por `BillingRegime::Credits` (líneas 783-796) — el concepto de régimen es de (b) y vive en el mismo archivo que el trabajo de cuota y periodo de (a). Y (c) depende de (b): la rama mixta de `mergeReports` llama a `regimeBlocksKeeping`, que compara `billingRegime`, el campo que declara (b) en `model.rs` y `types.ts`; si (c) se construyera en paralelo sobre la base, ese campo no existiría y el TypeScript no compilaría. Por lo tanto las tres porciones van **encadenadas de verdad**, que es literalmente lo que el mantenedor pidió ("PRs encadenadas"): `main` ← `fix/252-nan-tier-quota-a` ← `fix/252-nan-tier-quota-b` ← `fix/252-nan-tier-quota-c`, y el diff de cada PR es exactamente su porción. Se mergean en orden y cada PR se re-apunta a `main` (al borrar la rama inferior, GitHub la re-apunta sola). **Lo que no cambia**: el tamaño de cada diff —que es lo que el mantenedor pidió— y el historial de `#261` sigue sin reescribirse.
 - L60: **No se pide la captura: el trabajo se cierra contra el contrato público del proveedor** (decisión del autor, 2026-11-16): "no vamos a pedir la captura, ya lo estamos trabajando así, ya terminemos de trabajarlo así". Con esta decisión, el punto 7 del mantenedor se cierra **con el ejemplo publicado por el proveedor** en su OpenAPI (`https://nan.builders/openapi.json`, el bloque `credits` de la raíz de `GET /v1/usage`), marcado en el código y en el test como ejemplo publicado y **no** como captura real. Es exactamente lo que el mantenedor ya aceptó el 2026-11-13 ("El de créditos usa el ejemplo del OpenAPI, y [...] Su validación con una captura real de Inference/Premium sigue pendiente"). El cuerpo de la PR lo declara de forma explícita: la validación contra una cuenta real de Inference o Premium **queda pendiente**, y no se vuelve a pedir en este hilo. **Lo que cambia**: el punto 7 deja de ser un bloqueo de la cadena —la porción (b) entrega el test de la ruta con API key llamando a `fetch()` (no a los helpers) con ese ejemplo— y la tarea T6 de `#268` queda pendiente por la misma razón, sin que bloquee esta cadena. **Lo que no cambia**: la línea de tiempo de S43 se conserva como historia (el mantenedor se ofreció el 2026-11-12 con "Si no tienes una cuenta de créditos para capturar el payload, avísame y lo vemos", y la captura se le pidió por última vez el 2026-11-13; desde entonces no se insiste).
 - L61: **El punto 6 sale de este trabajo y NO se abre issue: se lo reportamos al mantenedor en el comentario de la PR** (decisión del autor, 2026-11-16). Verificación de dónde lo pidió, para que la afirmación no sea nuestra: es **un solo lugar** en todo el hilo, el **punto 6 de los siete** del comentario del mantenedor del **2026-11-14T07:06:26Z** en el PR #261 (https://github.com/egdev6/quorb/pull/261#issuecomment-6873557539), textual: "**Textos fuera de los catálogos.** Las explicaciones nuevas de créditos y de respaldo (`nan.rs:809-835`, mostradas en `src/components/ProviderCard.tsx:135-137`) son cadenas en español del backend y se ven igual con la interfaz en inglés." Un barrido de **todos** los comentarios y reviews del mantenedor en `#252`, `#261`, `#264`, `#265`, `#268` y `#275` no encuentra ninguna otra mención de traducciones o de catálogos: las otras coincidencias del barrido son del **inventario** i18n (`docs/i18n-inventory.md`), que es otra cosa. Y su pedido es **acotado**: las explicaciones *nuevas* de créditos y de respaldo, no la prosa del backend en general. Pero el mecanismo para traducirlas no existe: los doce proveedores arman prosa en `report.message` (`copilot.rs:124`, `gemini.rs:123`, `cursor.rs:78-80`…) y el frente la pinta tal cual (`ProviderCard.tsx:135-138`); no hay ninguna clave que viaje del backend al frente, y el único precedente del frente es el de los **ids** de medidor (`allocation`, `balance`). Lo que se le va a decir en el comentario de la PR: que el punto 6 sale de esta cadena, por qué (no hay estructura, y definirla es una decisión de diseño del contrato), las tres vías posibles (clave + parámetros; datos estructurados; extender el patrón de ids genéricos que el frente ya traduce) y que acogemos la que prefiera, en esta u otra issue. **No abrimos nosotros la issue**: la decisión de dónde se trata es suya.
+- L62: **Borrador del comentario al mantenedor** (texto exacto, en español neutro; **no publicado**, espera el OK del autor). Los enlaces de las tres PRs van como `{{PR_A}}`, `{{PR_B}}`, `{{PR_C}}` porque todavía no existen; la tabla de los siete puntos se completa cuando las tres porciones estén en verde. El borrador:
+
+  > Buenas Noches, sr @egdev6.
+  >
+  > Gracias por la revisión del 14 de noviembre. Tomamos los siete puntos y tu propuesta de partir la PR, y te cuento cómo quedó.
+  >
+  > **El corte que propusiste**
+  >
+  > Aceptamos partirla en tres, encadenadas, cada una con su parte en el diff:
+  >
+  > - `{{PR_A}}` — cálculo de cuota y periodo de NaN, con sus tests
+  > - `{{PR_B}}` — detección del régimen de crédito
+  > - `{{PR_C}}` — cambios compartidos de datos obsoletos y alertas
+  >
+  > Las encadenamos en ese orden (cada una sobre la anterior) y no en paralelo como la cadena de `#245`: la segunda refina el mismo flujo que reescribe la primera, y la tercera consume el campo de régimen que declara la segunda, así que no compilan sueltas. El diff de cada PR es sólo su parte, que es lo que pedías. El historial de `#261` no lo reescribimos: sigue en el fork y esta cadena lo referencia.
+  >
+  > **El punto 6 (textos fuera de los catálogos)**
+  >
+  > Sale de esta cadena, y te lo dejo por escrito con el enlace: [tu comentario del 14 de noviembre](https://github.com/egdev6/quorb/pull/261#issuecomment-6873557539), punto 6. Los textos nuevos de créditos y de respaldo quedan fuera de estas tres PRs porque no hay estructura para traducirlos: los doce proveedores arman el texto en el backend y el front lo pinta tal cual, no hay ninguna clave que viaje del backend al front, y el único precedente es el de los identificadores de medidor, que el front sí traduce. Definir ese mecanismo es una decisión de diseño del contrato, no un arreglo de este arreglo, así que no la tomamos en el medio. Te dejo las tres vías posibles:
+  >
+  > - **clave y parámetros**: el backend manda un identificador (`nan.credits`) y el front traduce;
+  > - **datos estructurados**: el backend manda datos y el front compone el texto;
+  > - **extender el patrón de identificadores genéricos** que el front ya traduce para `allocation` y `balance`.
+  >
+  > Acogemos la que prefieras, y decidí vos si se trata en esta cadena o en otro artefacto.
+  >
+  > **El test de la cuenta de créditos**
+  >
+  > El caso de la cuenta de créditos se prueba contra el ejemplo que publica el propio proveedor en su OpenAPI (`https://nan.builders/openapi.json`), marcado en el código y en el test como ejemplo publicado y no como captura real. La validación contra una cuenta real de Inference o Premium queda pendiente.
+  >
+  > **Los siete puntos**
+  >
+  > {{TABLA_DE_LOS_SIETE_PUNTOS}}
+  >
+  > Muchas gracias, quedo atento.
