@@ -148,6 +148,24 @@ html[data-window='detail'], html[data-window='detail'] body, html[data-window='d
 @media (prefers-reduced-motion: reduce) { .icon-btn--update::after, .icon-btn--update[data-spin] svg { animation: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Estado neutro del arranque de la tira (#271): spinner SIN texto, porque antes
+   de cargar la config no sabemos qué idioma mostrar (no podemos emitir
+   «Cargando…» ni tooltips localizados). Reutiliza la animación `spin`. */
+.strip__pending {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin: 0 6px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+/* Revisión PR #271: respeta prefers-reduced-motion (la tira en estado neutro
+   no anima el spinner: un anillo estático sigue comunicando «cargando» sin
+   movimiento). */
+@media (prefers-reduced-motion: reduce) { .strip__pending { animation: none; } }
+
 /* ───────── círculo (orb) ───────── */
 .orb {
   position: relative;
