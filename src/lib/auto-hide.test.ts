@@ -1982,7 +1982,7 @@ describe('hover presence wiring', () => {
       await hoverAfterTheGuard(hover);
       // El hover con el panel cerrado espera el `OPEN_DELAY` antes de abrir.
       await vi.advanceTimersByTimeAsync(400);
-      expect(widgetEffects.states[7]).toEqual({ providerId: 'a', anchored: false });
+      expect(widgetEffects.states[9]).toEqual({ providerId: 'a', anchored: false });
     });
   });
 });
@@ -2157,7 +2157,7 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
 
     /** La tira de tres orbes con las posiciones que decide la vista previa. */
     const strip = () => {
-      widgetEffects.refs[6].current = {
+      widgetEffects.refs[7].current = {
         querySelectorAll: () => [
           { dataset: { id: 'a' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 60 }) },
           { dataset: { id: 'b' }, getBoundingClientRect: () => ({ left: 200, top: 0, width: 60, height: 60 }) },
@@ -2182,26 +2182,26 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     it('does not save the order when the drag is cancelled (#279)', () => {
       const { tree } = render(null);
       const dragged = drag(tree);
-      expect(widgetEffects.states[19]).not.toBeNull();
+      expect(widgetEffects.states[21]).not.toBeNull();
       dragged.onPointerCancel?.({
         pointerId: 1,
         currentTarget: { releasePointerCapture: () => {} },
       });
       expect(widgetEffects.patch).not.toHaveBeenCalled();
-      expect(widgetEffects.states[19]).toBeNull();
+      expect(widgetEffects.states[21]).toBeNull();
     });
 
     // Escape durante el arrastre restaura el orden original.
     it('does not save the order when Escape cancels the drag (#279)', () => {
       const { tree } = render(null);
       drag(tree);
-      expect(widgetEffects.states[19]).not.toBeNull();
+      expect(widgetEffects.states[21]).not.toBeNull();
       const escape = widgetEffects.effects.find((e) => e.run.toString().includes('keydown')
         && e.run.toString().includes('Escape'));
       escape!.run();
       keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
       expect(widgetEffects.patch).not.toHaveBeenCalled();
-      expect(widgetEffects.states[19]).toBeNull();
+      expect(widgetEffects.states[21]).toBeNull();
     });
 
     // Soltar normalmente sigue guardando el nuevo orden: la separación de la
@@ -2209,7 +2209,7 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     it('still saves the order when the orb is dropped (#279)', () => {
       const { tree } = render(null);
       drag(tree);
-      const preview = widgetEffects.states[19] as { id: string; order: string[] };
+      const preview = widgetEffects.states[21] as { id: string; order: string[] };
       // Los handlers son cierres del render que los creó: el que suelta tiene
       // que ser el del render nuevo, con la vista previa ya escrita.
       const { tree: after } = render(preview);
@@ -2220,7 +2220,7 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       });
       expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
       expect(widgetEffects.patch).toHaveBeenCalledWith({ providerOrder: preview.order });
-      expect(widgetEffects.states[19]).toBeNull();
+      expect(widgetEffects.states[21]).toBeNull();
     });
   });
 });
