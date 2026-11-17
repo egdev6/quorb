@@ -12,9 +12,9 @@ El diagnóstico de escritorio (`src-tauri/src/wm_compat.rs`) recomienda «Auto-h
 
 ## Tasks
 
-- T1 | S1, S3 | worker, test-first | consejo de «Auto-hide» solo donde el posicionamiento es `ok`; tests por la función pública | commit: pendiente
-- T2 | S2, S3, S4 | worker, test-first | arranque automático `limited` con nota según lo medido; columna en la matriz §6 | commit: pendiente
-- T3 | S5 | inline | regenerar `docs/i18n-inventory.md` después de los commits de código (`node scripts/i18n-inventory.mjs`) | commit: pendiente
+- T1 | S1, S3 | worker, test-first | consejo de «Auto-hide» solo donde el posicionamiento es `ok`; tests por la función pública | commit: f8b9f93
+- T2 | S2, S3, S4 | worker, test-first | arranque automático `limited` con nota según lo medido; columna en la matriz §6 | commit: f8b9f93
+- T3 | S5 | inline | regenerar `docs/i18n-inventory.md` después de los commits de código (`node scripts/i18n-inventory.mjs`) | commit: el `docs(i18n)` que sigue a f8b9f93
 - T4 | S1-S5 | inline | suite completa, revalidar alcance y `main`, borrador de PR con evidencia; abrirla requiere OK de Rafael | PR: pendiente
 
 ## Log
