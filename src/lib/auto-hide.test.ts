@@ -85,6 +85,9 @@ type OrbPointer = {
   onPointerDown(event: unknown): void;
   onPointerMove(event: unknown): void;
   onPointerUp(event: unknown): void;
+  onPointerCancel(event: unknown): void;
+  /** El anclaje por clic (#170/#223): el único camino a `anchorOn`. */
+  onClick?(el: HTMLElement): void;
 };
 
 /** The reorder handlers of every orb of the strip (real props of the tree). */
@@ -93,8 +96,8 @@ function findOrbPointers(node: ReactNode, out: OrbPointer[] = []): OrbPointer[] 
     for (const child of node) findOrbPointers(child, out);
     return out;
   }
-  if (!isValidElement<{ report?: { id: string }; pointer?: Omit<OrbPointer, 'id'>; children?: ReactNode }>(node)) return out;
-  if (node.props.pointer && node.props.report) out.push({ id: node.props.report.id, ...node.props.pointer });
+  if (!isValidElement<{ report?: { id: string }; pointer?: Omit<OrbPointer, 'id'>; onClick?: (el: HTMLElement) => void; children?: ReactNode }>(node)) return out;
+  if (node.props.pointer && node.props.report) out.push({ id: node.props.report.id, ...node.props.pointer, onClick: node.props.onClick });
   return findOrbPointers(node.props.children, out);
 }
 
@@ -129,7 +132,7 @@ const widgetEffects = vi.hoisted(() => ({
   expectedRefCount: null as number | null,
   refs: [] as { current: unknown }[], refIndex: 0,
   getConfig: vi.fn(), openSettings: vi.fn(),
-  effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
+  effects: [] as { run: () => void | (() => void); deps?: readonly unknown[]; name?: string }[],
   bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
   outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
   cancel: vi.fn(async () => {}),
@@ -170,7 +173,11 @@ vi.mock('react', async (importOriginal) => {
       }
       return widgetEffects.refs[index] ??= { current: initial };
     }) as typeof react.useRef,
-    useEffect: ((run, deps) => { widgetEffects.effects.push({ run, deps }); }) as typeof react.useEffect,
+    useEffect: ((run, deps) => {
+      // El nombre del efecto: el arnés lo busca por nombre y no por el texto
+      // de su fuente, que se rompe con cualquier refactor (#279/S19).
+      widgetEffects.effects.push({ run, deps, name: (run as { name?: string }).name });
+    }) as typeof react.useEffect,
     useLayoutEffect: (() => {}) as typeof react.useLayoutEffect,
   };
 });
@@ -771,7 +778,7 @@ describe('Widget effect mutation ordering', () => {
       grip.onPointerMove(pointer(screenY, pointerId));
       runFrame();
     };
-    const unmount = widgetEffects.effects.find(e => e.deps?.length === 0 && e.run.toString().includes('cancelTimers'))!.run();
+    const unmount = widgetEffects.effects.find(e => e.name === 'dragMountLifecycle')!.run();
     return {
       grip, pointer, acceptFrame, runFrame, frames, position: () => position, unmount,
       applyPosition: (next: { x: number; y: number }) => { position = { x: next.x, y: next.y }; },
@@ -2032,6 +2039,23 @@ describe('hover presence wiring', () => {
       await vi.advanceTimersByTimeAsync(400);
       expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
     });
+
+    // #279: una cancelación no deja el bloqueo del reordenamiento puesto: no
+    // hubo reordenamiento, así que el hover sigue abriendo. Antes la
+    // cancelación pasaba por el handler de la suelta y armaba el bloqueo.
+    it('does not block the hover after a cancelled drag (#279)', async () => {
+      const { dock, hover, orbs } = await wire(false, NO_PANEL);
+      dock.onMouseEnter();
+      const orb = orbs.find((o) => o.id === 'a')!;
+      const target = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
+      orb.onPointerDown({ button: 0, clientX: 10, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerMove({ clientX: 40, clientY: 10, pointerId: 1, currentTarget: target });
+      orb.onPointerCancel?.({ pointerId: 1, currentTarget: target });
+      await hoverAfterTheGuard(hover);
+      // El hover con el panel cerrado espera el `OPEN_DELAY` antes de abrir.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
+    });
   });
 });
 
@@ -2176,5 +2200,198 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     // Al soltar se limpia la vista previa: los orbes vuelven al orden guardado.
     expect(preview()).toBeUndefined();
     expect(orbs(render().markup).map((o) => o.order)).toEqual([undefined, undefined, undefined]);
+  });
+
+  // #279: cancelar el arrastre no confirma el reordenamiento. `pointercancel`
+  // iba al mismo handler que `pointerup`, así que una cancelación del sistema
+  // (pérdida de la captura, un gesto interrumpido, la ventana que pierde el
+  // foco) guardaba el orden de la vista previa como definitivo.
+  describe('a cancelled reorder does not confirm the order (#279)', () => {
+    /** Los handlers de `keydown` que registró la tira. */
+    const keydown: ((e: KeyboardEvent) => void)[] = [];
+
+    beforeEach(() => {
+      keydown.length = 0;
+      // Las esperas del reloj (la ventana de 300 ms de la guarda, la apertura
+      // retardada del hover) necesitan timers falsos.
+      vi.useFakeTimers();
+      vi.stubGlobal('window', {
+        setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+        innerWidth: 1920, innerHeight: 1080,
+        // #279: Escape cancela el reordenamiento y la tira atiende el teclado
+        // en la ventana, así que el arnés guarda el handler.
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => {
+          if (type === 'keydown') keydown.push(fn);
+        },
+        removeEventListener: () => {},
+      });
+      widgetEffects.patch.mockImplementation(async (patch: { providerOrder: string[] }) => ({
+        accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+      }));
+      // El hit-test del soltar (#264/S23): el puntero quedó sobre el orbe 'a',
+      // así que el bloqueo del hover lo cubre y frena el `enter` diferido.
+      vi.stubGlobal('document', {
+        elementFromPoint: () => ({ closest: () => ({ getAttribute: () => 'a' }) }),
+      });
+    });
+
+    /** La tira de tres orbes con las posiciones que decide la vista previa. */
+    const strip = () => {
+      widgetEffects.refs[SLOT.orbsRef].current = {
+        querySelectorAll: () => [
+          { dataset: { id: 'a' }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 60 }) },
+          { dataset: { id: 'b' }, getBoundingClientRect: () => ({ left: 200, top: 0, width: 60, height: 60 }) },
+          { dataset: { id: 'c' }, getBoundingClientRect: () => ({ left: 100, top: 0, width: 60, height: 60 }) },
+        ],
+      };
+    };
+
+    /** Arrastra el orbe 'a': la vista previa queda escrita. */
+    const drag = (tree: ReactNode) => {
+      strip();
+      const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
+      dragged.onPointerDown({
+        button: 0, clientX: 30, clientY: 30, pointerId: 1,
+        currentTarget: { setPointerCapture: () => {} },
+      });
+      dragged.onPointerMove({ clientX: 150, clientY: 30 });
+      return dragged;
+    };
+
+    /** Escape, como lo atiende la tira. */
+    const escapeKey = () => {
+      const escape = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
+      escape!.run();
+      keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
+    };
+
+    /** El orbe, para el anclaje por clic (#170/#223). */
+    const orb = { getBoundingClientRect: () => ({ top: 0, left: 0, width: 60, height: 60 }) } as unknown as HTMLElement;
+
+    // #279/S16: Escape con el botón todavía apretado. El gesto se cancela, pero
+    // el botón sigue apretado y la captura puesta: al soltar llega el
+    // `pointerup` y el navegador despacha el `click` de la cola sobre el mismo
+    // orbe. Si el gesto no quedó marcado como cancelado, ese `click` ancla el
+    // panel en el orbe que el usuario quería mover.
+    it('does not anchor the panel when Escape is pressed with the button still down (#279/S16)', () => {
+      const { tree } = render(null);
+      const dragged = drag(tree);
+      expect(widgetEffects.states[SLOT.reorder]).not.toBeNull();
+      escapeKey();
+      expect(widgetEffects.states[SLOT.reorder]).toBeNull();
+      // El usuario suelta.
+      dragged.onPointerUp({
+        clientX: 150, clientY: 30, pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      // Y el navegador despacha el `click` de la cola sobre el mismo orbe.
+      dragged.onClick?.(orb);
+      expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+      expect(widgetEffects.patch).not.toHaveBeenCalled();
+    });
+
+    // Un clic normal (sin arrastrar) sigue anclando el panel (#170/#223): lo
+    // garantiza la compuerta `od.moved` (#279/S18).
+    it('still anchors the panel on a plain click (#170/#223)', () => {
+      const { tree } = render(null);
+      const plain = findOrbPointers(tree).find((o) => o.id === 'a')!;
+      plain.onPointerDown({
+        button: 0, clientX: 30, clientY: 30, pointerId: 1,
+        currentTarget: { setPointerCapture: () => {} },
+      });
+      plain.onPointerUp({
+        clientX: 30, clientY: 30, pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      plain.onClick?.(orb);
+      expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: true });
+    });
+
+    // El `enter` diferido del navegador no abre el detalle: para eso está el
+    // bloqueo del hover. El reloj pasa la ventana de 300 ms de la suelta, si
+    // no esa guarda taparía al bloqueo y el test no discriminaría (#279/S16).
+    it('does not open the detail on the deferred enter after a cancelled drag (#279/S16)', async () => {
+      const { tree } = render(null);
+      const dragged = drag(tree);
+      escapeKey();
+      dragged.onPointerUp({
+        clientX: 150, clientY: 30, pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      await vi.advanceTimersByTimeAsync(400);
+      findOrbHover(tree)?.(orb);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+    });
+
+    // La ventana entre el Escape y la suelta: el gesto sigue vivo (el botón
+    // apretado), así que el hover no puede abrir el detalle (#279/S16).
+    it('does not open the detail between Escape and the release (#279/S16)', async () => {
+      const { tree } = render(null);
+      drag(tree);
+      escapeKey();
+      await vi.advanceTimersByTimeAsync(400);
+      findOrbHover(tree)?.(orb);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+    });
+
+    // Después del Escape el gesto cancelado no mueve más la vista previa: si
+    // moviera, se vería un reordenamiento que nunca se guarda (#279/S16).
+    it('does not move the preview after Escape cancels the drag (#279/S16)', () => {
+      const { tree } = render(null);
+      const dragged = drag(tree);
+      escapeKey();
+      expect(widgetEffects.states[SLOT.reorder]).toBeNull();
+      dragged.onPointerMove({ clientX: 200, clientY: 30 });
+      expect(widgetEffects.states[SLOT.reorder]).toBeNull();
+    });
+
+    // Un `pointercancel` durante el arrastre deja el orden guardado sin cambios.
+    it('does not save the order when the drag is cancelled (#279)', () => {
+      const { tree } = render(null);
+      const dragged = drag(tree);
+      expect(widgetEffects.states[SLOT.reorder]).not.toBeNull();
+      dragged.onPointerCancel?.({
+        pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      expect(widgetEffects.patch).not.toHaveBeenCalled();
+      expect(widgetEffects.states[SLOT.reorder]).toBeNull();
+    });
+
+    // Escape durante el arrastre restaura el orden original.
+    it('does not save the order when Escape cancels the drag (#279)', () => {
+      const { tree } = render(null);
+      drag(tree);
+      expect(widgetEffects.states[SLOT.reorder]).not.toBeNull();
+      // El efecto se busca por nombre (#279/S19): el texto de su fuente se
+      // rompe con cualquier refactor. Y el handler es el que registró la
+      // tira, que el arnés intercepta (#279).
+      const escape = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
+      escape!.run();
+      keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
+      expect(widgetEffects.patch).not.toHaveBeenCalled();
+      expect(widgetEffects.states[SLOT.reorder]).toBeNull();
+    });
+
+    // Soltar normalmente sigue guardando el nuevo orden: la separación de la
+    // cancelación no puede romper la suelta.
+    it('still saves the order when the orb is dropped (#279)', () => {
+      const { tree } = render(null);
+      drag(tree);
+      const preview = widgetEffects.states[SLOT.reorder] as { id: string; order: string[] };
+      // Los handlers son cierres del render que los creó: el que suelta tiene
+      // que ser el del render nuevo, con la vista previa ya escrita.
+      const { tree: after } = render(preview);
+      const dropped = findOrbPointers(after).find((o) => o.id === 'a')!;
+      dropped.onPointerUp({
+        clientX: 150, clientY: 30, pointerId: 1,
+        currentTarget: { releasePointerCapture: () => {} },
+      });
+      expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
+      expect(widgetEffects.patch).toHaveBeenCalledWith({ providerOrder: preview.order });
+      expect(widgetEffects.states[SLOT.reorder]).toBeNull();
+    });
   });
 });
