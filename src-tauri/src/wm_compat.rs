@@ -151,35 +151,13 @@ pub fn detect_wm_info_from_env(env: &Env, tray: TrayDiagnostics) -> WindowManage
     let is_wayland = is_wayland_protocol(&env_n, is_hyprland);
     let is_gnome = is_gnome_signal(&env_n);
     let display_backend = display_backend_from_env(&env_n);
-    let is_kde = env_n
-        .desktop_session
-        .as_deref()
-        .map(|s| {
-            matches!(
-                s.to_ascii_lowercase().as_str(),
-                "kde"
-                    | "kde-5"
-                    | "kde-6"
-                    | "kde-plasma"
-                    | "plasma"
-                    | "plasma5"
-                    | "plasma6"
-                    | "kde_x11"
-                    | "kde5-19"
-                    | "default.desktop"
-            )
-        })
-        .unwrap_or(false)
-        || env_n
-            .xdg_current_desktop
-            .as_deref()
-            .map(|s| s.split(':').any(is_kde_token))
-            .unwrap_or(false);
+    let is_kde = is_kde_signal(&env_n);
 
     let recommendation = recommendation(
         is_wayland,
         is_hyprland,
         is_kde,
+        auto_hide_ok(display_backend),
         env_n.desktop_session.as_deref(),
         env_n.xdg_current_desktop.as_deref(),
     );
@@ -332,7 +310,55 @@ pub fn with_display_backend(
     };
     info.surfaces.window_positioning =
         window_positioning_status(backend, is_gnome_signal(&desktop_env));
+    // La sonda manda también sobre el consejo de «Auto-hide» (#290): solo
+    // cambian su nota y la recomendación; el resto de superficies queda igual.
+    if info.is_wayland {
+        info.surfaces.always_on_top = always_on_top_status(
+            info.is_hyprland,
+            is_gnome_signal(&desktop_env),
+            is_kde_signal(&desktop_env),
+            auto_hide_ok(backend),
+        );
+    }
+    info.recommendation = recommendation(
+        info.is_wayland,
+        info.is_hyprland,
+        is_kde_signal(&desktop_env),
+        auto_hide_ok(backend),
+        info.desktop_session.as_deref(),
+        info.xdg_current_desktop.as_deref(),
+    );
     info
+}
+
+/// Señal KDE (`DESKTOP_SESSION` de Plasma o token KDE en `XDG_CURRENT_DESKTOP`).
+/// Única fuente para `detect_wm_info_from_env` y el recálculo de
+/// `with_display_backend`.
+fn is_kde_signal(env_n: &Env) -> bool {
+    env_n
+        .desktop_session
+        .as_deref()
+        .map(|s| {
+            matches!(
+                s.to_ascii_lowercase().as_str(),
+                "kde"
+                    | "kde-5"
+                    | "kde-6"
+                    | "kde-plasma"
+                    | "plasma"
+                    | "plasma5"
+                    | "plasma6"
+                    | "kde_x11"
+                    | "kde5-19"
+                    | "default.desktop"
+            )
+        })
+        .unwrap_or(false)
+        || env_n
+            .xdg_current_desktop
+            .as_deref()
+            .map(|s| s.split(':').any(is_kde_token))
+            .unwrap_or(false)
 }
 
 /// Token de escritorio KDE en `XDG_CURRENT_DESKTOP` (lista separada por `:`).
@@ -363,7 +389,57 @@ fn surfaces_for(
     // efectivo (el input de compositor solo refina la nota en GNOME).
     DesktopSurfaces {
         window_positioning: window_positioning_status(display_backend, is_gnome),
-        ..desktop_surfaces_by_session(is_wayland, is_hyprland, is_gnome, is_kde, tray)
+        ..desktop_surfaces_by_session(
+            is_wayland,
+            is_hyprland,
+            is_gnome,
+            is_kde,
+            auto_hide_ok(display_backend),
+            tray,
+        )
+    }
+}
+
+/// El consejo de «Auto-hide» solo se ofrece donde el posicionamiento es `ok`
+/// (backend GDK X11, incluido XWayland): en Wayland nativo no resuelve el
+/// problema y recomendarlo sería presentar como solución lo que no lo es (#290).
+fn auto_hide_ok(display_backend: DisplayBackend) -> bool {
+    display_backend == DisplayBackend::X11
+}
+
+/// Arranque automático (#290): no hay un inicio de sesión real medido, así
+/// que nunca es `ok`. En Wayland, el plugin escribe un `.desktop` sin
+/// `GDK_BACKEND` y el gestor de sesión lo ejecuta tal cual.
+const AUTOSTART_NOTE_X11: &str =
+    "Arranque vía XDG autostart (.desktop) sin verificar en un inicio de sesión real.";
+const AUTOSTART_NOTE_WAYLAND: &str = "El arranque automático lanza Quorb en Wayland nativo (el .desktop no lleva GDK_BACKEND): no hay posicionamiento de ventana aunque Quorb se use normalmente con GDK_BACKEND=x11.";
+
+/// Siempre-encima en sesiones Wayland. `auto_hide_ok` decide si la nota
+/// recomienda «Auto-hide» (solo con posicionamiento `ok`). Compartida con
+/// `with_display_backend`, que la recalcula cuando la sonda runtime manda.
+fn always_on_top_status(
+    is_hyprland: bool,
+    is_gnome: bool,
+    is_kde: bool,
+    auto_hide_ok: bool,
+) -> SurfaceStatus {
+    if is_kde {
+        return SurfaceStatus {
+            state: "ok",
+            note: "KWin respeta siempre-encima.",
+        };
+    }
+    let note = match (is_hyprland, is_gnome, auto_hide_ok) {
+        (true, _, true) => "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide».",
+        (true, _, false) => "Hyprland aplica siempre-encima de forma estricta; en Wayland nativo la tira puede quedar oculta tras otras ventanas.",
+        (_, true, true) => "Mutter admite hints de siempre-encima de forma parcial; si la tira se oculta tras ventanas, usa «Auto-hide».",
+        (_, true, false) => "Mutter admite hints de siempre-encima de forma parcial; en Wayland nativo la tira puede quedar oculta tras ventanas.",
+        (_, _, true) => "El soporte de siempre-encima depende del compositor; si la tira se oculta, usa «Auto-hide».",
+        (_, _, false) => "El soporte de siempre-encima depende del compositor; en Wayland nativo la tira puede quedar oculta.",
+    };
+    SurfaceStatus {
+        state: "limited",
+        note,
     }
 }
 
@@ -373,6 +449,7 @@ fn desktop_surfaces_by_session(
     is_hyprland: bool,
     is_gnome: bool,
     is_kde: bool,
+    auto_hide_ok: bool,
     tray: TrayDiagnostics,
 ) -> DesktopSurfaces {
     if !is_wayland {
@@ -384,7 +461,7 @@ fn desktop_surfaces_by_session(
             click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "ok", note: "El icono de bandeja se muestra en los gestores que la evalúan." },
             global_shortcuts: SurfaceStatus { state: "ok", note: "Los atajos globales funcionan desde cualquier app." },
-            autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
+            autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_X11 },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "Requiere composición activa (GNOME, KDE y XFCE la traen)." },
             ..Default::default()
@@ -392,11 +469,11 @@ fn desktop_surfaces_by_session(
     }
     if is_hyprland {
         return DesktopSurfaces {
-            always_on_top: SurfaceStatus { state: "limited", note: "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide»." },
+            always_on_top: always_on_top_status(true, false, false, auto_hide_ok),
             click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "limited", note: "Sin una barra que muestre AppIndicator, el icono no se ve: vuelve a abrir Quorb para recuperar la tira." },
             global_shortcuts: SurfaceStatus { state: "limited", note: "Los atajos globales dependen del registro por portal; si falla, el error se ve en Ajustes › Atajos." },
-            autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
+            autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
             ..Default::default()
@@ -404,14 +481,14 @@ fn desktop_surfaces_by_session(
     }
     if is_gnome {
         return DesktopSurfaces {
-            always_on_top: SurfaceStatus { state: "limited", note: "Mutter admite hints de siempre-encima de forma parcial; si la tira se oculta tras ventanas, usa «Auto-hide»." },
+            always_on_top: always_on_top_status(false, true, false, auto_hide_ok),
             click_through: SurfaceStatus { state: "limited", note: "Mutter puede ignorar la región de input: el ratón puede quedar capturado en el hueco; prueba a mover la tira." },
             // #181 (ajuste 1): el estado primario es del host StatusNotifier
             // (presente/ausente/desconocido); la extensión es complementaria.
             // Con host solo se acredita disponibilidad, no visibilidad del icono.
             tray_icon: SurfaceStatus { state: gnome_tray_state(tray), note: gnome_tray_note(tray) },
             global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
-            autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
+            autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
             ..Default::default()
@@ -419,11 +496,11 @@ fn desktop_surfaces_by_session(
     }
     if is_kde {
         return DesktopSurfaces {
-            always_on_top: SurfaceStatus { state: "ok", note: "KWin respeta siempre-encima." },
+            always_on_top: always_on_top_status(false, false, true, auto_hide_ok),
             click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "ok", note: "KDE soporta bandeja AppIndicator/StatusNotifier de forma nativa." },
             global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
-            autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
+            autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
             ..Default::default()
@@ -432,11 +509,11 @@ fn desktop_surfaces_by_session(
     // Wayland genérico (sway, wlroots, otros de la matriz): notas prudentes
     // mientras la verificación no confirme cada compositor.
     DesktopSurfaces {
-        always_on_top: SurfaceStatus { state: "limited", note: "El soporte de siempre-encima depende del compositor; si la tira se oculta, usa «Auto-hide»." },
+        always_on_top: always_on_top_status(false, false, false, auto_hide_ok),
         click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
         tray_icon: SurfaceStatus { state: "limited", note: "Solo se muestra el icono si la barra admite StatusNotifier/AppIndicator." },
         global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
-        autostart: SurfaceStatus { state: "ok", note: "Arranque al iniciar sesión vía XDG autostart (.desktop)." },
+        autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
         notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
         transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
         ..Default::default()
@@ -703,13 +780,17 @@ fn recommendation(
     is_wayland: bool,
     is_hyprland: bool,
     is_kde: bool,
+    auto_hide_ok: bool,
     desktop_session: Option<&str>,
     _xdg_current_desktop: Option<&str>,
 ) -> &'static str {
-    if is_hyprland {
+    if is_hyprland && auto_hide_ok {
         "Hyprland es particularmente estricto con always-on-top. \
          Si la tira se ve normal pero se oculta tras otras ventanas, \
          activa «Auto-hide» en Ajustes como Plan B."
+    } else if is_hyprland {
+        "Hyprland es particularmente estricto con always-on-top. \
+         En Wayland nativo la tira puede quedar oculta tras otras ventanas."
     } else if is_wayland {
         match (desktop_session, is_kde) {
             (Some(d), _) if d.eq_ignore_ascii_case("gnome") => {
@@ -720,9 +801,13 @@ fn recommendation(
                 "KDE Wayland suele respetar always-on-top; click-through puede \
                  fallar — usa la posición fija como fallback."
             }
-            _ => {
+            _ if auto_hide_ok => {
                 "Wayland detectado. Si siempre-encima o clic-a-través fallan, \
                  activa «Auto-hide» en Ajustes."
+            }
+            _ => {
+                "Wayland nativo detectado. Siempre-encima y clic-a-través \
+                 dependen del compositor y pueden fallar."
             }
         }
     } else {
@@ -893,7 +978,7 @@ mod tests {
             "click_through limited en Hyprland"
         );
         assert_eq!(info.surfaces.global_shortcuts.state, "limited");
-        assert_eq!(info.surfaces.autostart.state, "ok");
+        assert_eq!(info.surfaces.autostart.state, "limited");
     }
 
     #[test]
@@ -1003,6 +1088,12 @@ mod tests {
                 );
                 continue;
             }
+            // El arranque automático no está verificado en un inicio de sesión
+            // real (#290): nunca `ok` sin evidencia.
+            if *name == "autostart" {
+                assert_eq!(status.state, "limited");
+                continue;
+            }
             assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
         }
     }
@@ -1046,6 +1137,11 @@ mod tests {
                 );
                 continue;
             }
+            // Arranque automático sin verificar en un inicio de sesión real (#290).
+            if *name == "autostart" {
+                assert_eq!(status.state, "limited");
+                continue;
+            }
             assert_eq!(status.state, "ok", "{name} debería estar ok en X11");
         }
         // Nota honesta sobre composición (la tira es transparente).
@@ -1085,7 +1181,7 @@ mod tests {
         assert_eq!(s.click_through.state, "limited");
         assert_eq!(s.global_shortcuts.state, "limited");
         assert_eq!(s.always_on_top.state, "limited");
-        assert_eq!(s.autostart.state, "ok");
+        assert_eq!(s.autostart.state, "limited");
         assert_eq!(s.notifications.state, "ok");
     }
 
@@ -1401,7 +1497,7 @@ mod tests {
         assert_eq!(s.always_on_top.state, "limited");
         assert_eq!(s.tray_icon.state, "limited");
         assert!(s.tray_icon.note.contains("vuelve a abrir Quorb"));
-        assert_eq!(s.autostart.state, "ok");
+        assert_eq!(s.autostart.state, "limited");
     }
 
     #[test]
@@ -1560,9 +1656,10 @@ mod tests {
         assert_eq!(overridden.display_backend, DisplayBackend::X11);
         assert_eq!(overridden.surfaces.window_positioning.state, "ok");
         assert_eq!(overridden.surfaces.tray_icon, info.surfaces.tray_icon);
+        // Solo cambia la nota de siempre-encima (el consejo de «Auto-hide», #290).
         assert_eq!(
-            overridden.surfaces.always_on_top,
-            info.surfaces.always_on_top
+            overridden.surfaces.always_on_top.state,
+            info.surfaces.always_on_top.state
         );
         assert_eq!(
             overridden.surfaces.click_through,
@@ -1579,5 +1676,108 @@ mod tests {
         );
         assert_eq!(overridden.surfaces.transparency, info.surfaces.transparency);
         assert_eq!(overridden.is_wayland, info.is_wayland);
+    }
+
+    /// Sesiones de la matriz (#290): (nombre, env, ¿Wayland?).
+    fn session_rows() -> Vec<(&'static str, Env, bool)> {
+        vec![
+            (
+                "x11",
+                env(None, Some("x11"), Some("gnome-xorg-errors"), None),
+                false,
+            ),
+            (
+                "hyprland",
+                env(None, Some("wayland"), Some("hyprland"), None),
+                true,
+            ),
+            (
+                "gnome",
+                env(
+                    Some("wayland-0"),
+                    Some("wayland"),
+                    Some("gnome"),
+                    Some("GNOME"),
+                ),
+                true,
+            ),
+            (
+                "kde",
+                env(None, Some("wayland"), Some("plasma"), None),
+                true,
+            ),
+            (
+                "fallback",
+                env(Some("wayland-1"), None, Some("sway"), None),
+                true,
+            ),
+        ]
+    }
+
+    /// #290 (S2): el arranque automático nunca es `ok` sin evidencia, en
+    /// ninguna sesión ni backend; en Wayland la nota dice que arranca nativo.
+    #[test]
+    fn autostart_is_never_ok_and_wayland_note_says_native_launch() {
+        for (name, base, wayland) in session_rows() {
+            for gdk in [None, Some("x11"), Some("wayland")] {
+                let env = Env {
+                    gdk_backend: gdk.map(str::to_string),
+                    ..base.clone()
+                };
+                let info = detect_wm_info_from_env(&env, tray());
+                let a = &info.surfaces.autostart;
+                assert_eq!(a.state, "limited", "{name} gdk={gdk:?}");
+                if wayland {
+                    assert!(a.note.contains("Wayland nativo"), "{name}: {}", a.note);
+                    assert!(a.note.contains("GDK_BACKEND"), "{name}: {}", a.note);
+                } else {
+                    assert!(a.note.contains("sin verificar"), "{name}: {}", a.note);
+                }
+                // El override de la sonda runtime no lo cambia.
+                for backend in [DisplayBackend::X11, DisplayBackend::Wayland] {
+                    let o = with_display_backend(info.clone(), backend);
+                    assert_eq!(o.surfaces.autostart, info.surfaces.autostart, "{name}");
+                }
+            }
+        }
+    }
+
+    /// #290 (S1): «Auto-hide» solo se aconseja donde el posicionamiento es
+    /// `ok`; en Wayland nativo no aparece ni en notas ni en la recomendación.
+    #[test]
+    fn auto_hide_advice_only_where_window_positioning_is_ok() {
+        for (name, base, wayland) in session_rows() {
+            for gdk in [None, Some("x11"), Some("wayland")] {
+                let env = Env {
+                    gdk_backend: gdk.map(str::to_string),
+                    ..base.clone()
+                };
+                let info = detect_wm_info_from_env(&env, tray());
+                // Donde el consejo existía (Hyprland, GNOME y genérico bajo
+                // XWayland) se conserva; KDE y X11 nunca lo tuvieron.
+                let had_advice = wayland && matches!(name, "hyprland" | "gnome" | "fallback");
+                let mut variants = vec![("env", info.clone())];
+                // La sonda runtime manda: el override recalcula el consejo.
+                for backend in [DisplayBackend::X11, DisplayBackend::Wayland] {
+                    variants.push(("override", with_display_backend(info.clone(), backend)));
+                }
+                for (src, v) in variants {
+                    let ok = v.surfaces.window_positioning.state == "ok";
+                    let note = v.surfaces.always_on_top.note;
+                    let hint = v.recommendation;
+                    if !ok {
+                        assert!(
+                            !note.contains("Auto-hide") && !hint.contains("Auto-hide"),
+                            "{name} gdk={gdk:?} {src}: aconseja Auto-hide en Wayland nativo"
+                        );
+                    } else if had_advice {
+                        assert!(
+                            note.contains("Auto-hide"),
+                            "{name} gdk={gdk:?} {src}: XWayland pierde el consejo"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
