@@ -10,17 +10,16 @@
 
 - **Estado del port**: el binario compila, se empaqueta (`.deb` + `.AppImage`)
   y arranca en Ubuntu 26.04/GNOME Wayland, con warnings benignos de GTK y
-  libayatana. El panic de arranque en Wayland (tao#1204) está resuelto en la
-  rama `feat_native_linux` ([commit
+  libayatana. El panic de arranque en Wayland (tao#1204) está resuelto e
+  **integrado en `main`** ([commit
   `53058fa4`](https://github.com/sosan/quorb/commit/53058fa46ccd64c65b1ddfee320d562d6e445ca5),
-  evidencia externa del fork) y pendiente de integrar a
-  `main` vía #107.
+  vía #107 y PRs posteriores).
 - **Qué queda fuera del MVP**: distros no-Debian/Arch (Fedora, openSUSE,
   NixOS), arquitectura aarch64, macOS, firma digital (F5), paquete AUR,
   CI matrix para Arch rolling.
-- **Gate de CI**: `ci.yml` corre **solo en Windows**; la cobertura Linux vive
-  en `build-linux.yml` (tags `v*` o `workflow_dispatch`). No hay gate de PR
-  para Linux — hallazgo de este baseline (ver §4 y §8).
+- **Gate de CI**: `ci.yml` (Windows) y `linux-ci.yml` (manual, por ref,
+  `with_bundle: bundle` para empaquetar) + `linux-pr-ci.yml` (tests y build
+  en cada PR) — cierre #108: la cobertura Linux vive en `main` (ver §4 y §8).
 - **Contrato**: Ubuntu 22.04 LTS y Arch rolling (x86_64) como target; sesión
   gráfica Wayland-first; `.deb` para Debian/Ubuntu y `.AppImage` para Arch y
   resto. Sin afirmar soporte de lo no verificado (§5).
@@ -37,16 +36,16 @@
 | Arch | x86_64 |
 | node / npm | v24.15.0 / 12.0.1 |
 | rustc / cargo | 1.99.0 |
-| Paquete instalado | `quorb` 0.6.0 (`.deb`) |
+| Paquete instalado | `quorb` 0.6.0 (`.deb`, baseline histórico); la versión actual de `main` es 0.8.0 (cierre #108: refrescar la evidencia de instalación sobre esa versión) |
 
 ### 2.2 Entornos complementarios con evidencia
 
 | Entorno | Rol | Evidencia |
 |---|---|---|
-| Devcontainer `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` (`.devcontainer/`) | Build/tests locales sin distro física | `cargo test --locked` verde (§4) — **evidencia externa**: infra parked en `chore-linux-build-local-108` (fork, revisión #108), no incluida en este candidato |
-| CI runner `ubuntu-22.04` (`build-linux.yml`) | Bundles + verify | Tags `v0.6.6`/`v0.6.8` verdes (§4, fork externo; workflow no en este candidato) |
+| Devcontainer `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` (`.devcontainer/`) | Build/tests locales sin distro física | `cargo test --locked` verde (histórico) — **en `main` desde #108** (`.devcontainer/`, `Makefile`) |
+| CI runner `ubuntu-22.04` (`linux-ci.yml` + `linux-pr-ci.yml`) | Bundles + verify y gate de PR | En `main` desde #108; `with_bundle: bundle` construye AppImage/deb y los verifica |
 | CI runner `windows-latest` (`ci.yml`) | Regresión Windows | Verde por PR (ver §8) |
-| `.deb` v0.6.6 instalado en host | Arranque en compositor real | §4 |
+| `.deb` instalado en host | Arranque en compositor real | §4 (baseline 0.6.0; cierre #108: refrescar con la versión actual de `main`) |
 
 ## 3. Inventario de dependencias (L0a)
 
@@ -106,18 +105,18 @@ Dos niveles de evidencia, separados explícitamente:
 
 - **Estado integrado en upstream** (`egdev6/quorb`): `ci.yml` (Windows) es el
   único workflow CI presente en `main` de este candidato.
-- **Evidencia externa** (fork `sosan/quorb`, ramas de trabajo e infra parked):
-  proveniente de las ramas `feat_native_linux` y `chore-linux-build-local-108`
-  (revisión de #108). No está integrada en `main`; se cita para contrastar las
-  mediciones, no como estado del upstream.
+- **Evidencia histórica** (fork `sosan/quorb`, ramas de trabajo previas):
+  las ramas `feat_native_linux` y `chore-linux-build-local-108` sirvieron como
+  evidencia antes de que #107/#108 integraran su contenido en `main`; se citan
+  aquí solo como contexto histórico, no como estado del upstream.
 
 | Fuente | Ámbito | Cubre | Referencia |
 |---|---|---|---|
 | `ci.yml` (runner `windows-latest`; PR/push a `main`, `workflow_dispatch`) | upstream | `npm ci`, `npm test`, `npm run build`, `cargo test --locked` en Windows | https://github.com/egdev6/quorb/actions/workflows/ci.yml |
-| `build-linux.yml` (runner `ubuntu-22.04`; tag `v*`, `workflow_dispatch`) | externa (fork) | `npm test`, `npm run build`, `cargo test --locked`, `npm run app:build`, `verify-deb.sh`, `verify-appimage.sh`, `Launch AppImage directly` | https://github.com/sosan/quorb/actions/workflows/build-linux.yml |
+| `linux-ci.yml` (runner `ubuntu-22.04`; manual por ref, `with_bundle: bundle`) | `main` (desde #108) | `npm test`, `npm run build`, `cargo test --locked`, `npm run app:build`, `verify-deb.sh`, `verify-appimage.sh`, `Launch AppImage directly` | `.github/workflows/linux-ci.yml` |
 | Rama `feat_native_linux` | externa (fork) | Commits concretos: [`7627c448`](https://github.com/sosan/quorb/commit/7627c448f49376b3379dbaf688a9e5d64a252134) (wm_compat), [`53058fa4`](https://github.com/sosan/quorb/commit/53058fa46ccd64c65b1ddfee320d562d6e445ca5) (fix tao#1204), [`74b8be72`](https://github.com/sosan/quorb/commit/74b8be72e8a3a57c0b0b1873aa13a08a784b8a14)–[`b491ae32`](https://github.com/sosan/quorb/commit/b491ae32fe81c4d4d99e93b99fb5a6d22e9ad4be) (CI AppImage) | https://github.com/sosan/quorb/commits/feat_native_linux |
 | Tags `v0.6.6` / `v0.6.8` (sobre `feat_native_linux`) | externa (fork) | Build verde con plugin `continuous` (sin pin): run [`38822295271`](https://github.com/sosan/quorb/actions/runs/38822295271) (v0.6.6, 6m50s); `Launch AppImage directly` exit 124 = app viva: run [`38826266889`](https://github.com/sosan/quorb/actions/runs/38826266889) (v0.6.8, 8m20s) | runs del workflow anterior |
-| Devcontainer `.devcontainer/` (Ubuntu 22.04) + Makefile | externa (parked) | `npm ci`, `npm test`, `cargo test --locked` reproducibles localmente | rama `chore-linux-build-local-108` del fork (en revisión en #108); **no está en este candidato** |
+| Devcontainer `.devcontainer/` (Ubuntu 22.04) + Makefile | `main` (desde #108) | `npm ci`, `npm test`, `cargo test --locked` reproducibles localmente (`make up` + `make test`) | `.devcontainer/`, `Makefile` en `main` |
 
 ### 4.2 Tabla del baseline
 
@@ -125,18 +124,21 @@ Dos niveles de evidencia, separados explícitamente:
 |---|---|---|---|---|
 | `npm ci` | host Ubuntu 26.04 + devcontainer + CI | 0 | 12.2s (host) | 0 vulns; esbuild postinstall bloqueado por `allowScripts` (no afecta al build) |
 | `npm test` | host Ubuntu 26.04 + devcontainer + CI | 0 | 11.4s (host) | 147 passed, 0 failed, 0 skipped (vitest) |
-| `npm run typecheck` | host + `build-linux.yml` (Linux tag) | 0 | 17.5s (host) | `tsc --noEmit` limpio |
-| `npm run build` | host + `ci.yml` + `build-linux.yml` | 0 | 19.4s (host) | Vite 7.3.7, 87 modules, dist 376KB JS + 182KB CSS |
+| `npm run typecheck` | host + `linux-ci.yml` / `linux-pr-ci.yml` | 0 | 17.5s (host) | `tsc --noEmit` limpio |
+| `npm run build` | host + `ci.yml` + `linux-ci.yml` / `linux-pr-ci.yml` | 0 | 19.4s (host) | Vite 7.3.7, 87 modules, dist 376KB JS + 182KB CSS |
 | `cargo test --locked` en `src-tauri/` | devcontainer 22.04 + CI (Windows y Linux tag) | 0 | 7m24s (devcontainer, primer build) | 98 passed, 0 failed, 0 ignored |
 | `npm run app:dev` | devcontainer (`smoke-app.sh`, `xvfb-run` + `dbus-run-session`) | 124 (timeout = app viva) | — | Headless: valida "compila y arranca el main loop"; **no valida compositor** |
-| `npm run app:build` (deb + AppImage) | `build-linux.yml` (tags `v0.6.6`/`v0.6.8`) + `.testcontainer/verify-*.sh` | 0 | — | Produce `.deb` y `.AppImage`; verify con `--appimage-extract-and-run` |
-| Arranque/primer uso (compositor real) | `.deb` v0.6.6 en host Ubuntu 26.04/GNOME Wayland; `Launch AppImage directly` en `build-linux.yml` (runner 22.04 con FUSE real) | 0 (proceso estable) | — | Warnings benignos: `gdk_wayland_window_set_dbus_properties_libgtk_only` (Gdk-CRITICAL), `libayatana-appindicator is deprecated` (cosmético), `gtk_widget_get_scale_factor` (Gtk-CRITICAL). Panic de tao#1204 **resuelto** en `53058fa` (feat_native_linux) |
+| `npm run app:build` (deb + AppImage) | `linux-ci.yml` (`with_bundle: bundle`, `main`) + `.testcontainer/verify-*.sh` | 0 | — | Produce `.deb` y `.AppImage`; verify con `--appimage-extract-and-run` |
+| Arranque/primer uso (compositor real) | `.deb` en host Ubuntu 26.04/GNOME Wayland (baseline 0.6.0); `Launch AppImage directly` en `linux-ci.yml` (runner 22.04 con FUSE real) | 0 (proceso estable) | — | Warnings benignos: `gdk_wayland_window_set_dbus_properties_libgtk_only` (Gdk-CRITICAL), `libayatana-appindicator is deprecated` (cosmético), `gtk_widget_get_scale_factor` (Gtk-CRITICAL). Panic de tao#1204 **resuelto e integrado en `main`** (vía #107). Cierre #108: refrescar la evidencia de instalación con la versión actual (`0.8.0`) |
 
 ### 4.3 Fallos preexistentes conocidos
 
-1. **No hay CI Linux para PRs** — `ci.yml` corre solo en `windows-latest`.
-   Para validar Linux hay que usar un tag `v*` o `workflow_dispatch`
-   manual. (Workaround actual; el fix es decisión de #108/CI.)
+1. ~~**No hay CI Linux para PRs**~~ — **resuelto en #108**: `linux-pr-ci.yml`
+   corre tests y build en cada PR (`npm ci`, `npm test`, `npm run build`,
+   `cargo test --locked` en `ubuntu-22.04`), y `linux-ci.yml` es el workflow
+   manual por ref (`workflow_dispatch`, `with_bundle: bundle` para empaquetar
+   y verificar). La observación original de este baseline queda registrada
+   como histórica.
 2. **AppImage requiere el módulo `fuse` del kernel** — en el host Ubuntu
    26.04/kernel 6.17, `lsmod | grep fuse` está vacío (el módulo no está
    cargado por defecto en esta instalación), aunque `/dev/fuse` existe y
@@ -145,14 +147,46 @@ Dos niveles de evidencia, separados explícitamente:
    `fuse: memory allocation failed` / `Cannot mount AppImage`. Workaround
    documentado en §10 (`sudo modprobe fuse` o `linux-modules-extra-$(uname -r)`).
    **Sin impacto en el `.deb`**.
-3. **Backend de secretos: `keyring` 3.6.3 con la feature `linux-native` usa
+3. **Reporte del mantenedor: «Can't open squashfs» con el AppImage en
+   kernels ≥ 6.12 — REPRODUCIDO Y REFUTADO en CI (cierre #108)**. El mantenedor
+   observó el fallo en un host Ubuntu 26.04/kernel 6.12+. Se reprodujo el
+   lanzamiento directo del AppImage (sin `--appimage-extract-and-run`) en dos
+   runners de GitHub Actions con el workflow de diagnóstico (runs
+   `44186723327` y `44191439689`):
+   - **Ubuntu 22.04.5 / kernel 6.8.0-1070-azure**: `fuse` no cargado, pero
+     `/dev/fuse` + `libfuse2` presentes; el AppImage **montó su payload vía
+     FUSE** y arrancó el binario. Primer intento: abortó (exit 134) por
+     `Couldn't open libGLESv2.so.2` (entorno headless sin `libgles2`), no por
+     el kernel ni el montaje. Con `libgles2` instalado: **exit 124 = el
+     proceso siguió vivo los 60 s** (run `44191439689`).
+   - **Ubuntu 26.04.1 LTS / kernel 7.0.0-1019-azure** (≥ 6.12): ídem — `fuse`
+     no cargado, `/dev/fuse` + `libfuse2t64` presentes; el AppImage **montó su
+     payload vía FUSE**. Primer intento: abortó (exit 134) por
+     `libEGL warning: DRI3 error` + `Couldn't open libGLESv2.so.2`. Con
+     `libgles2` instalado: **exit 124 = el proceso siguió vivo los 60 s**
+     (solo quedan los warnings benignos de `libEGL DRI3`, esperados sin GPU
+     en headless).
+   Conclusión: **no se reproduce «Can't open squashfs» en kernels ≥ 6.12** en
+   el entorno CI; el montaje FUSE del payload funciona y el AppImage aguanta
+   60 s en kernel 6.8 y 7.0 con las dependencias de runtime gráficas
+   (`libegl1 libgl1 libgles2` + `libfuse2`/`libfuse2t64`). El abort anterior
+   era del entorno headless sin `libgles2`, no del empaquetado ni del kernel.
+   Queda fuera del alcance de esta pasada reproducir en un escritorio real de
+   Ubuntu 26.04 con compositor, que es donde el mantenedor observó el síntoma
+   original (es posible que en su host faltara alguna dependencia de runtime;
+   con las deps completas no se reproduce en CI). El `.deb` no se ve afectado
+   en ningún caso; el workaround inmediato sigue siendo
+   `--appimage-extract-and-run`, igual que para el fallo 2. El runtime
+   alternativo queda fuera del alcance de #108 y se decidiría en un milestone
+   propio si llega.
+4. **Backend de secretos: `keyring` 3.6.3 con la feature `linux-native` usa
    keyutils** (crate `linux-keyutils`, keyring del kernel), **no Secret
    Service/D-Bus**. Sin sesión de escritorio no se espera un fallo por
    ausencia de D-Bus; la persistencia y el comportamiento exacto (incluido
    el fallo explícito del command en entornos sin keyutils) se confirman en
    F2/#106 (placeholder hasta entonces). La migración a Secret Service
    queda en #106, sin cambio de dependencias en esta PR.
-4. **Hallazgos de contribuidores** (del comentario de Rafael en #105):
+5. **Hallazgos de contribuidores** (del comentario de Rafael en #105):
    `connect_map` GTK crash y `startDragging()` nativo vs layer-shell
    pertenecen a F3/#107, no a este baseline.
 
@@ -295,21 +329,23 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 |---|---|---|---|---|
 | tao 0.37.1 panicea en `CursorIgnoreEvents` si la ventana está oculta (GdkWindow None) | Alta (reproducido) | Alto (crash al arrancar en Wayland) | Fix `53058fa` (feat_native_linux): `set_ignore_cursor_events` tras `show()`, no en setup. Integrar en #107 | `src-tauri/src/lib.rs` `run()`/`play_effect`; tao `event_loop.rs:457`; upstream tao#1204 |
 | AppImage no monta sin módulo `fuse` del kernel (Ubuntu 26.04/kernel 6.17) | Media (host sin auto-load) | Medio (AppImage inusable en ese host) | `sudo modprobe fuse` / `linux-modules-extra-$(uname -r)` (§10); el `.deb` no lo sufre | `lsmod` vacío + `/dev/fuse` presente (host) |
-| WebKit2GTK ≥ 2.40 / GTK ≥ 3.22 (distros antiguas) | Media | Alto (excluye usuarios) | Documentar versión mínima; diferir distros no-Debian/Arch | PRD línea 110; `build-linux.yml` apt |
+| WebKit2GTK ≥ 2.40 / GTK ≥ 3.22 (distros antiguas) | Media | Alto (excluye usuarios) | Documentar versión mínima; diferir distros no-Debian/Arch | PRD línea 110; `linux-ci.yml` apt |
 | libayatana deprecation warning en runtime | Alta (cosmético) | Bajo | Nada (no impide) | Log de arranque del `.deb` (host) |
 | `keyring` linux-native requiere keyutils disponible (keyring del kernel); entorno sin keyutils | Media | Medio | Fallo explícito del command, no degradar a texto plano (F2/#106) | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
 | `connect_map` GTK crash (Rafael) | Desconocida | Medio | Pertenece a F3/#107 | Comentario de Rafael en #105 |
 | `startDragging()` nativo vs layer-shell (Rafael) | Desconocida | Medio | Decisión de F3/#107 | Comentario de Rafael en #105 |
-| No hay gate de CI Linux para PRs | Alta (confirmado) | Medio (regresiones Linux pasan desapercibidas) | Usar tag `v*`/`workflow_dispatch`; fix en #108 | `ci.yml` vs `build-linux.yml` |
+| ~~No hay gate de CI Linux para PRs~~ (resuelto en #108) | — | — | `linux-pr-ci.yml` (tests+build por PR) y `linux-ci.yml` (manual, `with_bundle`) | `linux-ci.yml`/`linux-pr-ci.yml` en `main` |
+| AppImage «Can't open squashfs» en kernels ≥ 6.12 (reporte del mantenedor) | **Refutado en CI** (§4.3 fallo 3): monta vía FUSE y aguanta 60 s (exit 124) en kernel 6.8 y 7.0 con `libgles2`; el abort anterior era headless sin GLES | Bajo | Workaround inmediato `--appimage-extract-and-run`; falta reproducir en escritorio real 26.04 (con deps completas no se reproduce en CI); runtime alternativo fuera del alcance | Cierre #108 |
 
 ## 8. Plan de pruebas y regresión Windows (L0d)
 
 - **Linux (gate de release)**: `npm test`, `cargo test --locked`, `npm run
-  app:build`, `verify-deb.sh`/`verify-appimage.sh`, y el paso nuevo **`Launch
-  AppImage directly`** (FUSE real) deben estar verdes en `build-linux.yml`
-  antes de mergear a `main` cualquier cambio Linux.
-- **Linux (gate de PR)**: pendiente de #108 — hoy no existe; workaround tag
-  manual. **Registrado como límite no verificado.**
+  app:build`, `verify-deb.sh`/`verify-appimage.sh`, y el paso **`Launch
+  AppImage directly`** (FUSE real) están verdes en `linux-ci.yml` (manual,
+  `with_bundle: bundle`).
+- **Linux (gate de PR)**: **resuelto en #108** — `linux-pr-ci.yml` corre
+  tests y build en cada PR (sin gate de bundles, que queda en el workflow
+  manual).
 - **Windows (regresión)**: `ci.yml` (windows-latest) sigue verde por PR; el
   bundle Windows (`nsis`/`msi`) queda inalterado — los cambios Linux no tocan
   los targets Windows de `tauri.conf.json`.
@@ -360,7 +396,7 @@ sudo apt install linux-modules-extra-$(uname -r)
 
 | Entrada | Esperado | Comportamiento real observado |
 |---|---|---|
-| `src-tauri/tauri.conf.json` | Windows-first (`nsis`/`msi`); Linux targets a añadir en #108 | Confirmado: solo `nsis`/`msi` en `bundle.targets` de main |
+| `src-tauri/tauri.conf.json` | Windows-first con Linux: `nsis`/`msi` + `deb`/`appimage` | Confirmado desde #108: `bundle.targets` de `main` incluye los cuatro |
 | `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host (`.deb` v0.6.6); panic tao#1204 resuelto en `53058fa` (feat) |
 | `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` (keyutils, `linux-keyutils`) | Comportamiento exacto de keyutils (persistencia, fallo sin keyutils) a verificar en F2/#106 |
 | `src-tauri/src/login.rs` | Login CLI con terminal Linux | Cascade `$TERMINAL → ghostty → kitty → alacritty` per Rafael; a verificar en F2/#106 |

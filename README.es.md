@@ -200,7 +200,7 @@ La firma Authenticode de Windows y distribución por winget, el modo click-throu
 Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `quorb-linux-local-v1`). Lo que funciona hoy es desarrollo y pruebas locales, no una release distribuida:
 
 - Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run app:dev`.
-- Los formatos de bundle y el empaquetado de un build local instalable siguen definiéndose en la unidad de paquete (#108); no distribuyáis los artefactos.
+- Los formatos de bundle local instalable ya están decididos: `.deb` para Debian/Ubuntu y `.AppImage` para Arch y el resto (ver [`docs/build-linux.md`](./docs/build-linux.md)). Se construyen y verifican con el workflow manual de Linux (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) o localmente con `npm run app:build` + los scripts `.testcontainer/verify-*.sh`. Los artefactos del CI quedan privados a cada run; las releases públicas de Linux quedan fuera de alcance por ahora.
 - Las limitaciones de sesión y comportamiento dependen del escritorio, y Ajustes las muestra por superficie en el bloque «Sesión de escritorio»:
   - X11: comportamiento completo de siempre-encima, icono de bandeja, atajos globales y transparencia (esta última solo con un compositor).
   - GNOME sobre Wayland: hace falta la extensión AppIndicator para ver el icono de bandeja; siempre-encima y click-through limitados por Mutter; el registro de atajos globales puede denegarse.
