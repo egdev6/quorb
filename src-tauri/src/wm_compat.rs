@@ -315,8 +315,6 @@ pub fn with_display_backend(
 }
 
 /// Señal KDE (`DESKTOP_SESSION` de Plasma o token KDE en `XDG_CURRENT_DESKTOP`).
-/// Única fuente para `detect_wm_info_from_env` y el recálculo de
-/// `with_display_backend`.
 fn is_kde_signal(env_n: &Env) -> bool {
     env_n
         .desktop_session
@@ -352,9 +350,7 @@ fn is_kde_token(token: &str) -> bool {
     )
 }
 
-/// Rasgos de la sesión, calculados una sola vez por `Session::new` y
-/// compartidos por la detección inicial y por `with_display_backend`, para
-/// que no haya dos copias de la lógica que puedan divergir.
+/// Rasgos de la sesión, calculados una sola vez en `Session::new`.
 #[derive(Debug, Clone, Copy)]
 struct Session {
     wayland: bool,
@@ -397,8 +393,9 @@ impl Session {
     }
 }
 
-/// Todo lo que depende del backend GDK efectivo. Única derivación: la usan
-/// la detección inicial y el override de la sonda runtime (#290).
+/// Todo lo que depende del backend GDK efectivo. Es la única derivación: la
+/// usan la detección inicial y el override de la sonda runtime, para que no
+/// puedan divergir (#290).
 struct BackendDependent {
     recommendation: &'static str,
     always_on_top: SurfaceStatus,
@@ -442,8 +439,7 @@ fn always_on_top_status(session: &Session) -> SurfaceStatus {
             note: "En X11 la tira se mantiene sobre las demás ventanas.",
         };
     }
-    // Mismo orden de precedencia que `desktop_surfaces_by_session`: así la
-    // detección inicial y el override de la sonda no pueden discrepar.
+    // Misma precedencia que `desktop_surfaces_by_session`: Hyprland, GNOME, KDE.
     let note = match (
         session.hyprland,
         session.gnome,
@@ -1097,8 +1093,6 @@ mod tests {
                 );
                 continue;
             }
-            // El arranque automático no está verificado en un inicio de sesión
-            // real (#290): nunca `ok` sin evidencia.
             if *name == "autostart" {
                 assert_eq!(status.state, "limited");
                 continue;
@@ -1146,7 +1140,6 @@ mod tests {
                 );
                 continue;
             }
-            // Arranque automático sin verificar en un inicio de sesión real (#290).
             if *name == "autostart" {
                 assert_eq!(status.state, "limited");
                 continue;
@@ -1769,7 +1762,7 @@ mod tests {
         }
     }
 
-    /// #290 (S2): el arranque automático nunca es `ok` sin evidencia, en
+    /// #290: el arranque automático nunca es `ok` sin evidencia, en
     /// ninguna sesión ni backend; en Wayland la nota dice que arranca nativo.
     #[test]
     fn autostart_is_never_ok_and_wayland_note_says_native_launch() {
@@ -1791,7 +1784,7 @@ mod tests {
         });
     }
 
-    /// #290 (S1): «Auto-hide» solo se aconseja donde el posicionamiento es
+    /// #290: «Auto-hide» solo se aconseja donde el posicionamiento es
     /// `ok`; en Wayland nativo no aparece ni en notas ni en la recomendación.
     #[test]
     fn auto_hide_advice_only_where_window_positioning_is_ok() {
