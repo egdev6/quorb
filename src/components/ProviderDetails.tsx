@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { formatCompact, formatMoney, formatResetIn, shortLabel } from '../lib/format';
+import { formatCompact, formatMoney, formatResetIn, shortLabel, currentMeters, isStaleSpend } from '../lib/format';
 import { meterPace, spendPace, type Pace } from '../lib/pace';
 import type { Locale, Sample, UsageReport } from '../lib/types';
 import { intlLocale, t } from '../i18n';
@@ -108,20 +108,25 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
     };
   }, [report.id, hours, report.fetchedAt]);
 
-  const ringMeters = report.meters.filter((m) => m.percent != null);
-  const paces = ringMeters.map((m, i) => ({ m, color: popupMeterColor(report, m, i), pace: meterPace(m) }));
-  const sp = report.spend ? spendPace(report.spend) : null;
+  // El ritmo es del estado de ahora: sólo los medidores vigentes. Los que se conservan
+  // de un ciclo anterior describen el pasado, no el estado de ahora.
+  const currentRingMeters = currentMeters(report).filter((m) => m.percent != null);
+  const paces = currentRingMeters.map((m, i) => ({ m, color: popupMeterColor(report, m, i), pace: meterPace(report, m) }));
+  // El gasto conservado es viejo si el informe entero lo es: se puede ver, pero nunca
+  // proyectado («a este ritmo» es, por definición, «ahora»).
+  const staleSpend = isStaleSpend(report);
+  const sp = report.spend && !staleSpend ? spendPace(report.spend) : null;
 
   const series = useMemo(() => {
     if (!samples) return { pct: [], spend: [] as [number, number][] };
     // History includes every percentage quota, not just the gauge's visible rings.
-    const pct = ringMeters.map((m, i) => ({
+    const pct = currentRingMeters.map((m, i) => ({
       color: popupMeterColor(report, m, i),
       points: samples.filter((s) => s.l === m.id || s.l === m.label).map((s) => [s.t, s.v] as [number, number]),
     }));
     const spend = samples.filter((s) => s.l === 'spend').map((s) => [s.t, s.v] as [number, number]);
     return { pct, spend };
-  }, [samples, report.meters, report.id, report.kind]);
+  }, [samples, report.meters, report.id, report.kind, report.stale]);
 
   // Escala del eje: no aplastamos consumos pequeños contra el 0.
   const peakPct = Math.max(0, ...series.pct.flatMap((s) => s.points.map((p) => p[1])));
@@ -157,7 +162,10 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
       }}>
         <summary className="details__toggle"><h3 className="details__title">{t(locale, 'details.paceTitle')}</h3></summary>
         <div className="details__body">
-          {paces.filter((p) => p.pace).length === 0 && !sp && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
+          {/* Sin ritmo que proyectar (no hay medidores vigentes) y sin gasto vigente: se
+              dice que no hay ventana, en vez de dejar un bloque vacío. El gasto viejo
+              no se proyecta nunca, así que el ritmo queda vacío. */}
+          {paces.filter((p) => p.pace).length === 0 && (!report.spend || isStaleSpend(report)) && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
           {paces.map(
             ({ m, color, pace }) =>
               pace && (

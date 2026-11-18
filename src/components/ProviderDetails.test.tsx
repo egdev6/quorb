@@ -79,3 +79,31 @@ describe('provider detail sections', () => {
     expect(html.indexOf('role="status"')).toBeLessThan(html.indexOf('<details'));
   });
 });
+
+// W1 (S52): con el gasto viejo el ritmo queda vacío: se dice que no hay ventana,
+// en vez de dejar un bloque en blanco. (Vive aquí y no junto a MeterBar: prueba
+// la sección de ritmo del detalle.)
+describe('ProviderDetails: el ritmo con gasto viejo (W1)', () => {
+  const staleReport: UsageReport = {
+    id: 'claude',
+    name: 'Claude',
+    kind: 'subscription',
+    status: 'warning',
+    plan: null,
+    meters: [],
+    spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 },
+    message: '429',
+    action: null,
+    fetchedAt: '2026-10-17T00:00:00Z',
+  };
+
+  it('says that there is no window when the spend is old', () => {
+    const html = renderToStaticMarkup(<ProviderDetails report={{ ...staleReport, stale: true }} />);
+    expect(html).toContain('Sin ventana de tiempo conocida para calcular el ritmo.');
+  });
+
+  it('keeps a fresh report unchanged', () => {
+    const html = renderToStaticMarkup(<ProviderDetails report={staleReport} />);
+    expect(html).not.toContain('Sin ventana de tiempo conocida para calcular el ritmo.');
+  });
+});
