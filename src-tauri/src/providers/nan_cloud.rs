@@ -17,9 +17,9 @@ pub const API: &str = "https://cloud-api.nan.builders";
 
 /// Base del panel de NaN Cloud para una petición.
 ///
-/// En producción es [`API`]; el backend la pasa desde la configuración (`NanConfig`:
-/// `cloud_base_url`), que es inyectable para que los tests puedan apuntar al panel a
-/// un servidor local y ejercitar el camino con API key sin salir a la red.
+/// En producción es [`API`] y la pasa el backend como parámetro; los tests pasan la
+/// de su servidor local para ejercitar el camino con API key sin salir a la red. No
+/// vive en la configuración del usuario.
 fn base_of(base: &str) -> &str {
     base.trim().trim_end_matches('/')
 }

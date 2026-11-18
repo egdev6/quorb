@@ -580,13 +580,6 @@ pub struct NanConfig {
     pub usage_label: Option<String>,
     /// Día del mes en que empieza tu periodo de facturación (Stripe); solo afecta a glm5.3.
     pub billing_day: u32,
-    /// Base del panel de NaN Cloud (la API que publica la cuota de la cuenta).
-    ///
-    /// En producción es `https://cloud-api.nan.builders`. No se edita en la interfaz:
-    /// es inyectable para que los tests puedan ejercitar el camino con API key contra
-    /// un servidor local, sin salir a la red. Una configuración vieja (sin este campo)
-    /// se deserializa con el valor por defecto.
-    pub cloud_base_url: String,
 }
 
 impl Default for NanConfig {
@@ -600,7 +593,6 @@ impl Default for NanConfig {
             limit_pointer: None,
             usage_label: None,
             billing_day: 1,
-            cloud_base_url: crate::providers::nan_cloud::API.into(),
         }
     }
 }
@@ -708,15 +700,6 @@ impl AppConfig {
             .trim_end_matches('/')
             .to_string();
         self.nan.billing_day = self.nan.billing_day.clamp(1, 28);
-        if self.nan.cloud_base_url.trim().is_empty() {
-            self.nan.cloud_base_url = NanConfig::default().cloud_base_url;
-        }
-        self.nan.cloud_base_url = self
-            .nan
-            .cloud_base_url
-            .trim()
-            .trim_end_matches('/')
-            .to_string();
         if self.nine_router.base_url.trim().is_empty() {
             self.nine_router.base_url = NineRouterConfig::default().base_url;
         }
@@ -932,29 +915,6 @@ mod tests {
         assert_eq!(cfg.nan.base_url, "https://api.nan.builders/v1");
         assert_eq!(cfg.codex.login_command, "codex login");
         assert_eq!(cfg.dock_edge, "top");
-    }
-
-    #[test]
-    fn the_nan_cloud_base_url_defaults_to_production_and_survives_an_old_config() {
-        // La base del panel de Cloud es inyectable (para los tests), pero el valor por
-        // defecto es el de producción y una configuración vieja —sin el campo— se
-        // deserializa igual: el formato de la configuración no cambia.
-        let cfg: AppConfig = serde_json::from_str(r#"{"nan": {"enabled": true}}"#).unwrap();
-        assert_eq!(cfg.nan.cloud_base_url, "https://cloud-api.nan.builders");
-        assert_eq!(
-            cfg.sanitized().nan.cloud_base_url,
-            "https://cloud-api.nan.builders"
-        );
-        // Una base escrita con barra final se corrige; una base vacía vuelve a la de
-        // por defecto.
-        let cfg: AppConfig =
-            serde_json::from_str(r#"{"nan": {"cloudBaseUrl": "http://127.0.0.1:1234/"}}"#).unwrap();
-        assert_eq!(cfg.sanitized().nan.cloud_base_url, "http://127.0.0.1:1234");
-        let cfg: AppConfig = serde_json::from_str(r#"{"nan": {"cloudBaseUrl": "  "}}"#).unwrap();
-        assert_eq!(
-            cfg.sanitized().nan.cloud_base_url,
-            "https://cloud-api.nan.builders"
-        );
     }
 
     #[test]

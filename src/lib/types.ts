@@ -99,11 +99,6 @@ export interface NanConfig {
   usageLabel: string | null;
   /** Día de inicio del periodo de facturación (solo glm5.3) */
   billingDay: number;
-  /**
-   * Base del panel de NaN Cloud (la API que publica la cuota de la cuenta). No se
-   * edita en la interfaz: el backend la usa para leer la cuota de la cuenta.
-   */
-  cloudBaseUrl?: string;
 }
 
 /** Periodos de uso que acepta 9Router (`GET /api/usage/stats?period=…`). */

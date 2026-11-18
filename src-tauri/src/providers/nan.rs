@@ -151,7 +151,15 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     // credenciales fijadas en memoria.
     let key = who.secret(secrets::NAN_API_KEY);
     let cookie = who.secret(secrets::NAN_SESSION);
-    refresh_with_credentials(cfg, who, http, key.as_deref(), cookie.as_deref()).await
+    refresh_with_credentials(
+        cfg,
+        who,
+        http,
+        key.as_deref(),
+        cookie.as_deref(),
+        nan_cloud::API,
+    )
+    .await
 }
 
 /// El cuerpo del refresco, con las credenciales ya resueltas.
@@ -160,12 +168,17 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
 /// declaración): lo único que cambia es de dónde salen la API key y la cookie. El
 /// seam está aquí para que el test pueda recorrer el camino con API key de punta a
 /// punta contra un servidor local, sin tocar el llavero.
+///
+/// La base del panel de NaN Cloud también es un parámetro: en producción es
+/// `nan_cloud::API` (fija, la misma que usa `whoami`) y los tests pasan la de su
+/// servidor local. No vive en la configuración del usuario.
 pub(crate) async fn refresh_with_credentials(
     cfg: &NanConfig,
     who: Who<'_>,
     http: &reqwest::Client,
     key: Option<&str>,
     cookie: Option<&str>,
+    base: &str,
 ) -> UsageReport {
     let mut report = who.report("NaN Builders", Kind::Subscription);
     report.plan = Some(plan_name(&cfg.plan).into());
@@ -190,7 +203,7 @@ pub(crate) async fn refresh_with_credentials(
     // A. Sesión de NaN Cloud: los mismos datos que el dashboard (preferente).
     let mut note: Option<String> = None;
     if let Some(cookie) = cookie {
-        match nan_cloud::fetch(http, cookie, &cfg.cloud_base_url).await {
+        match nan_cloud::fetch(http, cookie, base).await {
             Ok(u) => {
                 report.daily = u.daily;
                 // La supresión de los medidores por modelo de una cuenta facturada en
@@ -298,7 +311,7 @@ pub(crate) async fn refresh_with_credentials(
         //    payload válido SIN modelos no es un endpoint caído. El motivo de la caída se
         //    guarda: no es lo mismo un 401 que un timeout, y el mensaje lo dice.
         let (account_meters, dropped, account_failure) =
-            match nan_cloud::fetch_account_quota(http, key, &cfg.cloud_base_url).await {
+            match nan_cloud::fetch_account_quota(http, key, base).await {
                 Ok(payload) => {
                     let parsed = nan_cloud::parse_quota(&payload);
                     (Some(parsed.meters), parsed.dropped, None)
@@ -2209,11 +2222,11 @@ mod tests {
     }
 
     /// La configuración de NaN apuntando al servidor local: la API del proveedor
-    /// (`/v1/...`) y el panel de Cloud (`/api/...`) salen del mismo servidor.
+    /// (`/v1/...`) sale del mismo servidor. El panel de Cloud no vive en la
+    /// configuración: se pasa como parámetro (`mock.base()`).
     fn local_config(mock: &MockServer) -> NanConfig {
         NanConfig {
             base_url: format!("{}/v1", mock.base()),
-            cloud_base_url: mock.base(),
             ..Default::default()
         }
     }
@@ -2240,6 +2253,7 @@ mod tests {
             &http,
             Some("nan-key"),
             None,
+            &mock.base(),
         ));
         assert_eq!(report.billing_regime, Some("credits"));
         assert_eq!(report.status, Status::Ok);
@@ -2290,6 +2304,7 @@ mod tests {
             &http,
             Some("nan-key"),
             None,
+            &mock.base(),
         ));
         assert_eq!(report.billing_regime, Some("model-quota"));
         assert_eq!(report.status, Status::Ok);
@@ -2316,6 +2331,7 @@ mod tests {
             &http,
             Some("nan-key"),
             None,
+            &mock.base(),
         ));
         assert_eq!(report.billing_regime, None);
         assert_eq!(report.status, Status::Warning);
@@ -2359,6 +2375,7 @@ mod tests {
             &http,
             Some("nan-key"),
             Some("session=abc"),
+            &mock.base(),
         ));
         assert_eq!(report.billing_regime, Some("credits"));
         assert!(
@@ -2389,6 +2406,7 @@ mod tests {
             &http,
             None,
             Some("session=abc"),
+            &mock.base(),
         ));
         assert_eq!(report.billing_regime, None);
         assert_eq!(report.status, Status::Ok);
@@ -2416,6 +2434,7 @@ mod tests {
             &http,
             Some("nan-key"),
             None,
+            &mock.base(),
         ));
         let usage_calls = mock
             .requested()
@@ -2446,6 +2465,7 @@ mod tests {
             &http,
             None,
             Some("session=abc"),
+            &mock.base(),
         ));
         assert!(
             !mock.requested().iter().any(|p| p == "/v1/usage"),
