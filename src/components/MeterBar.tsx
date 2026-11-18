@@ -7,13 +7,14 @@ import { t } from '../i18n';
  * Un límite del panel (EGDEV Foundation): marca del anillo + etiqueta + %,
  * ProgressBar --lg y cuándo se reinicia. `ring` = anillo del círculo (1–3) o null.
  * `color` conserva la identidad del límite, incluso cuando no cabe en el círculo.
+ * Un medidor viejo (`meter.stale`) se marca y se atenúa entero (por clase del tema).
  */
 export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; ring: number | null; color?: string; locale?: Locale }) {
   const pct = meter.percent;
-  // Marca mínima de lo viejo para el medidor marcado individualmente (`meter.stale`,
-  // el del camino mixto): no puede verse como actual. El informe entero viejo lleva su
-  // propia pastilla en la cabecera y su marca en el resumen. La presentación completa
-  // (atenuación, serie) es de otra porción.
+  // Marca de lo viejo para el medidor marcado individualmente (`meter.stale`, el del
+  // camino mixto): no puede verse como actual. El informe entero viejo lleva su
+  // propia pastilla en la cabecera y su marca en el resumen. La atenuación es la
+  // pintura de (c): la barra y el número se apagan por clase del tema.
   const stale = meter.stale === true;
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
@@ -26,7 +27,7 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
 
   return (
     <div
-      className="q-meter"
+      className={`q-meter${stale ? ' q-meter--stale' : ''}`}
       data-ring={ring ?? undefined}
       data-level={levelFor(pct)}
       data-stale={stale ? 'true' : undefined}

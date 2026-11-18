@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Locale, UsageReport } from '../lib/types';
-import { formatMoney, currentMeters } from '../lib/format';
+import { formatMoney, currentMeters, isStaleSpend, staleMark } from '../lib/format';
 import { t } from '../i18n';
 import { MeterBar } from './MeterBar';
 import { popupMeterColor } from '../lib/popup-preferences';
@@ -57,6 +57,20 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
   const tone = STATUS_TONE[report.status];
   // Los medidores vigentes con porcentaje: la lista que comparte con el orbe y el detalle.
   const currentRings = currentMeters(report).filter((m) => m.percent != null);
+  // El gasto conservado (informe entero viejo) no se presenta como una cifra actual:
+  // se ve, pero marcado como viejo y con la hora de su última lectura. La marca es la
+  // misma que la de los medidores viejos (un solo texto: `staleMark`).
+  const staleSpend = isStaleSpend(report);
+  // La marca de lo viejo para el gasto conservado: el importe y su presupuesto son
+  // de la misma lectura vieja, así que los dos se marcan igual.
+  const spendMark = staleSpend ? (
+    <span className="eg-stat__delta">
+      {/* Mismas marcas que los medidores viejos (el CSS no cambia). */}
+      <span className="eg-status eg-status--neutral q-spend__stale" title={t(locale, 'details.staleChipTitle')}>
+        {staleMark(report.fetchedAt, locale)}
+      </span>
+    </span>
+  ) : null;
   return (
     <div className="q-card" data-status={report.status} data-provider={report.id}>
       <div className="eg-module-card__head">
@@ -102,11 +116,13 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
           <div className="eg-stat eg-stat--sm">
             <span className="eg-stat__label">{spend.periodLabel}</span>
             <span className="eg-stat__value">{formatMoney(spend.amount, spend.currency)}</span>
+            {spendMark}
           </div>
           {spend.budget != null && spend.budget > 0 && (
             <div className="eg-stat eg-stat--sm">
               <span className="eg-stat__label">{t(locale, 'details.budget')}</span>
               <span className="eg-stat__value">{formatMoney(spend.budget, spend.currency)}</span>
+              {spendMark}
             </div>
           )}
         </div>

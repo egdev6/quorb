@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { formatCompact, formatMoney, formatResetIn, shortLabel, currentMeters, isStaleSpend } from '../lib/format';
+import { formatCompact, formatMoney, formatResetIn, shortLabel, currentMeters, isStaleMeter, isStaleSpend, staleMark } from '../lib/format';
 import { meterPace, spendPace, type Pace } from '../lib/pace';
 import type { Locale, Sample, UsageReport } from '../lib/types';
 import { intlLocale, t } from '../i18n';
@@ -12,6 +12,9 @@ const RANGES = [
   { hours: 24 * 7, key: 'details.range7d' },
   { hours: 24 * 30, key: 'details.range30d' },
 ] as const;
+
+/** Tono de la serie de un medidor viejo: no es un anillo de la leyenda. */
+const STALE_SERIES_COLOR = 'var(--color-fg-muted)';
 
 function untilText(d: Date, locale: Locale): string {
   return formatResetIn(d.toISOString(), new Date(), locale) ?? '';
@@ -108,20 +111,24 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
     };
   }, [report.id, hours, report.fetchedAt]);
 
-  // El ritmo es del estado de ahora: sólo los medidores vigentes. Los que se conservan
-  // de un ciclo anterior describen el pasado, no el estado de ahora.
+  // Dos listas: el ritmo es del estado de ahora (sólo medidores vigentes) y la
+  // serie del historial conserva también la del medidor viejo: la historia es
+  // información real aunque el dato ya no sea vigente.
   const currentRingMeters = currentMeters(report).filter((m) => m.percent != null);
+  const historyMeters = report.meters.filter((m) => m.percent != null);
   const paces = currentRingMeters.map((m, i) => ({ m, color: popupMeterColor(report, m, i), pace: meterPace(report, m) }));
-  // El gasto conservado es viejo si el informe entero lo es: se puede ver, pero nunca
-  // proyectado («a este ritmo» es, por definición, «ahora»).
+  // El gasto conservado es viejo si el informe entero lo es: se puede ver, pero
+  // nunca proyectado («a este ritmo» es, por definición, «ahora») y siempre marcado.
   const staleSpend = isStaleSpend(report);
   const sp = report.spend && !staleSpend ? spendPace(report.spend) : null;
 
   const series = useMemo(() => {
     if (!samples) return { pct: [], spend: [] as [number, number][] };
     // History includes every percentage quota, not just the gauge's visible rings.
-    const pct = currentRingMeters.map((m, i) => ({
-      color: popupMeterColor(report, m, i),
+    const pct = historyMeters.map((m) => ({
+      // El medidor viejo no aporta índice de anillo: su serie se dibuja aparte,
+      // en un tono neutro, para no competir con la de los vigentes.
+      color: isStaleMeter(report, m) ? STALE_SERIES_COLOR : popupMeterColor(report, m, currentRingMeters.indexOf(m)),
       points: samples.filter((s) => s.l === m.id || s.l === m.label).map((s) => [s.t, s.v] as [number, number]),
     }));
     const spend = samples.filter((s) => s.l === 'spend').map((s) => [s.t, s.v] as [number, number]);
@@ -177,6 +184,21 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
                   <PaceBar pace={pace} color={color} locale={locale} />
                 </div>
               ),
+          )}
+          {staleSpend && report.spend && (
+            <div className="pace" data-status="stale">
+              <span className="pace__row">
+                <span className="pace__label">{t(locale, 'details.spendLabel')}</span>
+                <span className="pace__txt">
+                  {formatMoney(report.spend.amount, report.spend.currency)}
+                  {/* Mismas marcas que los medidores viejos (el CSS no cambia): un solo
+                      texto para la marca de lo viejo, con la hora de su última lectura. */}
+                  <span className="eg-status eg-status--neutral q-spend__stale" title={t(locale, 'details.staleChipTitle')}>
+                    {staleMark(report.fetchedAt, locale)}
+                  </span>
+                </span>
+              </span>
+            </div>
           )}
           {sp && report.spend && (
             <div className="pace" data-status={sp.status}>

@@ -646,3 +646,50 @@ describe('la hora de la última lectura es la local (S54)', () => {
   });
 });
 
+// F3: el resumen que se copia no afirma el estado viejo como vigente.
+describe('the copied summary never claims the old state is current (F3)', () => {
+  const now = new Date('2026-11-13T08:00:00Z');
+  // La hora de la última lectura se muestra en la hora local de quien mira: el
+  // `readAt` se arma con la hora local para que el test no dependa de la zona de la
+  // máquina (el instante sigue siendo UTC). La marca de lo viejo es UN solo texto
+  // («caché · leído a las HH:MM»), el de `staleMark`.
+  const readAt = new Date(2026, 10, 12, 8, 0).toISOString();
+
+  it('marks the stale meters with the cached chip and their reading time', () => {
+    const report: UsageReport = {
+      ...base,
+      meters: [
+        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null },
+        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null, stale: true, readAt },
+      ],
+    };
+    const lines = reportSummary(report, now, 'es').split('\n');
+    const fresh = lines.find((l) => l.includes('Peticiones'))!;
+    const old = lines.find((l) => l.includes('deepseek-v4-flash'))!;
+    // El medidor viejo va marcado, con la hora de su última lectura.
+    expect(old).toContain('caché');
+    expect(old).toContain('leído a las 08:00');
+    // El vigente, no.
+    expect(fresh).not.toContain('caché');
+  });
+
+  it('marks the meters of a whole kept report as cached', () => {
+    // Informe entero conservado: sus medidores son viejos aunque no lleven la marca.
+    const report: UsageReport = { ...base, stale: true, fetchedAt: readAt };
+    const summary = reportSummary(report, now, 'es');
+    expect(summary).toContain('caché');
+    expect(summary).toContain('leído a las 08:00');
+  });
+
+  it('marks the kept spend as cached', () => {
+    const report: UsageReport = {
+      ...base,
+      stale: true,
+      fetchedAt: readAt,
+      spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 },
+    };
+    const line = reportSummary(report, now, 'es').split('\n').find((l) => l.includes('Diciembre'))!;
+    expect(line).toContain('caché');
+    expect(line).toContain('leído a las 08:00');
+  });
+});

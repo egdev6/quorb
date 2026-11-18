@@ -273,8 +273,10 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
   for (const m of r.meters) {
     const reset = formatResetIn(m.resetsAt, now, locale);
     // Lo viejo va marcado: un número viejo no puede salir junto a los frescos con
-    // apariencia de actual.
-    const mark = isStaleMeter(r, m) ? staleMark(m.readAt ?? null, locale) : null;
+    // apariencia de actual. La fecha es la de la lectura del medidor; si el informe
+    // entero es el conservado (y el medidor no trae la suya), la del informe es la
+    // de su última lectura.
+    const mark = isStaleMeter(r, m) ? staleMark(m.readAt ?? (r.stale ? r.fetchedAt : null), locale) : null;
     const value =
       m.percent != null
         ? `${Math.round(m.percent)} %`
@@ -283,7 +285,12 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
           : '—';
     lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}${mark ? ` · ${mark}` : ''}`);
   }
-  if (r.spend) lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`);
+  // El gasto conservado (informe entero viejo) se ve, pero marcado como viejo: no
+  // es una cifra de ahora y su fecha es la de la lectura de la que viene.
+  if (r.spend) {
+    const mark = isStaleSpend(r) ? staleMark(r.fetchedAt, locale) : null;
+    lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}${mark ? ` (${mark})` : ''}`);
+  }
   if (r.message && r.status !== 'ok') lines.push(`· ${r.message}`);
   return lines.join('\n');
 }
