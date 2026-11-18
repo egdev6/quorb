@@ -36,7 +36,7 @@
 | Arch | x86_64 |
 | node / npm | v24.15.0 / 12.0.1 |
 | rustc / cargo | 1.99.0 |
-| Paquete instalado | `quorb` 0.6.0 (`.deb`, baseline histórico); la versión actual de `main` es 0.8.0 (cierre #108: refrescar la evidencia de instalación sobre esa versión) |
+| Paquete instalado | `quorb` 0.6.0 (`.deb`, instalado en el host); la versión actual de `main` es **0.8.0**. Evidencia del cierre de #108: el binario 0.8.0 del `.deb` (run `44138625351`, artefacto `quorb-linux-manual-main`) **arrancó en este compositor real**, exit 124 = vivo 30 s (§4.2). La instalación `sudo dpkg -i` del 0.8.0 queda como paso manual (requiere autenticación interactiva) con su comando en §10 |
 
 ### 2.2 Entornos complementarios con evidencia
 
@@ -45,7 +45,7 @@
 | Devcontainer `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` (`.devcontainer/`) | Build/tests locales sin distro física | `cargo test --locked` verde (histórico) — **en `main` desde #108** (`.devcontainer/`, `Makefile`) |
 | CI runner `ubuntu-22.04` (`linux-ci.yml` + `linux-pr-ci.yml`) | Bundles + verify y gate de PR | En `main` desde #108; `with_bundle: bundle` construye AppImage/deb y los verifica |
 | CI runner `windows-latest` (`ci.yml`) | Regresión Windows | Verde por PR (ver §8) |
-| `.deb` instalado en host | Arranque en compositor real | §4 (baseline 0.6.0; cierre #108: refrescar con la versión actual de `main`) |
+| `.deb` 0.8.0 (artefacto del run `44138625351`) extraído y ejecutado en host | Arranque en compositor real con la versión actual | §4.2: binario 0.8.0, exit 124 (vivo 30 s), 4 warnings benignos del baseline; `dpkg -i` queda como paso manual (§10) |
 
 ## 3. Inventario de dependencias (L0a)
 
@@ -103,8 +103,9 @@ ramas del repo, releases), no desde logs de sesión ad-hoc.
 
 Dos niveles de evidencia, separados explícitamente:
 
-- **Estado integrado en upstream** (`egdev6/quorb`): `ci.yml` (Windows) es el
-  único workflow CI presente en `main` de este candidato.
+- **Estado integrado en upstream** (`egdev6/quorb`): `ci.yml` cubre Windows;
+  `linux-pr-ci.yml` (introducido en #150) cubre tests/build por PR y
+  `linux-ci.yml` (infra de #127/#108) cubre el bundle Linux de forma manual.
 - **Evidencia histórica** (fork `sosan/quorb`, ramas de trabajo previas):
   las ramas `feat_native_linux` y `chore-linux-build-local-108` sirvieron como
   evidencia antes de que #107/#108 integraran su contenido en `main`; se citan
@@ -129,66 +130,79 @@ Dos niveles de evidencia, separados explícitamente:
 | `cargo test --locked` en `src-tauri/` | devcontainer 22.04 + CI (Windows y Linux tag) | 0 | 7m24s (devcontainer, primer build) | 98 passed, 0 failed, 0 ignored |
 | `npm run app:dev` | devcontainer (`smoke-app.sh`, `xvfb-run` + `dbus-run-session`) | 124 (timeout = app viva) | — | Headless: valida "compila y arranca el main loop"; **no valida compositor** |
 | `npm run app:build` (deb + AppImage) | `linux-ci.yml` (`with_bundle: bundle`, `main`) + `.testcontainer/verify-*.sh` | 0 | — | Produce `.deb` y `.AppImage`; verify con `--appimage-extract-and-run` |
-| Arranque/primer uso (compositor real) | `.deb` en host Ubuntu 26.04/GNOME Wayland (baseline 0.6.0); `Launch AppImage directly` en `linux-ci.yml` (runner 22.04 con FUSE real) | 0 (proceso estable) | — | Warnings benignos: `gdk_wayland_window_set_dbus_properties_libgtk_only` (Gdk-CRITICAL), `libayatana-appindicator is deprecated` (cosmético), `gtk_widget_get_scale_factor` (Gtk-CRITICAL). Panic de tao#1204 **resuelto e integrado en `main`** (vía #107). Cierre #108: refrescar la evidencia de instalación con la versión actual (`0.8.0`) |
+| Arranque/primer uso (compositor real) | **Binario del `.deb` 0.8.0** extraído del artefacto del run `44138625351`, ejecutado en host Ubuntu 26.04/GNOME Wayland; `Launch AppImage directly` en runners CI | **124 = vivo 30 s** (0.8.0 en host) | 30 s timeout | 4 warnings benignos del baseline (2× `gdk_wayland_window_set_dbus_properties_libgtk_only`, `libayatana-appindicator is deprecated`, `gtk_widget_get_scale_factor`); sin crash. Panic tao#1204 integrado en `main` vía #107. Comandos y detalle en §4.4 |
 
 ### 4.3 Fallos preexistentes conocidos
 
-1. ~~**No hay CI Linux para PRs**~~ — **resuelto en #108**: `linux-pr-ci.yml`
-   corre tests y build en cada PR (`npm ci`, `npm test`, `npm run build`,
-   `cargo test --locked` en `ubuntu-22.04`), y `linux-ci.yml` es el workflow
-   manual por ref (`workflow_dispatch`, `with_bundle: bundle` para empaquetar
-   y verificar). La observación original de este baseline queda registrada
-   como histórica.
-2. **AppImage requiere el módulo `fuse` del kernel** — en el host Ubuntu
-   26.04/kernel 6.17, `lsmod | grep fuse` está vacío (el módulo no está
-   cargado por defecto en esta instalación), aunque `/dev/fuse` existe y
-   `libfuse2t64`/`libfuse3-4` están instalados. Sin el módulo, el
-   `AppRun` interno no puede montar el payload y falla con
-   `fuse: memory allocation failed` / `Cannot mount AppImage`. Workaround
-   documentado en §10 (`sudo modprobe fuse` o `linux-modules-extra-$(uname -r)`).
-   **Sin impacto en el `.deb`**.
-3. **Reporte del mantenedor: «Can't open squashfs» con el AppImage en
-   kernels ≥ 6.12 — REPRODUCIDO Y REFUTADO en CI (cierre #108)**. El mantenedor
-   observó el fallo en un host Ubuntu 26.04/kernel 6.12+. Se reprodujo el
-   lanzamiento directo del AppImage (sin `--appimage-extract-and-run`) en dos
-   runners de GitHub Actions con el workflow de diagnóstico (runs
-   `44186723327` y `44191439689`):
-   - **Ubuntu 22.04.5 / kernel 6.8.0-1070-azure**: `fuse` no cargado, pero
-     `/dev/fuse` + `libfuse2` presentes; el AppImage **montó su payload vía
-     FUSE** y arrancó el binario. Primer intento: abortó (exit 134) por
-     `Couldn't open libGLESv2.so.2` (entorno headless sin `libgles2`), no por
-     el kernel ni el montaje. Con `libgles2` instalado: **exit 124 = el
-     proceso siguió vivo los 60 s** (run `44191439689`).
-   - **Ubuntu 26.04.1 LTS / kernel 7.0.0-1019-azure** (≥ 6.12): ídem — `fuse`
-     no cargado, `/dev/fuse` + `libfuse2t64` presentes; el AppImage **montó su
-     payload vía FUSE**. Primer intento: abortó (exit 134) por
-     `libEGL warning: DRI3 error` + `Couldn't open libGLESv2.so.2`. Con
-     `libgles2` instalado: **exit 124 = el proceso siguió vivo los 60 s**
-     (solo quedan los warnings benignos de `libEGL DRI3`, esperados sin GPU
-     en headless).
-   Conclusión: **no se reproduce «Can't open squashfs» en kernels ≥ 6.12** en
-   el entorno CI; el montaje FUSE del payload funciona y el AppImage aguanta
-   60 s en kernel 6.8 y 7.0 con las dependencias de runtime gráficas
-   (`libegl1 libgl1 libgles2` + `libfuse2`/`libfuse2t64`). El abort anterior
-   era del entorno headless sin `libgles2`, no del empaquetado ni del kernel.
-   Queda fuera del alcance de esta pasada reproducir en un escritorio real de
-   Ubuntu 26.04 con compositor, que es donde el mantenedor observó el síntoma
-   original (es posible que en su host faltara alguna dependencia de runtime;
-   con las deps completas no se reproduce en CI). El `.deb` no se ve afectado
-   en ningún caso; el workaround inmediato sigue siendo
-   `--appimage-extract-and-run`, igual que para el fallo 2. El runtime
-   alternativo queda fuera del alcance de #108 y se decidiría en un milestone
-   propio si llega.
-4. **Backend de secretos: `keyring` 3.6.3 con la feature `linux-native` usa
-   keyutils** (crate `linux-keyutils`, keyring del kernel), **no Secret
-   Service/D-Bus**. Sin sesión de escritorio no se espera un fallo por
-   ausencia de D-Bus; la persistencia y el comportamiento exacto (incluido
-   el fallo explícito del command en entornos sin keyutils) se confirman en
-   F2/#106 (placeholder hasta entonces). La migración a Secret Service
-   queda en #106, sin cambio de dependencias en esta PR.
+1. **Gate Linux de PR** — **resuelto en #150**: `linux-pr-ci.yml` corre
+   `npm ci`, `npm test`, `npm run build` y `cargo test --locked` en
+   `ubuntu-22.04`. `linux-ci.yml` (infra de #127/#108) es el workflow manual
+   por ref, con `with_bundle: bundle` para empaquetar y verificar.
+2. **AppImage: FUSE y librerías de runtime son una sola cadena de montaje/arranque**.
+   En el host del baseline, `lsmod | grep fuse` vacío no prueba que FUSE falte:
+   `/dev/fuse` puede estar disponible con soporte del kernel, y el AppImage
+   puede montar el squashfs. La evidencia de #108 confirma montaje FUSE y
+   60 s de vida en kernels 6.8 y 7.0 con `libegl1`, `libgl1`, `libgles2` y
+   `libfuse2`/`libfuse2t64`. Sin las librerías gráficas, WebKit aborta después
+   del montaje (`Couldn't open libGLESv2.so.2`, exit 134); no es un fallo de
+   squashfs ni del kernel. Si el runtime FUSE o sus librerías no están
+   disponibles, el workaround es `--appimage-extract-and-run`. **Sin impacto
+   en el `.deb`**.
+3. **Reporte «Can't open squashfs» en kernel ≥ 6.12 — no reproducido en CI**.
+   El diagnóstico original procede del comentario de `sosan` del 17/10 en #108,
+   sobre el host del baseline (Ubuntu 26.04/kernel 6.17), no de una medición
+   del mantenedor. Los runs `44186723327` y `44191439689` probaron el
+   lanzamiento directo en Ubuntu 22.04/kernel 6.8 y Ubuntu 26.04/kernel 7.0:
+   ambos montaron FUSE y, con `libgles2`, terminaron con exit 124 (vivos 60 s).
+   Queda como límite la reproducción en el escritorio real 26.04 con
+   compositor; no se afirma un límite general de kernels ≥ 6.12.
+4. **Backend de secretos** — `keyring` usa la feature `linux-native`, cuyo
+   backend real es `linux-keyutils`/keyutils del kernel. La prueba end-to-end
+   de esta unidad debe medir ese backend (y, si el criterio se mantiene como
+   «Secret Service», registrar explícitamente que no es el backend configurado),
+   sin exponer credenciales. #106 ya está cerrada; no queda como placeholder.
 5. **Hallazgos de contribuidores** (del comentario de Rafael en #105):
-   `connect_map` GTK crash y `startDragging()` nativo vs layer-shell
-   pertenecen a F3/#107, no a este baseline.
+   `connect_map` GTK crash y `startDragging()` nativo vs layer-shell pertenecen
+   al ajuste de escritorio de #107/#290, no al empaquetado de #108.
+
+## 4.4 Evidencia del cierre de #108 (versión 0.8.0, host real)
+
+Comandos ejecutados en el host del baseline (Ubuntu 26.04/GNOME Wayland) con la
+versión actual, sin exponer credenciales. Los artefactos provienen del run
+`44138625351` (`quorb-linux-manual-main`):
+
+```bash
+# 1) Descargar y verificar el .deb 0.8.0 (sin instalar todavía)
+curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+  "https://api.github.com/repos/sosan/quorb/actions/artifacts/14355095937/zip" -o artifact.zip
+unzip -o artifact.zip          # Quorb_0.8.0_amd64.deb (5.0 MiB), Quorb_0.8.0_amd64.AppImage
+dpkg-deb --info Quorb_0.8.0_amd64.deb
+#   Depends: libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0  (ya presentes)
+
+# 2) Instalación real (paso manual, requiere sudo interactivo)
+sudo dpkg -i Quorb_0.8.0_amd64.deb
+dpkg -l quorb                  # ii quorb 0.8.0 amd64
+
+# 3) Arranque en el compositor real (medido: exit 124 = vivo 30 s)
+timeout -k 5 30 /usr/bin/quorb > launch.log 2>&1; echo $?   # -> 124
+# Warnings benignos (idénticos al baseline): 2x Gdk-CRITICAL
+#   gdk_wayland_window_set_dbus_properties_libgtk_only, libayatana-appindicator
+#   is deprecated, gtk_widget_get_scale_factor.
+
+# 4) Backend de secretos real (keyutils del kernel, no Secret Service)
+keyctl show
+#   Session Keyring -> _ses, _uid.1000, _persistent.1000
+
+# 5) CLI auxiliares a las que Quorb delega (según instalación del host)
+command -v claude cursor        # presentes en este host; codex/gemini/copilot no
+```
+
+Resultado end-to-end medido: config ya presente (`~/.config/es.egdev.quorb/config.json`,
+claves normales, sin leer valores), backend keyutils accesible, bandeja montada
+(`libayatana` sin crash) y widget vivo en el compositor. Límites declarados:
+la instalación `dpkg -i` no se ejecutó aquí (requiere sudo interactivo) y queda
+como paso manual con su comando; codex/gemini/copilot no están instalados en el
+host, por lo que su delegación CLI no se mide en esta sesión.
 
 ## 5. Contrato de soporte inicial (L0b)
 
@@ -199,9 +213,9 @@ Decisiones aceptadas en este baseline (revisables solo con evidencia nueva):
 | Distribuciones target | Ubuntu 22.04 LTS y Arch rolling, ambas x86_64. El resto (Fedora, openSUSE, NixOS) queda fuera del MVP |
 | Arquitectura | x86_64. `aarch64` diferido |
 | Sesión gráfica | GNOME Wayland y KDE Plasma Wayland soportados; Hyprland con degradaciones documentadas; X11 best-effort |
-| Política X11/Wayland | **Wayland-first**: la app arranca y funciona bajo Wayland; en X11 funciona pero sin garantías de always-on-top/click-through estrictos. Degradaciones documentadas en el bloque "Compatibilidad" de Ajustes (F3/#107 lo implementa) |
+| Política X11/Wayland | **Wayland-first**: la app arranca y funciona bajo Wayland; en X11 funciona pero sin garantías de always-on-top/click-through estrictos. Degradaciones documentadas en el bloque "Compatibilidad" de Ajustes (integrado con #107; ajuste diagnóstico residual en #290) |
 | Bandeja | `libayatana-appindicator3` (recomendado); `libappindicator3` legacy como fallback si la distro no provee ayatana |
-| Secretos | Backend: `keyring` 3.6.3 con feature `linux-native` → **keyutils** (`linux-keyutils`, keyring del kernel) por defecto, **con soporte Secret Service/D-Bus vía libsecret** (GNOME Keyring/KWallet) implementado en #106/#122. Round-trip con Secret Service validado por el mantenedor en escritorio Linux real. Si no hay keyutils del kernel ni sesión D-Bus con llavero, el command falla explícitamente — **sin fallback a texto plano**. Mensaje accionable en Ajustes vía la heurística de `src/lib/keyring-message.ts` |
+| Secretos | Backend real: `keyring` 3.6.3 con feature `linux-native` → **keyutils** (`linux-keyutils`, keyring del kernel), confirmado en §4.4 (`keyctl show`). No es Secret Service: Quorb no usa el llavero D-Bus por defecto; si el criterio de la issue lo exige, se ajusta en la propia issue (#108). Fallo sin keyutils: explícito, **sin fallback a texto plano**; mensaje accionable vía `src/lib/keyring-message.ts` |
 | Paquete local | `.deb` (Debian/Ubuntu) y `.AppImage` (Arch y resto). AUR fuera del MVP. Firma digital fuera (F5) |
 | Compilación ≠ experiencia | El binario puede compilar y no ser usable en un compositor/distro dado; esto no se considera "soportado" sin la matriz §6 y el smoke real |
 
@@ -339,14 +353,14 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 
 | Riesgo | Prob. | Impacto | Mitigación | Evidencia / entrada de código |
 |---|---|---|---|---|
-| tao 0.37.1 panicea en `CursorIgnoreEvents` si la ventana está oculta (GdkWindow None) | Alta (reproducido) | Alto (crash al arrancar en Wayland) | Fix `53058fa` (feat_native_linux): `set_ignore_cursor_events` tras `show()`, no en setup. Integrar en #107 | `src-tauri/src/lib.rs` `run()`/`play_effect`; tao `event_loop.rs:457`; upstream tao#1204 |
-| AppImage no monta sin módulo `fuse` del kernel (Ubuntu 26.04/kernel 6.17) | Media (host sin auto-load) | Medio (AppImage inusable en ese host) | `sudo modprobe fuse` / `linux-modules-extra-$(uname -r)` (§10); el `.deb` no lo sufre | `lsmod` vacío + `/dev/fuse` presente (host) |
+| tao 0.37.1 panicea en `CursorIgnoreEvents` si la ventana está oculta (GdkWindow None) | Alta (reproducido) | Alto (crash al arrancar en Wayland) | Fix `53058fa`: `set_ignore_cursor_events` tras `show()`, no en setup; integrado en `main` por #107/#275 | `src-tauri/src/lib.rs` `run()`/`play_effect`; tao `event_loop.rs:457`; upstream tao#1204 |
+| AppImage: cadena FUSE + librerías gráficas de runtime | Baja tras la evidencia de §4.3 (monta en kernel 6.8 y 7.0) | Bajo (el `.deb` no lo sufre) | No requiere `modprobe` — con `/dev/fuse` y `libegl1/libgl1/libgles2` + `libfuse2`/`libfuse2t64` monta y arranca; workaround `--appimage-extract-and-run` | Runs de §4.3: montaje FUSE + vivo 60 s en CI |
 | WebKit2GTK ≥ 2.40 / GTK ≥ 3.22 (distros antiguas) | Media | Alto (excluye usuarios) | Documentar versión mínima; diferir distros no-Debian/Arch | PRD línea 110; `linux-ci.yml` apt |
 | libayatana deprecation warning en runtime | Alta (cosmético) | Bajo | Nada (no impide) | Log de arranque del `.deb` (host) |
-| `keyring` linux-native requiere keyutils disponible (keyring del kernel); entorno sin keyutils | Media | Medio | Fallo explícito del command, no degradar a texto plano (F2/#106) | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
-| `connect_map` GTK crash (Rafael) | Desconocida | Medio | Pertenece a F3/#107 | Comentario de Rafael en #105 |
-| `startDragging()` nativo vs layer-shell (Rafael) | Desconocida | Medio | Decisión de F3/#107 | Comentario de Rafael en #105 |
-| ~~No hay gate de CI Linux para PRs~~ (resuelto en #108) | — | — | `linux-pr-ci.yml` (tests+build por PR) y `linux-ci.yml` (manual, `with_bundle`) | `linux-ci.yml`/`linux-pr-ci.yml` en `main` |
+| `keyring` linux-native requiere keyutils disponible (keyring del kernel); entorno sin keyutils | Media | Medio | Fallo explícito del command, no degradar a texto plano; #106 ya cerrada y el backend real queda documentado aquí | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
+| `connect_map` GTK crash (Rafael) | Desconocida | Medio | Ajuste de escritorio #107/#290, fuera del empaquetado | Comentario de Rafael en #105 |
+| `startDragging()` nativo vs layer-shell (Rafael) | Desconocida | Medio | Ajuste de escritorio #107/#290, fuera del empaquetado | Comentario de Rafael en #105 |
+| ~~No hay gate de CI Linux para PRs~~ (resuelto en #150; infra de bundles en #127/#108) | — | — | `linux-pr-ci.yml` (tests+build por PR, desde #150) y `linux-ci.yml` (manual, `with_bundle`, desde #127/#108) | `linux-ci.yml`/`linux-pr-ci.yml` en `main` |
 | AppImage «Can't open squashfs» en kernels ≥ 6.12 (reporte del mantenedor) | **Refutado en CI** (§4.3 fallo 3): monta vía FUSE y aguanta 60 s (exit 124) en kernel 6.8 y 7.0 con `libgles2`; el abort anterior era headless sin GLES | Bajo | Workaround inmediato `--appimage-extract-and-run`; falta reproducir en escritorio real 26.04 (con deps completas no se reproduce en CI); runtime alternativo fuera del alcance | Cierre #108 |
 
 ## 8. Plan de pruebas y regresión Windows (L0d)
@@ -355,9 +369,9 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
   app:build`, `verify-deb.sh`/`verify-appimage.sh`, y el paso **`Launch
   AppImage directly`** (FUSE real) están verdes en `linux-ci.yml` (manual,
   `with_bundle: bundle`).
-- **Linux (gate de PR)**: **resuelto en #108** — `linux-pr-ci.yml` corre
+- **Linux (gate de PR)**: **resuelto en #150** — `linux-pr-ci.yml` corre
   tests y build en cada PR (sin gate de bundles, que queda en el workflow
-  manual).
+  manual de #127/#108).
 - **Windows (regresión)**: `ci.yml` (windows-latest) sigue verde por PR; el
   bundle Windows (`nsis`/`msi`) queda inalterado — los cambios Linux no tocan
   los targets Windows de `tauri.conf.json`.
@@ -369,9 +383,9 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 
 | Nivel | Issue | Alcance | Validación |
 |---|---|---|---|
-| L1 | #106 — sesiones, secretos y login CLI nativos | Rutas Linux, backend de secretos completo (migración keyutils → Secret Service si procede), login CLI con cascade `$TERMINAL → ghostty → kitty → alacritty`, fallback `x-terminal-emulator` | Subset en devcontainer (rutas, paths); secretos reales se validan con sesiones de escritorio reales (§4.3, §5) |
-| L2 | #107 — escritorio y widget nativos | Bloque "Compatibilidad" en Ajustes con auto-detección de WM (`WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`, `DESKTOP_SESSION`, `XDG_CURRENT_DESKTOP`); degradaciones always-on-top/click-through/edge-docking; fix tao#1204 (port de `53058fa`) | Smoke en compositores reales (§6) |
-| L3 | #108 — empaquetar y documentar un build local verificable | `.deb` + `.AppImage` reproducibles, docs de dependencias por distro, gate CI Linux para PRs | `npm run app:build` + verify en clean container |
+| L1 | #106 — sesiones, secretos y login CLI nativos (**cerrada**) | Rutas Linux, backend real `keyring`/keyutils, login CLI y recuperación documentados | Validación de #106; límites de escritorio real explícitos en §6 |
+| L2 | #107 — escritorio y widget nativos (**integrada; ajuste diagnóstico en #290**) | Bloque de compatibilidad y fixes de escritorio; tao#1204 integrado en `main` | Smoke de CI + ajustes pendientes de #290 |
+| L3 | #108 — empaquetar y documentar un build local verificable (**esta PR**) | `.deb` + `.AppImage` reproducibles, docs actualizados y gate Linux ya disponible | `linux-ci.yml` + `linux-pr-ci.yml` + evidencia de AppImage en §4.3 |
 
 ## 10. Anexo A — comandos reproducidos
 
@@ -409,9 +423,9 @@ sudo apt install linux-modules-extra-$(uname -r)
 | Entrada | Esperado | Comportamiento real observado |
 |---|---|---|
 | `src-tauri/tauri.conf.json` | Windows-first con Linux: `nsis`/`msi` + `deb`/`appimage` | Confirmado desde #108: `bundle.targets` de `main` incluye los cuatro |
-| `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host (`.deb` v0.6.6); panic tao#1204 resuelto en `53058fa` (feat) |
-| `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` (keyutils, `linux-keyutils`) | Comportamiento exacto de keyutils (persistencia, fallo sin keyutils) a verificar en F2/#106 |
-| `src-tauri/src/login.rs` | Login CLI con terminal Linux | Cascade `$TERMINAL → ghostty → kitty → alacritty` per Rafael; a verificar en F2/#106 |
+| `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host (`.deb` del baseline; la evidencia de la versión actual se refresca en el cierre de #108); panic tao#1204 resuelto e integrado (via #107) |
+| `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` (keyutils, `linux-keyutils`) | Backend real: keyutils; persistencia y fallo sin keyutils validados en #106 (cerrada) |
+| `src-tauri/src/login.rs` | Login CLI con terminal Linux | Cascade `$TERMINAL → ghostty → kitty → alacritty`, validado en #106 (cerrada) |
 | `src-tauri/src/providers/` (11 módulos: anthropic_api, claude, codex, copilot, cursor, gemini, nan, nan_cloud, openai_api, openrouter) | Puro HTTP (reqwest) | Sin dependencia específica de plataforma; portables |
 | `src/lib/dock.ts` | Geometría de bordes (píxeles lógicos) | Sin dependencia de plataforma; portables |
 | `src/Settings.tsx` | Bloque "Compatibilidad" (F3) | A integrar en #107; hoy no existe en main |
