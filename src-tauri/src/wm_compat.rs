@@ -415,11 +415,12 @@ impl BackendDependent {
 }
 
 /// Arranque automático (#290): no hay un inicio de sesión real medido, así
-/// que nunca es `ok`. En Wayland, el plugin escribe un `.desktop` sin
-/// `GDK_BACKEND` y el gestor de sesión lo ejecuta tal cual.
-const AUTOSTART_NOTE_X11: &str =
+/// que nunca es `ok`. La nota de Wayland es condicional porque solo se midió
+/// en KDE, cuyo gestor de sesión ejecuta las entradas XDG autostart; Hyprland
+/// o sway no lo hacen sin uwsm, dex o el generador de systemd.
+const AUTOSTART_NOTE_NON_WAYLAND: &str =
     "Arranque vía XDG autostart (.desktop) sin verificar en un inicio de sesión real.";
-const AUTOSTART_NOTE_WAYLAND: &str = "El arranque automático lanza Quorb en Wayland nativo (el .desktop no lleva GDK_BACKEND): no hay posicionamiento de ventana aunque Quorb se use normalmente con GDK_BACKEND=x11.";
+const AUTOSTART_NOTE_WAYLAND: &str = "Si el gestor de sesión ejecuta la entrada XDG autostart, Quorb arranca en Wayland nativo (el .desktop no lleva GDK_BACKEND): no hay posicionamiento de ventana aunque Quorb se use normalmente con GDK_BACKEND=x11.";
 
 const AOT_HYPRLAND_ADVISED: &str =
     "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide».";
@@ -478,7 +479,7 @@ fn desktop_surfaces_by_session(session: &Session, tray: TrayDiagnostics) -> Desk
             click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "ok", note: "El icono de bandeja se muestra en los gestores que la evalúan." },
             global_shortcuts: SurfaceStatus { state: "ok", note: "Los atajos globales funcionan desde cualquier app." },
-            autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_X11 },
+            autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_NON_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "Requiere composición activa (GNOME, KDE y XFCE la traen)." },
             ..Default::default()
@@ -1763,14 +1764,20 @@ mod tests {
     }
 
     /// #290: el arranque automático nunca es `ok` sin evidencia, en
-    /// ninguna sesión ni backend; en Wayland la nota dice que arranca nativo.
+    /// ninguna sesión ni backend. En Wayland la nota solo afirma lo medido:
+    /// arranca en nativo si el gestor de sesión ejecuta la entrada, cosa que
+    /// Hyprland o sway no hacen por sí solos.
     #[test]
-    fn autostart_is_never_ok_and_wayland_note_says_native_launch() {
+    fn autostart_is_never_ok_and_wayland_note_is_conditional() {
         walk_matrix(|case, label, source, info| {
             let autostart = &info.surfaces.autostart;
             assert_eq!(autostart.state, "limited", "{label} {source}");
             let expected: &[&str] = if case.wayland {
-                &["Wayland nativo", "GDK_BACKEND"]
+                &[
+                    "Si el gestor de sesión ejecuta",
+                    "Wayland nativo",
+                    "GDK_BACKEND",
+                ]
             } else {
                 &["sin verificar"]
             };
