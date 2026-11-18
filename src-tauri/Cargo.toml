@@ -38,6 +38,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Windows Credential Manager (y Keychain / Secret Service en otros SO)
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
 
+tauri-plugin-nexo = { git = "https://github.com/egdev6/tauri-plugin-nexo", tag = "v0.1.0" }
+
 # Solo Windows: registro (PATH fresco) y Job Objects (contención del árbol de procesos).
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
