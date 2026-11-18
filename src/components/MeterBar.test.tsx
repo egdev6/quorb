@@ -17,7 +17,11 @@ describe('MeterBar marca lo viejo (B2)', () => {
     resetsAt: null,
     windowSeconds: null,
   };
-  const stale: Meter = { ...fresh, id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', stale: true, readAt: '2026-11-10T08:30:00Z' };
+  // La hora de la última lectura se muestra en la hora local de quien mira: el
+  // `readAt` se arma con la hora local para que el test no dependa de la zona de la
+  // máquina (el instante sigue siendo UTC).
+  const localReadAt = new Date(2026, 10, 10, 8, 30).toISOString();
+  const stale: Meter = { ...fresh, id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', stale: true, readAt: localReadAt };
 
   it('renders a fresh meter exactly as before', () => {
     // Un medidor fresco no cambia ni un byte: la marca sólo aparece con lo viejo.
@@ -30,7 +34,7 @@ describe('MeterBar marca lo viejo (B2)', () => {
     const html = renderToStaticMarkup(<MeterBar meter={stale} ring={null} locale="es" />);
     expect(html).toContain('data-stale="true"');
     // El texto de la pastilla se reutiliza («caché») y la hora de la última lectura
-    // se en UTC, para que no dependa de la zona de quien mira.
+    // es la local de quien mira, como el «actualizado» del detalle.
     expect(html).toContain('caché');
     expect(html).toContain('leído a las 08:30');
   });

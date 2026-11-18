@@ -1,12 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectAlerts } from './alerts';
-import { currentMeters, formatCompact, formatResetIn, hasStaleData, isStaleMeter, isStaleSpend, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
+import { currentMeters, formatCompact, formatReadTime, formatResetIn, hasStaleData, isStaleMeter, isStaleSpend, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
 import { meterPace } from './pace';
 import type { Meter, UsageReport } from './types';
 
 // Instante de referencia para las pruebas de `mergeReports`: antes de que terminen las
 // ventanas de los medidores conservados, así que no dependen del reloj de la máquina.
 const BEFORE_WINDOW_END = Date.parse('2026-11-10T00:00:00Z');
+
+// La hora de la última lectura se muestra en la hora local de quien mira: el
+// `readAt` se arma con la hora local para que el test no dependa de la zona de la
+// máquina (el instante sigue siendo UTC).
+const localReadAt = new Date(2026, 10, 10, 8, 30).toISOString();
 
 const base: UsageReport = {
   id: 'claude',
@@ -246,7 +251,7 @@ describe('format', () => {
       ...base,
       meters: [
         { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
-        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', resetsAt: '2026-12-05T22:15:31Z', windowSeconds: 2_592_000, stale: true, readAt: '2026-11-10T08:30:00Z' },
+        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', resetsAt: '2026-12-05T22:15:31Z', windowSeconds: 2_592_000, stale: true, readAt: localReadAt },
       ],
     };
     const lines = reportSummary(report, new Date('2026-11-10T00:00:00Z'), 'es').split('\n');
@@ -498,6 +503,28 @@ describe('the kept spend is never presented as the current state (F1)', () => {
   it('does not show the kept spend of a stale report in the tray tooltip', () => {
     const whole: UsageReport = { ...base, stale: true, spend };
     expect(trayTooltip([whole])).toBe('Claude: —');
+  });
+});
+
+describe('la hora de la última lectura es la local (S54)', () => {
+  afterEach(() => {
+    // La zona fijada no puede quedar puesta para los demás archivos del worker.
+    vi.unstubAllEnvs();
+  });
+
+  it('shows the reading time in the local zone, not in UTC', () => {
+    // La hora de la lectura es la de quien mira, como el «actualizado» del detalle:
+    // el instante es UTC, pero lo que se muestra es local. Se fija una zona para que
+    // el test sea el mismo en cualquier máquina.
+    vi.stubEnv('TZ', 'Europe/Madrid');
+    const iso = '2026-11-10T08:30:00Z';
+    const d = new Date(iso);
+    const expected = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    expect(formatReadTime(iso)).toBe(expected);
+    // Y no la de UTC: si la pantalla siguiera en UTC, saldría «08:30» en vez de la
+    // hora local. La comparación sólo aplica cuando la zona local no es UTC.
+    const inUtc = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' }).format(d);
+    if (d.getHours() !== d.getUTCHours()) expect(formatReadTime(iso)).not.toBe(inUtc);
   });
 });
 

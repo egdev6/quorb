@@ -42,14 +42,14 @@ export function formatPercent(p: number): string {
 }
 
 /**
- * La hora de la última lectura, en UTC: el texto no depende de la zona horaria de
- * quien mira; la fecha va en UTC, como toda fecha mostrada.
+ * La hora de la última lectura: la hora local de quien mira, como el resto de la app
+ * («actualizado» en el detalle). El instante es UTC; lo que se muestra es local.
  */
 export function formatReadTime(iso: string | null, locale: Locale = 'es'): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return new Intl.DateTimeFormat(intlLocale(locale), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' }).format(d);
+  return new Intl.DateTimeFormat(intlLocale(locale), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d);
 }
 
 /**
