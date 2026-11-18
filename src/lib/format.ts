@@ -146,6 +146,26 @@ export function peakMeter(r: UsageReport): Meter | null {
 }
 
 /**
+ * ¿El régimen que declara el informe nuevo impide conservar los medidores del anterior?
+ *
+ * El texto del régimen es opaco: el frente no sabe qué significa, sólo si es el mismo.
+ * La comparación es ASIMÉTRICA, porque «no declarar» no es una declaración:
+ * - el informe nuevo declara un régimen DISTINTO al anterior → los medidores del
+ *   anterior son de un régimen que ya no aplica y no se conservan;
+ * - el informe nuevo declara un régimen y el anterior NO declara ninguno → esos
+ *   medidores tampoco se pueden atribuir al régimen vigente, así que no se conservan;
+ * - el informe nuevo NO declara nada (lectura fallida) → no hay comparación posible y
+ *   se conserva todo lo anterior, como siempre: el último ciclo correcto no se borra.
+ */
+function regimeBlocksKeeping(old: UsageReport | undefined, next: UsageReport): boolean {
+  const after = next.billingRegime;
+  // Sin declaración del informe nuevo no hay comparación posible: no se bloquea nada.
+  if (after == null) return false;
+  const before = old?.billingRegime;
+  return before == null || before !== after;
+}
+
+/**
  * Si un ciclo falla pero el anterior tenía datos, conservamos los datos
  * antiguos marcados como `stale` para que el widget no se quede vacío.
  *
@@ -161,6 +181,11 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
     const old = byId.get(r.id);
     const failed = r.status === 'error' || r.status === 'warning';
     if (failed && r.meters.length === 0 && !r.spend && old && (old.meters.length > 0 || old.spend)) {
+      // El régimen que declara el informe nuevo manda: los medidores del informe anterior
+      // (topes por modelo de una cuenta que ya no se factura así) no se pueden atribuir
+      // al régimen vigente, así que no se resucitan. El plan no es una lectura —nome la
+      // cuenta— y sí se conserva.
+      if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
       return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(old.meters, old.fetchedAt) };
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
@@ -169,7 +194,15 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
     // desaparezcan en silencio. El informe mergeado manda; lo que no trae se conserva del
     // anterior. El informe NO queda desactualizado entero: trae datos frescos, y marcarlo
     // saltaría los avisos del ciclo entero (con el fresco incluido).
+    // Si el informe declara el régimen de facturación, la regla de no resucitar
+    // medidores de otro régimen se aplica aquí (mismo sitio, misma marca): si el
+    // informe nuevo declara un régimen, los medidores que no trae no se conservan
+    // (arriba, con `regimeBlocksKeeping`).
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
+      // Con un régimen declarado por el informe nuevo tampoco se conservan los medidores
+      // que el informe nuevo no trae: no se pueden atribuir al régimen vigente (mismo
+      // sitio, misma marca).
+      if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
       // Lo que el informe nuevo no trae se conserva del anterior… salvo que su periodo
       // ya haya terminado: entonces la lectura es del periodo anterior y no se
       // conserva (si no, se vería como vigente, con «Se reinicia ahora»).

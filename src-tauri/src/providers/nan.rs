@@ -3,6 +3,9 @@
 //! Fuentes (docs públicas, oct 2026):
 //!   · `GET /v1/usage?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` → tu uso de tokens
 //!     por día y por modelo, con totales; paginado con `cursor` / `next_cursor`.
+//!     En la raíz trae además el bloque `credits`: es `null` si la cuenta NO se factura
+//!     en créditos. Ese `null` es lo que decide el régimen de facturación, y lo decide
+//!     el backend (el frente recibe el dato, no el concepto).
 //!   · `GET /v1/models` → modelos disponibles para tu key (y sus límites, si los expone).
 //!   · `GET https://cloud-api.nan.builders/api/usage/quota` → la cuota **de la cuenta**:
 //!     por modelo, el consumo (`tokensUsed`), la asignación (`cap`) y las fechas del
@@ -44,6 +47,69 @@ pub(crate) enum QuotaSource {
     None,
 }
 
+// ───────────────────────── el régimen de facturación ─────────────────────────
+
+/// El bloque `credits` del contrato público del proveedor (`GET /v1/usage`): es `null`
+/// cuando la cuenta NO se factura en créditos, y ese `null` es lo que decide el
+/// régimen. La decisión vive en el backend: el frente recibe los datos, no el concepto.
+///
+/// El contrato publica estos campos (`https://nan.builders/openapi.json`):
+/// `period_start`, `period_end`, `allowance`, `used`, `remaining`, `pack_credits`,
+/// `pack_expires_at` y `frozen`. Con el corte de alcance (#261 = detección y
+/// supresión), de este bloque sólo se lee `frozen` («la suscripción no está activa»):
+/// la asignación del periodo, el saldo de packs y el desglose por modelo son de la
+/// otra mitad del alcance (#268).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct Credits {
+    /// `true` mientras la suscripción no está activa: las peticiones se rechazan.
+    pub frozen: bool,
+}
+
+impl Credits {
+    /// El régimen que declara este bloque: la cuenta se factura en créditos.
+    pub fn regime(&self) -> BillingRegime {
+        BillingRegime::Credits {
+            frozen: self.frozen,
+        }
+    }
+}
+
+/// El régimen de facturación de la cuenta, tal y como lo declara el payload del
+/// proveedor. El frente lo trata como **texto opaco**: no sabe qué significa, sólo
+/// compara si cambió entre dos informes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BillingRegime {
+    /// La cuenta se factura en créditos: lo dice el bloque `credits` del payload.
+    Credits { frozen: bool },
+    /// La cuenta se factura con una asignación por modelo (el bloque `credits` vino
+    /// `null`).
+    ModelQuota,
+    /// No se pudo leer el dato que lo decide: el informe no declara régimen y no
+    /// afirma el tipo de cuenta.
+    Unknown,
+}
+
+impl BillingRegime {
+    /// El texto opaco que viaja en el informe (el frente no lo interpreta).
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            BillingRegime::Credits { .. } => Some(CREDITS_REGIME),
+            BillingRegime::ModelQuota => Some(MODEL_QUOTA_REGIME),
+            BillingRegime::Unknown => None,
+        }
+    }
+}
+
+/// Los literales del régimen: texto opaco y estable. No nombran al proveedor ni al
+/// plan (el frente no puede deducir nada de ellos).
+pub(crate) const CREDITS_REGIME: &str = "credits";
+pub(crate) const MODEL_QUOTA_REGIME: &str = "model-quota";
+
+/// Lo que se dice cuando no se pudo determinar el tipo de cuenta: el informe no
+/// afirma que la cuota de la cuenta sea por modelo, porque no se pudo comprobar.
+const UNKNOWN_REGIME_NOTE: &str =
+    "no se pudo determinar el tipo de cuenta: los topes por modelo pueden no aplicarle";
+
 /// Cuotas publicadas en nan.builders/docs/models. Si `/v1/models` trae otras, mandan esas.
 pub(crate) fn known_quotas() -> BTreeMap<&'static str, Quota> {
     let m = |t: f64| Quota {
@@ -79,16 +145,63 @@ impl UsageSummary {
 }
 
 pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> UsageReport {
+    // Las credenciales salen del almacén seguro. El cuerpo del refresco las recibe ya
+    // resueltas: el llavero no es inyectable y un test no puede escribir en el
+    // almacén seguro de la persona, así que el camino con API key se ejercita con las
+    // credenciales fijadas en memoria.
+    let key = who.secret(secrets::NAN_API_KEY);
+    let cookie = who.secret(secrets::NAN_SESSION);
+    refresh_with_credentials(cfg, who, http, key.as_deref(), cookie.as_deref()).await
+}
+
+/// El cuerpo del refresco, con las credenciales ya resueltas.
+///
+/// Es **el mismo camino que `fetch`** (mismos pasos, mismas peticiones, misma
+/// declaración): lo único que cambia es de dónde salen la API key y la cookie. El
+/// seam está aquí para que el test pueda recorrer el camino con API key de punta a
+/// punta contra un servidor local, sin tocar el llavero.
+pub(crate) async fn refresh_with_credentials(
+    cfg: &NanConfig,
+    who: Who<'_>,
+    http: &reqwest::Client,
+    key: Option<&str>,
+    cookie: Option<&str>,
+) -> UsageReport {
     let mut report = who.report("NaN Builders", Kind::Subscription);
     report.plan = Some(plan_name(&cfg.plan).into());
 
+    let now = Utc::now();
+    let period_start = billing_period_start(now, cfg.billing_day);
+    let from = month_start(now).min(period_start);
+
+    // EL RÉGIMEN, en un solo sitio. La única fuente documentada del bloque `credits`
+    // es la raíz de `GET /v1/usage` (el panel de Cloud no lo publica), así que la
+    // lectura de esa página es la que lo decide — y sólo si hay API key: sin key no
+    // hay forma de leerla y el régimen queda desconocido.
+    let (regime, first_page) = match key {
+        Some(k) => match usage_page(cfg, http, k, from, now, None).await {
+            Ok(page) => (regime_of(&page), Some(page)),
+            // Sin lectura no se sabe el régimen: no se inventa ninguno.
+            Err(_) => (BillingRegime::Unknown, None),
+        },
+        None => (BillingRegime::Unknown, None),
+    };
+
     // A. Sesión de NaN Cloud: los mismos datos que el dashboard (preferente).
     let mut note: Option<String> = None;
-    if let Some(cookie) = who.secret(secrets::NAN_SESSION) {
-        match nan_cloud::fetch(http, &cookie).await {
+    if let Some(cookie) = cookie {
+        match nan_cloud::fetch(http, cookie, &cfg.cloud_base_url).await {
             Ok(u) => {
-                report.meters = session_meters_with_basis(u.meters);
                 report.daily = u.daily;
+                // La supresión de los medidores por modelo de una cuenta facturada en
+                // créditos vive en UN solo sitio (`credits_declaration`), que usan los
+                // dos caminos: esos topes no existen para esa cuenta, tampoco en la
+                // sesión.
+                if let Some(declared) = credits_declaration(regime) {
+                    declared.apply_to_report(&mut report);
+                    return report;
+                }
+                report.meters = session_meters_with_basis(u.meters);
                 let mut parts = vec![];
                 if let Some(m) = u.month {
                     parts.push(format!("{} tokens este mes", compact(m)));
@@ -110,6 +223,9 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
                         &dropped_note(&u.dropped),
                     ));
                 }
+                // El régimen sólo se declara si se pudo determinar: el frente lo trata
+                // como texto opaco y un régimen desconocido no se inventa.
+                report.billing_regime = regime.label();
                 return report;
             }
             Err(nan_cloud::CloudError::Expired) => {
@@ -125,7 +241,7 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
 
     // B. API key: la cuota de la cuenta (el mismo payload que el panel) y, si no
     //    responde, el consumo de `/v1/usage` con la cuota publicada.
-    let Some(key) = who.secret(secrets::NAN_API_KEY) else {
+    let Some(key) = key else {
         let mut r = report.fail(
             if note.is_some() {
                 Status::NeedsLogin
@@ -143,7 +259,7 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
     // 1. Modelos (valida la key y, si los trae, límites por modelo)
     let res = match http
         .get(format!("{}/models", cfg.base_url))
-        .bearer_auth(&key)
+        .bearer_auth(key)
         .send()
         .await
     {
@@ -163,67 +279,82 @@ pub async fn fetch(cfg: &NanConfig, who: Who<'_>, http: &reqwest::Client) -> Usa
         .collect();
     quotas.extend(quotas_from_models(&models_json));
 
-    let now = Utc::now();
-    let period_start = billing_period_start(now, cfg.billing_day);
-    let from = month_start(now).min(period_start);
-
-    // 2. La cuota de la cuenta: `GET /api/usage/quota` del panel de NaN con la MISMA API
-    //    key. `cap` es la asignación de la cuenta para el periodo en curso (el mismo
-    //    número que el panel muestra como "Allowance per billing period"), así que cuota,
-    //    consumo y fechas salen del mismo payload: la cabecera y los medidores no
-    //    muestran periodos distintos.
-    //    `Some` (el panel respondió) y `None` (el panel no respondió) son dos cosas: un
-    //    payload válido SIN modelos no es un endpoint caído. El motivo de la caída se
-    //    guarda: no es lo mismo un 401 que un timeout, y el mensaje lo dice.
-    let (account_meters, dropped, account_failure) =
-        match nan_cloud::fetch_account_quota(http, &key).await {
-            Ok(payload) => {
-                let parsed = nan_cloud::parse_quota(&payload);
-                (Some(parsed.meters), parsed.dropped, None)
-            }
-            Err(e) => (None, Vec::new(), Some(cloud_failure(e))),
-        };
-
     // Los medidores de CUOTA del informe: van aparte porque el informe puede ser MIXTO
     // (los medidores extra y los de rate limit, sin los de cuota).
     let mut quota: Vec<Meter> = Vec::new();
-    if let Some(meters) = account_meters {
-        // 3. La cuota de la cuenta manda: no se lee `/v1/usage` (mide el consumo de esta
-        //    key, de otro periodo) ni se usa `billing_day` (el periodo es el del payload).
-        let declared = declare(Some(meters), &dropped, None, &quotas, now, cfg.billing_day);
+    if let Some(declared) = credits_declaration(regime) {
+        // Una cuenta facturada en créditos NO tiene topes por modelo: esos topes no
+        // existen para esa cuenta. No se declaran medidores por modelo ni se recurre a la
+        // cuota publicada (`known_quotas()`), y ni se lee la cuota de la cuenta. Lo
+        // decide el backend; el frente no lo repite.
         declared.apply(&mut report, &mut quota);
     } else {
-        // 4. Consumo del periodo (el camino de respaldo: la cuota publicada, señalada).
-        match fetch_usage(cfg, http, &key, from, now).await {
-            Ok(pages) => {
-                let declared = declare_usage(&pages, &dropped, &quotas, now, cfg.billing_day);
-                declared.apply(&mut report, &mut quota);
-                // El motivo por el que se cayó la cuota de la cuenta va en el mensaje:
-                // no es lo mismo un 401 que un timeout.
-                if let Some(reason) = &account_failure {
-                    report.message = Some(join_message(
-                        report.message.take(),
-                        &format!("la cuota de la cuenta no respondió ({reason})"),
-                    ));
+        // 2. La cuota de la cuenta: `GET /api/usage/quota` del panel de NaN con la MISMA API
+        //    key. `cap` es la asignación de la cuenta para el periodo en curso (el mismo
+        //    número que el panel muestra como "Allowance per billing period"), así que cuota,
+        //    consumo y fechas salen del mismo payload: la cabecera y los medidores no
+        //    muestran periodos distintos.
+        //    `Some` (el panel respondió) y `None` (el panel no respondió) son dos cosas: un
+        //    payload válido SIN modelos no es un endpoint caído. El motivo de la caída se
+        //    guarda: no es lo mismo un 401 que un timeout, y el mensaje lo dice.
+        let (account_meters, dropped, account_failure) =
+            match nan_cloud::fetch_account_quota(http, key, &cfg.cloud_base_url).await {
+                Ok(payload) => {
+                    let parsed = nan_cloud::parse_quota(&payload);
+                    (Some(parsed.meters), parsed.dropped, None)
                 }
-            }
-            Err(e) => {
-                report.status = Status::Warning;
-                let mut message =
-                    format!("No pude leer /v1/usage ({e}). {}", plan_quota(&cfg.plan));
-                if let Some(reason) = &account_failure {
-                    message = format!("{message} · la cuota de la cuenta no respondió ({reason})");
+                Err(e) => (None, Vec::new(), Some(cloud_failure(e))),
+            };
+
+        if let Some(meters) = account_meters {
+            // 3. La cuota de la cuenta manda: no se lee `/v1/usage` (mide el consumo de esta
+            //    key, de otro periodo) ni se usa `billing_day` (el periodo es el del payload).
+            let declared = declare(
+                regime,
+                Some(meters),
+                &dropped,
+                None,
+                &quotas,
+                now,
+                cfg.billing_day,
+            );
+            declared.apply(&mut report, &mut quota);
+        } else {
+            // 4. Consumo del periodo (el camino de respaldo: la cuota publicada, señalada).
+            match fetch_usage(cfg, http, key, from, now, first_page).await {
+                Ok(pages) => {
+                    let declared = declare_usage(&pages, &dropped, &quotas, now, cfg.billing_day);
+                    declared.apply(&mut report, &mut quota);
+                    // El motivo por el que se cayó la cuota de la cuenta va en el mensaje:
+                    // no es lo mismo un 401 que un timeout.
+                    if let Some(reason) = &account_failure {
+                        report.message = Some(join_message(
+                            report.message.take(),
+                            &format!("la cuota de la cuenta no respondió ({reason})"),
+                        ));
+                    }
                 }
-                if !dropped.is_empty() {
-                    message = format!("{message} · {}", dropped_note(&dropped));
+                Err(e) => {
+                    report.status = Status::Warning;
+                    let mut message =
+                        format!("No pude leer /v1/usage ({e}). {}", plan_quota(&cfg.plan));
+                    if let Some(reason) = &account_failure {
+                        message =
+                            format!("{message} · la cuota de la cuenta no respondió ({reason})");
+                    }
+                    if !dropped.is_empty() {
+                        message = format!("{message} · {}", dropped_note(&dropped));
+                    }
+                    report.message = Some(message);
+                    // El régimen ya se conoce si la lectura tuvo éxito.
+                    report.billing_regime = regime.label();
                 }
-                report.message = Some(message);
             }
         }
     }
 
     // 5. Endpoint propio opcional (avanzado) + cabeceras de rate limit
-    let own = custom_usage(cfg, http, &key).await;
+    let own = custom_usage(cfg, http, key).await;
     report.meters = compose_meters(quota, own, rate_meters);
     if let Some(n) = note {
         report.status = Status::Warning;
@@ -251,47 +382,65 @@ pub(crate) fn compose_meters(
     out
 }
 
-/// Llama a `/v1/usage` siguiendo `next_cursor` (máx. 10 páginas).
+/// Una página de `/v1/usage` para la ventana pedida (con su cursor, si lo hay).
+///
+/// La primera página es también la que trae el bloque `credits` de la raíz: el que
+/// decide el régimen de facturación.
+async fn usage_page(
+    cfg: &NanConfig,
+    http: &reqwest::Client,
+    key: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    cursor: Option<&str>,
+) -> Result<Value, String> {
+    let mut q = vec![
+        ("start_date", from.format("%Y-%m-%d").to_string()),
+        ("end_date", to.format("%Y-%m-%d").to_string()),
+    ];
+    if let Some(c) = cursor {
+        q.push(("cursor", c.to_string()));
+    }
+    let res = http
+        .get(format!("{}/usage", cfg.base_url))
+        .query(&q)
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(net_error)?;
+    if !res.status().is_success() {
+        return Err(format!("HTTP {}", res.status().as_u16()));
+    }
+    res.json::<Value>()
+        .await
+        .map_err(|e| format!("respuesta no JSON: {e}"))
+}
+
+/// Llama a `/v1/usage` siguiendo `next_cursor` (máx. 10 páginas). La primera página
+/// puede venir ya leída (la misma que se leyó para decidir el régimen), así que el
+/// ciclo no la pide dos veces.
 async fn fetch_usage(
     cfg: &NanConfig,
     http: &reqwest::Client,
     key: &str,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
+    first: Option<Value>,
 ) -> Result<Vec<Value>, String> {
     let mut pages = vec![];
-    let mut cursor: Option<String> = None;
+    let mut body = match first {
+        Some(page) => page,
+        None => usage_page(cfg, http, key, from, to, None).await?,
+    };
     for _ in 0..10 {
-        let mut q = vec![
-            ("start_date", from.format("%Y-%m-%d").to_string()),
-            ("end_date", to.format("%Y-%m-%d").to_string()),
-        ];
-        if let Some(c) = &cursor {
-            q.push(("cursor", c.clone()));
-        }
-        let res = http
-            .get(format!("{}/usage", cfg.base_url))
-            .query(&q)
-            .bearer_auth(key)
-            .send()
-            .await
-            .map_err(net_error)?;
-        if !res.status().is_success() {
-            return Err(format!("HTTP {}", res.status().as_u16()));
-        }
-        let body: Value = res
-            .json()
-            .await
-            .map_err(|e| format!("respuesta no JSON: {e}"))?;
-        cursor = body
+        let cursor = body
             .get("next_cursor")
             .and_then(Value::as_str)
             .filter(|c| !c.is_empty())
             .map(str::to_string);
         pages.push(body);
-        if cursor.is_none() {
-            break;
-        }
+        let Some(c) = cursor else { break };
+        body = usage_page(cfg, http, key, from, to, Some(&c)).await?;
     }
     Ok(pages)
 }
@@ -581,6 +730,7 @@ pub(crate) fn quota_meters(
 /// `usage` is the aggregated consumption of the API key (`/v1/usage`), used only when the
 /// account payload does not answer.
 pub(crate) fn nan_meters(
+    regime: BillingRegime,
     account_meters: Option<Vec<Meter>>,
     usage: Option<(&UsageSummary, &UsageSummary)>,
     published: &BTreeMap<String, Quota>,
@@ -596,7 +746,7 @@ pub(crate) fn nan_meters(
             return (Vec::new(), QuotaSource::Account, NO_ACCOUNT_MODELS.into());
         }
         let total: f64 = meters.iter().filter_map(|m| m.used).sum();
-        let header = usage_message(total, QuotaSource::Account);
+        let header = usage_message(total, QuotaSource::Account, regime);
         return (
             declare_basis(meters, QuotaSource::Account),
             QuotaSource::Account,
@@ -609,10 +759,10 @@ pub(crate) fn nan_meters(
     };
     let meters = quota_meters(month, period, published, now, billing_day);
     if meters.is_empty() {
-        let header = usage_message(month.total(), QuotaSource::None);
+        let header = usage_message(month.total(), QuotaSource::None, regime);
         (Vec::new(), QuotaSource::None, header)
     } else {
-        let header = usage_message(month.total(), QuotaSource::Published);
+        let header = usage_message(month.total(), QuotaSource::Published, regime);
         (
             declare_basis(meters, QuotaSource::Published),
             QuotaSource::Published,
@@ -630,10 +780,19 @@ pub(crate) fn declare_usage(
     now: DateTime<Utc>,
     billing_day: u32,
 ) -> Declared {
+    // La misma respuesta que trae el consumo decide el régimen: si el bloque `credits`
+    // viene con contenido, la cuenta se factura en créditos y NO se declaran los
+    // medidores por modelo ni se recurre a la cuota publicada (esos topes no existen
+    // para una cuenta facturada en créditos). Sin lectura extra a la red.
+    let regime = pages
+        .first()
+        .map(regime_of)
+        .unwrap_or(BillingRegime::Unknown);
     // Para el mes natural solo contamos días del mes; para glm5.3, desde el inicio del periodo.
     let month = summarize(pages, Some(month_start(now)));
     let period = summarize(pages, Some(billing_period_start(now, billing_day)));
     declare(
+        regime,
         None,
         dropped,
         Some((&month, &period)),
@@ -648,25 +807,78 @@ pub(crate) struct Declared {
     pub meters: Vec<Meter>,
     pub header: String,
     pub status: Status,
+    /// El régimen de facturación que declara el backend: viaja en el informe como texto
+    /// opaco (el frente sólo compara si cambió).
+    pub regime: BillingRegime,
 }
 
 impl Declared {
-    /// Aplica lo declarado al informe: estado y cabecera. Los medidores de cuota se
-    /// componen aparte (con los propios y los de rate limit).
+    /// Aplica lo declarado al informe: estado, cabecera y régimen. Los medidores de
+    /// cuota se componen aparte (con los propios y los de rate limit).
     pub fn apply(self, report: &mut UsageReport, quota: &mut Vec<Meter>) {
-        *quota = self.meters;
-        report.message = Some(self.header);
-        report.status = self.status;
+        let Declared {
+            meters,
+            header,
+            status,
+            regime,
+        } = self;
+        *quota = meters;
+        report.message = Some(header);
+        report.status = status;
+        report.billing_regime = regime.label();
     }
+
+    /// Aplica lo declarado al informe (estado, cabecera y régimen) SIN los medidores:
+    /// lo usa el camino de sesión, que compone sus medidores aparte (y con créditos
+    /// no hay medidores por modelo que componer).
+    pub fn apply_to_report(self, report: &mut UsageReport) {
+        let Declared {
+            header,
+            status,
+            regime,
+            ..
+        } = self;
+        report.message = Some(header);
+        report.status = status;
+        report.billing_regime = regime.label();
+    }
+}
+
+/// Lo que declara el backend cuando la cuenta se factura en créditos: NINGÚN medidor
+/// por modelo (esos topes no existen para una cuenta facturada en créditos) ni cuota
+/// publicada, y la cabecera que lo dice.
+///
+/// Es el **único** sitio de la supresión: los dos caminos (sesión y API key) lo usan,
+/// para que las dos copias no puedan divergir. La asignación del periodo, el saldo de
+/// packs y el desglose por modelo son de la otra mitad del alcance (#268).
+///
+/// `frozen` es «la suscripción no está activa» (las peticiones se rechazan): algo que
+/// merece atención, aunque no haya datos.
+fn credits_declaration(regime: BillingRegime) -> Option<Declared> {
+    let BillingRegime::Credits { frozen } = regime else {
+        return None;
+    };
+    Some(Declared {
+        meters: Vec::new(),
+        header: credits_message(frozen),
+        status: if frozen { Status::Warning } else { Status::Ok },
+        regime,
+    })
 }
 
 /// Lo que declara el backend, según de dónde sale la cuota: la de la cuenta manda y la
 /// publicada queda de respaldo.
 ///
+/// `regime` es lo que declara el proveedor (el bloque `credits` de `/v1/usage`): con
+/// créditos NO hay medidores por modelo ni cuota publicada, porque esos topes no
+/// existen para una cuenta facturada en créditos. La decisión no llega al frente: sólo
+/// llegan los datos.
+///
 /// `dropped` son los modelos que el payload trajo y no se pudieron declarar: si hay
 /// alguno, el informe degrada a aviso y los nombra (un total incompleto no puede
 /// presentarse como completo).
 pub(crate) fn declare(
+    regime: BillingRegime,
     account_meters: Option<Vec<Meter>>,
     dropped: &[nan_cloud::Dropped],
     usage: Option<(&UsageSummary, &UsageSummary)>,
@@ -674,12 +886,23 @@ pub(crate) fn declare(
     now: DateTime<Utc>,
     billing_day: u32,
 ) -> Declared {
-    let (meters, source, header) = nan_meters(account_meters, usage, published, now, billing_day);
+    if let Some(declared) = credits_declaration(regime) {
+        return declared;
+    }
+    let (meters, source, header) =
+        nan_meters(regime, account_meters, usage, published, now, billing_day);
     let mut declared = Declared {
         meters,
         header,
         status: status_for(source),
+        regime,
     };
+    if regime == BillingRegime::Unknown {
+        // No se pudo determinar el tipo de cuenta: el informe no lo afirma y degrada de
+        // forma visible, en vez de salir `ok` como si los medidores por modelo fueran la
+        // cuota de la cuenta.
+        declared.status = Status::Warning;
+    }
     if !dropped.is_empty() {
         declared.status = Status::Warning;
         declared.header = format!("{} · {}", declared.header, dropped_note(dropped));
@@ -692,13 +915,56 @@ pub(crate) fn declare(
     declared
 }
 
+/// El régimen que declara el payload: el bloque `credits` de la raíz de `/v1/usage` es
+/// `null` si la cuenta NO se factura en créditos. Éste es el **único** sitio que decide
+/// el régimen: los dos caminos (sesión y API key) llegan aquí con la página leída.
+pub(crate) fn regime_of(page: &Value) -> BillingRegime {
+    match parse_credits(page) {
+        Some(c) => c.regime(),
+        None => BillingRegime::ModelQuota,
+    }
+}
+
+/// Lee el bloque `credits` de la raíz de `/v1/usage`. `None` cuando la cuenta no se
+/// factura en créditos (el bloque es `null`) o cuando el payload no lo trae: ese es el
+/// dato que decide el régimen, y lo decide el backend.
+pub(crate) fn parse_credits(page: &Value) -> Option<Credits> {
+    let block = page.get("credits")?.as_object()?;
+    Some(Credits {
+        frozen: block
+            .get("frozen")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// La cabecera del informe cuando la cuenta se factura en créditos: la indicación de
+/// que la cuenta se factura en créditos (y el aviso de suscripción inactiva, si la
+/// hay). El texto lo arma el backend (el frente no interpreta nada).
+fn credits_message(frozen: bool) -> String {
+    let mut parts: Vec<String> = vec!["la cuenta se factura en créditos".into()];
+    if frozen {
+        parts.push("suscripción inactiva: las peticiones se rechazan".into());
+    }
+    parts.join(" · ")
+}
+
 /// Header of the report: it names the period the numbers come from. The published quota is
 /// flagged as a fallback, not as the account one. In the fallback path two windows live
 /// together (the month's figures follow the natural month, the `glm5.3` meter follows the
 /// billing period) and the header says so.
-fn usage_message(total: f64, source: QuotaSource) -> String {
+///
+/// With an unknown regime the header does not claim the account type: it says it could
+/// not be determined.
+fn usage_message(total: f64, source: QuotaSource, regime: BillingRegime) -> String {
     match source {
         QuotaSource::Account => {
+            if regime == BillingRegime::Unknown {
+                return format!(
+                    "{} tokens del periodo de la cuenta · {UNKNOWN_REGIME_NOTE}",
+                    compact(total)
+                );
+            }
             format!("{} tokens del periodo de la cuenta · cuotas por modelo", compact(total))
         }
         QuotaSource::Published => format!(
@@ -907,6 +1173,8 @@ mod tests {
     use super::*;
     use reqwest::header::{HeaderMap, HeaderValue};
     use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 6, 12, 0, 0).unwrap()
@@ -962,6 +1230,7 @@ mod tests {
             per_day: BTreeMap::new(),
         };
         let (meters, source, _header) = nan_meters(
+            BillingRegime::ModelQuota,
             Some(nan_cloud::parse_quota(&payload).meters),
             Some((&month, &UsageSummary::default())),
             &published_quotas(),
@@ -999,7 +1268,11 @@ mod tests {
 
     #[test]
     fn the_account_header_describes_the_account_period() {
-        let msg = usage_message(1_452_206_378.0, QuotaSource::Account);
+        let msg = usage_message(
+            1_452_206_378.0,
+            QuotaSource::Account,
+            BillingRegime::ModelQuota,
+        );
         assert!(msg.contains("periodo de la cuenta"), "{msg}");
         assert!(!msg.contains("este mes"), "{msg}");
     }
@@ -1011,6 +1284,7 @@ mod tests {
             per_day: BTreeMap::new(),
         };
         let (meters, source, header) = nan_meters(
+            BillingRegime::ModelQuota,
             None,
             Some((&month, &UsageSummary::default())),
             &published_quotas(),
@@ -1028,6 +1302,7 @@ mod tests {
         // The account payload carries the period: the meter and the header must name it.
         let payload = nan_cloud::real_account_payload();
         let (meters, source, header) = nan_meters(
+            BillingRegime::ModelQuota,
             Some(nan_cloud::parse_quota(&payload).meters),
             None,
             &published_quotas(),
@@ -1051,6 +1326,7 @@ mod tests {
         // allowance of the account (`cap`), not the published table.
         let payload = nan_cloud::real_account_payload();
         let (meters, source, _header) = nan_meters(
+            BillingRegime::ModelQuota,
             Some(nan_cloud::parse_quota(&payload).meters),
             None,
             &published_quotas(),
@@ -1086,6 +1362,7 @@ mod tests {
             }
         }
         let (meters, source, _header) = nan_meters(
+            BillingRegime::ModelQuota,
             Some(nan_cloud::parse_quota(&payload).meters),
             None,
             &published_quotas(),
@@ -1112,8 +1389,14 @@ mod tests {
         // Un payload válido SIN modelos no es un endpoint caído: la cuota publicada no
         // se usa (esos topes pueden no existir para esta cuenta). `Some(vacío)` y
         // `None` son dos cosas distintas.
-        let (meters, source, header) =
-            nan_meters(Some(Vec::new()), None, &published_quotas(), now(), 1);
+        let (meters, source, header) = nan_meters(
+            BillingRegime::Unknown,
+            Some(Vec::new()),
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
         assert_eq!(source, QuotaSource::Account);
         assert!(meters.is_empty());
         assert!(
@@ -1126,7 +1409,15 @@ mod tests {
     fn an_account_payload_without_models_degrades_the_report() {
         // Sin medidores de cuota el informe no va en `ok`: nunca `ok` sin medidores,
         // para que los datos anteriores no se borren en silencio.
-        let declared = declare(Some(Vec::new()), &[], None, &published_quotas(), now(), 1);
+        let declared = declare(
+            BillingRegime::Unknown,
+            Some(Vec::new()),
+            &[],
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
         assert_eq!(declared.status, Status::Warning);
         assert!(declared.meters.is_empty());
     }
@@ -1159,7 +1450,7 @@ mod tests {
     fn the_report_says_when_there_is_no_consumption_data() {
         // Hay cuotas, pero el proveedor no devolvió consumo para ellas: el mensaje dice
         // que no hay datos, no que no haya cuotas con contador.
-        let msg = usage_message(0.0, QuotaSource::None);
+        let msg = usage_message(0.0, QuotaSource::None, BillingRegime::ModelQuota);
         assert!(msg.contains("datos de consumo disponibles"), "{msg}");
         assert!(!msg.contains("sin cuotas con contador"), "{msg}");
     }
@@ -1179,7 +1470,11 @@ mod tests {
         // mes natural y el medidor de glm5.3 sigue el periodo de facturación. El
         // mensaje del informe lo explica (el texto de `billingDay` explica cuándo se
         // usa, no esta mezcla).
-        let header = usage_message(1_452_206_378.0, QuotaSource::Published);
+        let header = usage_message(
+            1_452_206_378.0,
+            QuotaSource::Published,
+            BillingRegime::ModelQuota,
+        );
         assert!(header.contains("mes natural"), "{header}");
         assert!(header.contains("periodo de facturación"), "{header}");
         assert!(header.contains("glm5.3"), "{header}");
@@ -1190,11 +1485,15 @@ mod tests {
         // El texto de la cuenta se mantiene byte a byte; el de la cuota publicada
         // explica además la mezcla de ventanas (mes natural y periodo de facturación).
         assert_eq!(
-            usage_message(1_452_206_378.0, QuotaSource::Account),
+            usage_message(
+                1_452_206_378.0,
+                QuotaSource::Account,
+                BillingRegime::ModelQuota
+            ),
             "1.5B tokens del periodo de la cuenta · cuotas por modelo"
         );
         assert_eq!(
-            usage_message(1_452_206_378.0, QuotaSource::Published),
+            usage_message(1_452_206_378.0, QuotaSource::Published, BillingRegime::ModelQuota),
             "1.5B tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta) · el total del mes sigue el mes natural y el medidor de glm5.3 sigue el periodo de facturación"
         );
     }
@@ -1212,6 +1511,7 @@ mod tests {
         // distintas, y el frente solo las compara como texto.
         let payload = nan_cloud::real_account_payload();
         let (account, source, _header) = nan_meters(
+            BillingRegime::ModelQuota,
             Some(nan_cloud::parse_quota(&payload).meters),
             None,
             &published_quotas(),
@@ -1231,6 +1531,7 @@ mod tests {
             per_day: BTreeMap::new(),
         };
         let (published, source, _header) = nan_meters(
+            BillingRegime::ModelQuota,
             None,
             Some((&month, &UsageSummary::default())),
             &published_quotas(),
@@ -1292,6 +1593,7 @@ mod tests {
         assert_eq!(parsed.dropped[0].model, "glm5.3-flash");
 
         let declared = declare(
+            BillingRegime::ModelQuota,
             Some(parsed.meters),
             &parsed.dropped,
             None,
@@ -1322,6 +1624,7 @@ mod tests {
         let payload = nan_cloud::real_account_payload();
         let parsed = nan_cloud::parse_quota(&payload);
         let declared = declare(
+            BillingRegime::ModelQuota,
             Some(parsed.meters),
             &parsed.dropped,
             None,
@@ -1505,5 +1808,657 @@ mod tests {
         };
         let m = pointer_meter(&json!({"u": 1}), &cfg).unwrap();
         assert_eq!((m.id.as_str(), m.label.as_str()), ("custom", "Mi cuota"));
+    }
+
+    // ───────────── el régimen de facturación ─────────────
+
+    /// Ejemplo publicado por el proveedor en su OpenAPI (`GET /v1/usage`): el bloque
+    /// `credits` de una cuenta facturada en créditos, con los nombres EXACTOS del
+    /// contrato público (`period_start`, `period_end`, `allowance`, `used`,
+    /// `remaining`, `pack_credits`, `pack_expires_at`, `frozen`).
+    /// NO es una captura real: la captura de una cuenta de Inference o Premium sigue
+    /// pendiente (S18) y el trabajo se hace contra el contrato público.
+    fn published_credits_page() -> Value {
+        json!({
+            "object": "list",
+            "data": [],
+            "credits": {
+                "period_start": "2026-11-01T00:00:00Z",
+                "period_end": "2026-12-01T00:00:00Z",
+                "allowance": 7000,
+                "used": 24.3,
+                "remaining": 6975.7,
+                "pack_credits": 0,
+                "pack_expires_at": null,
+                "frozen": false
+            }
+        })
+    }
+
+    #[test]
+    fn the_credits_block_decides_the_billing_regime() {
+        // El bloque `credits` de la raíz de `/v1/usage` es `null` cuando la cuenta
+        // NO se factura en créditos: el régimen lo decide el payload, no el nombre del
+        // plan, y lo decide el backend (no el frente).
+        assert_eq!(
+            regime_of(&published_credits_page()),
+            BillingRegime::Credits { frozen: false }
+        );
+        assert_eq!(
+            regime_of(&json!({"credits": null})),
+            BillingRegime::ModelQuota
+        );
+        assert_eq!(regime_of(&json!({})), BillingRegime::ModelQuota);
+    }
+
+    #[test]
+    fn the_credits_block_is_read_for_the_frozen_flag() {
+        // Con el corte de alcance, del bloque `credits` sólo se lee `frozen`: el resto
+        // del contrato es de la otra mitad del alcance (#268).
+        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        assert!(!c.frozen);
+        let mut frozen = published_credits_page();
+        frozen["credits"]["frozen"] = json!(true);
+        assert!(parse_credits(&frozen).expect("the credits block").frozen);
+    }
+
+    #[test]
+    fn a_credits_account_declares_no_meter_at_all() {
+        // Con el corte de alcance, una cuenta facturada en créditos NO declara
+        // medidores: ni la asignación del periodo ni el saldo de packs (eso vive en
+        // la otra mitad del alcance, #268). Lo que queda es la indicación de que la
+        // cuenta se factura en créditos.
+        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
+        let declared = declare(
+            c.regime(),
+            Some(account.meters),
+            &[],
+            Some((&UsageSummary::default(), &UsageSummary::default())),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert!(
+            declared.meters.is_empty(),
+            "una cuenta de créditos no declara medidores: {:?}",
+            declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+        assert!(
+            declared.header.contains("se factura en créditos"),
+            "{}",
+            declared.header
+        );
+    }
+
+    #[test]
+    fn a_credits_account_does_not_declare_the_model_quotas() {
+        // Con créditos NO se declaran los medidores por modelo ni se recurre a la
+        // cuota publicada: esos topes no existen para una cuenta facturada en
+        // créditos. La decisión es del backend; el frente no la repite.
+        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
+        let declared = declare(
+            c.regime(),
+            Some(account.meters),
+            &[],
+            Some((&UsageSummary::default(), &UsageSummary::default())),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert!(
+            declared.meters.is_empty(),
+            "con créditos no hay medidores por modelo: {:?}",
+            declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn an_account_without_credits_keeps_the_model_quotas() {
+        // Sin bloque `credits` la cuenta se factura por modelo: lo de siempre.
+        let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
+        let declared = declare(
+            BillingRegime::ModelQuota,
+            Some(account.meters),
+            &[],
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(declared.status, Status::Ok);
+        assert!(declared
+            .meters
+            .iter()
+            .any(|m| m.id == "model:deepseek-v4-flash"));
+    }
+
+    #[test]
+    fn a_frozen_subscription_is_reported_as_a_warning() {
+        // `frozen` es «la suscripción no está activa», no «sin créditos».
+        let mut page = published_credits_page();
+        page["credits"]["frozen"] = json!(true);
+        let c = parse_credits(&page).expect("the credits block");
+        let declared = declare(c.regime(), None, &[], None, &published_quotas(), now(), 1);
+        assert_eq!(declared.status, Status::Warning);
+        assert!(declared.header.contains("inactiva"), "{}", declared.header);
+    }
+
+    #[test]
+    fn the_fallback_path_reclassifies_the_regime_when_its_read_brings_credits() {
+        // La primera lectura de `/v1/usage` falló (régimen desconocido) y esta, la del
+        // camino de fallback, trae `credits`: la cuenta se factura en créditos, así que
+        // NO se declaran los medidores por modelo ni se recurre a la cuota publicada
+        // (esos topes no existen para una cuenta facturada en créditos). La
+        // reclasificación no cuesta una lectura extra: usa la misma respuesta.
+        let pages = vec![json!({
+            "credits": {"frozen": false},
+            "data": [
+                {"date": "2026-10-06", "model": "deepseek-v4-flash", "total_tokens": 600_000_000u64}
+            ]
+        })];
+        let declared = declare_usage(&pages, &[], &published_quotas(), now(), 1);
+        assert!(
+            declared.meters.is_empty(),
+            "una cuenta de créditos no declara medidores por modelo: {:?}",
+            declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+        assert!(
+            declared.header.contains("se factura en créditos"),
+            "{}",
+            declared.header
+        );
+        assert!(
+            !declared.header.contains("cuota publicada"),
+            "una cuenta de créditos no cae a la cuota publicada: {}",
+            declared.header
+        );
+        assert_eq!(declared.regime.label(), Some("credits"));
+    }
+
+    #[test]
+    fn the_fallback_path_keeps_the_published_quota_without_credits() {
+        // Sin `credits` en la respuesta, el camino de fallback es el de siempre: la
+        // cuota publicada, señalada como tal.
+        let pages = vec![json!({
+            "data": [
+                {"date": "2026-10-06", "model": "deepseek-v4-flash", "total_tokens": 600_000_000u64}
+            ]
+        })];
+        let declared = declare_usage(&pages, &[], &published_quotas(), now(), 1);
+        assert!(
+            declared
+                .meters
+                .iter()
+                .any(|m| m.id == "model:deepseek-v4-flash"),
+            "sin créditos el camino de fallback declara los medidores por modelo: {:?}",
+            declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+        assert!(
+            declared.header.contains("cuota publicada"),
+            "{}",
+            declared.header
+        );
+        assert_eq!(declared.regime.label(), Some("model-quota"));
+    }
+
+    #[test]
+    fn the_credits_account_declares_the_credits_regime() {
+        // El backend declara el régimen de facturación en el informe y el frente lo
+        // trata como texto opaco (no sabe qué significa): una cuenta facturada en
+        // créditos lo dice en su informe.
+        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let declared = declare(c.regime(), None, &[], None, &published_quotas(), now(), 1);
+        let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
+        let mut quota = Vec::new();
+        declared.apply(&mut report, &mut quota);
+        assert_eq!(
+            serde_json::to_value(&report).unwrap()["billingRegime"],
+            "credits"
+        );
+    }
+
+    #[test]
+    fn the_model_quota_account_declares_its_own_regime() {
+        // La otra rama: una cuenta con asignación por modelo declara OTRO régimen,
+        // distinto y estable.
+        let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
+        let declared = declare(
+            BillingRegime::ModelQuota,
+            Some(account.meters),
+            &[],
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
+        let mut quota = Vec::new();
+        declared.apply(&mut report, &mut quota);
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["billingRegime"], "model-quota");
+        assert_ne!(v["billingRegime"], "credits");
+    }
+
+    #[test]
+    fn the_regime_names_do_not_mention_the_provider_nor_the_plan() {
+        // Los literales son texto opaco y estable: no nombran al proveedor ni al plan
+        // (el frente no puede deducir nada de ellos).
+        for name in [CREDITS_REGIME, MODEL_QUOTA_REGIME] {
+            let lower = name.to_lowercase();
+            for forbidden in ["nan", "gentle", "inference", "premium", "community"] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "el régimen {name} nombra {forbidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_regime_does_not_claim_the_account_type() {
+        // Sin lectura de `/v1/usage` no se sabe el régimen: el informe NO declara
+        // régimen, NO afirma que la cuenta se facture por modelo y degrada de forma
+        // visible (nunca `ok` como si los medidores por modelo fueran la cuota de la
+        // cuenta).
+        let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
+        let declared = declare(
+            BillingRegime::Unknown,
+            Some(account.meters),
+            &[],
+            None,
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert_eq!(declared.status, Status::Warning);
+        assert_eq!(declared.regime.label(), None);
+        assert!(
+            declared
+                .header
+                .contains("no se pudo determinar el tipo de cuenta"),
+            "{}",
+            declared.header
+        );
+        assert!(
+            !declared.header.contains("cuotas por modelo"),
+            "el texto no afirma el tipo de cuenta: {}",
+            declared.header
+        );
+    }
+
+    #[test]
+    fn the_report_does_not_declare_an_unknown_regime() {
+        // Un informe sin régimen no pone la clave: el frente conserva los datos
+        // anteriores como siempre, porque no se inventa un régimen.
+        let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
+        report.billing_regime = BillingRegime::Unknown.label();
+        assert!(serde_json::to_value(&report)
+            .unwrap()
+            .get("billingRegime")
+            .is_none());
+    }
+
+    // ───────────── el camino completo contra un servidor local ─────────────
+
+    /// Servidor HTTP mínimo para el camino con API key: atiende `/v1/models`,
+    /// `/v1/usage` y `/api/usage/quota` con el cuerpo que le corresponde; una ruta
+    /// que no está en la lista responde 500 (como un endpoint caído). El puerto es
+    /// dinámico (`127.0.0.1:0`), así que dos tests en paralelo no chocan.
+    struct MockServer {
+        port: u16,
+        /// Las rutas pedidas, en orden: para comprobar qué pide cada camino.
+        requests: Arc<std::sync::Mutex<Vec<String>>>,
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl MockServer {
+        fn new(routes: Vec<(&'static str, String)>) -> Self {
+            use std::io::{Read, Write};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            listener.set_nonblocking(true).unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let seen = requests.clone();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopping = stop.clone();
+            let thread = std::thread::spawn(move || {
+                while !stopping.load(Ordering::Acquire) {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        continue;
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut head = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = stream.read(&mut buf).unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        head.extend_from_slice(&buf[..n]);
+                    }
+                    let request = String::from_utf8_lossy(&head).to_string();
+                    let path = request
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("")
+                        .split('?')
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    seen.lock().unwrap().push(path.clone());
+                    let response = match routes.iter().find(|(p, _)| path == *p) {
+                        Some((_, body)) => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        ),
+                        None => "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    };
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            });
+            MockServer {
+                port,
+                requests,
+                stop,
+                thread: Some(thread),
+            }
+        }
+
+        fn base(&self) -> String {
+            format!("http://127.0.0.1:{}", self.port)
+        }
+
+        /// Las rutas que se han pedido, en orden.
+        fn requested(&self) -> Vec<String> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl Drop for MockServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    /// Cliente local: sin proxy (el servidor de pruebas está en loopback).
+    fn local_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("the client builds")
+    }
+
+    /// La configuración de NaN apuntando al servidor local: la API del proveedor
+    /// (`/v1/...`) y el panel de Cloud (`/api/...`) salen del mismo servidor.
+    fn local_config(mock: &MockServer) -> NanConfig {
+        NanConfig {
+            base_url: format!("{}/v1", mock.base()),
+            cloud_base_url: mock.base(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_api_key_path_classifies_a_credits_account() {
+        // El camino con API key, de punta a punta (el `fetch` de verdad, contra un
+        // servidor local): el ejemplo publicado por el proveedor dice que la cuenta se
+        // factura en créditos, así que el informe NO declara medidores por modelo y SÍ
+        // declara el régimen.
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            ("/v1/usage", published_credits_page().to_string()),
+            (
+                "/api/usage/quota",
+                nan_cloud::real_account_payload().to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            None,
+        ));
+        assert_eq!(report.billing_regime, Some("credits"));
+        assert_eq!(report.status, Status::Ok);
+        assert!(
+            report.meters.is_empty(),
+            "una cuenta de créditos no declara medidores por modelo: {:?}",
+            report.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            report.message.as_deref(),
+            Some("la cuenta se factura en créditos")
+        );
+        // Con créditos no se lee la cuota de la cuenta: esos topes no existen para una
+        // cuenta facturada en créditos.
+        assert!(
+            !mock.requested().iter().any(|p| p == "/api/usage/quota"),
+            "se pidió la cuota de la cuenta: {:?}",
+            mock.requested()
+        );
+        assert!(
+            mock.requested().iter().any(|p| p == "/v1/usage"),
+            "el régimen se decide con /v1/usage: {:?}",
+            mock.requested()
+        );
+    }
+
+    #[test]
+    fn the_api_key_path_declares_the_model_quota_regime() {
+        // La otra rama del mismo camino: `credits` es `null` (la cuenta se factura con
+        // una asignación por modelo), así que el informe declara el otro régimen y los
+        // medidores de la cuenta.
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            (
+                "/v1/usage",
+                r#"{"object":"list","data":[],"credits":null}"#.to_string(),
+            ),
+            (
+                "/api/usage/quota",
+                nan_cloud::real_account_payload().to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            None,
+        ));
+        assert_eq!(report.billing_regime, Some("model-quota"));
+        assert_eq!(report.status, Status::Ok);
+        assert_eq!(report.meters.len(), 2);
+        assert_eq!(report.meters[0].quota_source, Some("account"));
+    }
+
+    #[test]
+    fn an_unreadable_usage_leaves_the_regime_unknown() {
+        // Si `/v1/usage` no se puede leer, el régimen queda desconocido: el informe no
+        // declara régimen, no afirma el tipo de cuenta y degrada de forma visible.
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            (
+                "/api/usage/quota",
+                nan_cloud::real_account_payload().to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            None,
+        ));
+        assert_eq!(report.billing_regime, None);
+        assert_eq!(report.status, Status::Warning);
+        assert!(
+            report
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("no se pudo determinar el tipo de cuenta"),
+            "{:?}",
+            report.message
+        );
+        assert!(
+            !report
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("cuotas por modelo"),
+            "{:?}",
+            report.message
+        );
+    }
+
+    #[test]
+    fn the_session_path_classifies_the_regime_when_there_is_an_api_key() {
+        // La sesión también clasifica el régimen: el panel de Cloud no publica el
+        // bloque `credits`, así que se lee `/v1/usage` (la única fuente documentada).
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            ("/v1/usage", published_credits_page().to_string()),
+            (
+                "/api/usage/quota",
+                nan_cloud::real_account_payload().to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            Some("session=abc"),
+        ));
+        assert_eq!(report.billing_regime, Some("credits"));
+        assert!(
+            report.meters.is_empty(),
+            "una cuenta de créditos no muestra los topes por modelo: {:?}",
+            report.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            report.message.as_deref(),
+            Some("la cuenta se factura en créditos")
+        );
+    }
+
+    #[test]
+    fn without_an_api_key_the_session_leaves_the_regime_unknown() {
+        // Sin API key no hay forma de leer el bloque `credits`: el régimen queda
+        // desconocido y el informe no lo declara. Los datos de la sesión (los del
+        // panel) no se tocan.
+        let mock = MockServer::new(vec![(
+            "/api/usage/quota",
+            nan_cloud::real_account_payload().to_string(),
+        )]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            None,
+            Some("session=abc"),
+        ));
+        assert_eq!(report.billing_regime, None);
+        assert_eq!(report.status, Status::Ok);
+        assert_eq!(report.meters.len(), 2);
+        assert_eq!(report.meters[0].quota_source, Some("account"));
+    }
+
+    #[test]
+    fn the_cycle_reads_the_usage_page_only_once() {
+        // La lectura de `/v1/usage` que decide el régimen se reutiliza en el camino de
+        // respaldo: el ciclo no pide una segunda página. Con la cuota de la cuenta
+        // caída (500) el camino de respaldo lee el consumo de la MISMA respuesta.
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            (
+                "/v1/usage",
+                r#"{"object":"list","data":[],"credits":null}"#.to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let _report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            None,
+        ));
+        let usage_calls = mock
+            .requested()
+            .iter()
+            .filter(|p| p.as_str() == "/v1/usage")
+            .count();
+        assert_eq!(
+            usage_calls,
+            1,
+            "el ciclo pide /v1/usage una sola vez: {:?}",
+            mock.requested()
+        );
+    }
+
+    #[test]
+    fn without_an_api_key_the_session_does_not_read_the_usage_page() {
+        // Sin API key no hay forma de leer el bloque `credits`: la sesión no pide
+        // `/v1/usage` y el informe no declara régimen.
+        let mock = MockServer::new(vec![(
+            "/api/usage/quota",
+            nan_cloud::real_account_payload().to_string(),
+        )]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            None,
+            Some("session=abc"),
+        ));
+        assert!(
+            !mock.requested().iter().any(|p| p == "/v1/usage"),
+            "sin API key no se lee /v1/usage: {:?}",
+            mock.requested()
+        );
+        assert_eq!(report.billing_regime, None);
+        assert!(
+            serde_json::to_value(&report)
+                .unwrap()
+                .get("billingRegime")
+                .is_none(),
+            "un informe sin régimen no pone la clave"
+        );
     }
 }
