@@ -653,7 +653,12 @@ describe('the copied summary never claims the old state is current (F3)', () => 
   // `readAt` se arma con la hora local para que el test no dependa de la zona de la
   // máquina (el instante sigue siendo UTC). La marca de lo viejo es UN solo texto
   // («caché · leído a las HH:MM»), el de `staleMark`.
-  const readAt = new Date(2026, 10, 12, 8, 0).toISOString();
+  const readAtDate = new Date(2026, 10, 12, 8, 0);
+  const readAt = readAtDate.toISOString();
+  // La hora esperada se deriva del propio instante, en la zona de ahora: la zona
+  // puede cambiar entre la carga del archivo y la aserción (otro test del worker la
+  // fija), y el instante se pinta en la zona de quien mira.
+  const readingTime = () => `${String(readAtDate.getHours()).padStart(2, '0')}:${String(readAtDate.getMinutes()).padStart(2, '0')}`;
 
   it('marks the stale meters with the cached chip and their reading time', () => {
     const report: UsageReport = {
@@ -668,7 +673,7 @@ describe('the copied summary never claims the old state is current (F3)', () => 
     const old = lines.find((l) => l.includes('deepseek-v4-flash'))!;
     // El medidor viejo va marcado, con la hora de su última lectura.
     expect(old).toContain('caché');
-    expect(old).toContain('leído a las 08:00');
+    expect(old).toContain(`leído a las ${readingTime()}`);
     // El vigente, no.
     expect(fresh).not.toContain('caché');
   });
@@ -678,7 +683,7 @@ describe('the copied summary never claims the old state is current (F3)', () => 
     const report: UsageReport = { ...base, stale: true, fetchedAt: readAt };
     const summary = reportSummary(report, now, 'es');
     expect(summary).toContain('caché');
-    expect(summary).toContain('leído a las 08:00');
+    expect(summary).toContain(`leído a las ${readingTime()}`);
   });
 
   it('marks the kept spend as cached', () => {
@@ -690,6 +695,6 @@ describe('the copied summary never claims the old state is current (F3)', () => 
     };
     const line = reportSummary(report, now, 'es').split('\n').find((l) => l.includes('Diciembre'))!;
     expect(line).toContain('caché');
-    expect(line).toContain('leído a las 08:00');
+    expect(line).toContain(`leído a las ${readingTime()}`);
   });
 });
