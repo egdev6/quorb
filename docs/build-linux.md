@@ -195,10 +195,12 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 > con `Exec=<ruta>` sin argumentos ni variables, y Quorb arranca con
 > `WAYLAND_DISPLAY` y sin `GDK_BACKEND`, es decir, en **Wayland nativo** (sin
 > posicionamiento de la tira) aunque se use normalmente con
-> `GDK_BACKEND=x11`. Sin verificar: un inicio de sesión real, la tira a simple
-> vista, GNOME y Plasma X11. Con una ruta con espacios el generador de systemd
-> no crea la unidad y nada lo avisa. Aparte, el consejo de «Auto-hide» solo se
-> ofrece donde el posicionamiento es `ok` (X11/XWayland).
+> `GDK_BACKEND=x11`. Hyprland y sway no ejecutan las entradas XDG autostart
+> por sí solos (requieren uwsm, dex o el generador de systemd), así que ahí
+> puede no arrancar. Sin verificar: un inicio de sesión real, la tira a simple
+> vista, GNOME, Hyprland y Plasma X11. Con una ruta con espacios el generador
+> de systemd no crea la unidad y nada lo avisa. Aparte, el consejo de
+> «Auto-hide» solo se ofrece donde el posicionamiento es `ok` (X11/XWayland).
 >
 > Nota: la matriz cubre solo lo **medido o asignado**. Las celdas sin evidencia
 > no se marcan como soportadas; la política de soporte (§5) es el único
