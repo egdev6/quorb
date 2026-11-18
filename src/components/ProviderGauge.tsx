@@ -89,8 +89,13 @@ export function ProviderGauge({
    * natural.
    */
   order?: number;
-  /** Manejadores de puntero para reordenar arrastrando */
-  pointer?: Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp'>;
+  /**
+   * Manejadores de puntero para reordenar arrastrando.
+   *
+   * `onPointerCancel` va aparte de `onPointerUp` (#279): una cancelación del
+   * sistema no es una suelta y no puede confirmar el reordenamiento.
+   */
+  pointer?: Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp' | 'onPointerCancel'>;
 }) {
   const validity = validityInfo(report, locale);
   const resets = showResets ? resetCreditsInfo(report, locale) : null;
@@ -140,8 +145,10 @@ export function ProviderGauge({
         onHover(e.currentTarget);
       }}
       onClick={(e) => (onClick ?? onHover)(e.currentTarget)}
-      onPointerCancel={pointer?.onPointerUp}
       {...pointer}
+      // #279: la cancelación del sistema no confirma el reordenamiento: va a
+      // su propio handler, no al de la suelta.
+      onPointerCancel={pointer?.onPointerCancel}
     >
       {list.map(({ percent, color }, i) => (
         <span key={i} className="eg-gauge__ring" style={{ '--p': Math.max(0, Math.min(100, percent)) / 100, '--c': color } as CSSProperties} />
