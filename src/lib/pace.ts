@@ -1,6 +1,8 @@
 // Ritmo de consumo: compara lo gastado con el tiempo transcurrido de la ventana.
 
-import type { Meter, Spend } from './types';
+import type { Meter, Spend, UsageReport } from './types';
+import { isStaleMeter } from './format';
+import { windowEnd, windowStart } from './window';
 
 export interface Pace {
   /** fracción de la ventana transcurrida (0–1) */
@@ -33,12 +35,20 @@ export function paceOf(used: number, start: number, end: number, now: number): P
   return { elapsed, used, ratio, projected, exhaustAt, status };
 }
 
-/** Ritmo de un medidor con % y ventana conocida (sesión 5 h, semana, mes…). */
-export function meterPace(m: Meter, now: number = Date.now()): Pace | null {
-  if (m.percent == null || !m.resetsAt || !m.windowSeconds) return null;
-  const end = Date.parse(m.resetsAt);
-  if (Number.isNaN(end)) return null;
-  return paceOf(m.percent / 100, end - m.windowSeconds * 1000, end, now);
+/**
+ * Ritmo de un medidor con % y ventana conocida (sesión 5 h, semana, mes…).
+ *
+ * Con el informe delante, un medidor viejo no genera ritmo: lo que se conserva de
+ * un ciclo anterior describe el pasado, no el estado de ahora. La regla de
+ * obsolescencia la pone el frente (`isStaleMeter`), no este módulo.
+ */
+export function meterPace(report: UsageReport, m: Meter, now: number = Date.now()): Pace | null {
+  if (isStaleMeter(report, m)) return null;
+  if (m.percent == null || !m.windowSeconds) return null;
+  const end = windowEnd(m);
+  const start = windowStart(m);
+  if (end == null || start == null) return null;
+  return paceOf(m.percent / 100, start, end, now);
 }
 
 /** Ritmo del gasto mensual frente al presupuesto (o proyección del mes si no hay presupuesto). */

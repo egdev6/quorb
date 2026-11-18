@@ -219,6 +219,7 @@ fn parse_models(
             unit: None,
             window_seconds,
             resets_at,
+            ..Default::default()
         };
         let keep = by_model
             .get(&name)

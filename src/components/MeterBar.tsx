@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { Locale, Meter } from '../lib/types';
-import { formatCompact, formatPercent, formatResetIn, levelFor } from '../lib/format';
+import { formatCompact, formatPercent, formatResetIn, levelFor, staleMark } from '../lib/format';
 import { t } from '../i18n';
 
 /**
@@ -10,6 +10,11 @@ import { t } from '../i18n';
  */
 export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; ring: number | null; color?: string; locale?: Locale }) {
   const pct = meter.percent;
+  // Marca mínima de lo viejo para el medidor marcado individualmente (`meter.stale`,
+  // el del camino mixto): no puede verse como actual. El informe entero viejo lleva su
+  // propia pastilla en la cabecera y su marca en el resumen. La presentación completa
+  // (atenuación, serie) es de otra porción.
+  const stale = meter.stale === true;
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
     meter.used != null
@@ -24,6 +29,7 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
       className="q-meter"
       data-ring={ring ?? undefined}
       data-level={levelFor(pct)}
+      data-stale={stale ? 'true' : undefined}
       data-colored={color ? true : undefined}
       style={color ? { '--meter-color': color } as CSSProperties : undefined}
     >
@@ -51,6 +57,11 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
         </span>
       )}
       {meta && <span className="q-meter__meta">{meta}</span>}
+      {stale && (
+        <span className="q-meter__meta" title={t(locale, 'details.staleChipTitle')}>
+          {staleMark(meter.readAt ?? null, locale)}
+        </span>
+      )}
     </div>
   );
 }
