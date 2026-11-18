@@ -12,9 +12,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useWidgetStartup, STARTUP_SHOW_DELAY_MS } from './use-widget-startup';
+import { SKIP, STARTUP_SLOT, STARTUP_STATES, STARTUP_STATE_COUNT } from './test-slots';
 
 const state = vi.hoisted(() => ({
   states: [] as unknown[], stateIndex: 0,
+  // Iniciales que el hook pasa a cada useState, en orden de render (#286).
+  stateInitials: [] as unknown[],
+  expectedStateCount: null as number | null,
   effects: [] as { run: () => void | (() => void); deps?: readonly unknown[] }[],
   getConfig: vi.fn(),
   listeners: new Map<string, ((event?: { payload?: unknown }) => void)[]>(),
@@ -26,6 +30,13 @@ vi.mock('react', async (importOriginal) => {
     ...react,
     useState: ((initial?: unknown) => {
       const index = state.stateIndex++;
+      state.stateInitials.push(initial);
+      // Disparidad temprana con la tabla de slots (#286): el render del probe
+      // no debe crear más useState de los declarados para el hook.
+      const expected = state.expectedStateCount;
+      if (expected != null && index >= expected) {
+        throw new Error(`useWidgetStartup crea más useState (${index + 1}) de los que declara STARTUP_STATES (#286). Actualiza src/lib/test-slots.ts.`);
+      }
       const value = index in state.states ? state.states[index]
         : typeof initial === 'function' ? initial() : initial;
       // El valor inicial vive en el slot: el test lo lee con `state.states[i]`
@@ -49,6 +60,10 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }));
 
+// Recuento esperado de la tabla de slots del hook (#286): inyectado aquí
+// (el factory de `vi.mock` no puede importar `test-slots` por hoisting).
+state.expectedStateCount = STARTUP_STATE_COUNT;
+
 /** Promise controlable para `getConfig` (pendiente hasta que el test decida). */
 function deferred() {
   let resolve!: (c: unknown) => void;
@@ -68,11 +83,11 @@ function probe(options: Parameters<typeof useWidgetStartup>[0] = {}) {
     return createElement('pre', null, 'probe');
   }
   renderToStaticMarkup(createElement(Probe));
-  // Los tres primeros slots de estado del hook: config, configFailed, configError.
+  // Slots del hook por nombre (#286): la tabla vive en `test-slots.ts`.
   const read = (): { config: unknown; configFailed: boolean; configError: string | null } => ({
-    config: state.states[0] ?? null,
-    configFailed: state.states[1] as boolean,
-    configError: (state.states[2] ?? null) as string | null,
+    config: state.states[STARTUP_SLOT.config] ?? null,
+    configFailed: state.states[STARTUP_SLOT.configFailed] as boolean,
+    configError: (state.states[STARTUP_SLOT.configError] ?? null) as string | null,
   });
   const load = state.effects.find((e) => e.run.toString().includes('getConfig'))!;
   const timer = state.effects.find((e) => e.run.toString().includes('setTimeout'))!;
@@ -217,5 +232,23 @@ describe('useWidgetStartup wiring (#271)', () => {
     p.timer.run();
     await vi.advanceTimersByTimeAsync(STARTUP_SHOW_DELAY_MS + 1);
     expect(onReadyToShow).toHaveBeenCalledTimes(1);
+  });
+
+  // Coherencia de la tabla de slots (#286): el render del probe consume
+  // exactamente los useState que declara STARTUP_STATES, en orden y con los
+  // iniciales esperados. Un useState de más en el hook (o un reordenamiento)
+  // rompe este test pidiendo actualizar la tabla.
+  it('the probe consumes exactly the useState declared in STARTUP_STATES, with matching initials', () => {
+    state.stateIndex = 0;
+    state.stateInitials = [];
+    state.states = [];
+    probe();
+    expect(state.stateIndex).toBe(STARTUP_STATE_COUNT);
+    STARTUP_STATES.forEach((spec, i) => {
+      // `STARTUP_STATES` no declara SKIP hoy; el cast mantiene el oráculo
+      // válido si la tabla lo usa en el futuro (#286).
+      if ((spec.initial as unknown) === SKIP) return;
+      expect(state.stateInitials[i], `initial de ${spec.name}`).toEqual(spec.initial);
+    });
   });
 });

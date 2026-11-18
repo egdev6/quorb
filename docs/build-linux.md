@@ -211,17 +211,29 @@ Celdas: `medido` (con evidencia de esta sesión/CI), `pendiente contribuidor`
 (no verificado aquí; CachyOS/Omarchy/Arch por Rafael y la comunidad),
 `n/a` (no aplicable en ese entorno).
 
-| Entorno | Install | app:dev/arranque | Widget | Click-through | Always-on-top | Bandeja | Secretos |
-|---|---|---|---|---|---|---|---|
-| Ubuntu 22.04 X11 (GNOME) | medido (devcontainer) | n/a (sin compositor en container) | n/a | n/a | n/a | n/a | pendiente F2 |
-| Ubuntu 22.04 Wayland (GNOME) | medido (CI runner) | medido indirecto (xvfb) | n/a | degradación Mutter (esperado, no verificado) | degradación Mutter (esperado) | libayatana | pendiente F2 |
-| Ubuntu 26.04 Wayland (GNOME) | medido (host) | medido (.deb) | sí | degradación Mutter (esperado) | degradación Mutter (esperado) | libayatana | pendiente F2 |
-| Arch rolling GNOME (Wayland) | pendiente contribuidor | – | – | – | – | – | – |
-| Arch rolling KDE Plasma (Wayland) | pendiente contribuidor | – | – | – | – | – | – |
-| CachyOS KDE Plasma | pendiente contribuidor | – | – | – | – | – | – |
-| CachyOS Hyprland (0.57.0) | medido (contribuidor, #250) | medido (Wayland nativo y XWayland) | sí con #250 (61×181 ajustada a la tira; sin el fix, caja de 1270×1026 en nativo y mosaico en XWayland) | pendiente | pendiente | pendiente | pendiente |
-| Omarchy Hyprland | pendiente contribuidor | – | – | – | – | – | – |
+| Entorno | Install | app:dev/arranque | Widget | Click-through | Always-on-top | Bandeja | Arranque automático | Secretos |
+|---|---|---|---|---|---|---|---|---|
+| Ubuntu 22.04 X11 (GNOME) | medido (devcontainer) | n/a (sin compositor en container) | n/a | n/a | n/a | n/a | n/a (sin sesión gráfica) | pendiente F2 |
+| Ubuntu 22.04 Wayland (GNOME) | medido (CI runner) | medido indirecto (xvfb) | n/a | degradación Mutter (esperado, no verificado) | degradación Mutter (esperado) | libayatana | n/a (sin inicio de sesión) | pendiente F2 |
+| Ubuntu 26.04 Wayland (GNOME) | medido (host) | medido (.deb) | sí | degradación Mutter (esperado) | degradación Mutter (esperado) | libayatana | pendiente | pendiente F2 |
+| Arch rolling GNOME (Wayland) | pendiente contribuidor | – | – | – | – | – | – | – |
+| Arch rolling KDE Plasma (Wayland) | pendiente contribuidor | – | – | – | – | – | – | – |
+| CachyOS KDE Plasma | pendiente contribuidor | – | – | – | – | – | medido por emulación en Wayland (#290): arranca en Wayland nativo | – |
+| CachyOS Hyprland (0.57.0) | medido (contribuidor, #250) | medido (Wayland nativo y XWayland) | sí con #250 (61×181 ajustada a la tira; sin el fix, caja de 1270×1026 en nativo y mosaico en XWayland) | pendiente | pendiente | pendiente | pendiente | pendiente |
+| Omarchy Hyprland | pendiente contribuidor | – | – | – | – | – | – | – |
 
+> Arranque automático (#290): en ningún entorno consta como `ok`; el diagnóstico
+> lo marca `limited`. Medición con la emulación de un inicio de sesión
+> (`systemctl --user start app-Quorb@autostart.service`, KDE Plasma 6.7.5 en
+> Wayland, AppImage 0.8.0): el plugin escribe `~/.config/autostart/Quorb.desktop`
+> con `Exec=<ruta>` sin argumentos ni variables, y Quorb arranca con
+> `WAYLAND_DISPLAY` y sin `GDK_BACKEND`, es decir, en **Wayland nativo** (sin
+> posicionamiento de la tira) aunque se use normalmente con
+> `GDK_BACKEND=x11`. Sin verificar: un inicio de sesión real, la tira a simple
+> vista, GNOME y Plasma X11. Con una ruta con espacios el generador de systemd
+> no crea la unidad y nada lo avisa. Aparte, el consejo de «Auto-hide» solo se
+> ofrece donde el posicionamiento es `ok` (X11/XWayland).
+>
 > Nota: la matriz cubre solo lo **medido o asignado**. Las celdas sin evidencia
 > no se marcan como soportadas; la política de soporte (§5) es el único
 > compromiso aceptado.

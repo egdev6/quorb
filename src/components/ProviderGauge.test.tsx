@@ -140,6 +140,26 @@ describe('ProviderGauge pointer-only enter', () => {
     const { button, event } = gauge();
     expect(() => button.props.onMouseLeave(event)).not.toThrow();
   });
+
+  // #279: una cancelación del sistema (pérdida de la captura, un gesto
+  // interrumpido, la ventana que pierde el foco) no es una suelta: no puede
+  // confirmar el reordenamiento, así que tiene su propio handler y no el de
+  // la suelta.
+  it('routes pointercancel to its own handler, not to the drop one (#279)', () => {
+    const onPointerUp = vi.fn();
+    const onPointerCancel = vi.fn();
+    const report: UsageReport = {
+      id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
+      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+    };
+    const button = ProviderGauge({
+      report, small: false, size: 60, active: false, onHover: () => {},
+      pointer: { onPointerUp, onPointerCancel },
+    });
+    button.props.onPointerCancel({ currentTarget: {} });
+    expect(onPointerCancel).toHaveBeenCalledTimes(1);
+    expect(onPointerUp).not.toHaveBeenCalled();
+  });
 });
 
 describe('ProviderGauge visual order', () => {
