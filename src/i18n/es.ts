@@ -653,6 +653,7 @@ export const es = {
     },
     staleChip: 'caché',
     staleChipTitle: 'Datos del último ciclo correcto',
+    staleReadAtTime: 'leído a las {time}',
     budget: 'Presupuesto',
     copy: {
       summary: 'Copiar resumen',

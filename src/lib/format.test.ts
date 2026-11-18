@@ -4,6 +4,10 @@ import { currentMeters, formatCompact, formatResetIn, hasStaleData, isStaleMeter
 import { meterPace } from './pace';
 import type { Meter, UsageReport } from './types';
 
+// Instante de referencia para las pruebas de `mergeReports`: antes de que terminen las
+// ventanas de los medidores conservados, así que no dependen del reloj de la máquina.
+const BEFORE_WINDOW_END = Date.parse('2026-11-10T00:00:00Z');
+
 const base: UsageReport = {
   id: 'claude',
   name: 'Claude',
@@ -129,7 +133,7 @@ describe('format', () => {
         { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
       ],
     };
-    const [merged] = mergeReports([previous], [failed]);
+    const [merged] = mergeReports([previous], [failed], BEFORE_WINDOW_END);
     // El informe MIXTO no queda desactualizado entero: trae datos frescos.
     expect(merged.stale).toBeUndefined();
     expect(merged.meters.map((m) => m.id)).toEqual(['custom', 'rate_requests', 'model:deepseek-v4-flash']);
@@ -168,7 +172,7 @@ describe('format', () => {
         { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 95, used: 95, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
       ],
     };
-    const [merged] = mergeReports([previous], [failed]);
+    const [merged] = mergeReports([previous], [failed], BEFORE_WINDOW_END);
     // El informe NO queda desactualizado: si lo quedara, los avisos lo saltarían entero.
     expect(merged.stale).toBeUndefined();
     const kept = merged.meters.find((m) => m.id === 'model:deepseek-v4-flash')!;
@@ -181,6 +185,75 @@ describe('format', () => {
     const { events } = detectAlerts([previous], [merged], {}, { threshold: 90, onReset: true });
     expect(events.map((e) => e.kind)).toEqual(['exceeded']);
     expect(events[0].meterId).toBe('rate_requests');
+  });
+
+  it('drops a kept meter whose window already ended (M3)', () => {
+    // La cuota de la cuenta se cayó DESPUÉS de que terminara su periodo: la lectura
+    // del periodo anterior no se conserva, porque si se conservara se presentaría
+    // como vigente («Se reinicia ahora») cuando su ventana ya pasó.
+    const quota: Meter = {
+      id: 'model:deepseek-v4-flash',
+      label: 'deepseek-v4-flash',
+      percent: 95.558,
+      used: 955_581_032,
+      limit: 1_000_000_000,
+      unit: 'tokens',
+      resetsAt: '2026-12-05T22:15:31Z',
+      windowSeconds: 2_592_000,
+      quotaSource: 'account',
+    };
+    const previous: UsageReport = { ...base, status: 'ok', meters: [quota] };
+    const failed: UsageReport = {
+      ...base,
+      status: 'warning',
+      message: 'cuota no disponible',
+      meters: [{ id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null }],
+    };
+    const [merged] = mergeReports([previous], [failed], Date.parse('2026-12-06T00:00:00Z'));
+    // El medidor vencido no se conserva: su ventana ya terminó.
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.meters.some((m) => m.id === 'model:deepseek-v4-flash')).toBe(false);
+  });
+
+  it('keeps a kept meter with no known window however long ago it was read', () => {
+    // Sin `resetsAt` legible no hay ventana: no se puede saber que el periodo pasó,
+    // así que el medidor se conserva (no se borra nada por un dato que no se conoce).
+    const custom: Meter = {
+      id: 'custom',
+      label: 'Consumo',
+      percent: 10,
+      used: 10,
+      limit: 100,
+      unit: 'tokens',
+      resetsAt: null,
+      windowSeconds: null,
+    };
+    const previous: UsageReport = { ...base, status: 'ok', meters: [custom] };
+    const failed: UsageReport = {
+      ...base,
+      status: 'warning',
+      message: 'cuota no disponible',
+      meters: [{ id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null }],
+    };
+    const [merged] = mergeReports([previous], [failed], Date.parse('2027-01-01T00:00:00Z'));
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests', 'custom']);
+    expect(merged.meters[1].stale).toBe(true);
+  });
+
+  it('marks the stale meters in the copied summary (B2)', () => {
+    // El resumen copiado no puede presentar un número viejo como si fuera de ahora.
+    const report: UsageReport = {
+      ...base,
+      meters: [
+        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
+        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', resetsAt: '2026-12-05T22:15:31Z', windowSeconds: 2_592_000, stale: true, readAt: '2026-11-10T08:30:00Z' },
+      ],
+    };
+    const lines = reportSummary(report, new Date('2026-11-10T00:00:00Z'), 'es').split('\n');
+    // El medidor fresco no lleva marca…
+    expect(lines[1]).toBe('· Peticiones (ventana): 20 %');
+    // …y el viejo sí: el texto de la pastilla y la hora de su última lectura.
+    expect(lines[2]).toContain('caché · leído a las 08:30');
   });
 
   it('does not carry the previous daily series nor the spend into a mixed report', () => {
@@ -211,7 +284,7 @@ describe('format', () => {
       message: 'cuota no disponible',
       meters: [{ id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null }],
     };
-    const [merged] = mergeReports([previous], [failed]);
+    const [merged] = mergeReports([previous], [failed], BEFORE_WINDOW_END);
     // El medidor de cuota sí se conserva (marcado como viejo)...
     expect(merged.meters.find((m) => m.id === quota.id)?.stale).toBe(true);
     // ...pero la serie diaria y el gasto no: si este ciclo no los trae, no se muestran.
@@ -373,7 +446,7 @@ describe('stale data is never presented as the current state (T31)', () => {
     // conserva el medidor del régimen anterior, marcado como viejo.
     const previous: UsageReport = { ...base, status: 'ok', meters: [keptMeter()] };
     const failed: UsageReport = { ...base, status: 'warning', message: 'cuota no disponible', meters: [freshMeter()] };
-    const [merged] = mergeReports([previous], [failed]);
+    const [merged] = mergeReports([previous], [failed], BEFORE_WINDOW_END);
     // Lo viejo se conserva…
     expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests', 'model:deepseek-v4-flash']);
     expect(merged.meters[1].stale).toBe(true);
@@ -385,7 +458,7 @@ describe('stale data is never presented as the current state (T31)', () => {
   it('stamps the kept meter with the reading date of the report it comes from (R4)', () => {
     const previous: UsageReport = { ...base, status: 'ok', fetchedAt: '2026-11-10T08:00:00Z', meters: [keptMeter()] };
     const failed: UsageReport = { ...base, status: 'warning', message: 'cuota no disponible', fetchedAt: '2026-11-12T08:00:00Z', meters: [freshMeter()] };
-    const [merged] = mergeReports([previous], [failed]);
+    const [merged] = mergeReports([previous], [failed], BEFORE_WINDOW_END);
     const kept = merged.meters.find((m) => m.id === 'model:deepseek-v4-flash')!;
     // El medidor conserva la fecha de SU lectura; el informe nuevo manda con la suya.
     expect(kept.readAt).toBe('2026-11-10T08:00:00Z');

@@ -162,7 +162,10 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
       }}>
         <summary className="details__toggle"><h3 className="details__title">{t(locale, 'details.paceTitle')}</h3></summary>
         <div className="details__body">
-          {paces.filter((p) => p.pace).length === 0 && !report.spend && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
+          {/* Sin ritmo que proyectar (no hay medidores vigentes) y sin gasto vigente: se
+              dice que no hay ventana, en vez de dejar un bloque vacío. El gasto viejo
+              no se proyecta nunca, así que el ritmo queda vacío. */}
+          {paces.filter((p) => p.pace).length === 0 && (!report.spend || isStaleSpend(report)) && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
           {paces.map(
             ({ m, color, pace }) =>
               pace && (

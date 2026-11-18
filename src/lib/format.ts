@@ -1,6 +1,7 @@
 import type { Locale, Meter, UsageReport } from './types';
-import { t, type MessageKey } from '../i18n';
+import { t, intlLocale, type MessageKey } from '../i18n';
 import { meterKey } from './alerts';
+import { windowEnd } from './window';
 
 /** «en 2 h 13 min», «en 3 d 4 h», «ahora» */
 export function formatResetIn(iso: string | null, now: Date = new Date(), locale: Locale = 'es'): string | null {
@@ -38,6 +39,29 @@ export function formatCompact(n: number): string {
 
 export function formatPercent(p: number): string {
   return `${Math.round(p)}%`;
+}
+
+/**
+ * La hora de la última lectura, en UTC: el texto no depende de la zona horaria de
+ * quien mira; la fecha va en UTC, como toda fecha mostrada.
+ */
+export function formatReadTime(iso: string | null, locale: Locale = 'es'): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat(intlLocale(locale), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' }).format(d);
+}
+
+/**
+ * La marca de lo viejo: el texto de la pastilla («caché») y, cuando se sabe, la hora
+ * de la última lectura. El TEXTO es uno solo (barra y resumen); el gatillo difiere:
+ * la barra marca el medidor marcado individualmente, el resumen también los del
+ * informe entero (`isStaleMeter`).
+ */
+export function staleMark(readAt: string | null, locale: Locale = 'es'): string {
+  const chip = t(locale, 'details.staleChip');
+  const time = formatReadTime(readAt, locale);
+  return time ? `${chip} · ${t(locale, 'details.staleReadAtTime', { time })}` : chip;
 }
 
 // Etiqueta corta para la leyenda de los anillos: por id estable, con la etiqueta
@@ -124,8 +148,14 @@ export function peakMeter(r: UsageReport): Meter | null {
 /**
  * Si un ciclo falla pero el anterior tenía datos, conservamos los datos
  * antiguos marcados como `stale` para que el widget no se quede vacío.
+ *
+ * `now` se inyecta para que la regla de vencimiento sea determinista: en el camino
+ * MIXTO, un medidor conservado cuyo periodo ya terminó no se conserva (su lectura es
+ * del periodo anterior, y presentarla como vigente sería mentir). La rama de informe
+ * entero NO aplica el vencimiento (S51 pide sólo el camino mixto): hueco declarado,
+ * candidato a extender.
  */
-export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageReport[] {
+export function mergeReports(prev: UsageReport[], next: UsageReport[], now: number = Date.now()): UsageReport[] {
   const byId = new Map(prev.map((r) => [r.id, r]));
   return next.map((r) => {
     const old = byId.get(r.id);
@@ -140,7 +170,10 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     // anterior. El informe NO queda desactualizado entero: trae datos frescos, y marcarlo
     // saltaría los avisos del ciclo entero (con el fresco incluido).
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
-      const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)));
+      // Lo que el informe nuevo no trae se conserva del anterior… salvo que su periodo
+      // ya haya terminado: entonces la lectura es del periodo anterior y no se
+      // conserva (si no, se vería como vigente, con «Se reinicia ahora»).
+      const missing = old.meters.filter((om) => !r.meters.some((nm) => meterKey(om) === meterKey(nm)) && !windowEnded(om, now));
       // Si no se conserva ningún medidor, no hay nada viejo que avisar: el informe
       // nuevo se queda tal cual (sus medidores son todos frescos).
       if (!missing.length) return r;
@@ -161,6 +194,15 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[]): UsageRep
     }
     return r;
   });
+}
+
+/**
+ * ¿La ventana de este medidor ya terminó? Sin `resetsAt` legible no hay ventana:
+ * no se puede saber que el periodo pasó, así que el medidor no se descarta.
+ */
+function windowEnded(m: Meter, now: number): boolean {
+  const end = windowEnd(m);
+  return end != null && end < now;
 }
 
 /** Estampa en cada medidor conservado la fecha de la lectura de la que viene. */
@@ -196,13 +238,16 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
   const lines = [r.plan ? `${r.name} (${r.plan})` : r.name];
   for (const m of r.meters) {
     const reset = formatResetIn(m.resetsAt, now, locale);
+    // Lo viejo va marcado: un número viejo no puede salir junto a los frescos con
+    // apariencia de actual.
+    const mark = isStaleMeter(r, m) ? staleMark(m.readAt ?? null, locale) : null;
     const value =
       m.percent != null
         ? `${Math.round(m.percent)} %`
         : m.used != null
           ? `${formatCompact(m.used)}${m.unit ? ` ${m.unit}` : ''}`
           : '—';
-    lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}`);
+    lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}${mark ? ` · ${mark}` : ''}`);
   }
   if (r.spend) lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`);
   if (r.message && r.status !== 'ok') lines.push(`· ${r.message}`);

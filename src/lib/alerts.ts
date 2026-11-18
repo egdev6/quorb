@@ -70,7 +70,9 @@ export function detectAlerts(
       const pct = m.percent;
       const ev = { providerId: r.id, providerName: r.name, meterId: meterKey(m), realMeterId: m.id, window: windowKey(m.resetsAt), label: m.label, percent: pct };
 
-      // 1. Límite superado (una vez por ventana)
+      // 1. Límite superado (una vez por ventana). La ventana entra en la clave: al
+      // cambiar de base de medición el reinicio también cambia, así que puede salir
+      // un segundo «superado» para el mismo modelo (aceptado: la base es otra).
       const key = `${r.id}|${meterKey(m)}|${windowKey(m.resetsAt)}`;
       // La memoria guardada antes de existir los ids usaba la etiqueta: no repetir ese aviso.
       const legacyKey = `${r.id}|${m.label}|${windowKey(m.resetsAt)}`;
@@ -108,6 +110,12 @@ function quotaBasisChanged(old: Meter, next: Meter): boolean {
  * ¿Es un reinicio del límite que ya estaba superado? Regla única, compartida por los dos
  * casos: con la misma base de medición se aplica la de siempre; con bases distintas sólo
  * se afirma el reinicio si además la ventana avanzó y el consumo absoluto bajó.
+ *
+ * Al caer a otra base de medición (por ejemplo, de la cuota de la cuenta a la cuota
+ * publicada) el medidor cambia de `resetsAt` y, con él, de CLAVE DE VENTANA
+ * (`windowKey`): la memoria de avisos es por ventana, así que puede salir un SEGUNDO
+ * aviso de «superado» para el mismo modelo. Eso se acepta: la base es otra, y el
+ * porcentaje nuevo está medido contra otro denominador, así que no es el mismo dato.
  */
 function isReset(old: Meter, next: Meter, pct: number, threshold: number): boolean {
   if (pct >= threshold) return false;
