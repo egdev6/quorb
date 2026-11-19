@@ -130,11 +130,14 @@ html[data-window='settings'] { font-family: var(--font-sans); font-size: 15px; }
 .q-meter__value { font-variant-numeric: tabular-nums; }
 .q-meter[data-level='max'] .q-meter__value { color: var(--color-fg-brand-raised); }
 .q-meter__meta { font-size: 12px; color: var(--color-fg-muted); }
+/* La nota de la base de la cuota (el medidor no se midió contra la cuota de la
+   cuenta): va junto al nombre, como una etiqueta neutra. */
 /* Medidor conservado de un ciclo anterior: lleva la marca de "caché" con la hora de
    su última lectura y se atenúa ENTERO para que se lea como dato viejo y no como la
    lectura del momento. La barra y la meta pierden opacidad; el número deja de llevar
    la marca de «tope superado» y pasa al tono apagado. El texto sigue legible. */
 .q-spend__stale { margin-left: 8px; }
+.q-meter__basis { margin-left: 6px; }
 .q-meter--stale .eg-progress { opacity: 0.45; }
 .q-meter--stale .q-meter__value { color: var(--color-fg-muted); }
 .q-meter--stale[data-level='max'] .q-meter__value { color: var(--color-fg-muted); }

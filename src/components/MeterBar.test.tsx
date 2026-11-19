@@ -88,3 +88,40 @@ describe('MeterBar y el informe entero viejo (T46)', () => {
   });
 });
 
+// La base de la cuota se muestra en el medidor cuando NO es la de la cuenta: el número
+// no viene de la lectura de la cuenta, así que no puede presentarse como su estado.
+describe('MeterBar y la base de la cuota (T46-bis)', () => {
+  const meter: Meter = {
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    resetsAt: null,
+    windowSeconds: null,
+  };
+
+  it('notes a meter that was not measured against the account quota', () => {
+    const published: Meter = { ...meter, quotaSource: 'published' };
+    const html = renderToStaticMarkup(<MeterBar meter={published} ring={null} locale="es" />);
+    expect(html).toContain('publicada');
+    // El tooltip explica qué significa: no es la cuota de la cuenta.
+    expect(html).toContain('No se pudo leer la cuota de tu cuenta');
+  });
+
+  it('does not note a meter measured against the account quota', () => {
+    // El caso normal no se anota: una etiqueta en cada barra sería ruido.
+    const account: Meter = { ...meter, quotaSource: 'account' };
+    const html = renderToStaticMarkup(<MeterBar meter={account} ring={null} locale="es" />);
+    expect(html).not.toContain('publicada');
+  });
+
+  it('says it in English too', () => {
+    const published: Meter = { ...meter, quotaSource: 'published' };
+    const html = renderToStaticMarkup(<MeterBar meter={published} ring={null} locale="en" />);
+    expect(html).toContain('published quota');
+    expect(html).toContain('quota could not be read');
+  });
+});
+

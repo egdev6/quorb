@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { Locale, Meter } from '../lib/types';
-import { formatCompact, formatPercent, formatResetIn, levelFor, staleMark } from '../lib/format';
+import { formatCompact, formatPercent, formatResetIn, levelFor, quotaBasisNote, staleMark } from '../lib/format';
 import { t } from '../i18n';
 
 /**
@@ -20,6 +20,9 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
   // marcado individualmente sigue marcado. El gatillo es `isStaleMeter`, que ya
   // incluye la marca individual y la del informe entero.
   const stale = staleVerdict === true || meter.stale === true;
+  // La base de la cuota, cuando el medidor no se midió contra la cuota de la cuenta:
+  // el número no viene de la lectura de la cuenta, así que se dice.
+  const basis = quotaBasisNote(meter.quotaSource, locale);
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
     meter.used != null
@@ -45,7 +48,14 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
             aria-hidden="true"
           />
         )}
-        <span className="q-meter__label">{meter.label}</span>
+        <span className="q-meter__label">
+          {meter.label}
+          {basis && (
+            <span className="eg-status eg-status--neutral q-meter__basis" title={basis.title}>
+              {basis.label}
+            </span>
+          )}
+        </span>
         <b className="q-meter__value">{pct != null ? formatPercent(pct) : amount}</b>
       </div>
       {pct != null && (

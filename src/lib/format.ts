@@ -64,6 +64,24 @@ export function staleMark(readAt: string | null, locale: Locale = 'es'): string 
   return time ? `${chip} · ${t(locale, 'details.staleReadAtTime', { time })}` : chip;
 }
 
+/**
+ * La nota de la base de la cuota, cuando el medidor NO se midió contra la cuota de la
+ * cuenta. Es PRESENTACIÓN: la base viaja como texto opaco y la lógica sólo la compara
+ * (`alerts.ts`, `regimeBlocksKeeping`); aquí se muestra, para que un número que no
+ * viene de la lectura de la cuenta no se lea como el estado real. Un medidor de la
+ * cuenta no se anota: es el caso normal.
+ */
+export function quotaBasisNote(
+  source: string | undefined,
+  locale: Locale = 'es',
+): { label: string; title: string } | null {
+  if (source !== 'published') return null;
+  return {
+    label: t(locale, 'details.quotaBasisPublished'),
+    title: t(locale, 'details.quotaBasisPublishedTitle'),
+  };
+}
+
 // Etiqueta corta para la leyenda de los anillos: por id estable, con la etiqueta
 // larga como respaldo para datos antiguos sin id.
 const KEY_BY_ID = new Map<string, MessageKey>([
