@@ -1168,9 +1168,11 @@ export function AccountEditor({
               <b>{t(locale, 'settings.providers.planLabel')}</b>
               <Field label={t(locale, 'settings.providers.planLabel')} hint={t(locale, 'settings.providers.accountEditor.nanPlanHint')}>
                 <select value={a.plan || 'member'} onChange={(e) => onChange({ plan: e.target.value })}>
-                  <option value="community">nan_community</option>
                   <option value="member">nan_member</option>
-                  <option value="premium">GLM Premium</option>
+                  <option value="gentle">Gentle</option>
+                  <option value="inference">Inference</option>
+                  <option value="premium">Premium</option>
+                  <option value="community">Community</option>
                 </select>
               </Field>
             </li>
@@ -2403,9 +2405,11 @@ export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets
           <b>{t(locale, 'settings.providers.planLabel')}</b>
           <Field label={t(locale, 'settings.providers.planLabel')}>
             <select value={cfg.nan.plan} onChange={(e) => set('nan', { plan: e.target.value })}>
-              <option value="community">nan_community</option>
               <option value="member">nan_member</option>
-              <option value="premium">GLM Premium</option>
+              <option value="gentle">Gentle</option>
+              <option value="inference">Inference</option>
+              <option value="premium">Premium</option>
+              <option value="community">Community</option>
             </select>
           </Field>
         </li>

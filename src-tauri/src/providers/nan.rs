@@ -1468,10 +1468,15 @@ fn plan_name(plan: &str) -> &'static str {
 /// sin eso el mensaje dejaría de decir de qué plan habla.
 fn plan_quota(plan: &str) -> &'static str {
     match plan {
-        "premium" => "Plan: GLM 5.3.",
+        // Los nombres son los de NaN (ToS y documentación): Gentle, Inference,
+        // Premium y Community. Los planes de créditos no tienen cuota por modelo: su
+        // fondo son los créditos del periodo.
+        "inference" => "Plan: Inference (créditos).",
+        "premium" => "Plan: Premium (créditos).",
         "community" => "Plan de comunidad (prioridad de cola).",
         // El cluster de DeepSeek tiene tope por modelo en la cuenta (1 B en la cuenta
-        // real): el texto no puede decir que ese modelo no tiene contador.
+        // real): el texto no puede decir que ese modelo no tiene contador. El plan
+        // Gentle es el que conserva la cuota por modelo.
         _ => "Plan: cluster con cuota por modelo · DeepSeek V4-Flash.",
     }
 }
@@ -1658,7 +1663,8 @@ mod tests {
             );
         }
         // Quitar la cifra no puede volver el mensaje genérico: el plan sigue nombrando su modelo.
-        assert!(plan_quota("premium").contains("GLM 5.3"));
+        assert!(plan_quota("inference").contains("Inference"));
+        assert!(plan_quota("premium").contains("Premium"));
         assert!(plan_quota("member").contains("DeepSeek V4-Flash"));
     }
 
