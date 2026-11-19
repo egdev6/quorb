@@ -7,15 +7,18 @@ import { t } from '../i18n';
  * Un límite del panel (EGDEV Foundation): marca del anillo + etiqueta + %,
  * ProgressBar --lg y cuándo se reinicia. `ring` = anillo del círculo (1–3) o null.
  * `color` conserva la identidad del límite, incluso cuando no cabe en el círculo.
- * Un medidor viejo (`meter.stale`) se marca y se atenúa entero (por clase del tema).
+ * Un medidor viejo se marca y se atenúa entero (por clase del tema).
+ *
+ * `stale` es el veredicto de obsolescencia, lo calcula `isStaleMeter` (el medidor lo
+ * marca o lo marca el informe entero que lo contiene). Quien lo pinte se lo pasa: la
+ * barra no copia la regla. Sin ese contexto sólo veía la marca individual, y un
+ * informe entero viejo salía sin marcar en la barra (T46).
  */
-export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; ring: number | null; color?: string; locale?: Locale }) {
+export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdict }: { meter: Meter; ring: number | null; color?: string; locale?: Locale; stale?: boolean }) {
   const pct = meter.percent;
-  // Marca de lo viejo para el medidor marcado individualmente (`meter.stale`, el del
-  // camino mixto): no puede verse como actual. El informe entero viejo lleva su
-  // propia pastilla en la cabecera y su marca en el resumen. La atenuación es la
-  // pintura de (c): la barra y el número se apagan por clase del tema.
-  const stale = meter.stale === true;
+  // La marca de lo viejo: el veredicto que le pasa quien la pinta; si no viene, la
+  // marca individual del medidor.
+  const stale = staleVerdict ?? meter.stale === true;
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
     meter.used != null

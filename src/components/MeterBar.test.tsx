@@ -47,3 +47,34 @@ describe('MeterBar marca lo viejo (B2)', () => {
   });
 });
 
+// T46: el gatillo de la marca es UNO solo (`isStaleMeter`): un medidor es viejo si él
+// lo marca o si lo marca el informe entero que lo contiene. La barra recibía sólo la
+// marca individual, así que un informe entero viejo salía marcado en el resumen
+// copiable y SIN marca en la barra. Quien la pinte le pasa el veredicto.
+describe('MeterBar y el informe entero viejo (T46)', () => {
+  const meter: Meter = {
+    id: 'weekly',
+    label: 'Semana · todos',
+    percent: 50,
+    used: null,
+    limit: null,
+    unit: null,
+    resetsAt: null,
+    windowSeconds: null,
+  };
+
+  it('marks a meter of a stale report even if the meter itself is not marked', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={meter} ring={null} locale="es" stale />);
+    expect(html).toContain('data-stale="true"');
+    expect(html).toContain('caché');
+    // La atenuación es la misma que la de un medidor marcado individualmente.
+    expect(html).toContain('q-meter--stale');
+  });
+
+  it('does not mark a meter of a fresh report', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={meter} ring={null} locale="es" stale={false} />);
+    expect(html).not.toContain('data-stale');
+    expect(html).not.toContain('caché');
+  });
+});
+

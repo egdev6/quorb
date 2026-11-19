@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Locale, UsageReport } from '../lib/types';
-import { formatMoney, currentMeters, isStaleSpend, staleMark } from '../lib/format';
+import { formatMoney, currentMeters, isStaleMeter, isStaleSpend, staleMark } from '../lib/format';
 import { t } from '../i18n';
 import { MeterBar } from './MeterBar';
 import { popupMeterColor } from '../lib/popup-preferences';
@@ -105,6 +105,10 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
                 ring={r}
                 color={index >= 0 ? popupMeterColor(report, m, index) : undefined}
                 locale={locale}
+                // El veredicto de obsolescencia es uno solo (`isStaleMeter`): el
+                // medidor lo marca o lo marca el informe entero. La barra no puede
+                // saberlo sin el informe, así que se lo pasa quien lo pinta (T46).
+                stale={isStaleMeter(report, m)}
               />
             );
           })}

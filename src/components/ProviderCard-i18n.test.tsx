@@ -72,4 +72,11 @@ describe('ProviderCard i18n (SSR)', () => {
     expect(html).not.toContain('Se reinicia');
     expect(html).not.toContain('Sin sesión');
   });
+
+  it('marks the bars of a whole stale report (T46)', () => {
+    // El informe entero es viejo: sus medidores son viejos aunque no lleven la marca
+    // individual. La barra usa el mismo gatillo que el resumen copiable.
+    const html = renderToStaticMarkup(<ProviderCard report={report} locale="es" />);
+    expect(html).toContain('data-stale="true"');
+  });
 });
