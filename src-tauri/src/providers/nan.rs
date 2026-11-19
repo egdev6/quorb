@@ -278,7 +278,8 @@ pub(crate) async fn refresh_with_credentials(
     let breakdown = match (key, credits_of(&block)) {
         (Some(k), Some(credits)) => {
             let page = breakdown_page(cfg, http, k, credits, first_page.as_ref(), from, now).await;
-            credits_breakdown(&page)
+            page.map(|page| credits_breakdown(&page))
+                .unwrap_or_default()
         }
         _ => Vec::new(),
     };
@@ -571,8 +572,9 @@ async fn fetch_usage(
 /// declara el bloque `credits` (la que contiene los créditos del periodo).
 ///
 /// Si esa ventana es la MISMA que la de la primera página, se reutiliza: el ciclo no
-/// pide dos veces la misma página. Y si no se puede leer, se usa la página que ya se
-/// leyó: el desglose es informativo y no puede tumbar el informe.
+/// pide dos veces la misma página. Si la ventana del periodo no se puede leer, NO hay
+/// desglose: el desglose es informativo, y es preferible no enseñarlo a enseñarlo con
+/// la etiqueta del periodo cuando lo que se leyó es otra ventana.
 async fn breakdown_page(
     cfg: &NanConfig,
     http: &reqwest::Client,
@@ -581,29 +583,34 @@ async fn breakdown_page(
     first: Option<&Value>,
     first_from: DateTime<Utc>,
     first_to: DateTime<Utc>,
-) -> Value {
-    let from = credits
-        .period_start
-        .as_deref()
-        .and_then(parse_instant)
-        .unwrap_or(first_from);
+) -> Option<Value> {
+    // La ventana del periodo tiene que estar declarada ENTERA: el desglose dice ser «del
+    // periodo», y con una ventana que no se puede leer no se puede afirmar. Antes se caía
+    // a la primera página, que es otra ventana, y el resultado se presentaba como el del
+    // periodo (una cifra con la etiqueta equivocada).
+    let (from, to) = breakdown_window(credits, first_from, first_to)?;
+    if from == first_from && to == first_to {
+        return first.cloned();
+    }
+    // Si la petición falla, tampoco hay desglose: el desglose es informativo y no puede
+    // tumbar el informe ni rellenarse con otra ventana.
+    usage_page(cfg, http, key, from, to, None).await.ok()
+}
+
+/// La ventana del desglose: la del periodo que declara el proveedor, recortada a la de la
+/// primera página. `None` cuando no se puede afirmar: falta un extremo o es degenerada.
+fn breakdown_window(
+    credits: &Credits,
+    first_from: DateTime<Utc>,
+    first_to: DateTime<Utc>,
+) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let from = credits.period_start.as_deref().and_then(parse_instant)?;
     let to = credits
         .period_end
         .as_deref()
-        .and_then(parse_instant)
-        .map(|end| end.min(first_to))
-        .unwrap_or(first_to);
-    let fallback = || first.cloned().unwrap_or(Value::Null);
-    if to <= from {
-        return fallback();
-    }
-    if from == first_from && to == first_to {
-        return fallback();
-    }
-    match usage_page(cfg, http, key, from, to, None).await {
-        Ok(page) => page,
-        Err(_) => fallback(),
-    }
+        .and_then(parse_instant)?
+        .min(first_to);
+    (to > from).then_some((from, to))
 }
 
 /// Respuestas en crudo de `/v1/models` y `/v1/usage` (para la pantalla de Ajustes).
@@ -1021,10 +1028,14 @@ fn credits_declaration(credits: Option<&Credits>) -> Option<Declared> {
     let credits = credits?;
     let meters = credits_meters(credits);
     Some(Declared {
-        // Nunca `ok` sin medidores: así los datos anteriores quedan como
-        // desactualizados en vez de borrarse en silencio. Y `frozen` (la suscripción
-        // no está activa) es un aviso, aunque haya saldo.
-        status: if credits.frozen || meters.is_empty() {
+        // Nunca `ok` sin medidores cuando NO se sabe la asignación: así los datos
+        // anteriores quedan como desactualizados en vez de borrarse en silencio. Y
+        // `frozen` (la suscripción no está activa) es un aviso, aunque haya saldo.
+        //
+        // Una asignación a 0 NO es un aviso: es un plan sin créditos (Community), un
+        // estado normal de la cuenta. Antes caía en «sin medidores» y la cuenta vivía en
+        // atención permanente por un plan que no incluye créditos.
+        status: if credits.frozen || (credits.allowance.is_none() && meters.is_empty()) {
             Status::Warning
         } else {
             Status::Ok
@@ -2588,6 +2599,77 @@ mod tests {
             panic!("the credits block");
         };
         assert_eq!(credits_message(&c), "esta cuenta no incluye créditos");
+    }
+
+    #[test]
+    fn a_plan_without_credits_is_not_a_warning() {
+        // Community: la asignación viene a 0 y no hay packs. No hay nada que medir, así
+        // que el panel no tiene medidores… pero la cuenta está bien. Antes caía en «sin
+        // medidores» y vivía en atención permanente por un plan que no incluye créditos.
+        let mut zero = published_credits_page();
+        zero["credits"]["allowance"] = json!(0);
+        zero["credits"]
+            .as_object_mut()
+            .unwrap()
+            .remove("pack_credits");
+        let CreditsBlock::Object(c) = parse_credits(&zero) else {
+            panic!("the credits block");
+        };
+        let declared = credits_declaration(Some(&c)).expect("la declaración de créditos");
+        assert!(declared.meters.is_empty(), "{:?}", declared.meters);
+        assert_eq!(declared.status, Status::Ok, "{:?}", declared.header);
+        // Y el texto sigue diciendo que el plan no incluye créditos.
+        assert_eq!(declared.header, "esta cuenta no incluye créditos");
+    }
+
+    #[test]
+    fn a_credits_account_without_a_known_allowance_still_warns() {
+        // Sin asignación declarada el régimen se conoce pero no las cifras: ahí sí se
+        // avisa, porque los medidores anteriores tienen que quedar como desactualizados
+        // en vez de borrarse en silencio.
+        let mut unknown = published_credits_page();
+        unknown["credits"]
+            .as_object_mut()
+            .unwrap()
+            .remove("allowance");
+        unknown["credits"]
+            .as_object_mut()
+            .unwrap()
+            .remove("pack_credits");
+        let CreditsBlock::Object(c) = parse_credits(&unknown) else {
+            panic!("the credits block");
+        };
+        let declared = credits_declaration(Some(&c)).expect("la declaración de créditos");
+        assert!(declared.meters.is_empty(), "{:?}", declared.meters);
+        assert_eq!(declared.status, Status::Warning);
+    }
+
+    #[test]
+    fn the_breakdown_has_no_window_when_the_period_cannot_be_read() {
+        // El desglose dice ser «del periodo»: si la ventana del periodo no se puede
+        // leer entera (o es degenerada), no hay desglose. Antes se usaba la primera
+        // página, que es otra ventana, y sus cifras se presentaban como las del periodo.
+        let CreditsBlock::Object(c) = parse_credits(&published_credits_page()) else {
+            panic!("the credits block");
+        };
+        let first_from = "2026-11-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let first_to = "2026-11-30T23:59:59Z".parse::<DateTime<Utc>>().unwrap();
+        assert!(breakdown_window(&c, first_from, first_to).is_some());
+
+        // Sin `period_start`, la ventana no se puede afirmar.
+        let mut no_start = c.clone();
+        no_start.period_start = None;
+        assert!(breakdown_window(&no_start, first_from, first_to).is_none());
+
+        // Sin `period_end`, tampoco.
+        let mut no_end = c.clone();
+        no_end.period_end = None;
+        assert!(breakdown_window(&no_end, first_from, first_to).is_none());
+
+        // Una ventana degenerada (fin antes que inicio) tampoco es una ventana.
+        let mut backwards = c.clone();
+        backwards.period_end = Some("2026-10-01T00:00:00Z".into());
+        assert!(breakdown_window(&backwards, first_from, first_to).is_none());
     }
 
     #[test]
