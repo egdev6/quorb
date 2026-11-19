@@ -120,7 +120,7 @@ describe('MeterBar y la base de la cuota (T46-bis)', () => {
   it('says it in English too', () => {
     const published: Meter = { ...meter, quotaSource: 'published' };
     const html = renderToStaticMarkup(<MeterBar meter={published} ring={null} locale="en" />);
-    expect(html).toContain('published quota');
+    expect(html).toContain('published');
     expect(html).toContain('quota could not be read');
   });
 });

@@ -42,8 +42,9 @@ pub(crate) struct Quota {
 pub(crate) enum QuotaSource {
     /// La asignación real de la cuenta: la que declara el panel de NaN.
     Account,
-    /// Las cuotas publicadas (la tabla de la documentación o `/v1/models`): un respaldo,
-    /// no la asignación de la cuenta.
+    /// La cuota de respaldo: la asignación conocida del plan (la tabla
+    /// `known_quotas()`, medida en la cuenta de referencia) o la que traiga
+    /// `/v1/models`. Es un respaldo: la cuota de la cuenta no se pudo leer.
     Published,
     /// Ninguna: no hay ningún modelo con contador.
     None,
@@ -1059,7 +1060,7 @@ fn usage_message(total: f64, source: QuotaSource, regime: BillingRegime) -> Stri
             format!("{} tokens del periodo de la cuenta · cuotas por modelo", compact(total))
         }
         QuotaSource::Published => format!(
-            "{} tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta) · el total del mes sigue el mes natural y los medidores siguen el periodo de facturación",
+            "{} tokens este mes · cuotas por modelo · cuota publicada (no se pudo leer la de tu cuenta) · el total del mes sigue el mes natural y los medidores siguen el periodo de facturación",
             compact(total)
         ),
         // Hay cuotas, pero el proveedor no devolvió consumo para ellas: el mensaje dice
@@ -1594,7 +1595,7 @@ mod tests {
         );
         assert_eq!(
             usage_message(1_452_206_378.0, QuotaSource::Published, BillingRegime::ModelQuota),
-            "1.5B tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta) · el total del mes sigue el mes natural y los medidores siguen el periodo de facturación"
+            "1.5B tokens este mes · cuotas por modelo · cuota publicada (no se pudo leer la de tu cuenta) · el total del mes sigue el mes natural y los medidores siguen el periodo de facturación"
         );
     }
 
