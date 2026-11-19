@@ -130,7 +130,7 @@ Dos niveles de evidencia, separados explícitamente:
 | `cargo test --locked` en `src-tauri/` | devcontainer 22.04 + CI (Windows y Linux tag) | 0 | 7m24s (devcontainer, primer build) | 98 passed, 0 failed, 0 ignored |
 | `npm run app:dev` | devcontainer (`smoke-app.sh`, `xvfb-run` + `dbus-run-session`) | 124 (timeout = app viva) | — | Headless: valida "compila y arranca el main loop"; **no valida compositor** |
 | `npm run app:build` (deb + AppImage) | `linux-ci.yml` (`with_bundle: bundle`, `main`) + `.testcontainer/verify-*.sh` | 0 | — | Produce `.deb` y `.AppImage`; verify con `--appimage-extract-and-run` |
-| Arranque/primer uso (compositor real) | **Binario del `.deb` 0.8.0** extraído del artefacto del run `44138625351`, ejecutado en host Ubuntu 26.04/GNOME Wayland; `Launch AppImage directly` en runners CI | **124 = vivo 30 s** (0.8.0 en host) | 30 s timeout | 4 warnings benignos del baseline (2× `gdk_wayland_window_set_dbus_properties_libgtk_only`, `libayatana-appindicator is deprecated`, `gtk_widget_get_scale_factor`); sin crash. Panic tao#1204 integrado en `main` vía #107. Comandos y detalle en §4.4 |
+| Arranque/primer uso (compositor real) | **Binario del `.deb` 0.8.0** extraído del artefacto del run `44138625351`, ejecutado en host Ubuntu 26.04/GNOME Wayland; **AppImage 0.8.0 lanzado directo en el mismo host** (FUSE real) y **`Launch AppImage directly` en runners CI** | `.deb` 0.8.0 en host: **124 = vivo 30 s**. AppImage directo en host: **127 — `Can't open squashfs image: Bad address`** (reproducido, ver §4.3 fallo 3); AppImage extraído + `AppRun`: **124 = vivo 30 s** | 30 s timeout | `.deb`: 4 warnings benignos del baseline (2× `gdk_wayland_window_set_dbus_properties_libgtk_only`, `libayatana-appindicator is deprecated`, `gtk_widget_get_scale_factor`); sin crash. AppImage extraído: mismos warnings base (más `appmenu-gtk-module` y `atk-bridge`, cosméticos). Panic tao#1204 integrado en `main` vía #107. Comandos y detalle en §4.4 |
 
 ### 4.3 Fallos preexistentes conocidos
 
@@ -148,14 +148,30 @@ Dos niveles de evidencia, separados explícitamente:
    squashfs ni del kernel. Si el runtime FUSE o sus librerías no están
    disponibles, el workaround es `--appimage-extract-and-run`. **Sin impacto
    en el `.deb`**.
-3. **Reporte «Can't open squashfs» en kernel ≥ 6.12 — no reproducido en CI**.
+3. **Reporte «Can't open squashfs» en kernel ≥ 6.12 — reproducido en el
+   escritorio real, delimitado al runtime de montaje, no al empaquetado**.
    El diagnóstico original procede del comentario de `sosan` del 17/10 en #108,
    sobre el host del baseline (Ubuntu 26.04/kernel 6.17), no de una medición
    del mantenedor. Los runs `44186723327` y `44191439689` probaron el
    lanzamiento directo en Ubuntu 22.04/kernel 6.8 y Ubuntu 26.04/kernel 7.0:
    ambos montaron FUSE y, con `libgles2`, terminaron con exit 124 (vivos 60 s).
-   Queda como límite la reproducción en el escritorio real 26.04 con
-   compositor; no se afirma un límite general de kernels ≥ 6.12.
+   Al lanzar el AppImage 0.8.0 **directo en el escritorio real del host**
+   (Ubuntu 26.04/kernel 6.17.0-14-generic/GNOME Wayland) el fallo se
+   **reproduce**: exit 127, `fuse: memory allocation failed` seguido de
+   `Can't open squashfs image: Bad address` (§4.4 paso 2b). El payload es
+   íntegro (`unsquashfs -s` lee el superbloque SQUASHFS en el offset
+   `944632`; extracción completa exit 0) y la app arranca desde el payload
+   extraído (exit 124 = vivo 30 s), así que el fallo está en la cadena de
+   montaje FUSE del AppImage en este host, no en el empaquetado ni en la app.
+   Factor de host: `appimagelauncher` está instalado aquí (binfmt_misc
+   `appimage-type2` → `/usr/bin/AppImageLauncher`, build 22.04) e intercepta
+   la ejecución; el montaje falla igual con `APPIMAGELAUNCHER_DISABLE=1`
+   (runtime propio) y con `--appimage-extract-and-run` (interceptado). En CI
+   no hay AppImageLauncher y el mismo artefacto monta (6.8/7.0), así que **no
+   se afirma un límite general de kernels ≥ 6.12**; queda como límite el
+   arranque directo del AppImage en este escritorio real con
+   `AppImageLauncher` presente, con workaround probado (unsquashfs + AppRun)
+   y el `.deb` como vía recomendada en Debian/Ubuntu.
 4. **Backend de secretos** — `keyring` usa la feature `linux-native`, cuyo
    backend real es `linux-keyutils`/keyutils del kernel. La prueba end-to-end
    de esta unidad debe medir ese backend (y, si el criterio se mantiene como
@@ -183,6 +199,22 @@ dpkg-deb --info Quorb_0.8.0_amd64.deb
 sudo dpkg -i Quorb_0.8.0_amd64.deb
 dpkg -l quorb                  # ii quorb 0.8.0 amd64
 
+# 2b) AppImage lanzado DIRECTO en el escritorio real (montaje FUSE real)
+APPIMAGELAUNCHER_DISABLE=1 timeout -k 5 30 ./Quorb_0.8.0_amd64.AppImage
+#   -> exit 127: "fuse: memory allocation failed" + "Can't open squashfs
+#      image: Bad address"  (reproduce el reporte original del 17/10)
+# Separar payload (sano) de la cadena de montaje (la que falla):
+#   APPIMAGELAUNCHER_DISABLE=1 ./Quorb_0.8.0_amd64.AppImage --appimage-offset
+#     -> 944632
+#   dd if=Quorb_0.8.0_amd64.AppImage of=payload.squashfs bs=1 skip=944632
+#   unsquashfs -s payload.squashfs      # superbloque SQUASHFS válido (zstd)
+#   unsquashfs -d squashfs-root payload.squashfs && ./squashfs-root/AppRun
+#     -> exit 124 (vivo 30 s); warnings base + appmenu-gtk-module (cosmético)
+# Nota: este host tiene `appimagelauncher` (binfmt appimage-type2) que
+# intercepta la ejecución; con APPIMAGELAUNCHER_DISABLE=1 el runtime propio
+# tampoco monta; `--appimage-extract-and-run` también queda interceptado.
+# El `.deb` no se ve afectado (montaje no aplica). Detalle en §4.3 fallo 3.
+
 # 3) Arranque en el compositor real (medido: exit 124 = vivo 30 s)
 timeout -k 5 30 /usr/bin/quorb > launch.log 2>&1; echo $?   # -> 124
 # Warnings benignos (idénticos al baseline): 2x Gdk-CRITICAL
@@ -199,10 +231,15 @@ command -v claude cursor        # presentes en este host; codex/gemini/copilot n
 
 Resultado end-to-end medido: config ya presente (`~/.config/es.egdev.quorb/config.json`,
 claves normales, sin leer valores), backend keyutils accesible, bandeja montada
-(`libayatana` sin crash) y widget vivo en el compositor. Límites declarados:
-la instalación `dpkg -i` no se ejecutó aquí (requiere sudo interactivo) y queda
-como paso manual con su comando; codex/gemini/copilot no están instalados en el
-host, por lo que su delegación CLI no se mide en esta sesión.
+(`libayatana` sin crash) y widget vivo en el compositor. El AppImage se lanzó
+directo en este mismo escritorio y reproduce el síntoma original
+(`Can't open squashfs image: Bad address`, exit 127); el payload es íntegro y
+la app extraída queda viva 30 s (exit 124), así que el fallo se delimita a la
+cadena de montaje FUSE del host (§4.3 fallo 3), no al empaquetado ni a la app.
+Límites declarados: la instalación `dpkg -i` no se ejecutó aquí (requiere sudo
+interactivo) y queda como paso manual con su comando; codex/gemini/copilot no
+están instalados en el host, por lo que su delegación CLI no se mide en esta
+sesión.
 
 ## 5. Contrato de soporte inicial (L0b)
 
@@ -363,7 +400,7 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 | `connect_map` GTK crash (Rafael) | Desconocida | Medio | Ajuste de escritorio #107/#290, fuera del empaquetado | Comentario de Rafael en #105 |
 | `startDragging()` nativo vs layer-shell (Rafael) | Desconocida | Medio | Ajuste de escritorio #107/#290, fuera del empaquetado | Comentario de Rafael en #105 |
 | ~~No hay gate de CI Linux para PRs~~ (resuelto en #150; infra de bundles en #127/#108) | — | — | `linux-pr-ci.yml` (tests+build por PR, desde #150) y `linux-ci.yml` (manual, `with_bundle`, desde #127/#108) | `linux-ci.yml`/`linux-pr-ci.yml` en `main` |
-| AppImage «Can't open squashfs» en kernels ≥ 6.12 (reporte del mantenedor) | **Refutado en CI** (§4.3 fallo 3): monta vía FUSE y aguanta 60 s (exit 124) en kernel 6.8 y 7.0 con `libgles2`; el abort anterior era headless sin GLES | Bajo | Workaround inmediato `--appimage-extract-and-run`; falta reproducir en escritorio real 26.04 (con deps completas no se reproduce en CI); runtime alternativo fuera del alcance | Cierre #108 |
+| AppImage «Can't open squashfs» (reporte de `sosan` del 17/10 en #108, host del baseline) | **Reproducido en el escritorio real del host** (exit 127, `Can't open squashfs image: Bad address` tras `fuse: memory allocation failed`); **no en CI** (monta vía FUSE y vive 60 s, exit 124, en kernel 6.8 y 7.0 con `libgles2`) | Bajo (no afecta al `.deb`; workaround probado) | Workaround probado: extraer el payload (`unsquashfs -o 944632`) y ejecutar `AppRun`, o usar el `.deb`; `--appimage-extract-and-run` queda interceptado por AppImageLauncher en este host; runtime alternativo fuera del alcance; delimitado en §4.3 fallo 3 | Cierre #108 |
 
 ## 8. Plan de pruebas y regresión Windows (L0d)
 
@@ -425,12 +462,12 @@ sudo apt install linux-modules-extra-$(uname -r)
 | Entrada | Esperado | Comportamiento real observado |
 |---|---|---|
 | `src-tauri/tauri.conf.json` | Windows-first con Linux: `nsis`/`msi` + `deb`/`appimage` | Confirmado desde #108: `bundle.targets` de `main` incluye los cuatro |
-| `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host (`.deb` del baseline; la evidencia de la versión actual se refresca en el cierre de #108); panic tao#1204 resuelto e integrado (via #107) |
+| `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host: `.deb` 0.8.0 y AppImage 0.8.0 extraído, ambos exit 124 = vivo 30 s (evidencia de la versión actual en §4.4 de esta PR); panic tao#1204 resuelto e integrado (via #107) |
 | `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` (keyutils, `linux-keyutils`) | Backend real: keyutils; persistencia y fallo sin keyutils validados en #106 (cerrada) |
 | `src-tauri/src/login.rs` | Login CLI con terminal Linux | Cascade `$TERMINAL → ghostty → kitty → alacritty`, validado en #106 (cerrada) |
 | `src-tauri/src/providers/` (11 módulos: anthropic_api, claude, codex, copilot, cursor, gemini, nan, nan_cloud, openai_api, openrouter) | Puro HTTP (reqwest) | Sin dependencia específica de plataforma; portables |
 | `src/lib/dock.ts` | Geometría de bordes (píxeles lógicos) | Sin dependencia de plataforma; portables |
-| `src/Settings.tsx` | Bloque "Compatibilidad" (F3) | A integrar en #107; hoy no existe en main |
+| `src/Settings.tsx` | Bloque "Compatibilidad" (F3) | Integrado en main (vía #107): `src/lib/desktop-compat.ts` (`desktopCompatRows`/`showDesktopCompat`) renderizado en Ajustes; matriz de entornos en §6 |
 
 ## 12. Referencias
 
