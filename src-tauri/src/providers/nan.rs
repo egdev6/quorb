@@ -443,9 +443,15 @@ async fn usage_page(
         .map_err(|e| format!("respuesta no JSON: {e}"))
 }
 
+/// El número máximo de páginas de `/v1/usage` que se leen en un ciclo.
+const MAX_PAGES: usize = 10;
+
 /// Llama a `/v1/usage` siguiendo `next_cursor` (máx. 10 páginas). La primera página
 /// puede venir ya leída (la misma que se leyó para decidir el régimen), así que el
 /// ciclo no la pide dos veces.
+///
+/// El corte es ANTES de pedir la página siguiente: en la última vuelta ya no se pide
+/// la que se descartaría.
 async fn fetch_usage(
     cfg: &NanConfig,
     http: &reqwest::Client,
@@ -459,7 +465,7 @@ async fn fetch_usage(
         Some(page) => page,
         None => usage_page(cfg, http, key, from, to, None).await?,
     };
-    for _ in 0..10 {
+    for page in 0..MAX_PAGES {
         let cursor = body
             .get("next_cursor")
             .and_then(Value::as_str)
@@ -467,6 +473,10 @@ async fn fetch_usage(
             .map(str::to_string);
         pages.push(body);
         let Some(c) = cursor else { break };
+        // Ya se han leído las 10 páginas: la siguiente se descartaría, así que no se pide.
+        if page + 1 == MAX_PAGES {
+            break;
+        }
         body = usage_page(cfg, http, key, from, to, Some(&c)).await?;
     }
     Ok(pages)
@@ -2521,6 +2531,39 @@ mod tests {
             usage_calls,
             1,
             "el ciclo pide /v1/usage una sola vez: {:?}",
+            mock.requested()
+        );
+    }
+
+    #[test]
+    fn the_usage_pagination_does_not_ask_for_one_page_too_many() {
+        // `fetch_usage` sigue el cursor hasta 10 páginas. En la décima vuelta pedía la
+        // undécima y la descartaba: ahora corta ANTES de pedirla.
+        let mock = MockServer::new(vec![(
+            "/v1/usage",
+            r#"{"object":"list","data":[],"credits":null,"next_cursor":"c2"}"#.to_string(),
+        )]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let pages = block_on(fetch_usage(
+            &cfg,
+            &http,
+            "nan-key",
+            now() - chrono::Duration::days(30),
+            now(),
+            None,
+        ))
+        .expect("la lectura de /v1/usage funciona");
+        let usage_calls = mock
+            .requested()
+            .iter()
+            .filter(|p| p.as_str() == "/v1/usage")
+            .count();
+        assert_eq!(pages.len(), 10, "se leen 10 páginas como máximo");
+        assert_eq!(
+            usage_calls,
+            10,
+            "no se pide la undécima página (se descartaría): {:?}",
             mock.requested()
         );
     }

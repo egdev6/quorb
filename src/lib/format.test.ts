@@ -552,18 +552,38 @@ describe('a different billing regime does not bring the old meters back (T31b)',
     expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
   });
 
-  it('does not keep the old data when only the new report declares a regime', () => {
-    // El informe nuevo declara el régimen y el anterior NO declara ninguno: los
-    // medidores del anterior no se pueden atribuir al régimen vigente, así que no
-    // se conservan (no se resucitan los topes de un régimen que ya no aplica).
+  it('keeps the old data when only the new report declares a regime', () => {
+    // La comparación es SIMÉTRICA: «no declarar» no es una declaración, en ninguno de
+    // los dos lados. El informe anterior no declara régimen (no se pudo determinar) y
+    // el nuevo sí: no hay comparación posible, así que los datos anteriores se
+    // conservan como estaban (desactualizados, con su fecha).
     const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
     const failed: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'sin cuota', meters: [] };
     const [merged] = mergeReports([previous], [failed]);
-    expect(merged.meters).toEqual([]);
-    // Y no queda nada viejo que conservar: el informe no se marca desactualizado.
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+    // Con la fecha de su lectura.
+    expect(merged.meters[0].readAt).toBe(previous.fetchedAt);
+    // Lo que se ve es viejo: el informe entero queda desactualizado.
+    expect(merged.stale).toBe(true);
+  });
+
+  it('keeps the account meters of a previous report without a regime (mixed cycle)', () => {
+    // El caso del owner (T51, S55): un ciclo con `/v1/usage` caído —el informe
+    // anterior NO declara régimen— seguido de un ciclo MIXTO que sí declara
+    // `model-quota`. Los medidores de la cuenta no desaparecen: se conservan y se
+    // MARCAN como desactualizados (lo que arregló #285).
+    const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
+    const mixed: UsageReport = { ...base, status: 'warning', billingRegime: 'model-quota', message: 'cuota no disponible', meters: [rateMeter] };
+    const [merged] = mergeReports([previous], [mixed], BEFORE_WINDOW_END);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests', 'model:deepseek-v4-flash']);
+    // El medidor de la cuenta se conserva MARCADO como viejo…
+    const kept = merged.meters.find((m) => m.id === 'model:deepseek-v4-flash')!;
+    expect(kept.stale).toBe(true);
+    expect(kept.readAt).toBe(previous.fetchedAt);
+    // …y el fresco no lleva marca.
+    expect(merged.meters[0].stale).toBeUndefined();
+    // El informe MIXTO no queda desactualizado entero: trae datos frescos.
     expect(merged.stale).toBeUndefined();
-    // El régimen que declara el informe nuevo es el que manda.
-    expect(merged.billingRegime).toBe('credits');
   });
 
   it('keeps the old data when only the previous report declares a regime', () => {
