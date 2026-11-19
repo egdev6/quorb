@@ -54,9 +54,9 @@ export function formatReadTime(iso: string | null, locale: Locale = 'es'): strin
 
 /**
  * La marca de lo viejo: el texto de la pastilla («caché») y, cuando se sabe, la hora
- * de la última lectura. El TEXTO es uno solo (barra y resumen); el gatillo difiere:
- * la barra marca el medidor marcado individualmente, el resumen también los del
- * informe entero (`isStaleMeter`).
+ * de la última lectura. El texto es uno solo (barra y resumen) y el gatillo también:
+ * lo calcula `isStaleMeter` (el medidor lo marca o lo marca el informe entero que lo
+ * contiene) y lo usan los dos.
  */
 export function staleMark(readAt: string | null, locale: Locale = 'es'): string {
   const chip = t(locale, 'details.staleChip');

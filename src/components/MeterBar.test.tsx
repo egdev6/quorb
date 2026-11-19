@@ -76,5 +76,15 @@ describe('MeterBar y el informe entero viejo (T46)', () => {
     expect(html).not.toContain('data-stale');
     expect(html).not.toContain('caché');
   });
+
+  it('does not let a false verdict hide a marked meter', () => {
+    // La marca individual no se puede ocultar: aunque quien la pinta pase un veredicto
+    // en falso, un medidor marcado sigue marcado (el gatillo es `isStaleMeter`, que
+    // ya incluye la marca individual y la del informe entero).
+    const marked: Meter = { ...meter, stale: true, readAt: new Date(2026, 10, 10, 8, 30).toISOString() };
+    const html = renderToStaticMarkup(<MeterBar meter={marked} ring={null} locale="es" stale={false} />);
+    expect(html).toContain('data-stale="true"');
+    expect(html).toContain('q-meter--stale');
+  });
 });
 

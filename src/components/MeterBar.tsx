@@ -16,9 +16,10 @@ import { t } from '../i18n';
  */
 export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdict }: { meter: Meter; ring: number | null; color?: string; locale?: Locale; stale?: boolean }) {
   const pct = meter.percent;
-  // La marca de lo viejo: el veredicto que le pasa quien la pinta; si no viene, la
-  // marca individual del medidor.
-  const stale = staleVerdict ?? meter.stale === true;
+  // La marca no se puede ocultar: aunque el veredicto venga en falso, un medidor
+  // marcado individualmente sigue marcado. El gatillo es `isStaleMeter`, que ya
+  // incluye la marca individual y la del informe entero.
+  const stale = staleVerdict === true || meter.stale === true;
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
     meter.used != null
