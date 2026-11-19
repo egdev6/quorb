@@ -16,9 +16,10 @@ export interface Meter {
   windowSeconds: number | null;
   /**
    * Base contra la que se midió este medidor, declarada por el proveedor. El frente la
-   * trata como texto opaco: solo le importa si cambió entre dos lecturas (el porcentaje
-   * bajó porque cambió el denominador, no porque la cuota se reiniciara). Sin base, el
-   * medidor se compara siempre.
+   * trata como texto opaco: la compara (sólo le importa si cambió entre dos lecturas:
+   * el porcentaje bajó porque cambió el denominador, no porque la cuota se reiniciara)
+   * y la muestra como presentación cuando el medidor no se midió contra la cuota de la
+   * cuenta. Sin base, el medidor se compara siempre.
    */
   quotaSource?: string;
   /**

@@ -42,8 +42,9 @@ pub(crate) struct Quota {
 pub(crate) enum QuotaSource {
     /// La asignación real de la cuenta: la que declara el panel de NaN.
     Account,
-    /// Las cuotas publicadas (la tabla de la documentación o `/v1/models`): un respaldo,
-    /// no la asignación de la cuenta.
+    /// La cuota de respaldo: la asignación conocida del plan (la tabla
+    /// `known_quotas()`, medida en la cuenta de referencia) o la que traiga
+    /// `/v1/models`. Es un respaldo: la cuota de la cuenta no se pudo leer.
     Published,
     /// Ninguna: no hay ningún modelo con contador.
     None,
@@ -145,24 +146,37 @@ pub(crate) const MODEL_QUOTA_REGIME: &str = "model-quota";
 const UNKNOWN_REGIME_NOTE: &str =
     "no se pudo determinar el tipo de cuenta: los topes por modelo pueden no aplicarle";
 
-/// Cuotas publicadas en nan.builders/docs/models. Si `/v1/models` trae otras, mandan esas.
+/// La asignación del plan Gentle en la cuenta de referencia (NaN × Gentle Shell),
+/// medida en su payload de cuota (`GET /api/usage/quota`): 1.000 M para
+/// `deepseek-v4-flash` y 500 M para `glm5.3-flash`, con el periodo de facturación de la
+/// cuenta (5 → 5), no el mes natural.
+///
+/// Antes esta tabla publicaba las cuotas **por plan** que NaN documentaba en
+/// `nan.builders/docs/models` (3.000 M y 2.000 M). NaN ya no publica cuotas por modelo
+/// (desde el 2026-11-10 la inferencia se mide en créditos, salvo el plan Gentle) y,
+/// además, esas cifras no describían la cuota de una cuenta: para la cuenta de
+/// referencia sobrestimaban el tope 3 y 4 veces, de modo que el respaldo mostraba 31 %
+/// donde la verdad era 96 %. Con esta tabla el respaldo coincide con lo que declara el
+/// panel. Los modelos cuya cuota real no se ha medido no se inventan: sin cuota de la
+/// cuenta, no hay medidor para ellos.
+///
+/// Si `/v1/models` trae otras cuotas, mandan esas.
 pub(crate) fn known_quotas() -> BTreeMap<&'static str, Quota> {
-    let m = |t: f64| Quota {
-        tokens: t,
-        billing_period: false,
-    };
     BTreeMap::from([
         (
-            "glm5.3",
+            "deepseek-v4-flash",
             Quota {
-                tokens: 3e9,
+                tokens: 1e9,
                 billing_period: true,
             },
         ),
-        ("deepseek-v4-flash", m(3e9)),
-        ("glm5.3-flash", m(2e9)),
-        ("qwen3.8-flash", m(5e8)),
-        ("mimo-v2.6-flash", m(1e9)),
+        (
+            "glm5.3-flash",
+            Quota {
+                tokens: 5e8,
+                billing_period: true,
+            },
+        ),
     ])
 }
 
@@ -860,7 +874,8 @@ pub(crate) fn declare_usage(
         .first()
         .map(regime_of)
         .unwrap_or(BillingRegime::Unknown);
-    // Para el mes natural solo contamos días del mes; para glm5.3, desde el inicio del periodo.
+    // Para el mes natural solo contamos días del mes; para los medidores de cuota,
+    // desde el inicio del periodo de facturación.
     let month = summarize(pages, Some(month_start(now)));
     let period = summarize(pages, Some(billing_period_start(now, billing_day)));
     declare(
@@ -1028,7 +1043,7 @@ fn credits_message(frozen: bool) -> String {
 
 /// Header of the report: it names the period the numbers come from. The published quota is
 /// flagged as a fallback, not as the account one. In the fallback path two windows live
-/// together (the month's figures follow the natural month, the `glm5.3` meter follows the
+/// together (the month's figures follow the natural month, the quota meters follow the
 /// billing period) and the header says so.
 ///
 /// With an unknown regime the header does not claim the account type: it says it could
@@ -1045,13 +1060,24 @@ fn usage_message(total: f64, source: QuotaSource, regime: BillingRegime) -> Stri
             format!("{} tokens del periodo de la cuenta · cuotas por modelo", compact(total))
         }
         QuotaSource::Published => format!(
-            "{} tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta) · el total del mes sigue el mes natural y el medidor de glm5.3 sigue el periodo de facturación",
+            "{} tokens este mes · cuotas por modelo · cuota publicada (no se pudo leer la de tu cuenta) · el total del mes sigue el mes natural y los medidores siguen el periodo de facturación",
             compact(total)
         ),
         // Hay cuotas, pero el proveedor no devolvió consumo para ellas: el mensaje dice
         // que no hay datos, no que no haya cuotas con contador.
+        // Hay dos casos distintos y el mensaje los distingue: no hay consumo que
+        // mostrar, o hay consumo pero no hay tope conocido para calcular el porcentaje
+        // (el modelo no está en la tabla de respaldo y la cuota de la cuenta no se pudo
+        // leer). Decir «no hay datos de consumo» cuando sí los hay sería mentir.
         QuotaSource::None => {
-            "No hay datos de consumo disponibles para los modelos con cuota.".into()
+            if total > 0.0 {
+                format!(
+                    "{} tokens consumidos · sin tope para calcular el porcentaje · no se pudo leer la de tu cuenta",
+                    compact(total)
+                )
+            } else {
+                "No hay datos de consumo disponibles para los modelos con cuota.".into()
+            }
         }
     }
 }
@@ -1290,7 +1316,9 @@ mod tests {
         );
         assert_eq!(meters[0].label, "deepseek-v4-flash");
         assert_eq!(meters[0].id, "model:deepseek-v4-flash");
-        assert_eq!(meters[0].percent, Some(20.0));
+        // 600 M contra la cuota publicada (1.000 M, la asignación medida de la cuenta
+        // de referencia): 60 %.
+        assert!((meters[0].percent.unwrap() - 60.0).abs() < 0.001);
         assert_eq!(
             meters[0].resets_at.as_deref(),
             Some("2026-11-01T00:00:00+00:00")
@@ -1360,18 +1388,92 @@ mod tests {
             per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
             per_day: BTreeMap::new(),
         };
+        // El resumen del periodo lleva el consumo desde el inicio del periodo de
+        // facturación: es el que miden los medidores de cuota, porque la asignación se
+        // reinicia con ese periodo.
+        let period = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
         let (meters, source, header) = nan_meters(
             BillingRegime::ModelQuota,
             None,
-            Some((&month, &UsageSummary::default())),
+            Some((&month, &period)),
             &published_quotas(),
             now(),
             1,
         );
         assert_eq!(source, QuotaSource::Published);
-        assert_eq!(meters[0].limit, Some(3e9));
+        assert_eq!(meters[0].limit, Some(1e9));
         assert!(header.contains("este mes"), "{header}");
         assert!(header.contains("cuota publicada"), "{header}");
+    }
+
+    #[test]
+    fn the_fallback_says_that_the_consumption_is_known_but_not_the_cap() {
+        // Hay consumo pero no hay tope conocido (el modelo no está en la tabla de
+        // respaldo y la cuota de la cuenta no se pudo leer): el mensaje dice eso. Decir
+        // «no hay datos de consumo» sería falso: el consumo se conoce.
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("qwen3.8-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let period = UsageSummary {
+            per_model: BTreeMap::from([("qwen3.8-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let (meters, source, header) = nan_meters(
+            BillingRegime::ModelQuota,
+            None,
+            Some((&month, &period)),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert!(meters.is_empty());
+        assert_eq!(source, QuotaSource::None);
+        assert!(header.contains("600.0M tokens consumidos"), "{header}");
+        assert!(
+            header.contains("sin tope para calcular el porcentaje"),
+            "{header}"
+        );
+        assert!(!header.contains("No hay datos de consumo"), "{header}");
+    }
+
+    #[test]
+    fn the_published_quota_follows_the_billing_period() {
+        // La tabla de respaldo reinicia con el periodo de facturación de la cuenta
+        // (5 -> 5), no con el mes natural: con un `billing_day` distinto del día 1, la
+        // ventana del medidor de respaldo es la del periodo de facturación y su consumo
+        // es el de ese periodo, no el del mes natural.
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let period = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 200_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let meters = quota_meters(&month, &period, &published_quotas(), now(), 5);
+        assert_eq!(meters.len(), 1);
+        assert_eq!(
+            meters[0].resets_at.as_deref(),
+            Some("2026-11-05T00:00:00+00:00")
+        );
+        assert_eq!(meters[0].window_seconds, Some(31 * 86400));
+        assert_eq!(meters[0].used, Some(200_000_000.0));
+        assert!((meters[0].percent.unwrap() - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn the_published_table_holds_only_the_measured_models() {
+        // La tabla de respaldo lleva los modelos cuya cuota real se ha medido (la
+        // cuenta de referencia): los que no, no se inventan. Sin cuota de la cuenta,
+        // un modelo sin cuota medida no tiene medidor.
+        let quotas = published_quotas();
+        assert_eq!(quotas.len(), 2);
+        assert!(quotas.contains_key("deepseek-v4-flash"));
+        assert!(quotas.contains_key("glm5.3-flash"));
     }
 
     #[test]
@@ -1544,7 +1646,7 @@ mod tests {
     #[test]
     fn the_fallback_header_explains_the_mix_of_windows() {
         // En el camino de fallback conviven dos ventanas: las cifras del mes siguen el
-        // mes natural y el medidor de glm5.3 sigue el periodo de facturación. El
+        // mes natural y los medidores de cuota siguen el periodo de facturación. El
         // mensaje del informe lo explica (el texto de `billingDay` explica cuándo se
         // usa, no esta mezcla).
         let header = usage_message(
@@ -1554,7 +1656,7 @@ mod tests {
         );
         assert!(header.contains("mes natural"), "{header}");
         assert!(header.contains("periodo de facturación"), "{header}");
-        assert!(header.contains("glm5.3"), "{header}");
+        assert!(header.contains("los medidores siguen"), "{header}");
     }
 
     #[test]
@@ -1571,7 +1673,7 @@ mod tests {
         );
         assert_eq!(
             usage_message(1_452_206_378.0, QuotaSource::Published, BillingRegime::ModelQuota),
-            "1.5B tokens este mes · cuotas por modelo · cuota publicada (no es la asignación de tu cuenta) · el total del mes sigue el mes natural y el medidor de glm5.3 sigue el periodo de facturación"
+            "1.5B tokens este mes · cuotas por modelo · cuota publicada (no se pudo leer la de tu cuenta) · el total del mes sigue el mes natural y los medidores siguen el periodo de facturación"
         );
     }
 
@@ -1610,7 +1712,7 @@ mod tests {
         let (published, source, _header) = nan_meters(
             BillingRegime::ModelQuota,
             None,
-            Some((&month, &UsageSummary::default())),
+            Some((&month, &month)),
             &published_quotas(),
             now(),
             1,

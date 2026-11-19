@@ -47,3 +47,81 @@ describe('MeterBar marca lo viejo (B2)', () => {
   });
 });
 
+// T46: el gatillo de la marca es UNO solo (`isStaleMeter`): un medidor es viejo si él
+// lo marca o si lo marca el informe entero que lo contiene. La barra recibía sólo la
+// marca individual, así que un informe entero viejo salía marcado en el resumen
+// copiable y SIN marca en la barra. Quien la pinte le pasa el veredicto.
+describe('MeterBar y el informe entero viejo (T46)', () => {
+  const meter: Meter = {
+    id: 'weekly',
+    label: 'Semana · todos',
+    percent: 50,
+    used: null,
+    limit: null,
+    unit: null,
+    resetsAt: null,
+    windowSeconds: null,
+  };
+
+  it('marks a meter of a stale report even if the meter itself is not marked', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={meter} ring={null} locale="es" stale />);
+    expect(html).toContain('data-stale="true"');
+    expect(html).toContain('caché');
+    // La atenuación es la misma que la de un medidor marcado individualmente.
+    expect(html).toContain('q-meter--stale');
+  });
+
+  it('does not mark a meter of a fresh report', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={meter} ring={null} locale="es" stale={false} />);
+    expect(html).not.toContain('data-stale');
+    expect(html).not.toContain('caché');
+  });
+
+  it('does not let a false verdict hide a marked meter', () => {
+    // La marca individual no se puede ocultar: aunque quien la pinta pase un veredicto
+    // en falso, un medidor marcado sigue marcado (el gatillo es `isStaleMeter`, que
+    // ya incluye la marca individual y la del informe entero).
+    const marked: Meter = { ...meter, stale: true, readAt: new Date(2026, 10, 10, 8, 30).toISOString() };
+    const html = renderToStaticMarkup(<MeterBar meter={marked} ring={null} locale="es" stale={false} />);
+    expect(html).toContain('data-stale="true"');
+    expect(html).toContain('q-meter--stale');
+  });
+});
+
+// La base de la cuota se muestra en el medidor cuando NO es la de la cuenta: el número
+// no viene de la lectura de la cuenta, así que no puede presentarse como su estado.
+describe('MeterBar y la base de la cuota (T48)', () => {
+  const meter: Meter = {
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    resetsAt: null,
+    windowSeconds: null,
+  };
+
+  it('notes a meter that was not measured against the account quota', () => {
+    const published: Meter = { ...meter, quotaSource: 'published' };
+    const html = renderToStaticMarkup(<MeterBar meter={published} ring={null} locale="es" />);
+    expect(html).toContain('publicada');
+    // El tooltip explica qué significa: no es la cuota de la cuenta.
+    expect(html).toContain('No se pudo leer la cuota de tu cuenta');
+  });
+
+  it('does not note a meter measured against the account quota', () => {
+    // El caso normal no se anota: una etiqueta en cada barra sería ruido.
+    const account: Meter = { ...meter, quotaSource: 'account' };
+    const html = renderToStaticMarkup(<MeterBar meter={account} ring={null} locale="es" />);
+    expect(html).not.toContain('publicada');
+  });
+
+  it('says it in English too', () => {
+    const published: Meter = { ...meter, quotaSource: 'published' };
+    const html = renderToStaticMarkup(<MeterBar meter={published} ring={null} locale="en" />);
+    expect(html).toContain('published');
+    expect(html).toContain('quota could not be read');
+  });
+});
+
