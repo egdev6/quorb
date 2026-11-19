@@ -629,6 +629,10 @@ export const en = {
     staleChip: 'cached',
     staleChipTitle: 'Data from the last good cycle',
     staleReadAtTime: 'read at {time}',
+    // The quota basis, when the meter was not measured against the account quota.
+    quotaBasisPublished: 'published',
+    quotaBasisPublishedTitle:
+      "Your account's quota could not be read: this uses the plan's known allowance, which may have changed.",
     budget: 'Budget',
     copy: {
       summary: 'Copy summary',

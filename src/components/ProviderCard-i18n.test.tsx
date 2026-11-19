@@ -43,6 +43,21 @@ describe('ProviderCard i18n (SSR)', () => {
     expect(html).toContain('Presupuesto');
   });
 
+  it('marks the kept spend as cached with the time of its last reading', () => {
+    // El gasto conservado no se presenta como una cifra actual: lleva su marca y la
+    // hora de la lectura de la que viene. La hora es la local de quien mira: el
+    // `readAt` se arma con la hora local para que el test no dependa de la zona de la
+    // máquina (el instante sigue siendo UTC).
+    const d = new Date(report.fetchedAt);
+    const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const html = renderToStaticMarkup(<ProviderCard report={report} locale="es" />);
+    expect(html).toContain('caché');
+    expect(html).toContain(`leído a las ${hhmm}`);
+    const en = renderToStaticMarkup(<ProviderCard report={report} locale="en" />);
+    expect(en).toContain('cached');
+    expect(en).toContain(`read at ${hhmm}`);
+  });
+
   it('renders the English UI texts when the locale is en', () => {
     const html = renderToStaticMarkup(<ProviderCard report={report} locale="en" />);
     expect(html).toContain('Signed out');
@@ -56,5 +71,12 @@ describe('ProviderCard i18n (SSR)', () => {
     expect(html).toContain('Este mes');
     expect(html).not.toContain('Se reinicia');
     expect(html).not.toContain('Sin sesión');
+  });
+
+  it('marks the bars of a whole stale report (T46)', () => {
+    // El informe entero es viejo: sus medidores son viejos aunque no lleven la marca
+    // individual. La barra usa el mismo gatillo que el resumen copiable.
+    const html = renderToStaticMarkup(<ProviderCard report={report} locale="es" />);
+    expect(html).toContain('data-stale="true"');
   });
 });

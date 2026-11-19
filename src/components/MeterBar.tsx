@@ -1,20 +1,28 @@
 import type { CSSProperties } from 'react';
 import type { Locale, Meter } from '../lib/types';
-import { formatCompact, formatPercent, formatResetIn, levelFor, staleMark } from '../lib/format';
+import { formatCompact, formatPercent, formatResetIn, levelFor, quotaBasisNote, staleMark } from '../lib/format';
 import { t } from '../i18n';
 
 /**
  * Un límite del panel (EGDEV Foundation): marca del anillo + etiqueta + %,
  * ProgressBar --lg y cuándo se reinicia. `ring` = anillo del círculo (1–3) o null.
  * `color` conserva la identidad del límite, incluso cuando no cabe en el círculo.
+ * Un medidor viejo se marca y se atenúa entero (por clase del tema).
+ *
+ * `stale` es el veredicto de obsolescencia, lo calcula `isStaleMeter` (el medidor lo
+ * marca o lo marca el informe entero que lo contiene). Quien lo pinte se lo pasa: la
+ * barra no copia la regla. Sin ese contexto sólo veía la marca individual, y un
+ * informe entero viejo salía sin marcar en la barra (T46).
  */
-export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; ring: number | null; color?: string; locale?: Locale }) {
+export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdict }: { meter: Meter; ring: number | null; color?: string; locale?: Locale; stale?: boolean }) {
   const pct = meter.percent;
-  // Marca mínima de lo viejo para el medidor marcado individualmente (`meter.stale`,
-  // el del camino mixto): no puede verse como actual. El informe entero viejo lleva su
-  // propia pastilla en la cabecera y su marca en el resumen. La presentación completa
-  // (atenuación, serie) es de otra porción.
-  const stale = meter.stale === true;
+  // La marca no se puede ocultar: aunque el veredicto venga en falso, un medidor
+  // marcado individualmente sigue marcado. El gatillo es `isStaleMeter`, que ya
+  // incluye la marca individual y la del informe entero.
+  const stale = staleVerdict === true || meter.stale === true;
+  // La base de la cuota, cuando el medidor no se midió contra la cuota de la cuenta:
+  // el número no viene de la lectura de la cuenta, así que se dice.
+  const basis = quotaBasisNote(meter.quotaSource, locale);
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
   const amount =
     meter.used != null
@@ -26,7 +34,7 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
 
   return (
     <div
-      className="q-meter"
+      className={`q-meter${stale ? ' q-meter--stale' : ''}`}
       data-ring={ring ?? undefined}
       data-level={levelFor(pct)}
       data-stale={stale ? 'true' : undefined}
@@ -40,7 +48,14 @@ export function MeterBar({ meter, ring, color, locale = 'es' }: { meter: Meter; 
             aria-hidden="true"
           />
         )}
-        <span className="q-meter__label">{meter.label}</span>
+        <span className="q-meter__label">
+          {meter.label}
+          {basis && (
+            <span className="eg-status eg-status--neutral q-meter__basis" title={basis.title}>
+              {basis.label}
+            </span>
+          )}
+        </span>
         <b className="q-meter__value">{pct != null ? formatPercent(pct) : amount}</b>
       </div>
       {pct != null && (
