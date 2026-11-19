@@ -169,11 +169,11 @@ function regimeBlocksKeeping(old: UsageReport | undefined, next: UsageReport): b
  * Si un ciclo falla pero el anterior tenía datos, conservamos los datos
  * antiguos marcados como `stale` para que el widget no se quede vacío.
  *
- * `now` se inyecta para que la regla de vencimiento sea determinista: en el camino
- * MIXTO, un medidor conservado cuyo periodo ya terminó no se conserva (su lectura es
- * del periodo anterior, y presentarla como vigente sería mentir). La rama de informe
- * entero NO aplica el vencimiento (S51 pide sólo el camino mixto): hueco declarado,
- * candidato a extender.
+ * `now` se inyecta para que la regla de vencimiento sea determinista: un medidor
+ * conservado cuyo periodo ya terminó no se conserva (su lectura es del periodo
+ * anterior, y presentarla como vigente sería mentir). La regla vale para las TRES
+ * ramas que conservan datos del ciclo anterior (T45): la mixta, la de informe entero
+ * y la de sesión caducada.
  */
 export function mergeReports(prev: UsageReport[], next: UsageReport[], now: number = Date.now()): UsageReport[] {
   const byId = new Map(prev.map((r) => [r.id, r]));
@@ -187,7 +187,14 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
       // declara régimen no hay comparación y se conserva lo anterior, como siempre.
       // El plan no es una lectura —nombra la cuenta— y sí se conserva.
       if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
-      return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(old.meters, old.fetchedAt) };
+      // Los medidores cuyo periodo ya terminó no se conservan (T45, el mismo criterio
+      // que M3 aplica al camino mixto): su lectura es del periodo anterior y se
+      // presentaría como vigente («Se reinicia ahora»).
+      const alive = old.meters.filter((m) => !windowEnded(m, now));
+      // Sin nada vigente que conservar no hay nada viejo que mostrar: el informe
+      // fallido se queda tal cual (mismo criterio que el camino mixto).
+      if (alive.length === 0 && !old.spend) return { ...r, plan: r.plan ?? old.plan };
+      return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(alive, old.fetchedAt) };
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
     // de rate limit vinieron. Los medidores que el informe nuevo NO trae se conservan del
@@ -224,7 +231,11 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
     // Sesión caducada: se conservan los últimos datos (atenuados) con la acción
     // de renovar, en vez de dejar el círculo vacío hasta volver a entrar.
     if (r.status === 'needsLogin' && r.meters.length === 0 && old && old.meters.length > 0) {
-      return { ...old, status: 'needsLogin', message: r.message, action: r.action, stale: true, meters: stamped(old.meters, old.fetchedAt) };
+      // Mismo criterio de vencimiento (T45): un medidor de un periodo ya terminado no
+      // se conserva, para que no salga como vigente con «Se reinicia ahora».
+      const alive = old.meters.filter((m) => !windowEnded(m, now));
+      if (alive.length === 0) return { ...r, plan: r.plan ?? old.plan };
+      return { ...old, status: 'needsLogin', message: r.message, action: r.action, stale: true, meters: stamped(alive, old.fetchedAt) };
     }
     return r;
   });

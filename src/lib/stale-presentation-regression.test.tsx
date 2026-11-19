@@ -39,9 +39,14 @@ describe('S33/S34/T35 — el dato obsoleto no es el estado actual', () => {
   });
 
   it('informe entero conservado: el viejo no da pico ni tooltip, pero se ve con su fecha', () => {
+    // El instante se fija: el ciclo falló con la ventana del medidor TODAVÍA abierta
+    // (termina el 15-11), así que el informe entero se conserva y queda viejo. Con la
+    // ventana ya pasada el medidor caduca y no se conserva (T45), que es otro
+    // escenario con su propio test.
     const [m] = mergeReports(
       [rep()],
       [rep({ status: 'warning', meters: [], message: 'error de red' })],
+      Date.parse('2026-11-12T10:00:00Z'),
     );
     expect(m.stale).toBe(true);
     expect(peakMeter(m)).toBeNull();

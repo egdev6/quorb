@@ -698,3 +698,60 @@ describe('the copied summary never claims the old state is current (F3)', () => 
     expect(line).toContain(`leído a las ${readingTime()}`);
   });
 });
+
+// T45: el vencimiento de lo viejo también se aplica cuando se conserva el INFORME
+// ENTERO y cuando se conserva la última lectura tras caducar la sesión. Sin esto, un
+// proveedor totalmente caído seguía mostrando un medidor de un periodo ya terminado
+// («Se reinicia ahora»): el mismo síntoma que M3 quita del camino mixto.
+describe('los medidores vencidos no se conservan en el informe entero (T45)', () => {
+  const expired: Meter = {
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    resetsAt: '2026-12-05T22:15:31Z',
+    windowSeconds: 2_592_000,
+  };
+  const alive: Meter = { ...expired, id: 'rate_requests', label: 'Peticiones (ventana)', resetsAt: '2026-12-20T00:00:00Z' };
+  const AFTER_WINDOW_END = Date.parse('2026-12-06T00:00:00Z');
+
+  it('does not keep an expired meter when the whole report is kept', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired] };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    // La lectura es del periodo anterior: no se conserva, así que no sale como
+    // vigente con «Se reinicia ahora».
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBeUndefined();
+    expect(merged.status).toBe('error');
+    expect(merged.message).toBe('sin cuota');
+  });
+
+  it('keeps the meters that did not expire when the whole report is kept', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired, alive] };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota' };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.stale).toBe(true);
+  });
+
+  it('does not keep an expired meter when the session expires', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired] };
+    const lost: UsageReport = { ...base, status: 'needsLogin', meters: [], message: 'sesión caducada', action: 'login' };
+    const [merged] = mergeReports([previous], [lost], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBeUndefined();
+    expect(merged.status).toBe('needsLogin');
+  });
+
+  it('keeps the meter that did not expire when the session expires', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [alive] };
+    const lost: UsageReport = { ...base, status: 'needsLogin', meters: [], message: 'sesión caducada', action: 'login' };
+    const [merged] = mergeReports([previous], [lost], AFTER_WINDOW_END);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.stale).toBe(true);
+    expect(merged.status).toBe('needsLogin');
+  });
+});
