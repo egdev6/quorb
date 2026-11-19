@@ -8,6 +8,13 @@
 //!     el backend (el frente recibe el dato, no el concepto). Si la clave `credits` no
 //!     viene, o viene con otra forma, el payload ya no coincide con el contrato y el
 //!     régimen queda desconocido: el informe no afirma el tipo de la cuenta.
+//!     Con contenido, el bloque declara el periodo, la asignación, el consumido, el
+//!     saldo de packs y su caducidad (`period_start`, `period_end`, `allowance`,
+//!     `used`, `remaining`, `pack_credits`, `pack_expires_at`, `frozen`): de ahí
+//!     salen el fondo del periodo (un medidor con tope) y el saldo de packs (otro,
+//!     sin porcentaje: es un saldo, no un límite).
+//!     Los totales de la ventana (`totals.by_model`, un array con una entrada por
+//!     modelo) traen los créditos facturados por modelo: el desglose informativo.
 //!   · `GET /v1/models` → modelos disponibles para tu key (y sus límites, si los expone).
 //!   · `GET https://cloud-api.nan.builders/api/usage/quota` → la cuota **de la cuenta**:
 //!     por modelo, el consumo (`tokensUsed`), la asignación (`cap`) y las fechas del
@@ -23,9 +30,9 @@
 use super::nan_cloud;
 use super::{month_start, net_error, next_month_start, Who};
 use crate::config::NanConfig;
-use crate::model::{Kind, Meter, Status, UsageReport};
+use crate::model::{BreakdownItem, Kind, Meter, Status, UsageReport};
 use crate::secrets;
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -58,12 +65,29 @@ pub(crate) enum QuotaSource {
 ///
 /// El contrato publica estos campos (`https://nan.builders/openapi.json`):
 /// `period_start`, `period_end`, `allowance`, `used`, `remaining`, `pack_credits`,
-/// `pack_expires_at` y `frozen`. Con el corte de alcance (#261 = detección y
-/// supresión), de este bloque sólo se lee `frozen` («la suscripción no está activa»):
-/// la asignación del periodo, el saldo de packs y el desglose por modelo son de la
-/// otra mitad del alcance (#268).
+/// `pack_expires_at` y `frozen`. De este bloque sale todo lo que la interfaz de una
+/// cuenta facturada en créditos necesita: la asignación del periodo (el fondo), el
+/// consumido, el saldo de packs y su caducidad, y el aviso de suscripción inactiva.
+///
+/// `remaining` NO incluye los packs (lo dice el contrato), así que el porcentaje va
+/// contra `allowance` con `used`: el fondo es el del periodo, los packs son un saldo
+/// aparte.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Credits {
+    /// Inicio del periodo de facturación en curso (UTC).
+    pub period_start: Option<String>,
+    /// Fin del periodo de facturación en curso (UTC): cuándo se renueva el fondo.
+    pub period_end: Option<String>,
+    /// Créditos incluidos en el plan para este periodo.
+    pub allowance: Option<f64>,
+    /// Créditos consumidos de la asignación en este periodo.
+    pub used: Option<f64>,
+    /// Créditos que quedan de la asignación (sin los packs).
+    pub remaining: Option<f64>,
+    /// Créditos que quedan en los packs comprados (se usan al agotarse la asignación).
+    pub pack_credits: Option<f64>,
+    /// Cuándo caducan los créditos de los packs (`null` si no hay packs).
+    pub pack_expires_at: Option<String>,
     /// `true` mientras la suscripción no está activa: las peticiones se rechazan.
     pub frozen: bool,
 }
@@ -237,13 +261,26 @@ pub(crate) async fn refresh_with_credentials(
     // es la raíz de `GET /v1/usage` (el panel de Cloud no lo publica), así que la
     // lectura de esa página es la que lo decide — y sólo si hay API key: sin key no
     // hay forma de leerla y el régimen queda desconocido.
-    let (regime, first_page) = match key {
+    let (block, first_page) = match key {
         Some(k) => match usage_page(cfg, http, k, from, now, None).await {
-            Ok(page) => (regime_of(&page), Some(page)),
+            Ok(page) => (parse_credits(&page), Some(page)),
             // Sin lectura no se sabe el régimen: no se inventa ninguno.
-            Err(_) => (BillingRegime::Unknown, None),
+            Err(_) => (CreditsBlock::Undetermined, None),
         },
-        None => (BillingRegime::Unknown, None),
+        None => (CreditsBlock::Undetermined, None),
+    };
+    let regime = block.regime();
+
+    // El desglose por modelo (los créditos facturados por modelo): lo declara el
+    // proveedor en los totales de la ventana del periodo de facturación, que es la
+    // que contiene los créditos del periodo. Sólo lo hay en una cuenta facturada en
+    // créditos, y sólo si el proveedor lo publica.
+    let breakdown = match (key, credits_of(&block)) {
+        (Some(k), Some(credits)) => {
+            let page = breakdown_page(cfg, http, k, credits, first_page.as_ref(), from, now).await;
+            credits_breakdown(&page)
+        }
+        _ => Vec::new(),
     };
 
     // A. Sesión de NaN Cloud: los mismos datos que el dashboard (preferente).
@@ -252,12 +289,12 @@ pub(crate) async fn refresh_with_credentials(
         match nan_cloud::fetch(http, cookie, base).await {
             Ok(u) => {
                 report.daily = u.daily;
-                // La supresión de los medidores por modelo de una cuenta facturada en
-                // créditos vive en UN solo sitio (`credits_declaration`), que usan los
-                // dos caminos: esos topes no existen para esa cuenta, tampoco en la
-                // sesión.
-                if let Some(declared) = credits_declaration(regime) {
+                // La declaración de una cuenta facturada en créditos vive en UN solo
+                // sitio (`credits_declaration`), que usan los dos caminos: esos topes
+                // por modelo no existen para esa cuenta, tampoco en la sesión.
+                if let Some(declared) = credits_declaration(credits_of(&block)) {
                     declared.apply_to_report(&mut report);
+                    report.breakdown = (!breakdown.is_empty()).then_some(breakdown);
                     return report;
                 }
                 report.meters = session_meters_with_basis(u.meters);
@@ -355,12 +392,14 @@ pub(crate) async fn refresh_with_credentials(
     // Los medidores de CUOTA del informe: van aparte porque el informe puede ser MIXTO
     // (los medidores extra y los de rate limit, sin los de cuota).
     let mut quota: Vec<Meter> = Vec::new();
-    if let Some(declared) = credits_declaration(regime) {
+    if let Some(declared) = credits_declaration(credits_of(&block)) {
         // Una cuenta facturada en créditos NO tiene topes por modelo: esos topes no
         // existen para esa cuenta. No se declaran medidores por modelo ni se recurre a la
         // cuota publicada (`known_quotas()`), y ni se lee la cuota de la cuenta. Lo
-        // decide el backend; el frente no lo repite.
+        // decide el backend; el frente no lo repite. Lo que sí se declara es el fondo
+        // del periodo (un medidor) y el saldo de packs (otro, sin porcentaje).
         declared.apply(&mut report, &mut quota);
+        report.breakdown = (!breakdown.is_empty()).then_some(breakdown);
     } else {
         // 2. La cuota de la cuenta: `GET /api/usage/quota` del panel de NaN con la MISMA API
         //    key. `cap` es la asignación de la cuenta para el periodo en curso (el mismo
@@ -383,7 +422,7 @@ pub(crate) async fn refresh_with_credentials(
             // 3. La cuota de la cuenta manda: no se lee `/v1/usage` (mide el consumo de esta
             //    key, de otro periodo) ni se usa `billing_day` (el periodo es el del payload).
             let declared = declare(
-                regime,
+                &block,
                 Some(meters),
                 &dropped,
                 None,
@@ -526,6 +565,45 @@ async fn fetch_usage(
         body = usage_page(cfg, http, key, from, to, Some(&c)).await?;
     }
     Ok(pages)
+}
+
+/// La página del desglose por modelo: la ventana del periodo de facturación que
+/// declara el bloque `credits` (la que contiene los créditos del periodo).
+///
+/// Si esa ventana es la MISMA que la de la primera página, se reutiliza: el ciclo no
+/// pide dos veces la misma página. Y si no se puede leer, se usa la página que ya se
+/// leyó: el desglose es informativo y no puede tumbar el informe.
+async fn breakdown_page(
+    cfg: &NanConfig,
+    http: &reqwest::Client,
+    key: &str,
+    credits: &Credits,
+    first: Option<&Value>,
+    first_from: DateTime<Utc>,
+    first_to: DateTime<Utc>,
+) -> Value {
+    let from = credits
+        .period_start
+        .as_deref()
+        .and_then(parse_instant)
+        .unwrap_or(first_from);
+    let to = credits
+        .period_end
+        .as_deref()
+        .and_then(parse_instant)
+        .map(|end| end.min(first_to))
+        .unwrap_or(first_to);
+    let fallback = || first.cloned().unwrap_or(Value::Null);
+    if to <= from {
+        return fallback();
+    }
+    if from == first_from && to == first_to {
+        return fallback();
+    }
+    match usage_page(cfg, http, key, from, to, None).await {
+        Ok(page) => page,
+        Err(_) => fallback(),
+    }
 }
 
 /// Respuestas en crudo de `/v1/models` y `/v1/usage` (para la pantalla de Ajustes).
@@ -867,16 +945,16 @@ pub(crate) fn declare_usage(
     // viene con contenido, la cuenta se factura en créditos y NO se declaran los
     // medidores por modelo ni se recurre a la cuota publicada (esos topes no existen
     // para una cuenta facturada en créditos). Sin lectura extra a la red.
-    let regime = pages
+    let block = pages
         .first()
-        .map(regime_of)
-        .unwrap_or(BillingRegime::Unknown);
+        .map(parse_credits)
+        .unwrap_or(CreditsBlock::Undetermined);
     // Para el mes natural solo contamos días del mes; para los medidores de cuota,
     // desde el inicio del periodo de facturación.
     let month = summarize(pages, Some(month_start(now)));
     let period = summarize(pages, Some(billing_period_start(now, billing_day)));
     declare(
-        regime,
+        &block,
         None,
         dropped,
         Some((&month, &period)),
@@ -912,48 +990,65 @@ impl Declared {
         report.billing_regime = regime.label();
     }
 
-    /// Aplica lo declarado al informe (estado, cabecera y régimen) SIN los medidores:
-    /// lo usa el camino de sesión, que compone sus medidores aparte (y con créditos
-    /// no hay medidores por modelo que componer).
+    /// Aplica lo declarado al informe (estado, cabecera, régimen y medidores): lo usa el
+    /// camino de sesión, que compone sus medidores aparte cuando la cuenta NO se
+    /// factura en créditos.
     pub fn apply_to_report(self, report: &mut UsageReport) {
         let Declared {
+            meters,
             header,
             status,
             regime,
-            ..
         } = self;
+        report.meters = meters;
         report.message = Some(header);
         report.status = status;
         report.billing_regime = regime.label();
     }
 }
 
-/// Lo que declara el backend cuando la cuenta se factura en créditos: NINGÚN medidor
-/// por modelo (esos topes no existen para una cuenta facturada en créditos) ni cuota
-/// publicada, y la cabecera que lo dice.
+/// Lo que declara el backend cuando la cuenta se factura en créditos: la asignación
+/// del periodo (un medidor con tope) y el saldo de packs (otro medidor SIN
+/// porcentaje: es un saldo, no un límite), NINGÚN medidor por modelo (esos topes no
+/// existen para una cuenta facturada en créditos) ni cuota publicada.
 ///
 /// Es el **único** sitio de la supresión: los dos caminos (sesión y API key) lo usan,
-/// para que las dos copias no puedan divergir. La asignación del periodo, el saldo de
-/// packs y el desglose por modelo son de la otra mitad del alcance (#268).
+/// para que las dos copias no puedan divergir.
 ///
 /// `frozen` es «la suscripción no está activa» (las peticiones se rechazan): algo que
-/// merece atención, aunque no haya datos.
-fn credits_declaration(regime: BillingRegime) -> Option<Declared> {
-    let BillingRegime::Credits { frozen } = regime else {
-        return None;
-    };
+/// merece atención, aunque no haya datos — y no tapa el saldo.
+fn credits_declaration(credits: Option<&Credits>) -> Option<Declared> {
+    let credits = credits?;
+    let meters = credits_meters(credits);
     Some(Declared {
-        meters: Vec::new(),
-        header: credits_message(frozen),
-        status: if frozen { Status::Warning } else { Status::Ok },
-        regime,
+        // Nunca `ok` sin medidores: así los datos anteriores quedan como
+        // desactualizados en vez de borrarse en silencio. Y `frozen` (la suscripción
+        // no está activa) es un aviso, aunque haya saldo.
+        status: if credits.frozen || meters.is_empty() {
+            Status::Warning
+        } else {
+            Status::Ok
+        },
+        meters,
+        header: credits_message(credits),
+        regime: credits.regime(),
     })
+}
+
+/// El bloque de créditos cuando el proveedor declara una cuenta facturada en
+/// créditos (`None` en los otros dos casos: el `null` explícito y el bloque
+/// ausente).
+pub(crate) fn credits_of(block: &CreditsBlock) -> Option<&Credits> {
+    match block {
+        CreditsBlock::Object(c) => Some(c),
+        _ => None,
+    }
 }
 
 /// Lo que declara el backend, según de dónde sale la cuota: la de la cuenta manda y la
 /// publicada queda de respaldo.
 ///
-/// `regime` es lo que declara el proveedor (el bloque `credits` de `/v1/usage`): con
+/// `block` es lo que declara el proveedor (el bloque `credits` de `/v1/usage`): con
 /// créditos NO hay medidores por modelo ni cuota publicada, porque esos topes no
 /// existen para una cuenta facturada en créditos. La decisión no llega al frente: sólo
 /// llegan los datos.
@@ -962,7 +1057,7 @@ fn credits_declaration(regime: BillingRegime) -> Option<Declared> {
 /// alguno, el informe degrada a aviso y los nombra (un total incompleto no puede
 /// presentarse como completo).
 pub(crate) fn declare(
-    regime: BillingRegime,
+    block: &CreditsBlock,
     account_meters: Option<Vec<Meter>>,
     dropped: &[nan_cloud::Dropped],
     usage: Option<(&UsageSummary, &UsageSummary)>,
@@ -970,9 +1065,10 @@ pub(crate) fn declare(
     now: DateTime<Utc>,
     billing_day: u32,
 ) -> Declared {
-    if let Some(declared) = credits_declaration(regime) {
+    if let Some(declared) = credits_declaration(credits_of(block)) {
         return declared;
     }
+    let regime = block.regime();
     let (meters, source, header) =
         nan_meters(regime, account_meters, usage, published, now, billing_day);
     let mut declared = Declared {
@@ -999,13 +1095,6 @@ pub(crate) fn declare(
     declared
 }
 
-/// El régimen que declara el payload: el bloque `credits` de la raíz de `/v1/usage` es
-/// `null` si la cuenta NO se factura en créditos. Éste es el **único** sitio que decide
-/// el régimen: los dos caminos (sesión y API key) llegan aquí con la página leída.
-pub(crate) fn regime_of(page: &Value) -> BillingRegime {
-    parse_credits(page).regime()
-}
-
 /// Lee el bloque `credits` de la raíz de `/v1/usage`.
 ///
 /// El contrato (`https://nan.builders/openapi.json`) lo declara como
@@ -1018,6 +1107,22 @@ pub(crate) fn parse_credits(page: &Value) -> CreditsBlock {
         None => CreditsBlock::Undetermined,
         Some(Value::Null) => CreditsBlock::Null,
         Some(Value::Object(block)) => CreditsBlock::Object(Credits {
+            period_start: block
+                .get("period_start")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            period_end: block
+                .get("period_end")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            allowance: block.get("allowance").and_then(num),
+            used: block.get("used").and_then(num),
+            remaining: block.get("remaining").and_then(num),
+            pack_credits: block.get("pack_credits").and_then(num),
+            pack_expires_at: block
+                .get("pack_expires_at")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             frozen: block
                 .get("frozen")
                 .and_then(Value::as_bool)
@@ -1027,15 +1132,184 @@ pub(crate) fn parse_credits(page: &Value) -> CreditsBlock {
     }
 }
 
-/// La cabecera del informe cuando la cuenta se factura en créditos: la indicación de
-/// que la cuenta se factura en créditos (y el aviso de suscripción inactiva, si la
-/// hay). El texto lo arma el backend (el frente no interpreta nada).
-fn credits_message(frozen: bool) -> String {
-    let mut parts: Vec<String> = vec!["la cuenta se factura en créditos".into()];
-    if frozen {
+/// Los medidores que declara el backend cuando la cuenta se factura en créditos: la
+/// asignación del periodo (con su tope) y el saldo de packs (sin tope: es un saldo, no
+/// una cuota). El frente sólo sabe que son medidores.
+///
+/// Sin fondo (`allowance` a 0 o ausente) NO se declara el medidor de la asignación: no
+/// se inventa un 0 % sin fondo. Y el saldo de packs sólo se declara si hay saldo.
+pub(crate) fn credits_meters(credits: &Credits) -> Vec<Meter> {
+    let mut out: Vec<Meter> = Vec::new();
+    if let Some(allowance) = credits.allowance.filter(|a| *a > 0.0) {
+        let used = credits.used.unwrap_or(0.0);
+        out.push(Meter {
+            id: "allocation".into(),
+            label: "Asignación del periodo".into(),
+            // El porcentaje va contra la asignación: `remaining` NO incluye los packs.
+            percent: Some(used / allowance * 100.0),
+            used: Some(used),
+            limit: Some(allowance),
+            unit: Some("credits".into()),
+            // El reinicio es el final del periodo que declara el proveedor, y la
+            // ventana es ese periodo: el ritmo va contra él.
+            resets_at: credits
+                .period_end
+                .as_deref()
+                .and_then(parse_instant)
+                .map(|d| d.to_rfc3339()),
+            window_seconds: credits_window(credits),
+            quota_source: Some("account"),
+        });
+    }
+    if let Some(pack) = credits.pack_credits.filter(|p| *p > 0.0) {
+        out.push(Meter {
+            id: "balance".into(),
+            label: "Saldo de packs".into(),
+            // Un saldo no es un tope: sin porcentaje y sin límite. Su caducidad viaja
+            // en `resets_at`: un saldo caduca, no se reinicia (el frente lo dice así).
+            percent: None,
+            used: Some(pack),
+            limit: None,
+            unit: Some("credits".into()),
+            resets_at: credits
+                .pack_expires_at
+                .as_deref()
+                .and_then(parse_instant)
+                .map(|d| d.to_rfc3339()),
+            window_seconds: None,
+            quota_source: None,
+        });
+    }
+    out
+}
+
+/// El desglose por modelo: una lista genérica de rótulo + importe + unidad. Los
+/// créditos por modelo los declara el proveedor: en los totales de la ventana
+/// (`totals.by_model`, que el contrato declara como un ARRAY con una entrada por
+/// modelo) o, si no los trae, en las filas de la ventana. El frente no sabe qué son
+/// esos rótulos.
+pub(crate) fn credits_breakdown(page: &Value) -> Vec<BreakdownItem> {
+    let mut amounts: BTreeMap<String, f64> = BTreeMap::new();
+    if let Some(list) = page.pointer("/totals/by_model").and_then(Value::as_array) {
+        for entry in list {
+            let Some(model) = entry.get("model").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(amount) = entry.get("credits").and_then(num) else {
+                continue;
+            };
+            *amounts.entry(model.to_string()).or_default() += amount;
+        }
+    }
+    if amounts.is_empty() {
+        // Sin totales por modelo, se suman las filas de la ventana.
+        for row in page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(model) = row.get("model").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(amount) = row.get("credits").and_then(num) else {
+                continue;
+            };
+            *amounts.entry(model.to_string()).or_default() += amount;
+        }
+    }
+    let mut out: Vec<BreakdownItem> = amounts
+        .into_iter()
+        .filter(|(_, amount)| *amount > 0.0)
+        .map(|(label, amount)| BreakdownItem {
+            label,
+            amount,
+            unit: Some("credits".into()),
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.amount
+            .partial_cmp(&a.amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
+/// La cabecera del informe cuando la cuenta se factura en créditos: el importe del
+/// periodo (el fondo y lo consumido) y, si la hay, la caducidad del saldo de packs
+/// viaja en su medidor. El texto lo arma el backend (el frente no interpreta nada).
+fn credits_message(credits: &Credits) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match credits.allowance {
+        Some(allowance) if allowance > 0.0 => match credits.used {
+            Some(used) => parts.push(format!(
+                "{} de {} créditos del periodo",
+                credits_amount(used),
+                credits_amount(allowance)
+            )),
+            None => parts.push(format!(
+                "{} créditos del periodo",
+                credits_amount(allowance)
+            )),
+        },
+        // La asignación viene a 0: la cuenta no incluye créditos (lo dice el dato).
+        Some(_) => parts.push("esta cuenta no incluye créditos".into()),
+        // Sin asignación declarada: se sabe el régimen, no las cifras.
+        None => parts.push("la cuenta se factura en créditos".into()),
+    }
+    if credits.frozen {
         parts.push("suscripción inactiva: las peticiones se rechazan".into());
     }
     parts.join(" · ")
+}
+
+/// Las cifras del bloque de créditos no son tokens: se muestran tal cual, con el
+/// formato de la interfaz (separador de miles y coma decimal).
+fn credits_amount(n: f64) -> String {
+    let rounded = (n * 10.0).round() / 10.0;
+    let negative = rounded < 0.0;
+    let abs = rounded.abs();
+    let int = abs.trunc() as u64;
+    let tenths = ((abs - int as f64) * 10.0).round() as u32;
+    let digits = int.to_string();
+    let mut grouped = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            grouped.push('.');
+        }
+        grouped.push(ch);
+    }
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    out.push_str(&grouped);
+    if tenths > 0 {
+        out.push(',');
+        out.push(char::from(b'0' + tenths as u8));
+    }
+    out
+}
+
+/// La ventana del periodo declarado: `period_end` menos `period_start`. Es la que
+/// usa el ritmo de consumo (el ritmo va contra el periodo que declara el proveedor).
+fn credits_window(credits: &Credits) -> Option<i64> {
+    let start = credits.period_start.as_deref().and_then(parse_instant)?;
+    let end = credits.period_end.as_deref().and_then(parse_instant)?;
+    (end > start).then(|| (end - start).num_seconds())
+}
+
+/// Un instante del payload: RFC 3339 o fecha suelta (UTC).
+fn parse_instant(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|d| d.and_utc())
+        })
 }
 
 /// Header of the report: it names the period the numbers come from. The published quota is
@@ -1171,10 +1445,19 @@ fn compact(n: f64) -> String {
     }
 }
 
+/// El plan que declara la persona (la configuración): el backend NO lo deduce del
+/// payload —no puede: el payload no trae el nombre del plan y una asignación
+/// prorrateada rompe cualquier inferencia—.
+///
+/// Los nombres comerciales que la persona puede declarar viajan como id estable y los
+/// traduce el frente; los ids de nivel que no son un nombre comercial conservan su
+/// texto (así, el frente no afirma un plan que nadie ha declarado).
 fn plan_name(plan: &str) -> &'static str {
     match plan {
-        "premium" => "GLM Premium",
-        "community" => "nan_community",
+        "gentle" => "plan.gentle",
+        "inference" => "plan.inference",
+        "premium" => "plan.premium",
+        "community" => "plan.community",
         _ => "nan_member",
     }
 }
@@ -1285,6 +1568,17 @@ mod tests {
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect()
+    }
+
+    /// El bloque de créditos que corresponde a un régimen: sirve para las pruebas que
+    /// recorren el camino de la cuota por modelo (donde el bloque no se factura en
+    /// créditos).
+    fn block_of(regime: BillingRegime) -> CreditsBlock {
+        match regime {
+            BillingRegime::Credits { .. } => CreditsBlock::Object(Credits::default()),
+            BillingRegime::ModelQuota => CreditsBlock::Null,
+            BillingRegime::Unknown => CreditsBlock::Undetermined,
+        }
     }
 
     #[test]
@@ -1586,7 +1880,7 @@ mod tests {
         // Sin medidores de cuota el informe no va en `ok`: nunca `ok` sin medidores,
         // para que los datos anteriores no se borren en silencio.
         let declared = declare(
-            BillingRegime::Unknown,
+            &block_of(BillingRegime::Unknown),
             Some(Vec::new()),
             &[],
             None,
@@ -1769,7 +2063,7 @@ mod tests {
         assert_eq!(parsed.dropped[0].model, "glm5.3-flash");
 
         let declared = declare(
-            BillingRegime::ModelQuota,
+            &block_of(BillingRegime::ModelQuota),
             Some(parsed.meters),
             &parsed.dropped,
             None,
@@ -1800,7 +2094,7 @@ mod tests {
         let payload = nan_cloud::real_account_payload();
         let parsed = nan_cloud::parse_quota(&payload);
         let declared = declare(
-            BillingRegime::ModelQuota,
+            &block_of(BillingRegime::ModelQuota),
             Some(parsed.meters),
             &parsed.dropped,
             None,
@@ -2011,17 +2305,94 @@ mod tests {
         })
     }
 
+    /// El mismo ejemplo publicado, con el desglose por modelo: los totales de la
+    /// ventana traen `by_model` como un ARRAY (una entrada por modelo).
+    fn published_credits_page_with_models() -> Value {
+        let mut page = published_credits_page();
+        page["totals"] = json!({"by_model": [
+            {"model": "deepseek-v4-flash", "credits": 12.4},
+            {"model": "glm5.3-flash", "credits": 11.9}
+        ]});
+        page
+    }
+
+    #[test]
+    fn a_prorated_first_period_is_measured_against_the_prorated_allowance() {
+        // El proveedor prorratea los créditos incluidos al empezar el periodo: el
+        // medidor va contra la asignación que declara ESE periodo (no contra la del
+        // plan completo).
+        let mut page = published_credits_page();
+        page["credits"]["allowance"] = json!(3500);
+        page["credits"]["used"] = json!(12.15);
+        let CreditsBlock::Object(c) = parse_credits(&page) else {
+            panic!("the credits block");
+        };
+        let meters = credits_meters(&c);
+        assert_eq!(meters[0].limit, Some(3500.0));
+        assert!((meters[0].percent.unwrap() - 12.15 / 3500.0 * 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn packs_without_included_credits_declare_only_the_balance() {
+        // Una cuenta sin créditos incluidos (asignación a 0) que tiene packs declara
+        // SÓLO el saldo: no hay fondo del que medir un porcentaje.
+        let mut page = published_credits_page();
+        page["credits"]["allowance"] = json!(0);
+        page["credits"]["pack_credits"] = json!(240);
+        page["credits"]["pack_expires_at"] = json!("2027-05-12T00:00:00Z");
+        let CreditsBlock::Object(c) = parse_credits(&page) else {
+            panic!("the credits block");
+        };
+        let meters = credits_meters(&c);
+        assert_eq!(meters.len(), 1, "{:?}", meters);
+        assert_eq!(meters[0].id, "balance");
+        assert_eq!(meters[0].used, Some(240.0));
+        assert_eq!(meters[0].percent, None);
+        assert_eq!(meters[0].limit, None);
+    }
+
+    #[test]
+    fn a_consumption_over_the_allowance_goes_over_a_hundred_percent() {
+        // S13, caso «más del 100 %»: el porcentaje sale por encima de 100 (el nivel
+        // máximo) y el saldo de packs se ve en esa misma situación.
+        let mut page = published_credits_page();
+        page["credits"]["used"] = json!(8400);
+        page["credits"]["pack_credits"] = json!(240);
+        let CreditsBlock::Object(c) = parse_credits(&page) else {
+            panic!("the credits block");
+        };
+        let meters = credits_meters(&c);
+        let allocation = &meters[0];
+        assert!((allocation.percent.unwrap() - 120.0).abs() < 1e-9);
+        assert_eq!(allocation.limit, Some(7000.0));
+        // El saldo de packs sigue declarado: es lo que consume el exceso.
+        assert_eq!(meters[1].id, "balance");
+        assert_eq!(meters[1].used, Some(240.0));
+    }
+
+    #[test]
+    fn the_plan_is_the_one_the_person_declares() {
+        // El plan lo declara la persona (la configuración): el backend NO lo deduce
+        // del payload. Los nombres comerciales viajan como id estable (los traduce el
+        // frente) y los ids de nivel conservan su texto.
+        assert_eq!(plan_name("gentle"), "plan.gentle");
+        assert_eq!(plan_name("inference"), "plan.inference");
+        assert_eq!(plan_name("premium"), "plan.premium");
+        assert_eq!(plan_name("community"), "plan.community");
+        assert_eq!(plan_name("member"), "nan_member");
+    }
+
     #[test]
     fn the_credits_block_decides_the_billing_regime() {
         // El bloque `credits` de la raíz de `/v1/usage` es `null` cuando la cuenta
         // NO se factura en créditos: el régimen lo decide el payload, no el nombre del
         // plan, y lo decide el backend (no el frente).
         assert_eq!(
-            regime_of(&published_credits_page()),
+            parse_credits(&published_credits_page()).regime(),
             BillingRegime::Credits { frozen: false }
         );
         assert_eq!(
-            regime_of(&json!({"credits": null})),
+            parse_credits(&json!({"credits": null})).regime(),
             BillingRegime::ModelQuota
         );
     }
@@ -2033,17 +2404,28 @@ mod tests {
         // factura en créditos». Una clave AUSENTE —o un bloque con otra forma— no es
         // ese `null`: es un payload que ya no coincide con el contrato, así que el
         // informe no puede afirmar el tipo de la cuenta.
-        assert_eq!(regime_of(&json!({})), BillingRegime::Unknown);
-        assert_eq!(regime_of(&json!({"credits": "x"})), BillingRegime::Unknown);
-        assert_eq!(regime_of(&json!({"credits": []})), BillingRegime::Unknown);
-        assert_eq!(regime_of(&json!({"credits": 42})), BillingRegime::Unknown);
-        assert_eq!(regime_of(&json!({"credits": true})), BillingRegime::Unknown);
+        assert_eq!(parse_credits(&json!({})).regime(), BillingRegime::Unknown);
+        assert_eq!(
+            parse_credits(&json!({"credits": "x"})).regime(),
+            BillingRegime::Unknown
+        );
+        assert_eq!(
+            parse_credits(&json!({"credits": []})).regime(),
+            BillingRegime::Unknown
+        );
+        assert_eq!(
+            parse_credits(&json!({"credits": 42})).regime(),
+            BillingRegime::Unknown
+        );
+        assert_eq!(
+            parse_credits(&json!({"credits": true})).regime(),
+            BillingRegime::Unknown
+        );
     }
 
     #[test]
     fn the_credits_block_is_read_for_the_frozen_flag() {
-        // Con el corte de alcance, del bloque `credits` sólo se lee `frozen`: el resto
-        // del contrato es de la otra mitad del alcance (#268).
+        // `frozen` («la suscripción no está activa») sale del bloque `credits`.
         let CreditsBlock::Object(c) = parse_credits(&published_credits_page()) else {
             panic!("the credits block");
         };
@@ -2057,15 +2439,177 @@ mod tests {
     }
 
     #[test]
-    fn a_credits_account_declares_no_meter_at_all() {
-        // Con el corte de alcance, una cuenta facturada en créditos NO declara
-        // medidores: ni la asignación del periodo ni el saldo de packs (eso vive en
-        // la otra mitad del alcance, #268). Lo que queda es la indicación de que la
-        // cuenta se factura en créditos.
+    fn the_credits_block_is_read_with_its_exact_fields() {
+        // El bloque `credits` de la raíz de `/v1/usage` trae el periodo, la asignación
+        // del periodo, el consumido, el saldo de packs y su caducidad: se leen con los
+        // nombres EXACTOS del contrato público (`https://nan.builders/openapi.json`).
+        let CreditsBlock::Object(c) = parse_credits(&published_credits_page()) else {
+            panic!("the credits block");
+        };
+        assert_eq!(c.period_start.as_deref(), Some("2026-11-01T00:00:00Z"));
+        assert_eq!(c.period_end.as_deref(), Some("2026-12-01T00:00:00Z"));
+        assert_eq!(c.allowance, Some(7000.0));
+        assert_eq!(c.used, Some(24.3));
+        assert_eq!(c.remaining, Some(6975.7));
+        assert_eq!(c.pack_credits, Some(0.0));
+        assert_eq!(c.pack_expires_at, None);
+    }
+
+    #[test]
+    fn a_credits_account_declares_the_allowance_and_the_pack_balance() {
+        // La asignación del periodo es un medidor con tope; el saldo de packs es otro
+        // medidor SIN porcentaje (es un saldo, no un límite) y sin tope.
+        let mut page = published_credits_page();
+        page["credits"]["pack_credits"] = json!(240);
+        page["credits"]["pack_expires_at"] = json!("2027-05-12T00:00:00Z");
+        let CreditsBlock::Object(c) = parse_credits(&page) else {
+            panic!("the credits block");
+        };
+        let meters = credits_meters(&c);
+        assert_eq!(meters.len(), 2, "{:?}", meters);
+        let allocation = &meters[0];
+        assert_eq!(allocation.id, "allocation");
+        assert_eq!(allocation.used, Some(24.3));
+        assert_eq!(allocation.limit, Some(7000.0));
+        assert_eq!(allocation.unit.as_deref(), Some("credits"));
+        // El porcentaje va contra la asignación: `remaining` NO incluye los packs.
+        assert!((allocation.percent.unwrap() - 24.3 / 7000.0 * 100.0).abs() < 1e-9);
+        // El reinicio es el final del periodo que declara el proveedor.
+        assert_eq!(
+            allocation.resets_at.as_deref(),
+            Some("2026-12-01T00:00:00+00:00")
+        );
+        assert_eq!(allocation.window_seconds, Some(30 * 86400));
+        let balance = &meters[1];
+        assert_eq!(balance.id, "balance");
+        assert_eq!(balance.percent, None);
+        assert_eq!(balance.limit, None);
+        assert_eq!(balance.used, Some(240.0));
+        assert_eq!(balance.unit.as_deref(), Some("credits"));
+        // La caducidad del saldo viaja en el medidor: el frente la muestra como
+        // caducidad (un saldo caduca, no se reinicia).
+        assert_eq!(
+            balance.resets_at.as_deref(),
+            Some("2027-05-12T00:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn a_credits_account_without_an_allowance_declares_no_meter() {
+        // S13, caso «cero»: si el fondo viene a 0 (o no viene) NO hay medidor: no se
+        // inventa un 0 % sin fondo.
+        let mut zero = published_credits_page();
+        zero["credits"]["allowance"] = json!(0);
+        let CreditsBlock::Object(c) = parse_credits(&zero) else {
+            panic!("the credits block");
+        };
+        assert!(
+            credits_meters(&c).is_empty(),
+            "sin fondo no hay medidor: {:?}",
+            credits_meters(&c)
+        );
+        let mut absent = published_credits_page();
+        absent["credits"]
+            .as_object_mut()
+            .unwrap()
+            .remove("allowance");
+        let CreditsBlock::Object(c) = parse_credits(&absent) else {
+            panic!("the credits block");
+        };
+        assert!(credits_meters(&c).is_empty());
+    }
+
+    #[test]
+    fn a_credits_account_without_pack_balance_declares_no_balance_meter() {
+        // El saldo de packs sólo se declara si hay saldo (S4: sin packs no hay línea).
+        let CreditsBlock::Object(c) = parse_credits(&published_credits_page()) else {
+            panic!("the credits block");
+        };
+        let meters = credits_meters(&c);
+        assert_eq!(meters.len(), 1, "{:?}", meters);
+        assert!(meters.iter().all(|m| m.id != "balance"));
+    }
+
+    #[test]
+    fn the_credits_breakdown_is_read_from_the_totals_by_model() {
+        // El contrato público declara `totals.by_model` como un ARRAY con una entrada
+        // por modelo (no un objeto): los créditos facturados por modelo.
+        let page = json!({"totals": {"by_model": [
+            {"model": "deepseek-v4-flash", "credits": 12.4},
+            {"model": "glm5.3-flash", "credits": 11.9}
+        ]}});
+        let items = credits_breakdown(&page);
+        assert_eq!(items.len(), 2, "{:?}", items);
+        assert_eq!(items[0].label, "deepseek-v4-flash");
+        assert_eq!(items[0].amount, 12.4);
+        assert_eq!(items[0].unit.as_deref(), Some("credits"));
+        assert_eq!(items[1].label, "glm5.3-flash");
+        assert_eq!(items[1].amount, 11.9);
+    }
+
+    #[test]
+    fn the_credits_breakdown_falls_back_to_the_rows_of_the_window() {
+        // Sin totales por modelo, se suman las filas de la ventana.
+        let page = json!({"data": [
+            {"date": "2026-11-02", "model": "glm5.3-flash", "credits": 2.0},
+            {"date": "2026-11-03", "model": "glm5.3-flash", "credits": 1.5},
+            {"date": "2026-11-03", "model": "deepseek-v4-flash", "credits": 0.0}
+        ]});
+        let items = credits_breakdown(&page);
+        assert_eq!(items.len(), 1, "{:?}", items);
+        assert_eq!(items[0].label, "glm5.3-flash");
+        assert_eq!(items[0].amount, 3.5);
+    }
+
+    #[test]
+    fn the_credits_header_says_the_amount_of_the_period() {
+        // La cabecera del informe de una cuenta de créditos dice el importe del periodo
+        // (el medidor lo muestra en su barra).
+        let CreditsBlock::Object(c) = parse_credits(&published_credits_page()) else {
+            panic!("the credits block");
+        };
+        let header = credits_message(&c);
+        assert_eq!(header, "24,3 de 7.000 créditos del periodo");
+    }
+
+    #[test]
+    fn the_credits_header_says_when_the_account_has_no_included_credits() {
+        // Una cuenta sin créditos incluidos (la asignación viene a 0 o no viene) lo
+        // dice: no se afirma un fondo que no hay.
+        let mut zero = published_credits_page();
+        zero["credits"]["allowance"] = json!(0);
+        let CreditsBlock::Object(c) = parse_credits(&zero) else {
+            panic!("the credits block");
+        };
+        assert_eq!(credits_message(&c), "esta cuenta no incluye créditos");
+    }
+
+    #[test]
+    fn the_credits_header_says_when_the_subscription_is_inactive() {
+        // `frozen` es un aviso («la suscripción no está activa») y no tapa el saldo.
+        let mut frozen = published_credits_page();
+        frozen["credits"]["frozen"] = json!(true);
+        let CreditsBlock::Object(c) = parse_credits(&frozen) else {
+            panic!("the credits block");
+        };
+        let header = credits_message(&c);
+        assert!(header.contains("inactiva"), "{header}");
+        assert!(header.contains("24,3 de 7.000"), "{header}");
+        // El aviso no borra los medidores: el saldo se sigue viendo.
+        let declared = credits_declaration(Some(&c)).expect("la declaración de créditos");
+        assert_eq!(declared.status, Status::Warning);
+        assert_eq!(declared.meters.len(), 1, "{:?}", declared.meters);
+    }
+
+    #[test]
+    fn a_credits_account_declares_the_credits_meters_and_no_model_quota() {
+        // Una cuenta facturada en créditos declara el fondo del periodo (un medidor con
+        // tope) y el saldo de packs (otro, sin porcentaje), y NINGÚN medidor por
+        // modelo: esos topes no existen para esa cuenta.
         let c = parse_credits(&published_credits_page());
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
-            c.regime(),
+            &c,
             Some(account.meters),
             &[],
             Some((&UsageSummary::default(), &UsageSummary::default())),
@@ -2073,13 +2617,12 @@ mod tests {
             now(),
             1,
         );
+        assert_eq!(declared.meters.len(), 1, "{:?}", declared.meters);
+        assert_eq!(declared.meters[0].id, "allocation");
         assert!(
-            declared.meters.is_empty(),
-            "una cuenta de créditos no declara medidores: {:?}",
-            declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
-        );
-        assert!(
-            declared.header.contains("se factura en créditos"),
+            declared
+                .header
+                .contains("24,3 de 7.000 créditos del periodo"),
             "{}",
             declared.header
         );
@@ -2093,7 +2636,7 @@ mod tests {
         let c = parse_credits(&published_credits_page());
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
-            c.regime(),
+            &c,
             Some(account.meters),
             &[],
             Some((&UsageSummary::default(), &UsageSummary::default())),
@@ -2102,7 +2645,7 @@ mod tests {
             1,
         );
         assert!(
-            declared.meters.is_empty(),
+            declared.meters.iter().all(|m| !m.id.starts_with("model:")),
             "con créditos no hay medidores por modelo: {:?}",
             declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
         );
@@ -2114,7 +2657,7 @@ mod tests {
         // cuenta conserva los medidores por modelo: lo de siempre.
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
-            BillingRegime::ModelQuota,
+            &block_of(BillingRegime::ModelQuota),
             Some(account.meters),
             &[],
             None,
@@ -2135,7 +2678,7 @@ mod tests {
         let mut page = published_credits_page();
         page["credits"]["frozen"] = json!(true);
         let c = parse_credits(&page);
-        let declared = declare(c.regime(), None, &[], None, &published_quotas(), now(), 1);
+        let declared = declare(&c, None, &[], None, &published_quotas(), now(), 1);
         assert_eq!(declared.status, Status::Warning);
         assert!(declared.header.contains("inactiva"), "{}", declared.header);
     }
@@ -2230,7 +2773,7 @@ mod tests {
         // trata como texto opaco (no sabe qué significa): una cuenta facturada en
         // créditos lo dice en su informe.
         let c = parse_credits(&published_credits_page());
-        let declared = declare(c.regime(), None, &[], None, &published_quotas(), now(), 1);
+        let declared = declare(&c, None, &[], None, &published_quotas(), now(), 1);
         let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
         let mut quota = Vec::new();
         declared.apply(&mut report, &mut quota);
@@ -2246,7 +2789,7 @@ mod tests {
         // distinto y estable.
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
-            BillingRegime::ModelQuota,
+            &block_of(BillingRegime::ModelQuota),
             Some(account.meters),
             &[],
             None,
@@ -2285,7 +2828,7 @@ mod tests {
         // cuenta).
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
-            BillingRegime::Unknown,
+            &block_of(BillingRegime::Unknown),
             Some(account.meters),
             &[],
             None,
@@ -2465,14 +3008,14 @@ mod tests {
         ));
         assert_eq!(report.billing_regime, Some("credits"));
         assert_eq!(report.status, Status::Ok);
-        assert!(
-            report.meters.is_empty(),
-            "una cuenta de créditos no declara medidores por modelo: {:?}",
-            report.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        assert_eq!(
+            report.meters.iter().map(|m| &m.id).collect::<Vec<_>>(),
+            vec!["allocation"],
+            "una cuenta de créditos declara el fondo del periodo y ningún tope por modelo"
         );
         assert_eq!(
             report.message.as_deref(),
-            Some("la cuenta se factura en créditos")
+            Some("24,3 de 7.000 créditos del periodo")
         );
         // Con créditos no se lee la cuota de la cuenta: esos topes no existen para una
         // cuenta facturada en créditos.
@@ -2486,6 +3029,52 @@ mod tests {
             "el régimen se decide con /v1/usage: {:?}",
             mock.requested()
         );
+    }
+
+    #[test]
+    fn the_api_key_path_declares_the_credits_of_the_period() {
+        // T6: el camino con API key, de punta a punta, contra el ejemplo publicado
+        // por el proveedor (NO una captura real): el informe declara el fondo del
+        // periodo (con su reinicio y su ventana) y el desglose por modelo.
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            (
+                "/v1/usage",
+                published_credits_page_with_models().to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            None,
+            &mock.base(),
+        ));
+        assert_eq!(report.billing_regime, Some("credits"));
+        assert_eq!(report.status, Status::Ok);
+        let allocation = report
+            .meters
+            .iter()
+            .find(|m| m.id == "allocation")
+            .expect("el fondo del periodo");
+        assert_eq!(allocation.used, Some(24.3));
+        assert_eq!(allocation.limit, Some(7000.0));
+        assert_eq!(allocation.unit.as_deref(), Some("credits"));
+        assert_eq!(
+            allocation.resets_at.as_deref(),
+            Some("2026-12-01T00:00:00+00:00")
+        );
+        assert_eq!(allocation.window_seconds, Some(30 * 86400));
+        // El desglose por modelo viaja en el informe (rótulo + importe + unidad).
+        let breakdown = report.breakdown.expect("el desglose por modelo");
+        assert_eq!(breakdown.len(), 2, "{:?}", breakdown);
+        assert_eq!(breakdown[0].label, "deepseek-v4-flash");
+        assert_eq!(breakdown[0].amount, 12.4);
+        assert_eq!(breakdown[0].unit.as_deref(), Some("credits"));
+        assert_eq!(breakdown[1].label, "glm5.3-flash");
     }
 
     #[test]
@@ -2623,14 +3212,14 @@ mod tests {
             &mock.base(),
         ));
         assert_eq!(report.billing_regime, Some("credits"));
-        assert!(
-            report.meters.is_empty(),
-            "una cuenta de créditos no muestra los topes por modelo: {:?}",
-            report.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        assert_eq!(
+            report.meters.iter().map(|m| &m.id).collect::<Vec<_>>(),
+            vec!["allocation"],
+            "una cuenta de créditos declara el fondo del periodo y ningún tope por modelo"
         );
         assert_eq!(
             report.message.as_deref(),
-            Some("la cuenta se factura en créditos")
+            Some("24,3 de 7.000 créditos del periodo")
         );
     }
 
