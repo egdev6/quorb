@@ -146,6 +146,26 @@ export function peakMeter(r: UsageReport): Meter | null {
 }
 
 /**
+ * ¿El régimen que declara el informe nuevo impide conservar los medidores del anterior?
+ *
+ * El texto del régimen es opaco: el frente no sabe qué significa, sólo si es el mismo.
+ * La comparación es SIMÉTRICA: «no declarar» no es una declaración, en ninguno de los
+ * dos lados. Sólo se bloquea cuando LOS DOS informes declaran régimen y son distintos:
+ * - los dos declaran y difieren → los medidores del anterior son de un régimen que ya
+ *   no aplica y no se conservan;
+ * - sólo uno declara (o ninguno) → no hay comparación posible: no se bloquea nada y los
+ *   datos anteriores se conservan como estaban, marcados como desactualizados (como
+ *   siempre: el último ciclo correcto no se borra).
+ */
+function regimeBlocksKeeping(old: UsageReport | undefined, next: UsageReport): boolean {
+  const before = old?.billingRegime;
+  const after = next.billingRegime;
+  // Sin declaración en los dos lados no hay comparación posible: no se bloquea nada.
+  if (before == null || after == null) return false;
+  return before !== after;
+}
+
+/**
  * Si un ciclo falla pero el anterior tenía datos, conservamos los datos
  * antiguos marcados como `stale` para que el widget no se quede vacío.
  *
@@ -161,6 +181,12 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
     const old = byId.get(r.id);
     const failed = r.status === 'error' || r.status === 'warning';
     if (failed && r.meters.length === 0 && !r.spend && old && (old.meters.length > 0 || old.spend)) {
+      // Si los dos informes declaran un régimen DISTINTO, los medidores del informe
+      // anterior (topes por modelo de una cuenta que ya no se factura así) no se
+      // pueden atribuir al régimen vigente, así que no se resucitan. Si alguno no
+      // declara régimen no hay comparación y se conserva lo anterior, como siempre.
+      // El plan no es una lectura —nombra la cuenta— y sí se conserva.
+      if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
       return { ...old, status: 'warning', message: r.message, stale: true, meters: stamped(old.meters, old.fetchedAt) };
     }
     // Un ciclo fallido puede llegar MIXTO: la cuota de la cuenta falló, pero las cabeceras
@@ -169,7 +195,15 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
     // desaparezcan en silencio. El informe mergeado manda; lo que no trae se conserva del
     // anterior. El informe NO queda desactualizado entero: trae datos frescos, y marcarlo
     // saltaría los avisos del ciclo entero (con el fresco incluido).
+    // Si los dos informes declaran un régimen DISTINTO, la regla de no resucitar
+    // medidores de otro régimen se aplica aquí (mismo sitio, misma marca): los medidores
+    // que el informe nuevo no trae no se conservan (arriba, con `regimeBlocksKeeping`).
+    // Si alguno de los dos no declara régimen no hay comparación y se conserva lo anterior.
     if (failed && r.meters.length > 0 && old && (old.meters.length > 0 || old.spend)) {
+      // Con un régimen declarado por el informe nuevo tampoco se conservan los medidores
+      // que el informe nuevo no trae: no se pueden atribuir al régimen vigente (mismo
+      // sitio, misma marca).
+      if (regimeBlocksKeeping(old, r)) return { ...r, plan: r.plan ?? old.plan };
       // Lo que el informe nuevo no trae se conserva del anterior… salvo que su periodo
       // ya haya terminado: entonces la lectura es del periodo anterior y no se
       // conserva (si no, se vería como vigente, con «Se reinicia ahora»).
@@ -180,7 +214,7 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
       // Se conservan SÓLO los medidores: la serie diaria y el gasto son lecturas
       // también, y arrastrarlas mostraría datos viejos sin marcar (la base no lo
       // hacía). Si este ciclo no los trae, no se muestran. El plan no es una
-      // lectura —nome la cuenta— y sí se conserva.
+      // lectura —nombra la cuenta— y sí se conserva.
       return {
         ...r,
         meters: [...r.meters, ...missing.map((m) => ({ ...m, stale: true, readAt: m.readAt ?? old.fetchedAt }))],
