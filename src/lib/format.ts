@@ -234,7 +234,10 @@ export function mergeReports(prev: UsageReport[], next: UsageReport[], now: numb
       // Mismo criterio de vencimiento (T45): un medidor de un periodo ya terminado no
       // se conserva, para que no salga como vigente con «Se reinicia ahora».
       const alive = old.meters.filter((m) => !windowEnded(m, now));
-      if (alive.length === 0) return { ...r, plan: r.plan ?? old.plan };
+      // El gasto no tiene ventana: el vencimiento no lo alcanza, así que se conserva
+      // como en la rama de error/aviso (si no queda ningún medidor vigente, el informe
+      // viejo se conserva con su gasto, marcado).
+      if (alive.length === 0 && !old.spend) return { ...r, plan: r.plan ?? old.plan };
       return { ...old, status: 'needsLogin', message: r.message, action: r.action, stale: true, meters: stamped(alive, old.fetchedAt) };
     }
     return r;
@@ -300,7 +303,7 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
   // es una cifra de ahora y su fecha es la de la lectura de la que viene.
   if (r.spend) {
     const mark = isStaleSpend(r) ? staleMark(r.fetchedAt, locale) : null;
-    lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}${mark ? ` (${mark})` : ''}`);
+    lines.push(`· ${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}${mark ? ` · ${mark}` : ''}`);
   }
   if (r.message && r.status !== 'ok') lines.push(`· ${r.message}`);
   return lines.join('\n');
