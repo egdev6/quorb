@@ -90,7 +90,7 @@ describe('MeterBar y el informe entero viejo (T46)', () => {
 
 // La base de la cuota se muestra en el medidor cuando NO es la de la cuenta: el número
 // no viene de la lectura de la cuenta, así que no puede presentarse como su estado.
-describe('MeterBar y la base de la cuota (T46-bis)', () => {
+describe('MeterBar y la base de la cuota (T48)', () => {
   const meter: Meter = {
     id: 'model:deepseek-v4-flash',
     label: 'deepseek-v4-flash',

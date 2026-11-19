@@ -1399,6 +1399,42 @@ mod tests {
     }
 
     #[test]
+    fn the_published_quota_follows_the_billing_period() {
+        // La tabla de respaldo reinicia con el periodo de facturación de la cuenta
+        // (5 -> 5), no con el mes natural: con un `billing_day` distinto del día 1, la
+        // ventana del medidor de respaldo es la del periodo de facturación y su consumo
+        // es el de ese periodo, no el del mes natural.
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let period = UsageSummary {
+            per_model: BTreeMap::from([("deepseek-v4-flash".to_string(), 200_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let meters = quota_meters(&month, &period, &published_quotas(), now(), 5);
+        assert_eq!(meters.len(), 1);
+        assert_eq!(
+            meters[0].resets_at.as_deref(),
+            Some("2026-11-05T00:00:00+00:00")
+        );
+        assert_eq!(meters[0].window_seconds, Some(31 * 86400));
+        assert_eq!(meters[0].used, Some(200_000_000.0));
+        assert!((meters[0].percent.unwrap() - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn the_published_table_holds_only_the_measured_models() {
+        // La tabla de respaldo lleva los modelos cuya cuota real se ha medido (la
+        // cuenta de referencia): los que no, no se inventan. Sin cuota de la cuenta,
+        // un modelo sin cuota medida no tiene medidor.
+        let quotas = published_quotas();
+        assert_eq!(quotas.len(), 2);
+        assert!(quotas.contains_key("deepseek-v4-flash"));
+        assert!(quotas.contains_key("glm5.3-flash"));
+    }
+
+    #[test]
     fn the_header_and_the_meters_describe_the_same_account_period() {
         // The account payload carries the period: the meter and the header must name it.
         let payload = nan_cloud::real_account_payload();
