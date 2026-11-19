@@ -109,5 +109,24 @@ describe('S33/S34/T35 — el dato obsoleto no es el estado actual', () => {
     ];
     // Mismo consumo, otra base: no es un reinicio (S17).
     expect(detectAlerts(prev, falso, {}, cfg, now).events).toEqual([]);
+    // Y el reinicio REAL dentro del mismo día UTC sí se avisa (no es lo mismo que el
+    // falso): el periodo publicado termina el 1-dic a las 00:00 y el de la cuenta
+    // empieza ese mismo día a las 22:15:31, así que las dos ventanas caen el mismo
+    // día calendario pero no se solapan, y el consumo bajó (950 M → 60 M).
+    const antes = [
+      rep({
+        id: 'nan',
+        name: 'NaN Builders',
+        meters: [cuota('published', { percent: 95, used: 950_000_000, limit: 1_000_000_000, resetsAt: '2026-12-01T00:00:00Z' })],
+      }),
+    ];
+    const real = [
+      rep({
+        id: 'nan',
+        name: 'NaN Builders',
+        meters: [cuota('account', { percent: 2, used: 60_000_000, limit: 3_000_000_000, resetsAt: '2026-12-31T22:15:31Z' })],
+      }),
+    ];
+    expect(detectAlerts(antes, real, {}, cfg, now).events.map((e) => e.kind)).toEqual(['reset']);
   });
 });
