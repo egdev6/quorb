@@ -1065,8 +1065,19 @@ fn usage_message(total: f64, source: QuotaSource, regime: BillingRegime) -> Stri
         ),
         // Hay cuotas, pero el proveedor no devolvió consumo para ellas: el mensaje dice
         // que no hay datos, no que no haya cuotas con contador.
+        // Hay dos casos distintos y el mensaje los distingue: no hay consumo que
+        // mostrar, o hay consumo pero no hay tope conocido para calcular el porcentaje
+        // (el modelo no está en la tabla de respaldo y la cuota de la cuenta no se pudo
+        // leer). Decir «no hay datos de consumo» cuando sí los hay sería mentir.
         QuotaSource::None => {
-            "No hay datos de consumo disponibles para los modelos con cuota.".into()
+            if total > 0.0 {
+                format!(
+                    "{} tokens consumidos · sin tope para calcular el porcentaje · no se pudo leer la de tu cuenta",
+                    compact(total)
+                )
+            } else {
+                "No hay datos de consumo disponibles para los modelos con cuota.".into()
+            }
         }
     }
 }
@@ -1396,6 +1407,37 @@ mod tests {
         assert_eq!(meters[0].limit, Some(1e9));
         assert!(header.contains("este mes"), "{header}");
         assert!(header.contains("cuota publicada"), "{header}");
+    }
+
+    #[test]
+    fn the_fallback_says_that_the_consumption_is_known_but_not_the_cap() {
+        // Hay consumo pero no hay tope conocido (el modelo no está en la tabla de
+        // respaldo y la cuota de la cuenta no se pudo leer): el mensaje dice eso. Decir
+        // «no hay datos de consumo» sería falso: el consumo se conoce.
+        let month = UsageSummary {
+            per_model: BTreeMap::from([("qwen3.8-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let period = UsageSummary {
+            per_model: BTreeMap::from([("qwen3.8-flash".to_string(), 600_000_000.0)]),
+            per_day: BTreeMap::new(),
+        };
+        let (meters, source, header) = nan_meters(
+            BillingRegime::ModelQuota,
+            None,
+            Some((&month, &period)),
+            &published_quotas(),
+            now(),
+            1,
+        );
+        assert!(meters.is_empty());
+        assert_eq!(source, QuotaSource::None);
+        assert!(header.contains("600.0M tokens consumidos"), "{header}");
+        assert!(
+            header.contains("sin tope para calcular el porcentaje"),
+            "{header}"
+        );
+        assert!(!header.contains("No hay datos de consumo"), "{header}");
     }
 
     #[test]
