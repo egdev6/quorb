@@ -239,6 +239,20 @@ pub(crate) async fn refresh_with_credentials(
                 // El régimen sólo se declara si se pudo determinar: el frente lo trata
                 // como texto opaco y un régimen desconocido no se inventa.
                 report.billing_regime = regime.label();
+                // Con API key, un régimen desconocido SÓLO puede significar que la
+                // lectura de `/v1/usage` falló (con key la lectura o acierta y el
+                // régimen es `credits`/`model-quota`, o falla y queda desconocido): el
+                // informe no afirma el tipo de cuenta y degrada a aviso, con la nota
+                // que lo dice. Sin API key no hay lectura que haya fallado (el régimen
+                // queda desconocido sin más) y el `ok` se queda como estaba.
+                if key.is_some() && regime == BillingRegime::Unknown {
+                    report.status = Status::Warning;
+                    // `join_message` une las dos partes; si el mensaje de la sesión
+                    // está vacío (las métricas del panel no respondieron), la nota
+                    // queda sola en vez de dejar un separador suelto delante.
+                    let previous = report.message.take().filter(|m| !m.trim().is_empty());
+                    report.message = Some(join_message(previous, UNKNOWN_REGIME_NOTE));
+                }
                 return report;
             }
             Err(nan_cloud::CloudError::Expired) => {
@@ -2412,6 +2426,68 @@ mod tests {
         assert_eq!(report.status, Status::Ok);
         assert_eq!(report.meters.len(), 2);
         assert_eq!(report.meters[0].quota_source, Some("account"));
+        // Sin API key no hay lectura que haya fallado: el régimen queda desconocido,
+        // pero el informe no lleva la nota del régimen desconocido.
+        assert!(
+            !report
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains(UNKNOWN_REGIME_NOTE),
+            "sin API key el informe no lleva la nota: {:?}",
+            report.message
+        );
+    }
+
+    #[test]
+    fn the_session_path_with_an_api_key_warns_when_the_regime_is_unknown() {
+        // Con cookie y API key, si `/v1/usage` falla (500), el régimen queda
+        // desconocido y el informe de sesión degrada a aviso: no afirma el tipo de
+        // cuenta y lo dice en el mensaje. Antes salía en `ok` con los topes por
+        // modelo, como si fueran la cuota de la cuenta.
+        let mock = MockServer::new(vec![
+            (
+                "/api/usage/quota",
+                nan_cloud::real_account_payload().to_string(),
+            ),
+            (
+                "/api/metrics/usage",
+                r#"{"monthToDate":{"totalTokens":955581032},"last24h":{"totalTokens":496625346}}"#
+                    .to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            Some("session=abc"),
+            &mock.base(),
+        ));
+        assert_eq!(
+            report.status,
+            Status::Warning,
+            "un régimen desconocido degrada el informe de sesión a aviso: {:?}",
+            report.message
+        );
+        assert!(
+            report
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains(UNKNOWN_REGIME_NOTE),
+            "el mensaje dice que no se pudo determinar el tipo de cuenta: {:?}",
+            report.message
+        );
+        // El informe no declara régimen (el frente lo trata como texto opaco).
+        assert_eq!(report.billing_regime, None);
+        assert!(
+            mock.requested().iter().any(|p| p == "/v1/usage"),
+            "el régimen se decide con /v1/usage: {:?}",
+            mock.requested()
+        );
     }
 
     #[test]
