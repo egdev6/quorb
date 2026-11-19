@@ -146,19 +146,16 @@ pub(crate) const MODEL_QUOTA_REGIME: &str = "model-quota";
 const UNKNOWN_REGIME_NOTE: &str =
     "no se pudo determinar el tipo de cuenta: los topes por modelo pueden no aplicarle";
 
-/// La asignación del plan Gentle en la cuenta de referencia (NaN × Gentle Shell),
-/// medida en su payload de cuota (`GET /api/usage/quota`): 1.000 M para
-/// `deepseek-v4-flash` y 500 M para `glm5.3-flash`, con el periodo de facturación de la
-/// cuenta (5 → 5), no el mes natural.
+/// La asignación del plan: 1.000 M para `deepseek-v4-flash` y 500 M para
+/// `glm5.3-flash`, la misma para todas las cuentas, con el periodo de facturación
+/// (5 → 5) y no el mes natural.
 ///
-/// Antes esta tabla publicaba las cuotas **por plan** que NaN documentaba en
-/// `nan.builders/docs/models` (3.000 M y 2.000 M). NaN ya no publica cuotas por modelo
-/// (desde el 2026-11-10 la inferencia se mide en créditos, salvo el plan Gentle) y,
-/// además, esas cifras no describían la cuota de una cuenta: para la cuenta de
-/// referencia sobrestimaban el tope 3 y 4 veces, de modo que el respaldo mostraba 31 %
-/// donde la verdad era 96 %. Con esta tabla el respaldo coincide con lo que declara el
-/// panel. Los modelos cuya cuota real no se ha medido no se inventan: sin cuota de la
-/// cuenta, no hay medidor para ellos.
+/// Antes esta tabla publicaba las cuotas que NaN documentaba en
+/// `nan.builders/docs/models` hasta el 2026-09-27 (3.000 M y 2.000 M): el proveedor
+/// ya no publica cuotas por modelo y aquéllas no eran las del plan (3 y 4 veces por
+/// encima), de modo que el respaldo mostraba 31 % donde la verdad era 96 %. Los modelos
+/// cuya asignación no se conoce no se inventan: sin cuota de la cuenta, no hay medidor
+/// para ellos.
 ///
 /// Si `/v1/models` trae otras cuotas, mandan esas.
 pub(crate) fn known_quotas() -> BTreeMap<&'static str, Quota> {
