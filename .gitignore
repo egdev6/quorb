@@ -17,3 +17,8 @@ docs/odd/
 
 # Estado local de Claude Code (PRDs, planes, memoria de sesión). No versionado.
 .claude/
+
+# Residuo de la maqueta (gentle-design): artboards, diseño del canvas y capturas
+# generadas. No se versiona: la maqueta vive en el working tree y se comparte por
+# capturas en la PR. Los binarios del canvas tampoco pasan el check de seguridad.
+design/
