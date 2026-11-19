@@ -16,9 +16,10 @@ export interface Meter {
   windowSeconds: number | null;
   /**
    * Base contra la que se midió este medidor, declarada por el proveedor. El frente la
-   * trata como texto opaco: solo le importa si cambió entre dos lecturas (el porcentaje
-   * bajó porque cambió el denominador, no porque la cuota se reiniciara). Sin base, el
-   * medidor se compara siempre.
+   * trata como texto opaco: la compara (sólo le importa si cambió entre dos lecturas:
+   * el porcentaje bajó porque cambió el denominador, no porque la cuota se reiniciara)
+   * y la muestra como presentación cuando el medidor no se midió contra la cuota de la
+   * cuenta. Sin base, el medidor se compara siempre.
    */
   quotaSource?: string;
   /**
@@ -62,6 +63,14 @@ export interface UsageReport {
   fetchedAt: string;
   /** Solo frontend: datos del último ciclo correcto porque el actual falló. */
   stale?: boolean;
+  /**
+   * Régimen de facturación que declara el proveedor. El frente lo trata como texto
+   * opaco: no sabe qué significa, sólo compara si cambió entre dos informes (un
+   * cambio de régimen no es un reinicio de cuota: los topes del régimen anterior ya no
+   * aplican). Lo declaran los proveedores que lo conocen; si un informe no lo declara,
+   * no hay comparación.
+   */
+  billingRegime?: string;
 }
 
 export interface SubscriptionConfig {

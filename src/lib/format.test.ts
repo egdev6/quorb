@@ -480,6 +480,124 @@ describe('stale data is never presented as the current state (T31)', () => {
 });
 
 
+// T31b (S33 caso 2, C-6): el backend declara el régimen de facturación en el informe y
+// el frente sólo compara si cambió. Un aviso de «suscripción inactiva» en una cuenta
+// que cambió de régimen NO es un fallo de lectura: los topes del régimen anterior ya no
+// aplican, así que no se resucitan. El texto del régimen es opaco para el frente.
+describe('a different billing regime does not bring the old meters back (T31b)', () => {
+  const modelQuotaMeter: Meter = {
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    resetsAt: '2026-12-05T22:15:31Z',
+    windowSeconds: 2_592_000,
+    quotaSource: 'account',
+  };
+  const rateMeter: Meter = {
+    id: 'rate_requests',
+    label: 'Peticiones (ventana)',
+    percent: 20,
+    used: 20,
+    limit: 100,
+    unit: 'req',
+    resetsAt: null,
+    windowSeconds: null,
+  };
+
+  it('does not resurrect the meters of the previous regime (credits account)', () => {
+    // El caso del owner: un informe de una cuenta con créditos (llega como aviso)
+    // no revive el medidor por modelo de la cuenta de asignación por modelo.
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const credits: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'suscripción inactiva', meters: [] };
+    const [merged] = mergeReports([previous], [credits]);
+    // El medidor del régimen anterior no aparece.
+    expect(merged.meters).toEqual([]);
+    // Y no queda nada viejo que conservar: el informe no se marca desactualizado.
+    expect(merged.stale).toBeUndefined();
+    // El mensaje del ciclo nuevo manda.
+    expect(merged.message).toBe('suscripción inactiva');
+  });
+
+  it('does not keep the missing meters of the previous regime in a mixed report', () => {
+    // El informe MIXTO: llegan los medidores frescos (cabeceras de rate limit) pero
+    // los del régimen anterior no se conservan.
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const credits: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'suscripción inactiva', meters: [rateMeter] };
+    const [merged] = mergeReports([previous], [credits]);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.meters[0].stale).toBeUndefined();
+  });
+
+  it('keeps the old data when the regime is the same', () => {
+    // Mismo régimen: el aviso es un fallo de lectura y los datos anteriores se
+    // conservan como estaban (desactualizados, con su fecha).
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', billingRegime: 'model-quota', message: 'cuota no disponible', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+    expect(merged.meters[0].readAt).toBe(previous.fetchedAt);
+  });
+
+  it('keeps the old data when a report declares no regime', () => {
+    // Un proveedor que no declara régimen (o un informe sin régimen): no hay
+    // comparación posible, así que el comportamiento es el de siempre.
+    const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', message: 'sin cuota', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+  });
+
+  it('keeps the old data when only the new report declares a regime', () => {
+    // La comparación es SIMÉTRICA: «no declarar» no es una declaración, en ninguno de
+    // los dos lados. El informe anterior no declara régimen (no se pudo determinar) y
+    // el nuevo sí: no hay comparación posible, así que los datos anteriores se
+    // conservan como estaban (desactualizados, con su fecha).
+    const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', billingRegime: 'credits', message: 'sin cuota', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+    // Con la fecha de su lectura.
+    expect(merged.meters[0].readAt).toBe(previous.fetchedAt);
+    // Lo que se ve es viejo: el informe entero queda desactualizado.
+    expect(merged.stale).toBe(true);
+  });
+
+  it('keeps the account meters of a previous report without a regime (mixed cycle)', () => {
+    // El caso del owner (T51, S55): un ciclo con `/v1/usage` caído —el informe
+    // anterior NO declara régimen— seguido de un ciclo MIXTO que sí declara
+    // `model-quota`. Los medidores de la cuenta no desaparecen: se conservan y se
+    // MARCAN como desactualizados (lo que arregló #285).
+    const previous: UsageReport = { ...base, status: 'ok', meters: [modelQuotaMeter] };
+    const mixed: UsageReport = { ...base, status: 'warning', billingRegime: 'model-quota', message: 'cuota no disponible', meters: [rateMeter] };
+    const [merged] = mergeReports([previous], [mixed], BEFORE_WINDOW_END);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests', 'model:deepseek-v4-flash']);
+    // El medidor de la cuenta se conserva MARCADO como viejo…
+    const kept = merged.meters.find((m) => m.id === 'model:deepseek-v4-flash')!;
+    expect(kept.stale).toBe(true);
+    expect(kept.readAt).toBe(previous.fetchedAt);
+    // …y el fresco no lleva marca.
+    expect(merged.meters[0].stale).toBeUndefined();
+    // El informe MIXTO no queda desactualizado entero: trae datos frescos.
+    expect(merged.stale).toBeUndefined();
+  });
+
+  it('keeps the old data when only the previous report declares a regime', () => {
+    // Lectura fallida: el informe nuevo NO declara régimen, así que no hay
+    // comparación posible y el último ciclo correcto se sigue guardando.
+    const previous: UsageReport = { ...base, status: 'ok', billingRegime: 'model-quota', meters: [modelQuotaMeter] };
+    const failed: UsageReport = { ...base, status: 'warning', message: 'sin cuota', meters: [] };
+    const [merged] = mergeReports([previous], [failed]);
+    expect(merged.stale).toBe(true);
+    expect(merged.meters.map((m) => m.id)).toEqual(['model:deepseek-v4-flash']);
+    expect(merged.meters[0].readAt).toBe(previous.fetchedAt);
+  });
+});
+
 // F1: el gasto conservado es un dato viejo. Se puede ver (la información es real),
 // pero nunca se presenta como el estado de ahora y siempre va marcado.
 describe('the kept spend is never presented as the current state (F1)', () => {
@@ -528,3 +646,146 @@ describe('la hora de la última lectura es la local (S54)', () => {
   });
 });
 
+// F3: el resumen que se copia no afirma el estado viejo como vigente.
+describe('the copied summary never claims the old state is current (F3)', () => {
+  const now = new Date('2026-11-13T08:00:00Z');
+  // La hora de la última lectura se muestra en la hora local de quien mira: el
+  // `readAt` se arma con la hora local para que el test no dependa de la zona de la
+  // máquina (el instante sigue siendo UTC). La marca de lo viejo es UN solo texto
+  // («caché · leído a las HH:MM»), el de `staleMark`.
+  const readAtDate = new Date(2026, 10, 12, 8, 0);
+  const readAt = readAtDate.toISOString();
+  // La hora esperada se deriva del propio instante, en la zona de ahora: la zona
+  // puede cambiar entre la carga del archivo y la aserción (otro test del worker la
+  // fija), y el instante se pinta en la zona de quien mira.
+  const readingTime = () => `${String(readAtDate.getHours()).padStart(2, '0')}:${String(readAtDate.getMinutes()).padStart(2, '0')}`;
+
+  it('marks the stale meters with the cached chip and their reading time', () => {
+    const report: UsageReport = {
+      ...base,
+      meters: [
+        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null },
+        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null, stale: true, readAt },
+      ],
+    };
+    const lines = reportSummary(report, now, 'es').split('\n');
+    const fresh = lines.find((l) => l.includes('Peticiones'))!;
+    const old = lines.find((l) => l.includes('deepseek-v4-flash'))!;
+    // El medidor viejo va marcado, con la hora de su última lectura.
+    expect(old).toContain('caché');
+    expect(old).toContain(`leído a las ${readingTime()}`);
+    // El vigente, no.
+    expect(fresh).not.toContain('caché');
+  });
+
+  it('marks the meters of a whole kept report as cached', () => {
+    // Informe entero conservado: sus medidores son viejos aunque no lleven la marca.
+    const report: UsageReport = { ...base, stale: true, fetchedAt: readAt };
+    const summary = reportSummary(report, now, 'es');
+    expect(summary).toContain('caché');
+    expect(summary).toContain(`leído a las ${readingTime()}`);
+  });
+
+  it('marks the kept spend as cached', () => {
+    const report: UsageReport = {
+      ...base,
+      stale: true,
+      fetchedAt: readAt,
+      spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 },
+    };
+    const line = reportSummary(report, now, 'es').split('\n').find((l) => l.includes('Diciembre'))!;
+    expect(line).toContain('caché');
+    expect(line).toContain(`leído a las ${readingTime()}`);
+  });
+});
+
+// T45: el vencimiento de lo viejo también se aplica cuando se conserva el INFORME
+// ENTERO y cuando se conserva la última lectura tras caducar la sesión. Sin esto, un
+// proveedor totalmente caído seguía mostrando un medidor de un periodo ya terminado
+// («Se reinicia ahora»): el mismo síntoma que M3 quita del camino mixto.
+describe('los medidores vencidos no se conservan en el informe entero (T45)', () => {
+  const expired: Meter = {
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    resetsAt: '2026-12-05T22:15:31Z',
+    windowSeconds: 2_592_000,
+  };
+  const alive: Meter = { ...expired, id: 'rate_requests', label: 'Peticiones (ventana)', resetsAt: '2026-12-20T00:00:00Z' };
+  const AFTER_WINDOW_END = Date.parse('2026-12-06T00:00:00Z');
+
+  it('does not keep an expired meter when the whole report is kept', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired] };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    // La lectura es del periodo anterior: no se conserva, así que no sale como
+    // vigente con «Se reinicia ahora».
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBeUndefined();
+    expect(merged.status).toBe('error');
+    expect(merged.message).toBe('sin cuota');
+  });
+
+  it('keeps the meters that did not expire when the whole report is kept', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired, alive] };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota' };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.stale).toBe(true);
+  });
+
+  it('does not keep an expired meter when the session expires', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired] };
+    const lost: UsageReport = { ...base, status: 'needsLogin', meters: [], message: 'sesión caducada', action: 'login' };
+    const [merged] = mergeReports([previous], [lost], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBeUndefined();
+    expect(merged.status).toBe('needsLogin');
+  });
+
+  it('keeps the meter that did not expire when the session expires', () => {
+    const previous: UsageReport = { ...base, status: 'ok', meters: [alive] };
+    const lost: UsageReport = { ...base, status: 'needsLogin', meters: [], message: 'sesión caducada', action: 'login' };
+    const [merged] = mergeReports([previous], [lost], AFTER_WINDOW_END);
+    expect(merged.meters.map((m) => m.id)).toEqual(['rate_requests']);
+    expect(merged.stale).toBe(true);
+    expect(merged.status).toBe('needsLogin');
+  });
+
+  it('keeps the kept spend when no meter is alive', () => {
+    // El gasto no tiene ventana: el vencimiento no lo alcanza. Si el único medidor
+    // caducó, el informe se conserva viejo CON su gasto (que sale marcado), no vacío.
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired], spend: { amount: 10, currency: 'USD', periodLabel: 'Diciembre', budget: 100 } };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBe(true);
+    expect(merged.spend?.amount).toBe(10);
+  });
+
+  it('does not expire a meter with no known window', () => {
+    // Sin `resetsAt` no hay ventana: no se puede saber que el periodo pasó, así que
+    // el medidor no se descarta (mismo criterio que el camino mixto).
+    const previous: UsageReport = { ...base, status: 'ok', meters: [{ ...expired, resetsAt: null }] };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota' };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(1);
+    expect(merged.stale).toBe(true);
+  });
+
+  it('keeps the kept spend when the session expires and no meter is alive', () => {
+    // Mismo criterio que la rama de error/aviso: el gasto no tiene ventana, así que el
+    // vencimiento no lo alcanza. Si el único medidor caducó, el informe viejo se
+    // conserva con su gasto (marcado como viejo), no se pierde.
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired], spend: { amount: 10, currency: 'USD', periodLabel: 'Diciembre', budget: 100 } };
+    const lost: UsageReport = { ...base, status: 'needsLogin', meters: [], message: 'sesión caducada', action: 'login' };
+    const [merged] = mergeReports([previous], [lost], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBe(true);
+    expect(merged.status).toBe('needsLogin');
+    expect(merged.spend?.amount).toBe(10);
+  });
+});

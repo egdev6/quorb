@@ -15,6 +15,15 @@ use std::collections::BTreeMap;
 
 pub const API: &str = "https://cloud-api.nan.builders";
 
+/// Base del panel de NaN Cloud para una petición.
+///
+/// En producción es [`API`] y la pasa el backend como parámetro; los tests pasan la
+/// de su servidor local para ejercitar el camino con API key sin salir a la red. No
+/// vive en la configuración del usuario.
+fn base_of(base: &str) -> &str {
+    base.trim().trim_end_matches('/')
+}
+
 pub enum CloudError {
     /// 401: hay que volver a iniciar sesión.
     Expired,
@@ -96,7 +105,7 @@ enum Auth<'a> {
 
 /// Comprueba la sesión y devuelve el nombre de usuario.
 pub async fn whoami(http: &reqwest::Client, cookie: &str) -> Result<String, CloudError> {
-    let v = get_json(http, Auth::Cookie(cookie), "/api/auth/me").await?;
+    let v = get_json(http, Auth::Cookie(cookie), API, "/api/auth/me").await?;
     Ok(v.pointer("/handle")
         .or_else(|| v.pointer("/username"))
         .or_else(|| v.pointer("/user/handle"))
@@ -115,10 +124,14 @@ pub struct CloudUsage {
     pub month: Option<f64>,
 }
 
-pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, CloudError> {
-    let quota = send_json(http, quota_request(http, Auth::Cookie(cookie))).await?;
+pub async fn fetch(
+    http: &reqwest::Client,
+    cookie: &str,
+    base: &str,
+) -> Result<CloudUsage, CloudError> {
+    let quota = send_json(http, quota_request(http, Auth::Cookie(cookie), base)).await?;
     // Las métricas son un extra: si fallan, seguimos con las cuotas.
-    let metrics = get_json(http, Auth::Cookie(cookie), "/api/metrics/usage")
+    let metrics = get_json(http, Auth::Cookie(cookie), base, "/api/metrics/usage")
         .await
         .ok();
     let (meters, dropped) = session_meters(&quota);
@@ -138,19 +151,28 @@ pub async fn fetch(http: &reqwest::Client, cookie: &str) -> Result<CloudUsage, C
 }
 
 /// Account quota of an API key: same payload as the dashboard (quota, usage and dates together).
-pub async fn fetch_account_quota(http: &reqwest::Client, key: &str) -> Result<Value, CloudError> {
-    send_json(http, quota_request(http, Auth::Bearer(key))).await
+pub async fn fetch_account_quota(
+    http: &reqwest::Client,
+    key: &str,
+    base: &str,
+) -> Result<Value, CloudError> {
+    send_json(http, quota_request(http, Auth::Bearer(key), base)).await
 }
 
 /// The request that reads the quota of the account (the payload the dashboard shows).
-fn quota_request(http: &reqwest::Client, auth: Auth<'_>) -> reqwest::RequestBuilder {
-    request(http, auth, "/api/usage/quota")
+fn quota_request(http: &reqwest::Client, auth: Auth<'_>, base: &str) -> reqwest::RequestBuilder {
+    request(http, auth, base, "/api/usage/quota")
 }
 
 /// Builds the request of a Cloud path with the given credentials.
-fn request(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> reqwest::RequestBuilder {
+fn request(
+    http: &reqwest::Client,
+    auth: Auth<'_>,
+    base: &str,
+    path: &str,
+) -> reqwest::RequestBuilder {
     let req = http
-        .get(format!("{API}{path}"))
+        .get(format!("{}{path}", base_of(base)))
         .header(reqwest::header::ACCEPT, "application/json");
     match auth {
         Auth::Cookie(cookie) => req.header(reqwest::header::COOKIE, cookie),
@@ -158,8 +180,13 @@ fn request(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> reqwest::Reque
     }
 }
 
-async fn get_json(http: &reqwest::Client, auth: Auth<'_>, path: &str) -> Result<Value, CloudError> {
-    send_json(http, request(http, auth, path)).await
+async fn get_json(
+    http: &reqwest::Client,
+    auth: Auth<'_>,
+    base: &str,
+    path: &str,
+) -> Result<Value, CloudError> {
+    send_json(http, request(http, auth, base, path)).await
 }
 
 /// Sends the request and parses the JSON body; the errors name the path of the request.
@@ -794,7 +821,7 @@ mod tests {
     #[test]
     fn the_account_quota_request_carries_the_api_key_as_bearer() {
         let http = reqwest::Client::new();
-        let req = quota_request(&http, Auth::Bearer("nan-key"))
+        let req = quota_request(&http, Auth::Bearer("nan-key"), API)
             .build()
             .expect("the request builds without network");
         assert_eq!(
@@ -819,7 +846,7 @@ mod tests {
     #[test]
     fn the_session_quota_request_carries_the_cookie_and_no_authorization() {
         let http = reqwest::Client::new();
-        let req = quota_request(&http, Auth::Cookie("session=abc"))
+        let req = quota_request(&http, Auth::Cookie("session=abc"), API)
             .build()
             .expect("the request builds without network");
         assert_eq!(

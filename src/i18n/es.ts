@@ -654,6 +654,10 @@ export const es = {
     staleChip: 'caché',
     staleChipTitle: 'Datos del último ciclo correcto',
     staleReadAtTime: 'leído a las {time}',
+    // La base de la cuota, cuando el medidor no se midió contra la cuota de la cuenta.
+    quotaBasisPublished: 'publicada',
+    quotaBasisPublishedTitle:
+      'No se pudo leer la cuota de tu cuenta: aquí se usa la asignación conocida del plan, que puede haber cambiado.',
     budget: 'Presupuesto',
     copy: {
       summary: 'Copiar resumen',
