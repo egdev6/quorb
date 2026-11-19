@@ -5,7 +5,9 @@
 //!     por día y por modelo, con totales; paginado con `cursor` / `next_cursor`.
 //!     En la raíz trae además el bloque `credits`: es `null` si la cuenta NO se factura
 //!     en créditos. Ese `null` es lo que decide el régimen de facturación, y lo decide
-//!     el backend (el frente recibe el dato, no el concepto).
+//!     el backend (el frente recibe el dato, no el concepto). Si la clave `credits` no
+//!     viene, o viene con otra forma, el payload ya no coincide con el contrato y el
+//!     régimen queda desconocido: el informe no afirma el tipo de la cuenta.
 //!   · `GET /v1/models` → modelos disponibles para tu key (y sus límites, si los expone).
 //!   · `GET https://cloud-api.nan.builders/api/usage/quota` → la cuota **de la cuenta**:
 //!     por modelo, el consumo (`tokensUsed`), la asignación (`cap`) y las fechas del
@@ -70,6 +72,39 @@ impl Credits {
     pub fn regime(&self) -> BillingRegime {
         BillingRegime::Credits {
             frozen: self.frozen,
+        }
+    }
+}
+
+/// Lo que dice el bloque `credits` de la raíz de `/v1/usage`.
+///
+/// Un `Option<Credits>` no alcanza: el contrato declara `credits` como
+/// `UsageCredits | null`, y ese `null` explícito ES una declaración del proveedor
+/// («la cuenta no se factura en créditos»). Una clave ausente —o un bloque con otra
+/// forma— es otra cosa: el payload ya no coincide con el contrato, y de él no se puede
+/// deducir el tipo de la cuenta. Por eso el bloque se lee con una forma que distingue
+/// las tres cosas, en vez de con un `Option` que las mezcla.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CreditsBlock {
+    /// El bloque vino `null`: el contrato dice que la cuenta NO se factura en créditos.
+    Null,
+    /// El bloque vino con contenido: la cuenta se factura en créditos.
+    Object(Credits),
+    /// La clave no vino, o vino con otra forma: el régimen no se puede determinar.
+    Undetermined,
+}
+
+impl CreditsBlock {
+    /// El régimen que declara el bloque.
+    ///
+    /// Sólo el `null` explícito declara el tipo de la cuenta. Un bloque ausente (o con
+    /// otra forma) no declara nada: el informe queda sin régimen, que es lo que hace
+    /// que no afirme el tipo de la cuenta sin poder comprobarlo.
+    pub fn regime(&self) -> BillingRegime {
+        match self {
+            CreditsBlock::Null => BillingRegime::ModelQuota,
+            CreditsBlock::Object(c) => c.regime(),
+            CreditsBlock::Undetermined => BillingRegime::Unknown,
         }
     }
 }
@@ -956,23 +991,28 @@ pub(crate) fn declare(
 /// `null` si la cuenta NO se factura en créditos. Éste es el **único** sitio que decide
 /// el régimen: los dos caminos (sesión y API key) llegan aquí con la página leída.
 pub(crate) fn regime_of(page: &Value) -> BillingRegime {
-    match parse_credits(page) {
-        Some(c) => c.regime(),
-        None => BillingRegime::ModelQuota,
-    }
+    parse_credits(page).regime()
 }
 
-/// Lee el bloque `credits` de la raíz de `/v1/usage`. `None` cuando la cuenta no se
-/// factura en créditos (el bloque es `null`) o cuando el payload no lo trae: ese es el
-/// dato que decide el régimen, y lo decide el backend.
-pub(crate) fn parse_credits(page: &Value) -> Option<Credits> {
-    let block = page.get("credits")?.as_object()?;
-    Some(Credits {
-        frozen: block
-            .get("frozen")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
+/// Lee el bloque `credits` de la raíz de `/v1/usage`.
+///
+/// El contrato (`https://nan.builders/openapi.json`) lo declara como
+/// `UsageCredits | null`, y ese `null` es lo que significa «la cuenta NO se factura en
+/// créditos». La clave ausente —o un bloque con otra forma— NO es ese `null`: es un
+/// payload que ya no coincide con el contrato, así que no se puede afirmar el tipo de
+/// la cuenta (y el informe no lo afirma).
+pub(crate) fn parse_credits(page: &Value) -> CreditsBlock {
+    match page.get("credits") {
+        None => CreditsBlock::Undetermined,
+        Some(Value::Null) => CreditsBlock::Null,
+        Some(Value::Object(block)) => CreditsBlock::Object(Credits {
+            frozen: block
+                .get("frozen")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }),
+        Some(_) => CreditsBlock::Undetermined,
+    }
 }
 
 /// La cabecera del informe cuando la cuenta se factura en créditos: la indicación de
@@ -1885,18 +1925,36 @@ mod tests {
             regime_of(&json!({"credits": null})),
             BillingRegime::ModelQuota
         );
-        assert_eq!(regime_of(&json!({})), BillingRegime::ModelQuota);
+    }
+
+    #[test]
+    fn a_missing_or_malformed_credits_block_leaves_the_regime_unknown() {
+        // El contrato (`https://nan.builders/openapi.json`) declara `credits` como
+        // `UsageCredits | null`, y ese `null` es lo que significa «la cuenta NO se
+        // factura en créditos». Una clave AUSENTE —o un bloque con otra forma— no es
+        // ese `null`: es un payload que ya no coincide con el contrato, así que el
+        // informe no puede afirmar el tipo de la cuenta.
+        assert_eq!(regime_of(&json!({})), BillingRegime::Unknown);
+        assert_eq!(regime_of(&json!({"credits": "x"})), BillingRegime::Unknown);
+        assert_eq!(regime_of(&json!({"credits": []})), BillingRegime::Unknown);
+        assert_eq!(regime_of(&json!({"credits": 42})), BillingRegime::Unknown);
+        assert_eq!(regime_of(&json!({"credits": true})), BillingRegime::Unknown);
     }
 
     #[test]
     fn the_credits_block_is_read_for_the_frozen_flag() {
         // Con el corte de alcance, del bloque `credits` sólo se lee `frozen`: el resto
         // del contrato es de la otra mitad del alcance (#268).
-        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let CreditsBlock::Object(c) = parse_credits(&published_credits_page()) else {
+            panic!("the credits block");
+        };
         assert!(!c.frozen);
         let mut frozen = published_credits_page();
         frozen["credits"]["frozen"] = json!(true);
-        assert!(parse_credits(&frozen).expect("the credits block").frozen);
+        let CreditsBlock::Object(c) = parse_credits(&frozen) else {
+            panic!("the credits block");
+        };
+        assert!(c.frozen);
     }
 
     #[test]
@@ -1905,7 +1963,7 @@ mod tests {
         // medidores: ni la asignación del periodo ni el saldo de packs (eso vive en
         // la otra mitad del alcance, #268). Lo que queda es la indicación de que la
         // cuenta se factura en créditos.
-        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let c = parse_credits(&published_credits_page());
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
             c.regime(),
@@ -1933,7 +1991,7 @@ mod tests {
         // Con créditos NO se declaran los medidores por modelo ni se recurre a la
         // cuota publicada: esos topes no existen para una cuenta facturada en
         // créditos. La decisión es del backend; el frente no la repite.
-        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let c = parse_credits(&published_credits_page());
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
             c.regime(),
@@ -1953,7 +2011,8 @@ mod tests {
 
     #[test]
     fn an_account_without_credits_keeps_the_model_quotas() {
-        // Sin bloque `credits` la cuenta se factura por modelo: lo de siempre.
+        // Con el régimen `model-quota` declarado (el bloque `credits` vino `null`), la
+        // cuenta conserva los medidores por modelo: lo de siempre.
         let account = nan_cloud::parse_quota(&nan_cloud::real_account_payload());
         let declared = declare(
             BillingRegime::ModelQuota,
@@ -1976,7 +2035,7 @@ mod tests {
         // `frozen` es «la suscripción no está activa», no «sin créditos».
         let mut page = published_credits_page();
         page["credits"]["frozen"] = json!(true);
-        let c = parse_credits(&page).expect("the credits block");
+        let c = parse_credits(&page);
         let declared = declare(c.regime(), None, &[], None, &published_quotas(), now(), 1);
         assert_eq!(declared.status, Status::Warning);
         assert!(declared.header.contains("inactiva"), "{}", declared.header);
@@ -2015,9 +2074,11 @@ mod tests {
     }
 
     #[test]
-    fn the_fallback_path_keeps_the_published_quota_without_credits() {
-        // Sin `credits` en la respuesta, el camino de fallback es el de siempre: la
-        // cuota publicada, señalada como tal.
+    fn the_fallback_path_keeps_the_published_quota_when_the_credits_block_is_missing() {
+        // Sin bloque `credits` en la respuesta, el camino de fallback es el de siempre:
+        // la cuota publicada, señalada como tal. Pero el régimen NO se afirma: sin el
+        // bloque no se puede saber si la cuenta se factura en créditos, así que el
+        // informe no declara régimen y degrada a aviso.
         let pages = vec![json!({
             "data": [
                 {"date": "2026-10-06", "model": "deepseek-v4-flash", "total_tokens": 600_000_000u64}
@@ -2037,6 +2098,30 @@ mod tests {
             "{}",
             declared.header
         );
+        assert_eq!(declared.regime.label(), None);
+        assert_eq!(declared.status, Status::Warning);
+    }
+
+    #[test]
+    fn the_fallback_path_declares_the_model_quota_with_an_explicit_null() {
+        // El `null` explícito SÍ declara el régimen: el contrato dice que la cuenta no
+        // se factura en créditos, así que el camino de fallback puede afirmar el tipo
+        // de la cuenta.
+        let pages = vec![json!({
+            "credits": null,
+            "data": [
+                {"date": "2026-10-06", "model": "deepseek-v4-flash", "total_tokens": 600_000_000u64}
+            ]
+        })];
+        let declared = declare_usage(&pages, &[], &published_quotas(), now(), 1);
+        assert!(
+            declared
+                .meters
+                .iter()
+                .any(|m| m.id == "model:deepseek-v4-flash"),
+            "sin créditos el camino de fallback declara los medidores por modelo: {:?}",
+            declared.meters.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
         assert_eq!(declared.regime.label(), Some("model-quota"));
     }
 
@@ -2045,7 +2130,7 @@ mod tests {
         // El backend declara el régimen de facturación en el informe y el frente lo
         // trata como texto opaco (no sabe qué significa): una cuenta facturada en
         // créditos lo dice en su informe.
-        let c = parse_credits(&published_credits_page()).expect("the credits block");
+        let c = parse_credits(&published_credits_page());
         let declared = declare(c.regime(), None, &[], None, &published_quotas(), now(), 1);
         let mut report = UsageReport::new("nan", "NaN Builders", Kind::Subscription);
         let mut quota = Vec::new();
@@ -2334,6 +2419,43 @@ mod tests {
         assert_eq!(report.status, Status::Ok);
         assert_eq!(report.meters.len(), 2);
         assert_eq!(report.meters[0].quota_source, Some("account"));
+    }
+
+    #[test]
+    fn the_api_key_path_does_not_claim_the_account_type_without_the_credits_block() {
+        // `/v1/usage` responde SIN el bloque `credits`: el payload ya no coincide con
+        // el contrato, así que el informe NO declara régimen, NO afirma que la cuenta
+        // se facture por modelo y degrada a aviso (nunca `ok` con los topes por modelo
+        // como si fueran la cuota de la cuenta).
+        let mock = MockServer::new(vec![
+            ("/v1/models", r#"{"data":[]}"#.to_string()),
+            ("/v1/usage", r#"{"object":"list","data":[]}"#.to_string()),
+            (
+                "/api/usage/quota",
+                nan_cloud::real_account_payload().to_string(),
+            ),
+        ]);
+        let cfg = local_config(&mock);
+        let http = local_client();
+        let report = block_on(refresh_with_credentials(
+            &cfg,
+            Who::main("nan"),
+            &http,
+            Some("nan-key"),
+            None,
+            &mock.base(),
+        ));
+        assert_eq!(report.billing_regime, None);
+        assert_eq!(report.status, Status::Warning);
+        let message = report.message.as_deref().unwrap_or_default();
+        assert!(
+            message.contains("no se pudo determinar el tipo de cuenta"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("cuotas por modelo"),
+            "el texto no afirma el tipo de cuenta: {message}"
+        );
     }
 
     #[test]
