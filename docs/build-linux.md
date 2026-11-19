@@ -195,9 +195,9 @@ unzip -o artifact.zip          # Quorb_0.8.0_amd64.deb (5.0 MiB), Quorb_0.8.0_am
 dpkg-deb --info Quorb_0.8.0_amd64.deb
 #   Depends: libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0  (ya presentes)
 
-# 2) Instalación real (paso manual, requiere sudo interactivo)
-sudo dpkg -i Quorb_0.8.0_amd64.deb
-dpkg -l quorb                  # ii quorb 0.8.0 amd64
+# 2) Instalación real (EJECUTADA el 19/11/2026: 0.8.0 sobre la 0.6.0 del host)
+sudo dpkg -i Quorb_0.8.0_amd64.deb   # requiere autenticación interactiva
+dpkg -l quorb                  # -> ii quorb 0.8.0 amd64 (instalación formal)
 
 # 2b) AppImage lanzado DIRECTO en el escritorio real (montaje FUSE real)
 APPIMAGELAUNCHER_DISABLE=1 timeout -k 5 30 ./Quorb_0.8.0_amd64.AppImage
@@ -215,7 +215,8 @@ APPIMAGELAUNCHER_DISABLE=1 timeout -k 5 30 ./Quorb_0.8.0_amd64.AppImage
 # tampoco monta; `--appimage-extract-and-run` también queda interceptado.
 # El `.deb` no se ve afectado (montaje no aplica). Detalle en §4.3 fallo 3.
 
-# 3) Arranque en el compositor real (medido: exit 124 = vivo 30 s)
+# 3) Arranque del binario INSTALADO en el compositor real
+#    (medido 19/11: exit 124 = vivo 30 s)
 timeout -k 5 30 /usr/bin/quorb > launch.log 2>&1; echo $?   # -> 124
 # Warnings benignos (idénticos al baseline): 2x Gdk-CRITICAL
 #   gdk_wayland_window_set_dbus_properties_libgtk_only, libayatana-appindicator
@@ -231,15 +232,15 @@ command -v claude cursor        # presentes en este host; codex/gemini/copilot n
 
 Resultado end-to-end medido: config ya presente (`~/.config/es.egdev.quorb/config.json`,
 claves normales, sin leer valores), backend keyutils accesible, bandeja montada
-(`libayatana` sin crash) y widget vivo en el compositor. El AppImage se lanzó
-directo en este mismo escritorio y reproduce el síntoma original
-(`Can't open squashfs image: Bad address`, exit 127); el payload es íntegro y
-la app extraída queda viva 30 s (exit 124), así que el fallo se delimita a la
-cadena de montaje FUSE del host (§4.3 fallo 3), no al empaquetado ni a la app.
-Límites declarados: la instalación `dpkg -i` no se ejecutó aquí (requiere sudo
-interactivo) y queda como paso manual con su comando; codex/gemini/copilot no
-están instalados en el host, por lo que su delegación CLI no se mide en esta
-sesión.
+(`libayatana` sin crash) y widget vivo en el compositor. La instalación formal
+se ejecutó el 19/11/2026 sobre la 0.6.0: `dpkg -l quorb` devuelve `ii quorb
+0.8.0 amd64`, y `/usr/bin/quorb` queda vivo 30 s (exit 124), con los cuatro
+warnings benignos del baseline. El AppImage se lanzó directo en este mismo
+escritorio y reproduce el síntoma original (`Can't open squashfs image: Bad
+address`, exit 127); el payload es íntegro y la app extraída queda viva 30 s
+(exit 124), así que el fallo se delimita a la cadena de montaje FUSE del host
+(§4.3 fallo 3), no al empaquetado ni a la app. Codex/gemini/copilot no están
+instalados en el host, por lo que su delegación CLI no se mide en esta sesión.
 
 ## 5. Contrato de soporte inicial (L0b)
 
