@@ -46,23 +46,35 @@ export function formatPercent(p: number): string {
  * grandes (los tokens) y con separador de miles para las pequeñas (los créditos del
  * periodo, que son miles: «7.000», no «7 K»).
  */
-export function formatAmount(n: number, unit: string | null = null): string {
+export function formatAmount(n: number, unit: string | null = null, locale: Locale = 'es'): string {
   if (unit === 'credits') {
     // Los créditos del periodo son miles: «7.000», no «7 K». El agrupamiento se hace
-    // a mano porque `Intl` no agrupa los números de cuatro cifras en español.
-    const text = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1, useGrouping: false }).format(n);
-    const [int, frac] = text.split(',');
-    const grouped = groupThousands(int);
-    return frac ? `${grouped},${frac}` : grouped;
+    // a mano porque `Intl` no agrupa los números de cuatro cifras en español; los
+    // separadores salen del idioma («7.000» en es, «7,000» en en).
+    const tag = intlLocale(locale);
+    const separators = separatorsOf(tag);
+    const text = new Intl.NumberFormat(tag, { maximumFractionDigits: 1, useGrouping: false }).format(n);
+    const [int, frac] = text.split(separators.decimal);
+    const grouped = groupThousands(int, separators.group);
+    return frac ? `${grouped}${separators.decimal}${frac}` : grouped;
   }
   return formatCompact(n);
 }
 
-/** «7000» → «7.000» (el separador de miles de la interfaz). */
-function groupThousands(digits: string): string {
+/** Los separadores de miles y decimales del idioma, sin suponer el formato de nadie. */
+function separatorsOf(tag: string): { group: string; decimal: string } {
+  const parts = new Intl.NumberFormat(tag).formatToParts(1000000.5);
+  return {
+    group: parts.find((p) => p.type === 'group')?.value ?? ',',
+    decimal: parts.find((p) => p.type === 'decimal')?.value ?? '.',
+  };
+}
+
+/** «7000» → «7.000» (el separador de miles del idioma). */
+function groupThousands(digits: string, separador = '.'): string {
   const sign = digits.startsWith('-') ? '-' : '';
   const rest = sign ? digits.slice(1) : digits;
-  return sign + rest.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return sign + rest.replace(/\B(?=(\d{3})+(?!\d))/g, separador);
 }
 
 /** La unidad que declara el backend, traducida si el catálogo la conoce. */
@@ -75,7 +87,7 @@ export function unitLabel(unit: string | null, locale: Locale = 'es'): string | 
 /** Importe de un elemento del desglose: la cifra y su unidad. */
 export function formatBreakdownAmount(item: BreakdownItem, locale: Locale = 'es'): string {
   const unit = unitLabel(item.unit, locale);
-  return `${formatAmount(item.amount, item.unit)}${unit ? ` ${unit}` : ''}`;
+  return `${formatAmount(item.amount, item.unit, locale)}${unit ? ` ${unit}` : ''}`;
 }
 
 /**
@@ -402,7 +414,7 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
       m.percent != null
         ? `${Math.round(m.percent)} %`
         : m.used != null
-          ? `${formatAmount(m.used, m.unit)}${unit ? ` ${unit}` : ''}`
+          ? `${formatAmount(m.used, m.unit, locale)}${unit ? ` ${unit}` : ''}`
           : '—';
     lines.push(`· ${declaredLabel(m, locale)}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}${mark ? ` · ${mark}` : ''}`);
   }

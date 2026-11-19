@@ -148,10 +148,22 @@ describe('MeterBar y los medidores que declara el backend (#268)', () => {
     expect(html).toContain('24,3 / 7.000 créditos');
   });
 
-  it('says it in English too', () => {
+  it('says it in English too, with the separators of English', () => {
     const html = renderToStaticMarkup(<MeterBar meter={allocation} ring={null} locale="en" />);
     expect(html).toContain('Period allowance');
-    expect(html).toContain('24,3 / 7.000 credits');
+    // El idioma manda también en el formato: punto decimal y coma de miles.
+    expect(html).toContain('24.3 / 7,000 credits');
+    expect(html).not.toContain('24,3 / 7.000');
+  });
+
+  it('shows when it resets, in the language of the app', () => {
+    // El reinicio lo pinta `formatResetIn` con la fecha del medidor: sin `resetsAt` no
+    // hay texto, y con él la línea de metadatos lo dice («Se reinicia en …» / «Resets in …»).
+    const resetting: Meter = { ...allocation, resetsAt: new Date(Date.now() + 3 * 3600_000).toISOString() };
+    const es = renderToStaticMarkup(<MeterBar meter={resetting} ring={null} locale="es" />);
+    expect(es).toContain('Se reinicia en 3 h');
+    const en = renderToStaticMarkup(<MeterBar meter={resetting} ring={null} locale="en" />);
+    expect(en).toContain('Resets in 3 h');
   });
 
   it('shows the excess when the consumption passes the cap', () => {

@@ -834,6 +834,16 @@ describe('los datos que declara el backend (#268)', () => {
     expect(formatAmount(1_000_000_000, 'tokens')).toBe('1 B');
   });
 
+  it('formats the amount with the separators of the language of the app', () => {
+    // El mismo número en los dos idiomas: el importe no se queda en español.
+    expect(formatAmount(7000, 'credits', 'es')).toBe('7.000');
+    expect(formatAmount(7000, 'credits', 'en')).toBe('7,000');
+    expect(formatAmount(24.3, 'credits', 'en')).toBe('24.3');
+    // El cero y el negativo no pierden su forma.
+    expect(formatAmount(0, 'credits', 'en')).toBe('0');
+    expect(formatAmount(-1400, 'credits', 'en')).toBe('-1,400');
+  });
+
   it('formats the amount of a breakdown item with its unit', () => {
     expect(formatBreakdownAmount({ label: 'x', amount: 24.3, unit: 'credits' }, 'es')).toBe('24,3 créditos');
     expect(formatBreakdownAmount({ label: 'x', amount: 240, unit: 'credits' }, 'en')).toBe('240 credits');
@@ -928,10 +938,4 @@ describe('los casos límite de la interfaz de créditos (S13)', () => {
     expect(pace!.projected).toBeCloseTo(100, 5);
   });
 
-  it('3 · cero: con consumo 0 el medidor sale al 0 % con el importe a la vista', () => {
-    // El medidor existe (hay fondo) y muestra el 0 % con el importe del periodo.
-    const zero: Meter = { ...allocation, percent: 0, used: 0 };
-    expect(zero.percent).toBe(0);
-    expect(zero.limit).toBe(7000);
-  });
 });

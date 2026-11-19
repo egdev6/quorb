@@ -29,14 +29,14 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
   const amount =
     meter.used != null
       ? meter.limit != null
-        ? `${formatAmount(meter.used, meter.unit)} / ${formatAmount(meter.limit, meter.unit)}${unit ? ` ${unit}` : ''}`
-        : `${formatAmount(meter.used, meter.unit)}${unit ? ` ${unit}` : ''}`
+        ? `${formatAmount(meter.used, meter.unit, locale)} / ${formatAmount(meter.limit, meter.unit, locale)}${unit ? ` ${unit}` : ''}`
+        : `${formatAmount(meter.used, meter.unit, locale)}${unit ? ` ${unit}` : ''}`
       : null;
   // El consumo que pasa del tope: el importe muestra el exceso (S13, «más del 100 %»).
   const excess =
     pct != null && meter.used != null && meter.limit != null && meter.used > meter.limit
       ? t(locale, 'details.meterExcess', {
-          amount: `${formatAmount(meter.used - meter.limit, meter.unit)}${unit ? ` ${unit}` : ''}`,
+          amount: `${formatAmount(meter.used - meter.limit, meter.unit, locale)}${unit ? ` ${unit}` : ''}`,
         })
       : null;
   const meta = [
@@ -77,7 +77,7 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
         <span
           className="eg-progress eg-progress--lg"
           role="progressbar"
-          aria-label={meter.label}
+          aria-label={declaredLabel(meter, locale)}
           aria-valuenow={Math.round(pct)}
           aria-valuemin={0}
           aria-valuemax={100}

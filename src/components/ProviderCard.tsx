@@ -145,7 +145,7 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
                   {expiry && <span className="q-balance__expiry">{t(locale, 'details.balanceExpires', { when: expiry })}</span>}
                 </span>
                 <span className="q-balance__value">
-                  {m.used != null ? `${formatAmount(m.used, m.unit)}${unit ? ` ${unit}` : ''}` : '—'}
+                  {m.used != null ? `${formatAmount(m.used, m.unit, locale)}${unit ? ` ${unit}` : ''}` : '—'}
                   {stale && (
                     <span className="eg-status eg-status--neutral q-balance__stale" title={t(locale, 'details.staleChipTitle')}>
                       {staleMark(m.readAt ?? report.fetchedAt, locale)}
