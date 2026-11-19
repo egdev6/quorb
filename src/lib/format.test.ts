@@ -754,4 +754,25 @@ describe('los medidores vencidos no se conservan en el informe entero (T45)', ()
     expect(merged.stale).toBe(true);
     expect(merged.status).toBe('needsLogin');
   });
+
+  it('keeps the kept spend when no meter is alive', () => {
+    // El gasto no tiene ventana: el vencimiento no lo alcanza. Si el único medidor
+    // caducó, el informe se conserva viejo CON su gasto (que sale marcado), no vacío.
+    const previous: UsageReport = { ...base, status: 'ok', meters: [expired], spend: { amount: 10, currency: 'USD', periodLabel: 'Diciembre', budget: 100 } };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(0);
+    expect(merged.stale).toBe(true);
+    expect(merged.spend?.amount).toBe(10);
+  });
+
+  it('does not expire a meter with no known window', () => {
+    // Sin `resetsAt` no hay ventana: no se puede saber que el periodo pasó, así que
+    // el medidor no se descarta (mismo criterio que el camino mixto).
+    const previous: UsageReport = { ...base, status: 'ok', meters: [{ ...expired, resetsAt: null }] };
+    const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota' };
+    const [merged] = mergeReports([previous], [failed], AFTER_WINDOW_END);
+    expect(merged.meters).toHaveLength(1);
+    expect(merged.stale).toBe(true);
+  });
 });
