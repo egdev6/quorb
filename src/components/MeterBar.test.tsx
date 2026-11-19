@@ -125,3 +125,69 @@ describe('MeterBar y la base de la cuota (T48)', () => {
   });
 });
 
+
+// T1-T5 (#268): los medidores que declara el backend (el fondo del periodo y el
+// saldo) se muestran con la etiqueta del catálogo y con el importe tal cual.
+describe('MeterBar y los medidores que declara el backend (#268)', () => {
+  const allocation: Meter = {
+    id: 'allocation',
+    label: 'Asignación del periodo',
+    percent: 0.347,
+    used: 24.3,
+    limit: 7000,
+    unit: 'credits',
+    resetsAt: null,
+    windowSeconds: 30 * 86400,
+  };
+
+  it('shows the declared label and the amount of the period', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={allocation} ring={null} locale="es" />);
+    // La etiqueta la traduce el catálogo por id (el frente no sabe de qué proveedor es).
+    expect(html).toContain('Asignación del periodo');
+    // El importe del periodo, sin compactar: los créditos son miles.
+    expect(html).toContain('24,3 / 7.000 créditos');
+  });
+
+  it('says it in English too', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={allocation} ring={null} locale="en" />);
+    expect(html).toContain('Period allowance');
+    expect(html).toContain('24,3 / 7.000 credits');
+  });
+
+  it('shows the excess when the consumption passes the cap', () => {
+    // S13, caso «más del 100 %»: el porcentaje sale por encima de 100 (el nivel
+    // máximo) y el importe muestra el exceso.
+    const over: Meter = { ...allocation, percent: 120, used: 8400 };
+    const html = renderToStaticMarkup(<MeterBar meter={over} ring={null} locale="es" />);
+    expect(html).toContain('120%');
+    expect(html).toContain('exceso 1.400 créditos');
+    expect(html).toContain('data-level="max"');
+  });
+
+  it('does not show an excess when the consumption is inside the cap', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={allocation} ring={null} locale="es" />);
+    expect(html).not.toContain('exceso');
+  });
+});
+
+// S13, caso «cero»: con consumo 0 el medidor sale al 0 % con el importe a la vista.
+describe('MeterBar y el cero (S13)', () => {
+  const allocation: Meter = {
+    id: 'allocation',
+    label: 'Asignación del periodo',
+    percent: 0,
+    used: 0,
+    limit: 7000,
+    unit: 'credits',
+    resetsAt: null,
+    windowSeconds: 30 * 86400,
+  };
+
+  it('shows the zero percent with the amount of the period in sight', () => {
+    const html = renderToStaticMarkup(<MeterBar meter={allocation} ring={null} locale="es" />);
+    expect(html).toContain('0%');
+    expect(html).toContain('0 / 7.000 créditos');
+    // El fondo existe: hay barra (no se inventa un 0 % sin fondo, pero aquí sí hay).
+    expect(html).toContain('role="progressbar"');
+  });
+});

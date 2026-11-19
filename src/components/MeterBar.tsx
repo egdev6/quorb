@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { Locale, Meter } from '../lib/types';
-import { formatCompact, formatPercent, formatResetIn, levelFor, quotaBasisNote, staleMark } from '../lib/format';
+import { declaredLabel, formatAmount, formatPercent, formatResetIn, levelFor, quotaBasisNote, staleMark, unitLabel } from '../lib/format';
 import { t } from '../i18n';
 
 /**
@@ -24,13 +24,28 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
   // el número no viene de la lectura de la cuenta, así que se dice.
   const basis = quotaBasisNote(meter.quotaSource, locale);
   const reset = formatResetIn(meter.resetsAt, new Date(), locale);
+  // La unidad la declara el backend y la traduce el catálogo (si la conoce).
+  const unit = unitLabel(meter.unit, locale);
   const amount =
     meter.used != null
       ? meter.limit != null
-        ? `${formatCompact(meter.used)} / ${formatCompact(meter.limit)}${meter.unit ? ` ${meter.unit}` : ''}`
-        : `${formatCompact(meter.used)}${meter.unit ? ` ${meter.unit}` : ''}`
+        ? `${formatAmount(meter.used, meter.unit)} / ${formatAmount(meter.limit, meter.unit)}${unit ? ` ${unit}` : ''}`
+        : `${formatAmount(meter.used, meter.unit)}${unit ? ` ${unit}` : ''}`
       : null;
-  const meta = [pct != null ? amount : null, reset ? t(locale, 'details.meterResets', { when: reset }) : null].filter(Boolean).join(' · ');
+  // El consumo que pasa del tope: el importe muestra el exceso (S13, «más del 100 %»).
+  const excess =
+    pct != null && meter.used != null && meter.limit != null && meter.used > meter.limit
+      ? t(locale, 'details.meterExcess', {
+          amount: `${formatAmount(meter.used - meter.limit, meter.unit)}${unit ? ` ${unit}` : ''}`,
+        })
+      : null;
+  const meta = [
+    pct != null ? amount : null,
+    excess,
+    reset ? t(locale, 'details.meterResets', { when: reset }) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div
@@ -49,7 +64,7 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
           />
         )}
         <span className="q-meter__label">
-          {meter.label}
+          {declaredLabel(meter, locale)}
           {basis && (
             <span className="eg-status eg-status--neutral q-meter__basis" title={basis.title}>
               {basis.label}
