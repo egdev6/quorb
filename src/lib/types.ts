@@ -37,6 +37,17 @@ export interface Meter {
   readAt?: string;
 }
 
+/**
+ * Un elemento del desglose que declara el proveedor: rótulo + importe + unidad.
+ * El frente no sabe qué son esos rótulos (ni de qué proveedor ni de qué régimen
+ * se trata): sólo los muestra.
+ */
+export interface BreakdownItem {
+  label: string;
+  amount: number;
+  unit: string | null;
+}
+
 export interface Spend {
   amount: number;
   currency: string;
@@ -60,6 +71,12 @@ export interface UsageReport {
   action: 'login' | 'settings' | null;
   /** Tokens por día, si el proveedor los da (NaN) */
   daily?: { date: string; value: number }[];
+  /**
+   * Desglose declarado por el proveedor: una lista genérica de rótulo + importe +
+   * unidad. El frente no sabe de qué se trata: lo muestra tal cual (sin porcentajes:
+   * es una lista informativa).
+   */
+  breakdown?: BreakdownItem[] | null;
   fetchedAt: string;
   /** Solo frontend: datos del último ciclo correcto porque el actual falló. */
   stale?: boolean;

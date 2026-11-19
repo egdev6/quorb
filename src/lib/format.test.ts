@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectAlerts } from './alerts';
-import { currentMeters, formatCompact, formatReadTime, formatResetIn, hasStaleData, isStaleMeter, isStaleSpend, levelFor, mergeReports, peakMeter, reportSummary, sessionsLost, shortLabel, trayTooltip } from './format';
+import { currentMeters, declaredLabel, formatAmount, formatBreakdownAmount, formatCompact, formatReadTime, formatResetIn, hasStaleData, isStaleMeter, isStaleSpend, levelFor, mergeReports, peakMeter, planLabel, reportSummary, sessionsLost, shortLabel, trayTooltip, unitLabel } from './format';
 import { meterPace } from './pace';
 import type { Meter, UsageReport } from './types';
 
@@ -787,5 +787,151 @@ describe('los medidores vencidos no se conservan en el informe entero (T45)', ()
     expect(merged.stale).toBe(true);
     expect(merged.status).toBe('needsLogin');
     expect(merged.spend?.amount).toBe(10);
+  });
+});
+
+// T1-T5 (#268): lo que declara el backend llega con ids estables y el frente lo
+// traduce por id, sin saber de qué proveedor ni de qué régimen se trata.
+describe('los datos que declara el backend (#268)', () => {
+  const allocation: Meter = {
+    id: 'allocation',
+    label: 'Asignación del periodo',
+    percent: 0.347,
+    used: 24.3,
+    limit: 7000,
+    unit: 'credits',
+    resetsAt: null,
+    windowSeconds: 30 * 86400,
+  };
+
+  it('shortLabel translates the declared meters by id', () => {
+    expect(shortLabel('Asignación del periodo', 'allocation', 'es')).toBe('Asignación');
+    expect(shortLabel('Asignación del periodo', 'allocation', 'en')).toBe('Allowance');
+    expect(shortLabel('Saldo de packs', 'balance', 'es')).toBe('Saldo');
+    expect(shortLabel('Saldo de packs', 'balance', 'en')).toBe('Balance');
+  });
+
+  it('declaredLabel translates the long label of the declared meters', () => {
+    expect(declaredLabel(allocation, 'es')).toBe('Asignación del periodo');
+    expect(declaredLabel(allocation, 'en')).toBe('Period allowance');
+    // Un medidor que el backend no declara con id estable: su etiqueta se conserva.
+    expect(declaredLabel({ ...allocation, id: 'model:x', label: 'deepseek-v4-flash' }, 'es')).toBe('deepseek-v4-flash');
+  });
+
+  it('translates the unit the backend declares', () => {
+    expect(unitLabel('credits', 'es')).toBe('créditos');
+    expect(unitLabel('credits', 'en')).toBe('credits');
+    // Las unidades que el catálogo no conoce se muestran tal cual.
+    expect(unitLabel('tokens', 'es')).toBe('tokens');
+    expect(unitLabel(null, 'es')).toBeNull();
+  });
+
+  it('formats the amount of the credits of the period without compacting it', () => {
+    // Los créditos del periodo son miles: «7.000», no «7 K».
+    expect(formatAmount(7000, 'credits')).toBe('7.000');
+    expect(formatAmount(24.3, 'credits')).toBe('24,3');
+    // Las unidades grandes (los tokens) se compactan como siempre.
+    expect(formatAmount(1_000_000_000, 'tokens')).toBe('1 B');
+  });
+
+  it('formats the amount of a breakdown item with its unit', () => {
+    expect(formatBreakdownAmount({ label: 'x', amount: 24.3, unit: 'credits' }, 'es')).toBe('24,3 créditos');
+    expect(formatBreakdownAmount({ label: 'x', amount: 240, unit: 'credits' }, 'en')).toBe('240 credits');
+  });
+
+  it('translates the plan the person declares and never deduces it', () => {
+    expect(planLabel('plan.gentle', 'es')).toBe('Gentle');
+    expect(planLabel('plan.inference', 'en')).toBe('Inference');
+    expect(planLabel('plan.premium', 'es')).toBe('Premium');
+    // Un plan que no es un id declarado se muestra tal cual (no se inventa nada).
+    expect(planLabel('nan_member', 'es')).toBe('nan_member');
+    expect(planLabel(null, 'es')).toBeNull();
+  });
+
+  it('summarizes the breakdown that the provider declares', () => {
+    // El desglose es una lista genérica de rótulo + importe + unidad: el frente no
+    // sabe qué son esos rótulos, sólo los muestra.
+    const r: UsageReport = {
+      ...base,
+      breakdown: [{ label: 'deepseek-v4-flash', amount: 24.3, unit: 'credits' }],
+    };
+    expect(reportSummary(r)).toContain('· deepseek-v4-flash: 24,3 créditos');
+  });
+});
+
+// S13: los cinco casos límite que la interfaz de créditos tiene que mostrar bien.
+describe('los casos límite de la interfaz de créditos (S13)', () => {
+  const NOW = Date.parse('2026-11-15T00:00:00Z');
+  const PERIOD_START = Date.parse('2026-11-01T00:00:00Z');
+  const PERIOD_END = Date.parse('2026-12-01T00:00:00Z');
+  const allocation: Meter = {
+    id: 'allocation',
+    label: 'Asignación del periodo',
+    percent: 0.347,
+    used: 24.3,
+    limit: 7000,
+    unit: 'credits',
+    resetsAt: new Date(PERIOD_END).toISOString(),
+    windowSeconds: (PERIOD_END - PERIOD_START) / 1000,
+  };
+  const balance: Meter = {
+    id: 'balance',
+    label: 'Saldo de packs',
+    percent: null,
+    used: 240,
+    limit: null,
+    unit: 'credits',
+    resetsAt: '2027-05-12T00:00:00Z',
+    windowSeconds: null,
+  };
+
+  it('1 · conexión perdida: lo último conocido se sigue viendo, marcado como viejo', () => {
+    // El proveedor no responde: el informe degrada a aviso, el régimen queda
+    // desconocido (y el mensaje lo dice) y lo último conocido se conserva marcado.
+    const previous: UsageReport = {
+      ...base,
+      id: 'nan',
+      status: 'ok',
+      plan: 'plan.inference',
+      meters: [allocation, balance],
+      breakdown: [{ label: 'deepseek-v4-flash', amount: 12.4, unit: 'credits' }],
+    };
+    const failed: UsageReport = {
+      ...base,
+      id: 'nan',
+      status: 'error',
+      plan: null,
+      meters: [],
+      message: 'no se pudo determinar el tipo de cuenta: los topes por modelo pueden no aplicarle',
+    };
+    const [merged] = mergeReports([previous], [failed], NOW);
+    expect(merged.status).toBe('warning');
+    expect(merged.stale).toBe(true);
+    // Los medidores viejos se conservan y se leen como viejos (el gatillo es uno solo:
+    // `isStaleMeter`).
+    expect(merged.meters.map((m) => m.id)).toEqual(['allocation', 'balance']);
+    expect(merged.meters.every((m) => isStaleMeter(merged, m))).toBe(true);
+    // El régimen desconocido no se afirma: el mensaje lo dice.
+    expect(merged.message).toContain('no se pudo determinar el tipo de cuenta');
+    expect(merged.billingRegime).toBeUndefined();
+  });
+
+  it('2 · reinicio: el ritmo va contra el periodo que declara el proveedor', () => {
+    // El fondo se renueva en `period_end` y el ritmo se mide contra ese periodo: la
+    // mitad del periodo pasada con la mitad consumida da un ritmo de 1×.
+    const half: Meter = { ...allocation, percent: 50, used: 3500 };
+    const report: UsageReport = { ...base, id: 'nan', meters: [half] };
+    const pace = meterPace(report, half, PERIOD_START + (PERIOD_END - PERIOD_START) / 2);
+    expect(pace).not.toBeNull();
+    expect(pace!.elapsed).toBeCloseTo(0.5, 5);
+    expect(pace!.ratio).toBeCloseTo(1, 5);
+    expect(pace!.projected).toBeCloseTo(100, 5);
+  });
+
+  it('3 · cero: con consumo 0 el medidor sale al 0 % con el importe a la vista', () => {
+    // El medidor existe (hay fondo) y muestra el 0 % con el importe del periodo.
+    const zero: Meter = { ...allocation, percent: 0, used: 0 };
+    expect(zero.percent).toBe(0);
+    expect(zero.limit).toBe(7000);
   });
 });

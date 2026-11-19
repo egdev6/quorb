@@ -1,4 +1,4 @@
-import type { Locale, Meter, UsageReport } from './types';
+import type { BreakdownItem, Locale, Meter, UsageReport } from './types';
 import { t, intlLocale, type MessageKey } from '../i18n';
 import { meterKey } from './alerts';
 import { windowEnd } from './window';
@@ -42,6 +42,43 @@ export function formatPercent(p: number): string {
 }
 
 /**
+ * El importe de un medidor o de un elemento del desglose: compacto para las unidades
+ * grandes (los tokens) y con separador de miles para las pequeñas (los créditos del
+ * periodo, que son miles: «7.000», no «7 K»).
+ */
+export function formatAmount(n: number, unit: string | null = null): string {
+  if (unit === 'credits') {
+    // Los créditos del periodo son miles: «7.000», no «7 K». El agrupamiento se hace
+    // a mano porque `Intl` no agrupa los números de cuatro cifras en español.
+    const text = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1, useGrouping: false }).format(n);
+    const [int, frac] = text.split(',');
+    const grouped = groupThousands(int);
+    return frac ? `${grouped},${frac}` : grouped;
+  }
+  return formatCompact(n);
+}
+
+/** «7000» → «7.000» (el separador de miles de la interfaz). */
+function groupThousands(digits: string): string {
+  const sign = digits.startsWith('-') ? '-' : '';
+  const rest = sign ? digits.slice(1) : digits;
+  return sign + rest.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/** La unidad que declara el backend, traducida si el catálogo la conoce. */
+export function unitLabel(unit: string | null, locale: Locale = 'es'): string | null {
+  if (!unit) return null;
+  const key = UNIT_BY_RAW.get(unit);
+  return key ? t(locale, key) : unit;
+}
+
+/** Importe de un elemento del desglose: la cifra y su unidad. */
+export function formatBreakdownAmount(item: BreakdownItem, locale: Locale = 'es'): string {
+  const unit = unitLabel(item.unit, locale);
+  return `${formatAmount(item.amount, item.unit)}${unit ? ` ${unit}` : ''}`;
+}
+
+/**
  * La hora de la última lectura: la hora local de quien mira, como el resto de la app
  * («actualizado» en el detalle). El instante es UTC; lo que se muestra es local.
  */
@@ -62,6 +99,18 @@ export function staleMark(readAt: string | null, locale: Locale = 'es'): string 
   const chip = t(locale, 'details.staleChip');
   const time = formatReadTime(readAt, locale);
   return time ? `${chip} · ${t(locale, 'details.staleReadAtTime', { time })}` : chip;
+}
+
+/**
+ * La fecha de una caducidad (la del saldo que declara el backend): el día, el mes y
+ * el año. La fecha es la del proveedor (UTC), así que se muestra en UTC: en la zona
+ * de quien mira el día puede ser otro.
+ */
+export function formatExpiry(iso: string | null, locale: Locale = 'es'): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(intlLocale(locale), { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
 /**
@@ -93,7 +142,46 @@ const KEY_BY_ID = new Map<string, MessageKey>([
   ['rate_requests', 'details.meters.rateRequests'],
   ['rate_tokens', 'details.meters.rateTokens'],
   ['extra_usage', 'details.meters.extraUsage'],
+  // Medidores que declara el backend cuando su cuenta tiene un fondo por periodo y un
+  // saldo: el frente los traduce por id, sin saber de qué proveedor son.
+  ['allocation', 'details.meters.allocationShort'],
+  ['balance', 'details.meters.balanceShort'],
 ]);
+
+// Etiqueta larga de los medidores que declara el backend: se traduce por id y, si el
+// catálogo no la conoce, se muestra la que trae el backend.
+const DECLARED_BY_ID = new Map<string, MessageKey>([
+  ['allocation', 'details.meters.allocation'],
+  ['balance', 'details.meters.balance'],
+]);
+
+// Unidades que declara el backend y el frente traduce (las demás se muestran tal cual).
+const UNIT_BY_RAW = new Map<string, MessageKey>([['credits', 'details.units.credits']]);
+
+// Planes que declara la persona: el backend los manda como id estable y el frente los
+// traduce (ningún plan lleva precios).
+const PLAN_BY_ID = new Map<string, MessageKey>([
+  ['plan.gentle', 'details.plans.gentle'],
+  ['plan.inference', 'details.plans.inference'],
+  ['plan.premium', 'details.plans.premium'],
+  ['plan.community', 'details.plans.community'],
+]);
+
+/** La etiqueta de un medidor que declara el backend: se traduce por id. */
+export function declaredLabel(meter: Meter, locale: Locale = 'es'): string {
+  const key = DECLARED_BY_ID.get(meter.id);
+  return key ? t(locale, key) : meter.label;
+}
+
+/**
+ * El plan que declara la persona: si es un id declarado, se traduce; si no, se muestra
+ * tal cual. El frente no deduce el plan de nada.
+ */
+export function planLabel(plan: string | null, locale: Locale = 'es'): string | null {
+  if (!plan) return null;
+  const key = PLAN_BY_ID.get(plan);
+  return key ? t(locale, key) : plan;
+}
 
 const KEY_BY_LABEL = new Map<string, MessageKey>([
   ['Semana · todos', 'details.meters.weekly'],
@@ -301,7 +389,7 @@ export function trayTooltip(reports: UsageReport[]): string {
 
 /** Resumen en texto plano para copiar al portapapeles. */
 export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Locale = 'es'): string {
-  const lines = [r.plan ? `${r.name} (${r.plan})` : r.name];
+  const lines = [r.plan ? `${r.name} (${planLabel(r.plan, locale)})` : r.name];
   for (const m of r.meters) {
     const reset = formatResetIn(m.resetsAt, now, locale);
     // Lo viejo va marcado: un número viejo no puede salir junto a los frescos con
@@ -309,13 +397,18 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
     // entero es el conservado (y el medidor no trae la suya), la del informe es la
     // de su última lectura.
     const mark = isStaleMeter(r, m) ? staleMark(m.readAt ?? (r.stale ? r.fetchedAt : null), locale) : null;
+    const unit = unitLabel(m.unit, locale);
     const value =
       m.percent != null
         ? `${Math.round(m.percent)} %`
         : m.used != null
-          ? `${formatCompact(m.used)}${m.unit ? ` ${m.unit}` : ''}`
+          ? `${formatAmount(m.used, m.unit)}${unit ? ` ${unit}` : ''}`
           : '—';
-    lines.push(`· ${m.label}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}${mark ? ` · ${mark}` : ''}`);
+    lines.push(`· ${declaredLabel(m, locale)}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}${mark ? ` · ${mark}` : ''}`);
+  }
+  // El desglose que declara el proveedor: rótulo + importe + unidad, sin saber qué son.
+  for (const b of r.breakdown ?? []) {
+    lines.push(`· ${b.label}: ${formatBreakdownAmount(b, locale)}`);
   }
   // El gasto conservado (informe entero viejo) se ve, pero marcado como viejo: no
   // es una cifra de ahora y su fecha es la de la lectura de la que viene.
