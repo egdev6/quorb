@@ -20,7 +20,7 @@
 
 # Quorb
 
-Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de tus suscripciones y APIs de IA en Windows y macOS.
+Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de tus suscripciones y APIs de IA en Windows, macOS y Linux.
 
 ## Descargas
 
@@ -28,8 +28,11 @@ Tus cuotas de IA, siempre a la vista: consumo, capacidad disponible y gasto de t
 | --- | --- |
 | Windows x64 | [Descargar .exe](https://github.com/egdev6/quorb/releases/latest) |
 | macOS 15+ · Apple Silicon (M1+) | [Descargar .dmg](https://github.com/egdev6/quorb/releases/latest) |
+| Linux x64 · Debian/Ubuntu | [Descargar .deb](https://github.com/egdev6/quorb/releases/latest) |
+| Linux x64 · otras distribuciones | [Descargar .AppImage](https://github.com/egdev6/quorb/releases/latest) |
 
 Ejecutad el instalador de Windows, o abrid el DMG de macOS y copiad Quorb a Aplicaciones.
+En Linux, instalad el `.deb` (`sudo apt install ./Quorb_<versión>_amd64.deb`, recomendado en Debian/Ubuntu) o ejecutad el `.AppImage` (necesita FUSE, `libfuse2`). Linux necesita un Secret Service en ejecución (GNOME Keyring o KWallet) para guardar las credenciales, y las actualizaciones en Linux son **manuales**; consultad [docs/build-linux.md](./docs/build-linux.md) para los escritorios soportados y los límites conocidos.
 Desde v0.9.0, un instalador interactivo de Windows puede preguntar primero Español o English, continuar en ese idioma y abrir una instalación nueva de Quorb en él; las instalaciones nuevas por MSI o silenciosas lo preguntan en el primer inicio de Quorb. Las actualizaciones automáticas nunca muestran el diálogo de idioma, y las actualizaciones y reinstalaciones conservan el idioma guardado, que podéis cambiar en Ajustes.
 La release macOS usa firma Developer ID y notarización de Apple; las actualizaciones son **manuales**.
 La primera descarga por navegador, cuarentena, instalación y GUI en un Mac real siguen pendientes en [#118](https://github.com/egdev6/quorb/issues/118); no retiréis la cuarentena para eludir un aviso.
@@ -43,7 +46,7 @@ Su widget se pega al borde de la pantalla: es compacto, transparente y permanece
 
 ## Linux
 
-El port nativo a Linux está en curso. El baseline, la matriz de soporte (distros, X11/Wayland, bandeja, secretos, formato de paquete) y los límites conocidos viven en [docs/build-linux.md](./docs/build-linux.md), dentro de la [issue #105](https://github.com/egdev6/quorb/issues/105). **No afirmar soporte de ninguna distro o compositor que no esté marcado como medido allí** — compilar no equivale a una experiencia funcional.
+Los instaladores de Linux (`.deb` y `.AppImage`) se publican desde v0.9.1. El baseline, la matriz de soporte (distros, X11/Wayland, bandeja, secretos, formato de paquete) y los límites conocidos viven en [docs/build-linux.md](./docs/build-linux.md), dentro de la [issue #105](https://github.com/egdev6/quorb/issues/105). **No afirmar soporte de ninguna distro o compositor que no esté marcado como medido allí** — compilar no equivale a una experiencia funcional.
 
 <!-- egdev:stack:start -->
 ## Stack
@@ -69,7 +72,7 @@ El port nativo a Linux está en curso. El baseline, la matriz de soporte (distro
 
 ## Inicio rápido para desarrollo
 
-Quorb está dirigido actualmente a Windows como plataforma principal. Existe además un port Linux en marcha (ver [Notas de Linux](#notas-de-desarrollo-linux)); macOS está integrado aparte para Apple Silicon.
+Quorb está dirigido actualmente a Windows como plataforma principal. Linux tiene instaladores publicados desde v0.9.1 (ver [Notas de Linux](#notas-de-desarrollo-linux)); macOS está integrado aparte para Apple Silicon.
 
 Necesitáis Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
 
@@ -197,10 +200,10 @@ La firma Authenticode de Windows y distribución por winget, el modo click-throu
 
 ## Notas de desarrollo Linux
 
-Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `quorb-linux-local-v1`). Lo que funciona hoy es desarrollo y pruebas locales, no una release distribuida:
+Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `quorb-linux-local-v1`). Desde v0.9.1 el `.deb` y el `.AppImage` se publican en cada release; para desarrollo local:
 
 - Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run app:dev`.
-- Los formatos de bundle local instalable ya están decididos: `.deb` para Debian/Ubuntu y `.AppImage` para Arch y el resto (ver [`docs/build-linux.md`](./docs/build-linux.md)). Se construyen y verifican con el workflow manual de Linux (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) o localmente con `npm run app:build` + los scripts `.testcontainer/verify-*.sh`. Los artefactos del CI quedan privados a cada run; las releases públicas de Linux quedan fuera de alcance por ahora.
+- Los formatos de bundle local instalable ya están decididos: `.deb` para Debian/Ubuntu y `.AppImage` para Arch y el resto (ver [`docs/build-linux.md`](./docs/build-linux.md)). Se construyen y verifican con el workflow manual de Linux (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) o localmente con `npm run app:build` + los scripts `.testcontainer/verify-*.sh`. Los artefactos del CI quedan privados a cada run; los instaladores públicos se adjuntan a cada release con `.github/workflows/linux-release.yml` (ver [docs/release-linux.md](./docs/release-linux.md)).
 - Las limitaciones de sesión y comportamiento dependen del escritorio, y Ajustes las muestra por superficie en el bloque «Sesión de escritorio»:
   - X11: comportamiento completo de siempre-encima, icono de bandeja, atajos globales y transparencia (esta última solo con un compositor).
   - GNOME sobre Wayland: hace falta la extensión AppIndicator para ver el icono de bandeja; siempre-encima y click-through limitados por Mutter; el registro de atajos globales puede denegarse.
