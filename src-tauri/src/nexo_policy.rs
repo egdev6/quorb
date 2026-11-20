@@ -13,9 +13,25 @@
 /// Los ids que Quorb declara en el menú del hub. Son un subconjunto de los de
 /// la bandeja nativa: «quit» queda fuera porque el hub añade su propio Quit.
 ///
-/// El orden coincide con el de `i18n::tray_labels` (toggle, refresh,
-/// settings, quit) para casar id con label localizada.
+/// Es el contrato canónico que verifican los tests; la construcción real del
+/// menú usa `hub_labels`, que fija el id junto a su label explícita.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const HUB_IDS: [&str; 3] = ["toggle", "refresh", "settings"];
+
+/// Construye las entradas del menú del hub con labels suministradas por
+/// significado, no por posición en el array del menú nativo. Esto evita que
+/// un cambio de orden en `tray_labels` despareje ids y textos.
+pub fn hub_labels<'a>(
+    toggle: &'a str,
+    refresh: &'a str,
+    settings: &'a str,
+) -> [(&'static str, &'a str); 3] {
+    [
+        ("toggle", toggle),
+        ("refresh", refresh),
+        ("settings", settings),
+    ]
+}
 
 /// Acciones que produce un clic, tanto en el menú nativo como en el del hub.
 /// `Quit` no llega desde el hub (su Quit es propio y va por el protocolo),
@@ -43,6 +59,7 @@ pub fn tray_action(id: &str) -> Option<TrayAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::{self, Locale, Msg};
 
     #[test]
     fn hub_ids_are_the_native_ids_without_quit() {
@@ -80,5 +97,27 @@ mod tests {
         assert_eq!(tray_action("open"), None);
         assert_eq!(tray_action(""), None);
         assert_eq!(tray_action("unknown"), None);
+    }
+
+    #[test]
+    fn hub_labels_match_explicit_i18n_messages_and_exclude_quit() {
+        for locale in [Locale::Es, Locale::En] {
+            let labels = hub_labels(
+                i18n::text(locale, Msg::TrayToggle),
+                i18n::text(locale, Msg::TrayRefresh),
+                i18n::text(locale, Msg::TraySettings),
+            );
+            assert_eq!(
+                labels,
+                [
+                    ("toggle", i18n::text(locale, Msg::TrayToggle)),
+                    ("refresh", i18n::text(locale, Msg::TrayRefresh)),
+                    ("settings", i18n::text(locale, Msg::TraySettings)),
+                ]
+            );
+            assert!(!labels
+                .iter()
+                .any(|(_, label)| *label == i18n::text(locale, Msg::TrayQuit)));
+        }
     }
 }

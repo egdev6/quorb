@@ -1574,34 +1574,45 @@ fn show_widget(app: &AppHandle) {
     }
 }
 
-/// Ítems del menú del hub a partir de los labels de la bandeja nativa. El
-/// orden de `i18n::tray_labels` es [toggle, refresh, settings, quit];
-/// `quit` queda fuera (el hub añade su propio Quit), luego el zip casa los
-/// tres ids con sus tres primeros labels.
+/// Ítems del menú del hub a partir de las labels de la bandeja nativa. El
+/// emparejamiento id→label usa `nexo_policy::hub_labels` (explícito por
+/// significado), así que el orden de `i18n::tray_labels` no importa.
 #[cfg(windows)]
-fn nexo_menu_items(labels: [&'static str; 4]) -> Vec<tauri_plugin_nexo::MenuItem> {
+fn nexo_menu_items(locale: i18n::Locale) -> Vec<tauri_plugin_nexo::MenuItem> {
     use tauri_plugin_nexo::MenuItem;
-    nexo_policy::HUB_IDS
-        .iter()
-        .zip(labels)
-        .map(|(id, label)| MenuItem {
-            id: (*id).into(),
-            label: label.into(),
-            enabled: true,
-            checked: None,
-        })
-        .collect()
+    nexo_policy::hub_labels(
+        i18n::text(locale, i18n::Msg::TrayToggle),
+        i18n::text(locale, i18n::Msg::TrayRefresh),
+        i18n::text(locale, i18n::Msg::TraySettings),
+    )
+    .into_iter()
+    .map(|(id, label)| MenuItem {
+        id: id.into(),
+        label: label.into(),
+        enabled: true,
+        checked: None,
+    })
+    .collect()
 }
 
-/// Mantiene el menú del hub en el idioma vigente: se registra el plugin con
-/// los labels por defecto y aquí se reemplaza el menú completo con los
-/// actuales (el protocolo envía el `menu` de nuevo al cambiar). No-op si el
-/// plugin no está operativo (p. ej. en un host sin Windows).
+/// Sincroniza los menús de Nexo con el idioma vigente:
+/// - el menú del hub (via `replace_menu`), y
+/// - la bandeja nativa si ya existe (puede haberse creado con el fallback `Es`
+///   de la factory antes de que `AppState` estuviera disponible).
+/// Silencioso: un fallo nativo puntual no aborta el arranque ni el guardado.
 #[cfg(windows)]
 fn nexo_sync_menu(app: &AppHandle) {
+    let locale = current_locale(app);
     if let Some(handle) = tauri_plugin_nexo::handle(app) {
-        let labels = i18n::tray_labels(current_locale(app));
-        let _ = handle.replace_menu(nexo_menu_items(labels));
+        let _ = handle.replace_menu(nexo_menu_items(locale));
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        match tray_menu(app, i18n::tray_labels(locale)) {
+            Ok(menu) => {
+                let _ = tray.set_menu(Some(menu));
+            }
+            Err(e) => eprintln!("No pude reconstruir el menú de la bandeja: {e}"),
+        }
     }
 }
 
@@ -1612,7 +1623,7 @@ fn nexo_sync_menu(app: &AppHandle) {
 fn nexo_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     use tauri_plugin_nexo::{AppInfo, Options, QuitDecision};
 
-    let items = nexo_menu_items(i18n::tray_labels(i18n::Locale::Es));
+    let items = nexo_menu_items(i18n::Locale::Es);
     let options = Options::new(
         AppInfo {
             id: "quorb".into(),
