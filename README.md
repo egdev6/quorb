@@ -26,8 +26,8 @@ Your AI quotas, always in sight: usage, remaining capacity and spending across y
 
 | Platform | Installer |
 | --- | --- |
-| Windows x64 | [Download .exe](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_x64-setup.exe) |
-| macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
+| Windows x64 | [Download .exe](https://github.com/egdev6/quorb/releases/download/v0.9.0/Quorb_0.9.0_x64-setup.exe) |
+| macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/download/v0.9.0/Quorb_0.9.0_aarch64.dmg) |
 
 Run the Windows installer, or open the macOS DMG and copy Quorb to Applications.
 From the release after v0.8.0, an interactive Windows installer can ask for Español or English, continue in that language and open a fresh install of Quorb in it; new MSI or silent installations ask on Quorb's first start instead. Automatic updates never show the language dialog, and updates and reinstalls keep your saved language, which you can change in Settings.
