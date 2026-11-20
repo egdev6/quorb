@@ -32,7 +32,7 @@ import quorbLogo from './assets/quorb-logo.png';
 import { useUpdater } from './lib/useUpdater';
 import { t, type MessageKey } from './i18n';
 import { changeLocale as applyLocaleChange, useLocale } from './i18n/use-locale';
-import { formatMoney, formatPercent, isStaleSpend, peakMeter } from './lib/format';
+import { declaredLabel, formatMoney, formatPercent, isStaleSpend, peakMeter, planLabel } from './lib/format';
 
 const LINKS = {
   anthropicAdmin: 'https://console.anthropic.com/settings/admin-keys',
@@ -666,11 +666,16 @@ export function healthSummary(r: UsageReport, locale: Locale = 'es'): string {
   const peak = peakMeter(r);
   const data =
     peak?.percent != null
-      ? t(locale, 'settings.providers.health.peakAt', { label: peak.label, percent: formatPercent(peak.percent) })
+      ? // El pico va por la etiqueta declarada, no por la cruda: el backend manda el
+        // id estable y una etiqueta en su idioma, y el catálogo es quien la traduce.
+        t(locale, 'settings.providers.health.peakAt', { label: declaredLabel(peak, locale), percent: formatPercent(peak.percent) })
       : r.spend && !isStaleSpend(r)
         ? `${r.spend.periodLabel}: ${formatMoney(r.spend.amount, r.spend.currency)}`
         : t(locale, 'settings.providers.health.dataReceived');
-  return r.plan ? `${r.plan} · ${data}` : data;
+  // El plan es un id declarado: se enseña su nombre, nunca el id. Un plan libre que
+  // el catálogo no conozca se muestra tal cual, como antes.
+  const plan = planLabel(r.plan, locale);
+  return plan ? `${plan} · ${data}` : data;
 }
 
 /**
@@ -1168,9 +1173,11 @@ export function AccountEditor({
               <b>{t(locale, 'settings.providers.planLabel')}</b>
               <Field label={t(locale, 'settings.providers.planLabel')} hint={t(locale, 'settings.providers.accountEditor.nanPlanHint')}>
                 <select value={a.plan || 'member'} onChange={(e) => onChange({ plan: e.target.value })}>
-                  <option value="community">nan_community</option>
                   <option value="member">nan_member</option>
-                  <option value="premium">GLM Premium</option>
+                  <option value="gentle">Gentle</option>
+                  <option value="inference">Inference</option>
+                  <option value="premium">Premium</option>
+                  <option value="community">Community</option>
                 </select>
               </Field>
             </li>
@@ -2403,9 +2410,11 @@ export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets
           <b>{t(locale, 'settings.providers.planLabel')}</b>
           <Field label={t(locale, 'settings.providers.planLabel')}>
             <select value={cfg.nan.plan} onChange={(e) => set('nan', { plan: e.target.value })}>
-              <option value="community">nan_community</option>
               <option value="member">nan_member</option>
-              <option value="premium">GLM Premium</option>
+              <option value="gentle">Gentle</option>
+              <option value="inference">Inference</option>
+              <option value="premium">Premium</option>
+              <option value="community">Community</option>
             </select>
           </Field>
         </li>

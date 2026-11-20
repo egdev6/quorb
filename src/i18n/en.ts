@@ -590,6 +590,36 @@ export const en = {
       rateRequests: 'Requests',
       rateTokens: 'Tokens',
       extraUsage: 'Extra',
+      // Meters declared by the backend (the period allowance and the balance): the
+      // front translates them by id, without knowing which provider they come from.
+      allocation: 'Period allowance',
+      allocationShort: 'Allowance',
+      balance: 'Pack balance',
+      balanceShort: 'Balance',
+    },
+    // Units declared by the backend: the front translates them (the rest are shown
+    // as they come).
+    units: {
+      credits: 'credits',
+    },
+    // The pack balance is a balance, not a cap: no bar and no percentage, with its
+    // expiry.
+    balanceExpires: 'expires on {when}',
+    // The breakdown declared by the provider: an informative list (in credits there is
+    // no cap per model, so the list carries no percentages).
+    breakdown: {
+      title: 'Breakdown',
+      note: 'This list is for information: it carries no percentages or caps.',
+    },
+    // The consumption that passes the cap: the amount shows the excess.
+    meterExcess: '{amount} over',
+    // The plan is declared by the person (it is not deduced from the payload) and the
+    // text carries no prices: the front translates the ids the backend declares.
+    plans: {
+      gentle: 'Gentle',
+      inference: 'Inference',
+      premium: 'Premium',
+      community: 'Community',
     },
     validity: {
       periodLabel: 'Period through',
