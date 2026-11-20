@@ -1568,6 +1568,9 @@ fn show_widget(app: &AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        // El frontend reintenta la colocación si la geometría cambió mientras
+        // el widget estaba oculto (#179), igual que al mostrarlo desde la bandeja.
+        let _ = app.emit_to(WIDGET, "widget-shown", ());
     }
 }
 
