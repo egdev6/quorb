@@ -10,6 +10,11 @@ mod i18n;
 mod installer_locale;
 mod login;
 mod model;
+// La política pura de la bandeja unificada de Nexo (#281): ids y acciones del
+// menú del hub, sin Tauri. Se compila en todas las plataformas para poder
+// testearla; el plugin en sí sólo se registra en Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod nexo_policy;
 // El relé nativo de los cruces del puntero (#264/S16/S17) necesita GTK:
 // sólo existe en Linux.
 #[cfg(target_os = "linux")]
@@ -396,6 +401,9 @@ fn apply_locale(app: &AppHandle, old: &str, new: &str) {
             }
         },
     );
+    // El menú del hub de Nexo también sigue al idioma (labels localizadas).
+    #[cfg(windows)]
+    nexo_sync_menu(app);
 }
 
 // ───────────────────────── comandos ─────────────────────────
@@ -1485,28 +1493,26 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
     }
 
     apply_shortcuts(app, &cfg.shortcuts);
-    build_tray(app, locale)?;
+    // En Windows la bandeja la crea el plugin de Nexo de forma lazy (según el
+    // hub); fuera de Windows se crea aquí como siempre. (#281)
+    #[cfg(not(windows))]
+    build_tray(app)?;
     Ok(())
 }
 
-fn build_tray(app: &AppHandle, locale: i18n::Locale) -> tauri::Result<()> {
+/// Crea la bandeja nativa de Quorb y devuelve el icono para que tanto el
+/// arranque (fuera de Windows) como la factory lazy del plugin de Nexo lo
+/// puedan construir. El locale se lee del estado vigente: los labels del menú
+/// siguen al idioma actual igual que en `apply_locale`.
+fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon<tauri::Wry>> {
+    let locale = current_locale(app);
     let menu = tray_menu(app, i18n::tray_labels(locale))?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(channel::current().name)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "toggle" => toggle_widget(app),
-            "refresh" => {
-                let _ = app.emit("refresh-now", ());
-            }
-            "settings" => {
-                let _ = show_settings(app);
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
+        .on_menu_event(|app, event| dispatch_tray_action(app, event.id.as_ref()))
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
@@ -1520,8 +1526,120 @@ fn build_tray(app: &AppHandle, locale: i18n::Locale) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
-    builder.build(app)?;
-    Ok(())
+    builder.build(app)
+}
+
+/// Traduce un clic de menú (nativo o del hub) a su acción, por id estable.
+fn dispatch_tray_action(app: &AppHandle, id: &str) {
+    match nexo_policy::tray_action(id) {
+        Some(nexo_policy::TrayAction::Toggle) => toggle_widget(app),
+        Some(nexo_policy::TrayAction::Refresh) => {
+            let _ = app.emit("refresh-now", ());
+        }
+        Some(nexo_policy::TrayAction::Settings) => {
+            let _ = show_settings(app);
+        }
+        Some(nexo_policy::TrayAction::Quit) => quit_from_tray(app),
+        None => {}
+    }
+}
+
+/// Salir desde la bandeja nativa. En Windows con el plugin de Nexo activo, se
+/// cierra primero la sesión con el hub (`shutdown_and_wait` → envía `bye`
+/// cuando puede) y luego se sale; sin plugin, el cierre es directo.
+fn quit_from_tray(app: &AppHandle) {
+    #[cfg(windows)]
+    if let Some(handle) = tauri_plugin_nexo::handle(app) {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            handle.shutdown_and_wait().await;
+            app.exit(0);
+        });
+        return;
+    }
+    app.exit(0);
+}
+
+/// `show` del hub: muestra, des-minimiza y enfoca la tira (la «ventana
+/// principal» de Quorb es el widget anclado, no una ventana `main`).
+#[cfg(windows)]
+fn show_widget(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(WIDGET) {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        // El frontend reintenta la colocación si la geometría cambió mientras
+        // el widget estaba oculto (#179), igual que al mostrarlo desde la bandeja.
+        let _ = app.emit_to(WIDGET, "widget-shown", ());
+    }
+}
+
+/// Ítems del menú del hub a partir de las labels de la bandeja nativa. El
+/// emparejamiento id→label usa `nexo_policy::hub_labels` (explícito por
+/// significado), así que el orden de `i18n::tray_labels` no importa.
+#[cfg(windows)]
+fn nexo_menu_items(locale: i18n::Locale) -> Vec<tauri_plugin_nexo::MenuItem> {
+    use tauri_plugin_nexo::MenuItem;
+    nexo_policy::hub_labels(
+        i18n::text(locale, i18n::Msg::TrayToggle),
+        i18n::text(locale, i18n::Msg::TrayRefresh),
+        i18n::text(locale, i18n::Msg::TraySettings),
+    )
+    .into_iter()
+    .map(|(id, label)| MenuItem {
+        id: id.into(),
+        label: label.into(),
+        enabled: true,
+        checked: None,
+    })
+    .collect()
+}
+
+/// Sincroniza los menús de Nexo con el idioma vigente:
+/// - el menú del hub (via `replace_menu`), y
+/// - la bandeja nativa si ya existe (puede haberse creado con el fallback `Es`
+///   de la factory antes de que `AppState` estuviera disponible).
+/// Silencioso: un fallo nativo puntual no aborta el arranque ni el guardado.
+#[cfg(windows)]
+fn nexo_sync_menu(app: &AppHandle) {
+    let locale = current_locale(app);
+    if let Some(handle) = tauri_plugin_nexo::handle(app) {
+        let _ = handle.replace_menu(nexo_menu_items(locale));
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        match tray_menu(app, i18n::tray_labels(locale)) {
+            Ok(menu) => {
+                let _ = tray.set_menu(Some(menu));
+            }
+            Err(e) => eprintln!("No pude reconstruir el menú de la bandeja: {e}"),
+        }
+    }
+}
+
+/// Construye el plugin de Nexo (solo Windows). La factory del tray es lazy:
+/// si el hub acepta la unificación no se llama, sin Nexo se llama al instante,
+/// y si el hub cae el plugin restaura el icono con la misma factory.
+#[cfg(windows)]
+fn nexo_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    use tauri_plugin_nexo::{AppInfo, Options, QuitDecision};
+
+    let items = nexo_menu_items(i18n::Locale::Es);
+    let options = Options::new(
+        AppInfo {
+            id: "quorb".into(),
+            name: "Quorb".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        },
+        build_tray,
+    )
+    .menu(items, |app, id| dispatch_tray_action(app, id))
+    .expect("el menú del hub debe respetar los límites del protocolo")
+    .show(show_widget)
+    .quit(
+        |_app, _reason, reply| reply.respond(QuitDecision::Accept),
+        |app| app.exit(0),
+    );
+    tauri_plugin_nexo::configured(options)
 }
 
 // ───────────────────────── arranque ─────────────────────────
@@ -1544,6 +1662,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init());
+    // Bandeja unificada de Nexo: solo Windows (#281). El plugin arranca su
+    // cliente en el setup y crea la bandeja nativa de forma lazy según el hub.
+    #[cfg(windows)]
+    let builder = builder.plugin(nexo_plugin());
     #[cfg(not(target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     let builder = builder
@@ -1600,6 +1722,10 @@ pub fn run() {
                 login_in_flight: Mutex::new(std::collections::HashSet::new()),
                 wsl_homes: wsl::WslHomeCache::default(),
             });
+            // El menú del hub de Nexo se registró con los labels por defecto;
+            // aquí se reemplaza con el idioma real de la config (#281).
+            #[cfg(windows)]
+            nexo_sync_menu(app.handle());
             // Con el selector pendiente, la UI principal espera a la elección (S3, D6).
             let picker = locale_picker_needed(
                 &app.state::<AppState>().config.lock().unwrap(),
