@@ -185,7 +185,7 @@ Ilustraciones promocionales, no capturas directas.
 
 ### Privacidad y datos locales
 
-Las API keys y la sesión de NaN se guardan en el almacén seguro del sistema (Windows Credential Manager; en Linux, Secret Service; en macOS, Keychain). Los archivos de sesión de las herramientas oficiales se leen sin escribir en ellos ni rotar refresh tokens. Gemini renueva su token de acceso de corta duración en memoria. Si caduca el login de una CLI, iniciad sesión de nuevo con la herramienta oficial.
+Las API keys y la sesión de NaN se guardan en el almacén seguro del sistema (Windows Credential Manager; en Linux, un almacén persistente Secret Service con keyutils del kernel como caché; en macOS, Keychain). Linux requiere un Secret Service en ejecución, como GNOME Keyring o KWallet. Las credenciales que versiones anteriores guardaron solo en keyutils se copian a Secret Service la primera vez que Quorb las lee, siempre que sea antes de un reinicio. Los archivos de sesión de las herramientas oficiales se leen sin escribir en ellos ni rotar refresh tokens. Gemini renueva su token de acceso de corta duración en memoria. Si caduca el login de una CLI, iniciad sesión de nuevo con la herramienta oficial.
 
 La configuración y el historial se guardan en la carpeta de usuario de cada plataforma (`%APPDATA%\es.egdev.quorb` en Windows, `~/.config/es.egdev.quorb` en Linux). Quorb consulta directamente los endpoints de los proveedores; no requiere un backend separado. El historial cubre hasta 30 días.
 
@@ -199,7 +199,7 @@ La firma Authenticode de Windows y distribución por winget, el modo click-throu
 
 Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `quorb-linux-local-v1`). Lo que funciona hoy es desarrollo y pruebas locales, no una release distribuida:
 
-- Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run app:dev`.
+- Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run app:dev`.
 - Los formatos de bundle local instalable ya están decididos: `.deb` para Debian/Ubuntu y `.AppImage` para Arch y el resto (ver [`docs/build-linux.md`](./docs/build-linux.md)). Se construyen y verifican con el workflow manual de Linux (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) o localmente con `npm run app:build` + los scripts `.testcontainer/verify-*.sh`. Los artefactos del CI quedan privados a cada run; las releases públicas de Linux quedan fuera de alcance por ahora.
 - Las limitaciones de sesión y comportamiento dependen del escritorio, y Ajustes las muestra por superficie en el bloque «Sesión de escritorio»:
   - X11: comportamiento completo de siempre-encima, icono de bandeja, atajos globales y transparencia (esta última solo con un compositor).

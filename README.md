@@ -183,7 +183,7 @@ Promotional illustrations, not raw screenshots.
 
 ### Privacy and local data
 
-API keys and the NaN session are stored in the system's secure store (Windows Credential Manager; on Linux, Secret Service; on macOS, Keychain). Official CLI/app session files are read without writing to them or rotating refresh tokens. Gemini refreshes its short-lived access token in memory. If a CLI login expires, sign in again through the official tool.
+API keys and the NaN session are stored in the system's secure store (Windows Credential Manager; on Linux, a persistent Secret Service store with kernel keyutils as a cache; on macOS, Keychain). Linux requires a running Secret Service such as GNOME Keyring or KWallet. Credentials saved by earlier versions only in keyutils are copied into Secret Service the first time Quorb reads them, as long as that happens before a reboot. Official CLI/app session files are read without writing to them or rotating refresh tokens. Gemini refreshes its short-lived access token in memory. If a CLI login expires, sign in again through the official tool.
 
 Configuration and history are stored under the platform user directory (`%APPDATA%\es.egdev.quorb` on Windows, `~/.config/es.egdev.quorb` on Linux). Quorb calls provider endpoints directly; no separate backend is required. History covers up to 30 days.
 
@@ -197,7 +197,7 @@ Windows Authenticode signing and winget distribution, click-through mode and NaN
 
 A native Linux port is under development (tracking issues #105–#108 of the ODD project `quorb-linux-local-v1`). What works today is local development and testing, not a distributed release:
 
-- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run app:dev`.
+- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run app:dev`.
 - Local installable bundles are decided: `.deb` for Debian/Ubuntu and `.AppImage` for Arch and the rest (see [`docs/build-linux.md`](./docs/build-linux.md)). They are built and verified by the manual Linux workflow (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) or locally with `npm run app:build` + the `.testcontainer/verify-*.sh` scripts. CI artifacts stay private to each run; public Linux releases are out of scope for now.
 - Session and behaviour limits depend on the desktop session, and Settings shows them per surface in the «Sesión de escritorio» block:
   - X11: complete behaviour of always-on-top, tray icon, global shortcuts and transparency (the last only with a compositing WM).
