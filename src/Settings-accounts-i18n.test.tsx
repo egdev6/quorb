@@ -280,12 +280,24 @@ describe('AccountEditor (SSR, i18n)', () => {
         'API key (alternativa)',
         '<b>Plan</b>',
         'La URL base y el resto de ajustes avanzados son los de la cuenta principal.',
-        '>nan_community<',
         '>nan_member<',
-        '>GLM Premium<',
+        '>Gentle<',
+        '>Inference<',
+        '>Premium<',
+        '>Community<',
       ],
       'es',
     );
+    // Las configs guardadas no cambian de `value`: `premium` y `community` siguen siendo
+    // los mismos ids. Lo que cambia es el nombre que se ve («GLM Premium» → «Premium»),
+    // y se declara en la PR: el plan es el mismo y no se migra nada.
+    const legacy = (plan: string) => editor('es', account('nan', { plan }));
+    expect(legacy('premium')).toContain('<option value="premium" selected');
+    expect(legacy('premium')).toContain('>Premium<');
+    expect(legacy('community')).toContain('<option value="community" selected');
+    expect(legacy('community')).toContain('>Community<');
+    // Un `member` guardado (el nivel) sigue siendo el valor por defecto del desplegable.
+    expect(legacy('member')).toContain('<option value="member" selected');
     expectAll(
       editor('es', account('openrouter')),
       ['<b>API key</b>', 'Puede ser de otra cuenta o de la misma con otro límite. <a href=', '>openrouter.ai › Keys</a>'],
@@ -376,9 +388,11 @@ describe('AccountEditor (SSR, i18n)', () => {
         'API key (alternative)',
         '<b>Plan</b>',
         'The base URL and the other advanced settings are those of the main account.',
-        '>nan_community<',
         '>nan_member<',
-        '>GLM Premium<',
+        '>Gentle<',
+        '>Inference<',
+        '>Premium<',
+        '>Community<',
       ],
       'en',
     );
