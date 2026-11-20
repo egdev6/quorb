@@ -447,6 +447,20 @@ describe('HealthStep, healthSummary and CliMissing (SSR, i18n)', () => {
     expect(healthSummary(report({ meters: [meter(null)] }), 'en')).toBe('Data received');
   });
 
+  it('healthSummary teaches the name of the plan and the label of the meter it declares', () => {
+    // Un informe en créditos: el plan llega como id (`plan.premium`) y el medidor con su
+    // id estable más una etiqueta en el idioma del backend. Ninguno de los dos sale crudo:
+    // el chequeo de salud pasa por `planLabel` y por `declaredLabel`, como el resto del panel.
+    const credits = report({
+      plan: 'plan.premium',
+      meters: [{ id: 'allocation', label: 'Asignación del periodo', percent: 2, used: 109.4, limit: 4853, unit: 'credits', resetsAt: null, windowSeconds: null }],
+    });
+    expect(healthSummary(credits, 'es')).toBe('Premium · Asignación del periodo al 2%');
+    expect(healthSummary(credits, 'en')).toBe('Premium · Period allowance at 2%');
+    // Un plan que el catálogo no conoce (uno libre, escrito por la persona) se ve tal cual.
+    expect(healthSummary(report({ plan: 'plan.desconocido' }), 'es')).toBe('plan.desconocido · Datos recibidos');
+  });
+
   const missing = (locale: Locale, provider: 'claude' | 'codex') => renderToStaticMarkup(<CliMissing provider={provider} locale={locale} />);
 
   it('CliMissing renders the Spanish literals verbatim and the English texts in en', () => {

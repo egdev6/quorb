@@ -615,6 +615,36 @@ export const es = {
       rateRequests: 'Peticiones',
       rateTokens: 'Tokens',
       extraUsage: 'Extra',
+      // Medidores que declara el backend cuando la cuenta tiene un fondo por periodo
+      // y un saldo: el frente los traduce por id, sin saber de qué proveedor son.
+      allocation: 'Asignación del periodo',
+      allocationShort: 'Asignación',
+      balance: 'Saldo de packs',
+      balanceShort: 'Saldo',
+    },
+    // Unidades que declara el backend: las traduce el frente (las demás se muestran
+    // tal cual).
+    units: {
+      credits: 'créditos',
+    },
+    // El saldo de packs es un saldo, no un límite: va sin barra y sin porcentaje, con
+    // su caducidad.
+    balanceExpires: 'caduca el {when}',
+    // El desglose que declara el proveedor: una lista informativa (en créditos no hay
+    // tope por modelo, así que la lista no lleva porcentajes).
+    breakdown: {
+      title: 'Desglose',
+      note: 'Esta lista es informativa: no lleva porcentajes ni topes.',
+    },
+    // El consumo que pasa del fondo: el importe muestra el exceso.
+    meterExcess: 'exceso {amount}',
+    // El plan lo declara la persona (no se deduce del payload) y el texto no lleva
+    // precios: el frente traduce los ids que declara el backend.
+    plans: {
+      gentle: 'Gentle',
+      inference: 'Inference',
+      premium: 'Premium',
+      community: 'Community',
     },
     validity: {
       periodLabel: 'Periodo hasta',

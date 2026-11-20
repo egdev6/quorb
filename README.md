@@ -20,20 +20,23 @@
 
 # Quorb
 
-Your AI quotas, always in sight: usage, remaining capacity and spending across your AI subscriptions and APIs on Windows and macOS.
+Your AI quotas, always in sight: usage, remaining capacity and spending across your AI subscriptions and APIs on Windows, macOS and Linux.
 
-## Downloads — v0.8.0
+## Downloads
 
-| Platform | Installer |
+| Platform | Installer (latest release) |
 | --- | --- |
-| Windows x64 | [Download .exe](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_x64-setup.exe) |
-| macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/download/v0.8.0/Quorb_0.8.0_aarch64.dmg) |
+| Windows x64 | [Download .exe](https://github.com/egdev6/quorb/releases/latest) |
+| macOS 15+ · Apple Silicon (M1+) | [Download .dmg](https://github.com/egdev6/quorb/releases/latest) |
+| Linux x64 · Debian/Ubuntu | [Download .deb](https://github.com/egdev6/quorb/releases/latest) |
+| Linux x64 · other distributions | [Download .AppImage](https://github.com/egdev6/quorb/releases/latest) |
 
 Run the Windows installer, or open the macOS DMG and copy Quorb to Applications.
-From the release after v0.8.0, an interactive Windows installer can ask for Español or English, continue in that language and open a fresh install of Quorb in it; new MSI or silent installations ask on Quorb's first start instead. Automatic updates never show the language dialog, and updates and reinstalls keep your saved language, which you can change in Settings.
+On Linux, install the `.deb` (`sudo apt install ./Quorb_<version>_amd64.deb`, recommended on Debian/Ubuntu) or run the `.AppImage` (needs FUSE, `libfuse2`). Linux needs a running Secret Service (GNOME Keyring or KWallet) to store credentials, and Linux updates are **manual**; see [docs/build-linux.md](./docs/build-linux.md) for supported desktops and known limits.
+Since v0.9.0, an interactive Windows installer can ask for Español or English, continue in that language and open a fresh install of Quorb in it; new MSI or silent installations ask on Quorb's first start instead. Automatic updates never show the language dialog, and updates and reinstalls keep your saved language, which you can change in Settings.
 The macOS release uses Developer ID signing and Apple notarization; updates are **manual**.
 First browser download, quarantine, installation and GUI checks on a real Mac remain pending in [#118](https://github.com/egdev6/quorb/issues/118); do not remove quarantine to bypass a warning.
-These links are pinned to **v0.8.0**; see [all releases](https://github.com/egdev6/quorb/releases) for other versions.
+These links always open the **latest release**, where you pick the installer for your platform; see [all releases](https://github.com/egdev6/quorb/releases) for other versions.
 
 ## What is it
 
@@ -43,7 +46,7 @@ Its edge-docked widget is compact, transparent and always on top. Hover over a p
 
 ## Linux
 
-A native Linux port is in progress. The current baseline, support matrix (distros, X11/Wayland, tray, secrets, package format) and known limits live in [docs/build-linux.md](./docs/build-linux.md), tracked under [issue #105](https://github.com/egdev6/quorb/issues/105). **Do not claim support for a distro or compositor that is not marked as measured there** — compilation does not equal a working experience.
+Linux installers (`.deb` and `.AppImage`) are published since v0.9.1. The current baseline, support matrix (distros, X11/Wayland, tray, secrets, package format) and known limits live in [docs/build-linux.md](./docs/build-linux.md), tracked under [issue #105](https://github.com/egdev6/quorb/issues/105). **Do not claim support for a distro or compositor that is not marked as measured there** — compilation does not equal a working experience.
 
 <!-- egdev:stack:start -->
 ## Stack
@@ -69,7 +72,7 @@ A native Linux port is in progress. The current baseline, support matrix (distro
 
 ## Developer quick start
 
-Quorb currently targets Windows as its main platform. There is also a Linux port in progress (see the [Linux notes](#linux-development-notes)); macOS has been integrated separately for Apple Silicon.
+Quorb currently targets Windows as its main platform. Linux has published installers since v0.9.1 (see the [Linux notes](#linux-development-notes)); macOS has been integrated separately for Apple Silicon.
 
 You need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
@@ -183,7 +186,7 @@ Promotional illustrations, not raw screenshots.
 
 ### Privacy and local data
 
-API keys and the NaN session are stored in the system's secure store (Windows Credential Manager; on Linux, Secret Service; on macOS, Keychain). Official CLI/app session files are read without writing to them or rotating refresh tokens. Gemini refreshes its short-lived access token in memory. If a CLI login expires, sign in again through the official tool.
+API keys and the NaN session are stored in the system's secure store (Windows Credential Manager; on Linux, a persistent Secret Service store with kernel keyutils as a cache; on macOS, Keychain). Linux requires a running Secret Service such as GNOME Keyring or KWallet. Credentials saved by earlier versions only in keyutils are copied into Secret Service the first time Quorb reads them, as long as that happens before a reboot. Official CLI/app session files are read without writing to them or rotating refresh tokens. Gemini refreshes its short-lived access token in memory. If a CLI login expires, sign in again through the official tool.
 
 Configuration and history are stored under the platform user directory (`%APPDATA%\es.egdev.quorb` on Windows, `~/.config/es.egdev.quorb` on Linux). Quorb calls provider endpoints directly; no separate backend is required. History covers up to 30 days.
 
@@ -195,10 +198,10 @@ Windows Authenticode signing and winget distribution, click-through mode and NaN
 
 ## Linux development notes
 
-A native Linux port is under development (tracking issues #105–#108 of the ODD project `quorb-linux-local-v1`). What works today is local development and testing, not a distributed release:
+A native Linux port is under development (tracking issues #105–#108 of the ODD project `quorb-linux-local-v1`). Since v0.9.1 the `.deb` and `.AppImage` are published in each release; for local development:
 
-- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run app:dev`.
-- The bundle formats and the packaging of an installable local build are still being defined in the packaging unit (#108); do not distribute the artifacts.
+- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run app:dev`.
+- Local installable bundles are decided: `.deb` for Debian/Ubuntu and `.AppImage` for Arch and the rest (see [`docs/build-linux.md`](./docs/build-linux.md)). They are built and verified by the manual Linux workflow (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) or locally with `npm run app:build` + the `.testcontainer/verify-*.sh` scripts. CI artifacts stay private to each run; public installers are attached to each release by `.github/workflows/linux-release.yml` (see [docs/release-linux.md](./docs/release-linux.md)).
 - Session and behaviour limits depend on the desktop session, and Settings shows them per surface in the «Sesión de escritorio» block:
   - X11: complete behaviour of always-on-top, tray icon, global shortcuts and transparency (the last only with a compositing WM).
   - GNOME on Wayland: AppIndicator extension needed to see the tray icon; always-on-top and click-through are limited by Mutter; global shortcut registration may be denied.

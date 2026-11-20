@@ -17,6 +17,7 @@ sudo apt-get install -y --no-install-recommends \
   file \
   patchelf \
   libwebkit2gtk-4.1-dev \
+  libdbus-1-dev \
   libxdo-dev \
   libssl-dev \
   libayatana-appindicator3-dev \

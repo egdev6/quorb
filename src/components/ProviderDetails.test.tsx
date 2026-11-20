@@ -263,3 +263,109 @@ describe('stale data presentation (T31)', () => {
     expect(html).not.toContain('A este ritmo');
   });
 });
+
+// T1-T5 (#268): la tarjeta de una cuenta con créditos muestra el fondo del periodo
+// (un medidor con su barra), el saldo de packs aparte (sin barra ni porcentaje, con su
+// caducidad) y el desglose por modelo (informativo, sin porcentajes).
+describe('la tarjeta de una cuenta con créditos (#268)', () => {
+  const credits: UsageReport = {
+    ...report,
+    id: 'nan',
+    name: 'NaN Builders',
+    status: 'ok',
+    plan: 'plan.inference',
+    meters: [
+      {
+        id: 'allocation', label: 'Asignación del periodo', percent: 0.347, used: 24.3, limit: 7000,
+        unit: 'credits', resetsAt: null, windowSeconds: 30 * 86400,
+      },
+      {
+        id: 'balance', label: 'Saldo de packs', percent: null, used: 240, limit: null,
+        unit: 'credits', resetsAt: '2027-05-12T00:00:00Z', windowSeconds: null,
+      },
+    ],
+    breakdown: [
+      { label: 'deepseek-v4-flash', amount: 12.4, unit: 'credits' },
+      { label: 'glm5.3-flash', amount: 11.9, unit: 'credits' },
+    ],
+  };
+
+  it('shows the plan the person declares', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={credits} locale="es" />);
+    expect(html).toContain('Inference');
+  });
+
+  it('shows the pack balance apart, without a bar or a percentage', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={credits} locale="es" />);
+    expect(html).toContain('Saldo de packs');
+    expect(html).toContain('240 créditos');
+    // El saldo es un saldo, no un límite: sólo el fondo del periodo lleva barra.
+    expect(html.match(/role="progressbar"/g)).toHaveLength(1);
+  });
+
+  it('shows the expiry of the pack balance', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={credits} locale="es" />);
+    expect(html).toContain('caduca el');
+    // La caducidad es la fecha que declara el proveedor (UTC): no se desplaza al día
+    // anterior en las zonas negativas.
+    expect(html).toContain('caduca el 12 may 2027');
+  });
+
+  it('shows the breakdown by model with its amounts and no percentages', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={credits} locale="es" />);
+    expect(html).toContain('Desglose');
+    expect(html).toContain('deepseek-v4-flash');
+    expect(html).toContain('12,4 créditos');
+    // La lista es informativa: no lleva porcentajes.
+    const section = html.slice(html.indexOf('q-breakdown'));
+    expect(section).not.toContain('%');
+  });
+
+  it('does not show the breakdown when the provider declares none', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={{ ...credits, breakdown: undefined }} locale="es" />);
+    expect(html).not.toContain('Desglose');
+  });
+
+  it('does not show a pack balance when there is no balance', () => {
+    // Sin saldo no hay línea de saldo (S4: sólo si hay saldo).
+    const without: UsageReport = { ...credits, meters: [credits.meters[0]] };
+    const html = renderToStaticMarkup(<ProviderCard report={without} locale="es" />);
+    expect(html).not.toContain('Saldo de packs');
+  });
+});
+
+// S13, caso «más del 100 %»: el porcentaje sale por encima de 100 y el saldo de packs
+// se ve en esa misma situación (es lo que consume el exceso).
+describe('el exceso del fondo (S13)', () => {
+  const over: UsageReport = {
+    ...report,
+    id: 'nan',
+    name: 'NaN Builders',
+    status: 'warning',
+    plan: 'plan.inference',
+    meters: [
+      {
+        id: 'allocation', label: 'Asignación del periodo', percent: 120, used: 8400, limit: 7000,
+        unit: 'credits', resetsAt: null, windowSeconds: 30 * 86400,
+      },
+      {
+        id: 'balance', label: 'Saldo de packs', percent: null, used: 240, limit: null,
+        unit: 'credits', resetsAt: '2027-05-12T00:00:00Z', windowSeconds: null,
+      },
+    ],
+  };
+
+  it('shows the percent over a hundred and the excess', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={over} locale="es" />);
+    expect(html).toContain('120%');
+    expect(html).toContain('exceso 1.400 créditos');
+  });
+
+  it('shows the pack balance in that same situation', () => {
+    const html = renderToStaticMarkup(<ProviderCard report={over} locale="es" />);
+    expect(html).toContain('Saldo de packs');
+    expect(html).toContain('240 créditos');
+  });
+});
+
+
