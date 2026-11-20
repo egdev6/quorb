@@ -1,4 +1,4 @@
-# Quorb en Linux — baseline, contrato y soporte (refutado «Can't open squashfs» ≥ 6.12 en escritorio real)
+# Quorb en Linux — baseline, contrato y soporte
 
 > Documento vivo de la issue **#105** (milestone Linux portability). Congela
 > el baseline medido en una máquina Linux real (Ubuntu 26.04 LTS, GNOME
@@ -36,7 +36,7 @@
 | Arch | x86_64 |
 | node / npm | v24.15.0 / 12.0.1 |
 | rustc / cargo | 1.99.0 |
-| Paquete instalado | `quorb` 0.6.0 (`.deb`, instalado en el host); la versión actual de `main` es **0.8.0**. Evidencia del cierre de #108: el binario 0.8.0 del `.deb` (run `44138625351`, artefacto `quorb-linux-manual-main`) **arrancó en este compositor real**, exit 124 = vivo 30 s (§4.2). La instalación `sudo dpkg -i` del 0.8.0 queda como paso manual (requiere autenticación interactiva) con su comando en §10 |
+| Paquete instalado | `quorb` 0.6.0 (`.deb`, instalado en el host); la versión actual de `main` es **0.8.0**. Evidencia del cierre de #108: el binario 0.8.0 del `.deb` (run `44138625351` del fork `sosan/quorb`, artefacto `quorb-linux-manual-main`) **arrancó en este compositor real**, exit 124 = vivo 30 s (§4.2). La instalación `sudo dpkg -i` del 0.8.0 se ejecutó el 19/11/2026 sobre la 0.6.0 (§4.4) |
 
 ### 2.2 Entornos complementarios con evidencia
 
@@ -190,9 +190,7 @@ del upstream `egdev6/quorb`. El resultado con kernel 7.0 procede de una matriz
 de ese fork que no está definida en `linux-ci.yml`.
 
 ```bash
-# 1) Descargar y verificar el .deb 0.8.0 (sin instalar todavía)
-curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-  "https://api.github.com/repos/sosan/quorb/actions/artifacts/14355095937/zip" -o artifact.zip
+# 1) Verificar el .deb 0.8.0 (artefacto del run 44138625351 del fork, ya descargado)
 unzip -o artifact.zip          # Quorb_0.8.0_amd64.deb (5.0 MiB), Quorb_0.8.0_amd64.AppImage
 dpkg-deb --info Quorb_0.8.0_amd64.deb
 #   Depends: libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0  (ya presentes)
@@ -226,14 +224,14 @@ timeout -k 5 30 /usr/bin/quorb > launch.log 2>&1; echo $?   # -> 124
 
 # 4) Backend de secretos real (keyutils del kernel, no Secret Service)
 keyctl show
-#   Session Keyring -> _ses, _uid.1000, _persistent.1000
+#   Session Keyring con los keyrings de sesión, usuario y persistente (keyutils)
 
 # 5) CLI auxiliares a las que Quorb delega (según instalación del host)
 command -v claude cursor        # presentes en este host; codex/gemini/copilot no
 ```
 
-Resultado end-to-end medido: config ya presente (`~/.config/es.egdev.quorb/config.json`,
-claves normales, sin leer valores), backend keyutils accesible, bandeja montada
+Resultado end-to-end medido: config ya presente en el directorio de configuración de Quorb
+(claves normales, sin leer valores), backend keyutils accesible, bandeja montada
 (`libayatana` sin crash) y widget vivo en el compositor. La instalación formal
 se ejecutó el 19/11/2026 sobre la 0.6.0: `dpkg -l quorb` devuelve `ii quorb
 0.8.0 amd64`, y `/usr/bin/quorb` queda vivo 30 s (exit 124), con los cuatro
@@ -395,7 +393,7 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 | Riesgo | Prob. | Impacto | Mitigación | Evidencia / entrada de código |
 |---|---|---|---|---|
 | tao 0.37.1 panicea en `CursorIgnoreEvents` si la ventana está oculta (GdkWindow None) | Alta (reproducido) | Alto (crash al arrancar en Wayland) | Fix `53058fa`: `set_ignore_cursor_events` tras `show()`, no en setup; integrado en `main` por #107/#275 | `src-tauri/src/lib.rs` `run()`/`play_effect`; tao `event_loop.rs:457`; upstream tao#1204 |
-| AppImage: cadena FUSE + librerías gráficas de runtime | Baja tras la evidencia de §4.3 (monta en kernel 6.8 y 7.0) | Bajo (el `.deb` no lo sufre) | No requiere `modprobe` — con `/dev/fuse` y `libegl1/libgl1/libgles2` + `libfuse2`/`libfuse2t64` monta y arranca; workaround `--appimage-extract-and-run` | Runs de §4.3: montaje FUSE + vivo 60 s en CI |
+| AppImage: cadena FUSE + librerías gráficas de runtime | Media: monta en CI (kernel 6.8 y 7.0, runs del fork) pero falla en el escritorio real del host (§4.3 fallo 3) | Bajo (el `.deb` no lo sufre) | Requiere `/dev/fuse` (cargar el módulo con `sudo modprobe fuse` solo si no está cargado, §10) y, en los runs del fork, `libegl1/libgl1/libgles2` + `libfuse2`/`libfuse2t64`; workaround `--appimage-extract-and-run` | Runs de §4.3: montaje FUSE + vivo 60 s en CI |
 | WebKit2GTK ≥ 2.40 / GTK ≥ 3.22 (distros antiguas) | Media | Alto (excluye usuarios) | Documentar versión mínima; diferir distros no-Debian/Arch | PRD línea 110; `linux-ci.yml` apt |
 | libayatana deprecation warning en runtime | Alta (cosmético) | Bajo | Nada (no impide) | Log de arranque del `.deb` (host) |
 | `keyring` linux-native requiere keyutils disponible (keyring del kernel); entorno sin keyutils | Media | Medio | Fallo explícito del command, no degradar a texto plano; #106 ya cerrada y el backend real queda documentado aquí | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
