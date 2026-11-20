@@ -28,8 +28,8 @@ Owner: @egdev6. Branch: `ci/linux-release-attach`. Risk: item 5 (release deliver
 
 | ID | Specs | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S2–S6 | gentle-ai-worker | — |
-| T2 | S1–S6 | gentle-ai-verify (Risk: item 5) | — |
+| T1 | S2–S6 | gentle-ai-worker | c04641a, 5bac5ea, 5bd5fdc |
+| T2 | S1–S6 | gentle-ai-verify (Risk: item 5) | fix in this commit |
 | T3 | S1 | parent, after the owner runs the workflow: release notes, README Linux row | — |
 
 ## Log
@@ -38,3 +38,5 @@ Owner: @egdev6. Branch: `ci/linux-release-attach`. Risk: item 5 (release deliver
 - L2 (owner): «el instalador ya está para linux no? que la descarga apunte a él» — evidence: no release v0.1.1–v0.9.0 has Linux assets; `release.yml` is Windows-only; Linux bundles are private `linux-ci.yml` artifacts.
 - L3 (owner): «a ver aclarémonos...hay que sacar la 0.10.0 para poder oficializar el instalador de linux? no podemos arreglar lo que queda e inclurlo en la 0.9.0?»
 - L4 (owner): «haz el workflow»
+- L5 (verify): S3–S6 pass; B1 blocker: `runner.temp` in job-level `env:` (not allowed by GitHub). `scripts/verify-linux-bundles` does not exist; `.testcontainer` (used by linux-ci) is the equivalent.
+- L6 (parent): B1 fixed (build: `$RUNNER_TEMP` via `$GITHUB_ENV`; attach: step-level env, keeping a single `run:`), regression test added (RED then GREEN). Focused 21/21, `npm test` exit 0 (vitest 1241, node 329), actionlint v1.7.7 exit 0. Slices: c04641a (preflight), 5bac5ea (attach), 5bd5fdc (workflow + docs).
