@@ -1,4 +1,4 @@
-# Quorb en Linux — baseline, contrato y soporte
+# Quorb en Linux — baseline, contrato y soporte (refutado «Can't open squashfs» ≥ 6.12 en escritorio real)
 
 > Documento vivo de la issue **#105** (milestone Linux portability). Congela
 > el baseline medido en una máquina Linux real (Ubuntu 26.04 LTS, GNOME
@@ -45,7 +45,7 @@
 | Devcontainer `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` (`.devcontainer/`) | Build/tests locales sin distro física | `cargo test --locked` verde (histórico) — **en `main` desde #108** (`.devcontainer/`, `Makefile`) |
 | CI runner `ubuntu-22.04` (`linux-ci.yml` + `linux-pr-ci.yml`) | Bundles + verify y gate de PR | En `main` desde #108; `with_bundle: bundle` construye AppImage/deb y los verifica |
 | CI runner `windows-latest` (`ci.yml`) | Regresión Windows | Verde por PR (ver §8) |
-| `.deb` 0.8.0 (artefacto del run `44138625351`) extraído y ejecutado en host | Arranque en compositor real con la versión actual | §4.2: binario 0.8.0, exit 124 (vivo 30 s), 4 warnings benignos del baseline; `dpkg -i` queda como paso manual (§10) |
+| `.deb` 0.8.0 (artefacto de un run del fork `sosan/quorb`, `44138625351`) instalado y ejecutado en host | Arranque en compositor real con la versión actual | §4.2: binario 0.8.0, exit 124 (vivo 30 s), 4 warnings benignos del baseline; instalación con `dpkg -i` ejecutada en el host |
 
 ## 3. Inventario de dependencias (L0a)
 
@@ -181,11 +181,13 @@ Dos niveles de evidencia, separados explícitamente:
    `connect_map` GTK crash y `startDragging()` nativo vs layer-shell pertenecen
    al ajuste de escritorio de #107/#290, no al empaquetado de #108.
 
-## 4.4 Evidencia del cierre de #108 (versión 0.8.0, host real)
+### 4.4 Evidencia del cierre de #108 (versión 0.8.0, host real)
 
 Comandos ejecutados en el host del baseline (Ubuntu 26.04/GNOME Wayland) con la
-versión actual, sin exponer credenciales. Los artefactos provienen del run
-`44138625351` (`quorb-linux-manual-main`):
+versión actual, sin exponer credenciales. Los artefactos provienen de runs del
+fork `sosan/quorb` (`44138625351`, `44186723327` y `44191439689`); no son runs
+del upstream `egdev6/quorb`. El resultado con kernel 7.0 procede de una matriz
+de ese fork que no está definida en `linux-ci.yml`.
 
 ```bash
 # 1) Descargar y verificar el .deb 0.8.0 (sin instalar todavía)
@@ -253,7 +255,6 @@ Decisiones aceptadas en este baseline (revisables solo con evidencia nueva):
 | Sesión gráfica | GNOME Wayland y KDE Plasma Wayland soportados; Hyprland con degradaciones documentadas; X11 best-effort |
 | Política X11/Wayland | **Wayland-first**: la app arranca y funciona bajo Wayland; en X11 funciona pero sin garantías de always-on-top/click-through estrictos. Degradaciones documentadas en el bloque "Compatibilidad" de Ajustes (integrado con #107; ajuste diagnóstico residual en #290) |
 | Bandeja | `libayatana-appindicator3` (recomendado); `libappindicator3` legacy como fallback si la distro no provee ayatana |
-| Secretos | Backend real: `keyring` 3.6.3 con feature `linux-native` → **keyutils** (`linux-keyutils`, keyring del kernel), confirmado en §4.4 (`keyctl show`). No es Secret Service: Quorb no usa el llavero D-Bus por defecto; si el criterio de la issue lo exige, se ajusta en la propia issue (#108). Fallo sin keyutils: explícito, **sin fallback a texto plano**; mensaje accionable vía `src/lib/keyring-message.ts` |
 | Paquete local | `.deb` (Debian/Ubuntu) y `.AppImage` (Arch y resto). AUR fuera del MVP. Firma digital fuera (F5) |
 | Compilación ≠ experiencia | El binario puede compilar y no ser usable en un compositor/distro dado; esto no se considera "soportado" sin la matriz §6 y el smoke real |
 
