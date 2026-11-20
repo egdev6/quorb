@@ -17,8 +17,8 @@ Owner: @egdev6. Branch: `fix/302-linux-keyring-persistence`. Risk: items 2 (cred
 
 | ID | Specs | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S2–S6, S3b | gentle-ai-worker | — |
-| T2 | S1–S6 | gentle-ai-verify (Risk: items 2, 5) | — |
+| T1 | S2–S6, S3b | gentle-ai-worker | 986517e (ci deps), 14fa47f (fix + tests), cdaac14 (docs) |
+| T2 | S1–S6 | gentle-ai-verify (Risk: items 2, 5) | verified twice (L5, L7) |
 | T3 | — | parent: CI run of linux-ci with Secret Service smoke, PR | — |
 
 ## Log
