@@ -55,7 +55,7 @@ test('validated exact source is built and clean-container verified before same-r
   assert.match(build, /ref: \$\{\{ needs\.preflight\.outputs\.source_sha \}\}\n\s+path: source/);
   assert.match(build, /working-directory: source\n\s+run: npm ci/);
   assert.match(build, /working-directory: source\n\s+run: npm run app:build/);
-  for (const dependency of ['libwebkit2gtk-4.1-dev', 'libxdo-dev', 'libssl-dev', 'libayatana-appindicator3-dev', 'librsvg2-dev', 'libsecret-1-dev', 'libfuse2', 'xvfb', 'dbus-x11']) assert.ok(build.includes(dependency), dependency);
+  for (const dependency of ['pkg-config', 'libdbus-1-dev', 'libwebkit2gtk-4.1-dev', 'libxdo-dev', 'libssl-dev', 'libayatana-appindicator3-dev', 'librsvg2-dev', 'libsecret-1-dev', 'libfuse2', 'xvfb', 'dbus-x11']) assert.ok(build.includes(dependency), dependency);
   assert.match(build, /source\/src-tauri\/target\/release\/bundle\/deb\/Quorb_\$\{RELEASE_VERSION\}_amd64\.deb/);
   assert.match(build, /source\/src-tauri\/target\/release\/bundle\/appimage\/Quorb_\$\{RELEASE_VERSION\}_amd64\.AppImage/);
   assert.match(build, /docker build -t quorb-build-verify \.testcontainer/);

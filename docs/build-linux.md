@@ -5,6 +5,13 @@
 > Wayland) y el contrato de soporte inicial **antes** de L1/L2/L3.
 > **Cero código en esta unidad**: solo mediciones, decisiones y docs.
 > Compilación ≠ experiencia funcional.
+>
+> **Backend actual de secretos (#302):** Secret Service es el almacén
+> persistente y keyutils del kernel actúa como caché. Se necesita un Secret
+> Service en ejecución, por ejemplo GNOME Keyring o KWallet. Las credenciales
+> anteriores que solo estén en keyutils se copian a Secret Service la primera
+> vez que Quorb las lee, siempre que sea antes de un reinicio. Las mediciones
+> del baseline de 0.8.0 citadas abajo son históricas.
 
 ## 1. Resumen ejecutivo
 
@@ -57,8 +64,9 @@ node 24.15, npm 12.0.1, rustc/cargo 1.99, TypeScript 5.9, Vite 7, vitest 4.1.11.
 
 tauri 2 (`tray-icon`, `protocol-asset`) + 9 plugins (opener, autostart,
 single-instance, notification, dialog, global-shortcut, updater, process);
-reqwest (`rustls-tls`, sin openssl), rusqlite `bundled`, keyring con feature
-`linux-native`, serde/serde_json, chrono, dirs, base64, futures, libc (unix).
+reqwest (`rustls-tls`, sin openssl), rusqlite `bundled`, keyring con features
+`linux-native-sync-persistent` y `crypto-rust`, serde/serde_json, chrono, dirs,
+base64, futures, libc (unix). El backend usa libdbus del sistema, sin `vendored`.
 
 ### 3.3 Dependencias de sistema (runtime, las que declara el `.deb`)
 
@@ -86,6 +94,7 @@ Del `setup.sh` / workflow `apt-get install` (versiones medidas en devcontainer
 | libayatana-appindicator3-dev | 0.5.90-7ubuntu2 |
 | libxdo-dev | 1:3.20160805.1-4 |
 | libgtk-3-dev, libsecret-1-dev, librsvg2-dev, libnotify-dev, libssl-dev, build-essential, pkg-config | instalados vía `setup.sh` (no listados en la sesión) |
+| libdbus-1-dev | requerido desde #302; no medido en el baseline histórico |
 
 **Nota**: el host (26.04) **no tiene las dev libs** (`webkit2gtk-4.1`,
 `gtk+-3.0`, `libsecret-1`, `ayatana-appindicator3-0.1`, `librsvg-2.0`,
@@ -172,11 +181,10 @@ Dos niveles de evidencia, separados explícitamente:
    arranque directo del AppImage en este escritorio real con
    `AppImageLauncher` presente, con workaround probado (unsquashfs + AppRun)
    y el `.deb` como vía recomendada en Debian/Ubuntu.
-4. **Backend de secretos** — `keyring` usa la feature `linux-native`, cuyo
-   backend real es `linux-keyutils`/keyutils del kernel. La prueba end-to-end
-   de esta unidad debe medir ese backend (y, si el criterio se mantiene como
-   «Secret Service», registrar explícitamente que no es el backend configurado),
-   sin exponer credenciales. #106 ya está cerrada; no queda como placeholder.
+4. **Backend de secretos del baseline 0.8.0** — entonces `keyring` usaba
+   `linux-native`, solo keyutils del kernel. Desde #302 se configura el backend
+   combinado: Secret Service persiste y keyutils sirve de caché. Las mediciones
+   históricas de #106 no prueban el backend persistente actual.
 5. **Hallazgos de contribuidores** (del comentario de Rafael en #105):
    `connect_map` GTK crash y `startDragging()` nativo vs layer-shell pertenecen
    al ajuste de escritorio de #107/#290, no al empaquetado de #108.
@@ -222,7 +230,7 @@ timeout -k 5 30 /usr/bin/quorb > launch.log 2>&1; echo $?   # -> 124
 #   gdk_wayland_window_set_dbus_properties_libgtk_only, libayatana-appindicator
 #   is deprecated, gtk_widget_get_scale_factor.
 
-# 4) Backend de secretos real (keyutils del kernel, no Secret Service)
+# 4) Backend de secretos del baseline 0.8.0 (keyutils, antes de #302)
 keyctl show
 #   Session Keyring con los keyrings de sesión, usuario y persistente (keyutils)
 
@@ -396,7 +404,7 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 | AppImage: cadena FUSE + librerías gráficas de runtime | Media: monta en CI (kernel 6.8 y 7.0, runs del fork) pero falla en el escritorio real del host (§4.3 fallo 3) | Bajo (el `.deb` no lo sufre) | Requiere `/dev/fuse` (cargar el módulo con `sudo modprobe fuse` solo si no está cargado, §10) y, en los runs del fork, `libegl1/libgl1/libgles2` + `libfuse2`/`libfuse2t64`; workaround `--appimage-extract-and-run` | Runs de §4.3: montaje FUSE + vivo 60 s en CI |
 | WebKit2GTK ≥ 2.40 / GTK ≥ 3.22 (distros antiguas) | Media | Alto (excluye usuarios) | Documentar versión mínima; diferir distros no-Debian/Arch | PRD línea 110; `linux-ci.yml` apt |
 | libayatana deprecation warning en runtime | Alta (cosmético) | Bajo | Nada (no impide) | Log de arranque del `.deb` (host) |
-| `keyring` linux-native requiere keyutils disponible (keyring del kernel); entorno sin keyutils | Media | Medio | Fallo explícito del command, no degradar a texto plano; #106 ya cerrada y el backend real queda documentado aquí | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
+| `keyring` requiere keyutils y un Secret Service en ejecución (GNOME Keyring o KWallet) | Media | Medio | Fallo explícito al guardar si no hay Secret Service, sin fallback a texto plano; keyutils es solo la caché | `src-tauri/src/secrets.rs` (`keyring::Entry::new`) |
 | `connect_map` GTK crash (Rafael) | Desconocida | Medio | Ajuste de escritorio #107/#290, fuera del empaquetado | Comentario de Rafael en #105 |
 | `startDragging()` nativo vs layer-shell (Rafael) | Desconocida | Medio | Ajuste de escritorio #107/#290, fuera del empaquetado | Comentario de Rafael en #105 |
 | ~~No hay gate de CI Linux para PRs~~ (resuelto en #150; infra de bundles en #127/#108) | — | — | `linux-pr-ci.yml` (tests+build por PR, desde #150) y `linux-ci.yml` (manual, `with_bundle`, desde #127/#108) | `linux-ci.yml`/`linux-pr-ci.yml` en `main` |
@@ -422,7 +430,7 @@ sesión Wayland, Quorb por XWayland (`GDK_BACKEND=x11`), tres escritorios.
 
 | Nivel | Issue | Alcance | Validación |
 |---|---|---|---|
-| L1 | #106 — sesiones, secretos y login CLI nativos (**cerrada**) | Rutas Linux, backend real `keyring`/keyutils, login CLI y recuperación documentados | Validación de #106; límites de escritorio real explícitos en §6 |
+| L1 | #106 — sesiones, secretos y login CLI nativos (**cerrada**) | Rutas Linux, backend de entonces `keyring`/keyutils, login CLI y recuperación documentados | Validación histórica de #106; backend actual combinado desde #302 |
 | L2 | #107 — escritorio y widget nativos (**integrada; ajuste diagnóstico en #290**) | Bloque de compatibilidad y fixes de escritorio; tao#1204 integrado en `main` | Smoke de CI + ajustes pendientes de #290 |
 | L3 | #108 — empaquetar y documentar un build local verificable (**esta PR**) | `.deb` + `.AppImage` reproducibles, docs actualizados y gate Linux ya disponible | `linux-ci.yml` + `linux-pr-ci.yml` + evidencia de AppImage en §4.3 |
 
@@ -435,7 +443,7 @@ en este baseline).
 # --- Build-time deps (solo para contribuir / hacer cargo test) ---
 # Host Ubuntu 22.04/26.04:
 sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  libdbus-1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
   libsecret-1-dev libnotify-dev libgtk-3-dev
 # (o usar el devcontainer: `devcontainer up` según el Makefile — evita
 #  tocar el host; no requiere instalar nada en la máquina real)
@@ -463,7 +471,7 @@ sudo apt install linux-modules-extra-$(uname -r)
 |---|---|---|
 | `src-tauri/tauri.conf.json` | Windows-first con Linux: `nsis`/`msi` + `deb`/`appimage` | Confirmado desde #108: `bundle.targets` de `main` incluye los cuatro |
 | `src-tauri/src/lib.rs` `run()` | Arranque sin crash, single-instance, shortcuts, tray | Arranca en host: `.deb` 0.8.0 y AppImage 0.8.0 extraído, ambos exit 124 = vivo 30 s (evidencia de la versión actual en §4.4 de esta PR); panic tao#1204 resuelto e integrado (via #107) |
-| `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native` (keyutils, `linux-keyutils`) | Backend real: keyutils; persistencia y fallo sin keyutils validados en #106 (cerrada) |
+| `src-tauri/src/secrets.rs` | `keyring::Entry::new` con `linux-native-sync-persistent` | Secret Service persistente con caché keyutils; el baseline #106 medía el backend anterior solo keyutils |
 | `src-tauri/src/login.rs` | Login CLI con terminal Linux | Cascade `$TERMINAL → ghostty → kitty → alacritty`, validado en #106 (cerrada) |
 | `src-tauri/src/providers/` (11 módulos: anthropic_api, claude, codex, copilot, cursor, gemini, nan, nan_cloud, openai_api, openrouter) | Puro HTTP (reqwest) | Sin dependencia específica de plataforma; portables |
 | `src/lib/dock.ts` | Geometría de bordes (píxeles lógicos) | Sin dependencia de plataforma; portables |

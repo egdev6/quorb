@@ -36,7 +36,7 @@ base64 = "0.22"
 # Lectura (solo lectura) de la sesión local de Cursor
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Windows Credential Manager (y Keychain / Secret Service en otros SO)
-keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent", "crypto-rust"] }
 
 # Solo Windows: registro (PATH fresco) y Job Objects (contención del árbol de procesos).
 [target.'cfg(windows)'.dependencies]
