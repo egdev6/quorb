@@ -90,10 +90,186 @@ fn is_known(key: &str) -> bool {
     }
 }
 
+// keyring 3.6.3's persistent default builder constructs SsCredential rather
+// than KeyutilsPersistentCredential. Use the crate's combined credential
+// explicitly so existing keyutils-only entries remain readable.
+#[cfg(target_os = "linux")]
+struct LinuxPersistentBuilder;
+
+#[cfg(target_os = "linux")]
+impl keyring::credential::CredentialBuilderApi for LinuxPersistentBuilder {
+    fn build(
+        &self,
+        target: Option<&str>,
+        service: &str,
+        user: &str,
+    ) -> keyring::Result<Box<keyring::Credential>> {
+        let combined = keyring::keyutils_persistent::KeyutilsPersistentCredential::new_with_target(
+            target, service, user,
+        )?;
+        let persistent =
+            keyring::secret_service::SsCredential::new_with_target(target, service, user)?;
+        Ok(linux_promoting_credential(
+            Box::new(combined),
+            Box::new(persistent),
+            target,
+            service,
+            user,
+        ))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn init_linux_keyring() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| keyring::set_default_credential_builder(Box::new(LinuxPersistentBuilder)));
+}
+
+// The combined backend reads existing keyutils entries but does not copy
+// them to Secret Service. The same process-wide lock covers the cached read,
+// promotion, writes and deletes, so an old read cannot undo a later mutation.
+#[cfg(target_os = "linux")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LinuxCredentialId {
+    target: Option<String>,
+    service: String,
+    user: String,
+}
+
+#[cfg(target_os = "linux")]
+type LinuxCheckedKeys = std::collections::BTreeSet<LinuxCredentialId>;
+
+#[cfg(target_os = "linux")]
+fn linux_checked_keys() -> std::sync::MutexGuard<'static, LinuxCheckedKeys> {
+    static CHECKED: std::sync::OnceLock<std::sync::Mutex<LinuxCheckedKeys>> =
+        std::sync::OnceLock::new();
+    CHECKED
+        .get_or_init(|| std::sync::Mutex::new(LinuxCheckedKeys::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxPromotingCredential {
+    combined: Box<keyring::Credential>,
+    persistent: Box<keyring::Credential>,
+    id: LinuxCredentialId,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_promoting_credential(
+    combined: Box<keyring::Credential>,
+    persistent: Box<keyring::Credential>,
+    target: Option<&str>,
+    service: &str,
+    user: &str,
+) -> Box<keyring::Credential> {
+    Box::new(LinuxPromotingCredential {
+        combined,
+        persistent,
+        id: LinuxCredentialId {
+            target: target.map(str::to_owned),
+            service: service.to_owned(),
+            user: user.to_owned(),
+        },
+    })
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxPromotingCredential {
+    fn promote_if_missing(&self, secret: &[u8], checked: &mut LinuxCheckedKeys) {
+        if checked.contains(&self.id) {
+            return;
+        }
+        let completed = match self.persistent.get_secret() {
+            Ok(_) => true,
+            Err(keyring::Error::NoEntry) => self.persistent.set_secret(secret).is_ok(),
+            Err(_) => false,
+        };
+        if completed {
+            checked.insert(self.id.clone());
+        }
+    }
+
+    fn write(&self, write: impl FnOnce() -> keyring::Result<()>) -> keyring::Result<()> {
+        let mut checked = linux_checked_keys();
+        let result = write();
+        if result.is_ok() {
+            checked.insert(self.id.clone());
+        } else {
+            checked.remove(&self.id);
+        }
+        result
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl keyring::credential::CredentialApi for LinuxPromotingCredential {
+    fn set_password(&self, password: &str) -> keyring::Result<()> {
+        self.write(|| self.combined.set_password(password))
+    }
+
+    fn set_secret(&self, secret: &[u8]) -> keyring::Result<()> {
+        self.write(|| self.combined.set_secret(secret))
+    }
+
+    fn get_password(&self) -> keyring::Result<String> {
+        let mut checked = linux_checked_keys();
+        let password = self.combined.get_password()?;
+        self.promote_if_missing(password.as_bytes(), &mut checked);
+        Ok(password)
+    }
+
+    fn get_secret(&self) -> keyring::Result<Vec<u8>> {
+        let mut checked = linux_checked_keys();
+        let secret = self.combined.get_secret()?;
+        self.promote_if_missing(&secret, &mut checked);
+        Ok(secret)
+    }
+
+    fn delete_credential(&self) -> keyring::Result<()> {
+        let mut checked = linux_checked_keys();
+        let result = self.combined.delete_credential();
+        if matches!(&result, Ok(()) | Err(keyring::Error::NoEntry)) {
+            // Keyutils can briefly return an invalidated key after deletion.
+            // Keep a tombstone so such a read cannot recreate it in Secret Service.
+            checked.insert(self.id.clone());
+        } else {
+            checked.remove(&self.id);
+        }
+        result
+    }
+
+    fn get_attributes(&self) -> keyring::Result<std::collections::HashMap<String, String>> {
+        self.combined.get_attributes()
+    }
+
+    fn update_attributes(
+        &self,
+        attributes: &std::collections::HashMap<&str, &str>,
+    ) -> keyring::Result<()> {
+        self.combined.update_attributes(attributes)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self.combined.as_any()
+    }
+
+    fn debug_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.combined.debug_fmt(f)
+    }
+}
+
 fn entry(key: &str) -> Result<keyring::Entry, String> {
     if !is_known(key) {
         return Err(format!("Clave desconocida: {key}"));
     }
+    #[cfg(target_os = "linux")]
+    init_linux_keyring();
     keyring::Entry::new(crate::channel::current().identifier, key).map_err(|e| e.to_string())
 }
 
@@ -311,6 +487,8 @@ mod tests {
             }
         }
         let store = Arc::new(Mutex::new(Store::default()));
+        #[cfg(target_os = "linux")]
+        init_linux_keyring();
         keyring::set_default_credential_builder(Box::new(Builder(store.clone())));
         let key = (
             crate::channel::current().identifier.to_string(),
@@ -333,6 +511,9 @@ mod tests {
                 Err("No se pudo leer la clave de Resend del almacén seguro".into())
             );
             assert_eq!(store.lock().unwrap().data, before);
+            let err = set(RESEND_API_KEY, "rejected-test-value").unwrap_err();
+            assert!(!err.contains("rejected-test-value"));
+            assert_eq!(store.lock().unwrap().data, before);
         }
         assert!(store.lock().unwrap().calls.iter().all(|k| k == &key));
         store.lock().unwrap().failure = 0;
@@ -349,6 +530,444 @@ mod tests {
         assert_eq!(get_resend_api_key(), Ok(None));
         assert_eq!(status(&[]).get(RESEND_API_KEY), Some(&false));
         assert!(!store.lock().unwrap().data.contains_key(&key));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_entries_use_keyutils_with_secret_service_persistence() {
+        let e = entry(OPENROUTER_API_KEY).expect("entry Linux");
+        assert!(e
+            .get_credential()
+            .is::<keyring::keyutils_persistent::KeyutilsPersistentCredential>());
+    }
+
+    #[cfg(target_os = "linux")]
+    mod linux_promotion {
+        use super::*;
+        use keyring::credential::{Credential, CredentialApi, CredentialBuilderApi};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct Store {
+            cache: Option<Vec<u8>>,
+            persistent: Option<Vec<u8>>,
+            read_attempts: usize,
+            write_attempts: usize,
+            fail_persistent_read: bool,
+            fail_persistent_write: bool,
+            pause: Option<Pause>,
+        }
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum PausePoint {
+            CombinedRead,
+            PersistentRead,
+        }
+
+        struct Pause {
+            point: PausePoint,
+            reached: std::sync::mpsc::Sender<()>,
+            resume: std::sync::mpsc::Receiver<()>,
+        }
+
+        enum Backend {
+            Combined,
+            Cache,
+            Persistent,
+        }
+
+        struct Item {
+            store: Arc<Mutex<Store>>,
+            backend: Backend,
+        }
+
+        impl CredentialApi for Item {
+            fn set_secret(&self, value: &[u8]) -> keyring::Result<()> {
+                let mut store = self.store.lock().unwrap();
+                match self.backend {
+                    Backend::Persistent => {
+                        // Only direct promotion writes count here, not writes
+                        // delegated to the combined backend.
+                        store.write_attempts += 1;
+                        if store.fail_persistent_write {
+                            return Err(keyring::Error::Invalid(
+                                "store".into(),
+                                "unavailable".into(),
+                            ));
+                        }
+                        store.persistent = Some(value.to_vec());
+                    }
+                    Backend::Combined => {
+                        store.cache = Some(value.to_vec());
+                        store.persistent = Some(value.to_vec());
+                    }
+                    Backend::Cache => store.cache = Some(value.to_vec()),
+                }
+                Ok(())
+            }
+
+            fn get_secret(&self) -> keyring::Result<Vec<u8>> {
+                let mut store = self.store.lock().unwrap();
+                let (result, point) = match self.backend {
+                    Backend::Persistent => {
+                        store.read_attempts += 1;
+                        let result = if store.fail_persistent_read {
+                            Err(keyring::Error::Invalid(
+                                "store".into(),
+                                "unavailable".into(),
+                            ))
+                        } else {
+                            store.persistent.clone().ok_or(keyring::Error::NoEntry)
+                        };
+                        (result, Some(PausePoint::PersistentRead))
+                    }
+                    Backend::Combined => (
+                        store
+                            .cache
+                            .clone()
+                            .or_else(|| store.persistent.clone())
+                            .ok_or(keyring::Error::NoEntry),
+                        Some(PausePoint::CombinedRead),
+                    ),
+                    Backend::Cache => (store.cache.clone().ok_or(keyring::Error::NoEntry), None),
+                };
+                let pause = if store.pause.as_ref().map(|p| p.point) == point && point.is_some() {
+                    store.pause.take()
+                } else {
+                    None
+                };
+                drop(store);
+                if let Some(pause) = pause {
+                    pause.reached.send(()).unwrap();
+                    pause
+                        .resume
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .expect("el controlador debe liberar la lectura");
+                }
+                result
+            }
+
+            fn delete_credential(&self) -> keyring::Result<()> {
+                let mut store = self.store.lock().unwrap();
+                let value = match self.backend {
+                    Backend::Combined => {
+                        store.cache.take();
+                        store.persistent.take()
+                    }
+                    Backend::Cache => store.cache.take(),
+                    Backend::Persistent => store.persistent.take(),
+                };
+                value.map(|_| ()).ok_or(keyring::Error::NoEntry)
+            }
+
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        struct Builder {
+            store: Arc<Mutex<Store>>,
+            key: &'static str,
+        }
+
+        impl CredentialBuilderApi for Builder {
+            fn build(
+                &self,
+                target: Option<&str>,
+                service: &str,
+                user: &str,
+            ) -> keyring::Result<Box<Credential>> {
+                assert_eq!(target, None);
+                assert_eq!(service, crate::channel::current().identifier);
+                assert_eq!(user, self.key);
+                Ok(super::super::linux_promoting_credential(
+                    Box::new(Item {
+                        store: self.store.clone(),
+                        backend: Backend::Combined,
+                    }),
+                    Box::new(Item {
+                        store: self.store.clone(),
+                        backend: Backend::Persistent,
+                    }),
+                    target,
+                    service,
+                    user,
+                ))
+            }
+
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        fn run_in_child(name: &str) -> bool {
+            const CHILD: &str = "QUORB_LINUX_PROMOTION_MOCK_CHILD";
+            if std::env::var_os(CHILD).is_some() {
+                return false;
+            }
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name])
+                .env(CHILD, "1")
+                .output()
+                .expect("iniciar proceso aislado para el builder global");
+            assert!(
+                result.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(result.stderr.is_empty());
+            true
+        }
+
+        fn fixture(key: &'static str) -> (Arc<Mutex<Store>>, keyring::Entry, keyring::Entry) {
+            let store = Arc::new(Mutex::new(Store::default()));
+            super::super::init_linux_keyring();
+            keyring::set_default_credential_builder(Box::new(Builder {
+                store: store.clone(),
+                key,
+            }));
+            let cache = keyring::Entry::new_with_credential(Box::new(Item {
+                store: store.clone(),
+                backend: Backend::Cache,
+            }));
+            let persistent = keyring::Entry::new_with_credential(Box::new(Item {
+                store: store.clone(),
+                backend: Backend::Persistent,
+            }));
+            (store, cache, persistent)
+        }
+
+        #[test]
+        fn missing_secret_service_value_is_promoted_once() {
+            if run_in_child(
+                "secrets::tests::linux_promotion::missing_secret_service_value_is_promoted_once",
+            ) {
+                return;
+            }
+            let (store, cache, persistent) = fixture(OPENROUTER_API_KEY);
+            cache.set_password("synthetic-cache-value").unwrap(); // gitleaks:allow
+            assert!(matches!(
+                persistent.get_password(),
+                Err(keyring::Error::NoEntry)
+            ));
+            assert_eq!(
+                get(OPENROUTER_API_KEY).as_deref(),
+                Some("synthetic-cache-value")
+            ); // gitleaks:allow
+            assert_eq!(cache.get_password().unwrap(), "synthetic-cache-value"); // gitleaks:allow
+            assert_eq!(persistent.get_password().unwrap(), "synthetic-cache-value"); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().write_attempts, 1);
+            assert_eq!(
+                get(OPENROUTER_API_KEY).as_deref(),
+                Some("synthetic-cache-value")
+            ); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().write_attempts, 1);
+        }
+
+        #[test]
+        fn existing_secret_service_value_is_never_overwritten() {
+            if run_in_child("secrets::tests::linux_promotion::existing_secret_service_value_is_never_overwritten") {
+                return;
+            }
+            let (store, cache, persistent) = fixture(OPENROUTER_API_KEY);
+            cache.set_password("synthetic-cache-value").unwrap(); // gitleaks:allow
+            persistent.set_password("synthetic-existing-value").unwrap(); // gitleaks:allow
+            store.lock().unwrap().write_attempts = 0;
+            assert_eq!(
+                get(OPENROUTER_API_KEY).as_deref(),
+                Some("synthetic-cache-value")
+            ); // gitleaks:allow
+            assert_eq!(cache.get_password().unwrap(), "synthetic-cache-value"); // gitleaks:allow
+            assert_eq!(
+                persistent.get_password().unwrap(),
+                "synthetic-existing-value"
+            ); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().write_attempts, 0);
+        }
+
+        #[test]
+        fn failed_promotion_keeps_email_readable_and_retries() {
+            if run_in_child("secrets::tests::linux_promotion::failed_promotion_keeps_email_readable_and_retries") {
+                return;
+            }
+            let (store, cache, persistent) = fixture(RESEND_API_KEY);
+            cache.set_password("synthetic-email-value").unwrap(); // gitleaks:allow
+            store.lock().unwrap().fail_persistent_read = true;
+            assert_eq!(
+                get_resend_api_key(),
+                Ok(Some("synthetic-email-value".into()))
+            ); // gitleaks:allow
+            assert_eq!(cache.get_password().unwrap(), "synthetic-email-value"); // gitleaks:allow
+            assert!(matches!(
+                persistent.get_password(),
+                Err(keyring::Error::Invalid(_, _))
+            ));
+            assert_eq!(store.lock().unwrap().write_attempts, 0);
+            store.lock().unwrap().fail_persistent_read = false;
+            store.lock().unwrap().fail_persistent_write = true;
+            for attempts in 1..=2 {
+                assert_eq!(
+                    get_resend_api_key(),
+                    Ok(Some("synthetic-email-value".into()))
+                ); // gitleaks:allow
+                assert_eq!(cache.get_password().unwrap(), "synthetic-email-value"); // gitleaks:allow
+                assert!(matches!(
+                    persistent.get_password(),
+                    Err(keyring::Error::NoEntry)
+                ));
+                assert_eq!(store.lock().unwrap().write_attempts, attempts);
+            }
+            store.lock().unwrap().fail_persistent_write = false;
+            assert_eq!(
+                get_resend_api_key(),
+                Ok(Some("synthetic-email-value".into()))
+            ); // gitleaks:allow
+            assert_eq!(cache.get_password().unwrap(), "synthetic-email-value"); // gitleaks:allow
+            assert_eq!(persistent.get_password().unwrap(), "synthetic-email-value"); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().write_attempts, 3);
+            assert_eq!(
+                get_resend_api_key(),
+                Ok(Some("synthetic-email-value".into()))
+            ); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().write_attempts, 3);
+        }
+
+        #[test]
+        fn checked_keys_do_not_query_secret_service_on_later_reads() {
+            if run_in_child("secrets::tests::linux_promotion::checked_keys_do_not_query_secret_service_on_later_reads") {
+                return;
+            }
+            let (store, cache, persistent) = fixture(OPENROUTER_API_KEY);
+            cache.set_password("synthetic-cache-value").unwrap(); // gitleaks:allow
+            assert_eq!(
+                get(OPENROUTER_API_KEY).as_deref(),
+                Some("synthetic-cache-value")
+            ); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().read_attempts, 1);
+            assert_eq!(
+                get(OPENROUTER_API_KEY).as_deref(),
+                Some("synthetic-cache-value")
+            ); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().read_attempts, 1);
+            assert_eq!(persistent.get_password().unwrap(), "synthetic-cache-value"); // gitleaks:allow
+
+            let (store, _, persistent) = fixture(MINIMAX_API_KEY);
+            assert_eq!(set(MINIMAX_API_KEY, "synthetic-new-value"), Ok(())); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().read_attempts, 0);
+            assert_eq!(get(MINIMAX_API_KEY).as_deref(), Some("synthetic-new-value")); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().read_attempts, 0);
+            assert_eq!(persistent.get_password().unwrap(), "synthetic-new-value");
+            // gitleaks:allow
+        }
+
+        fn assert_race(key: &'static str, delete: bool, point: PausePoint) {
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let (store, cache, persistent) = fixture(key);
+            cache.set_password("synthetic-v1").unwrap(); // gitleaks:allow
+            let (reached_tx, reached_rx) = mpsc::channel();
+            let (resume_tx, resume_rx) = mpsc::channel();
+            store.lock().unwrap().pause = Some(Pause {
+                point,
+                reached: reached_tx,
+                resume: resume_rx,
+            });
+            let reader = std::thread::spawn(move || get(key));
+            reached_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("lectura pausada");
+            let (started_tx, started_rx) = mpsc::channel();
+            let (finished_tx, finished_rx) = mpsc::channel();
+            let writer = std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let result = set(key, if delete { "" } else { "synthetic-v2" }); // gitleaks:allow
+                finished_tx.send(result).unwrap();
+            });
+            started_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("escritura iniciada");
+            // Without serialization the writer completes while the reader is
+            // paused. With it the writer waits until the read is released.
+            let early = finished_rx.recv_timeout(Duration::from_millis(300));
+            let finished_before_resume = early.is_ok();
+            resume_tx.send(()).unwrap();
+            assert_eq!(reader.join().unwrap().as_deref(), Some("synthetic-v1")); // gitleaks:allow
+            let result = match early {
+                Ok(result) => result,
+                Err(mpsc::RecvTimeoutError::Timeout) => finished_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("escritura terminada"),
+                Err(err) => panic!("canal de escritura: {err}"),
+            };
+            assert_eq!(result, Ok(()));
+            writer.join().unwrap();
+            assert!(
+                !finished_before_resume,
+                "la escritura debe esperar a la lectura"
+            );
+            if delete {
+                assert!(matches!(cache.get_password(), Err(keyring::Error::NoEntry)));
+                assert!(matches!(
+                    persistent.get_password(),
+                    Err(keyring::Error::NoEntry)
+                ));
+                // Simulate keyutils briefly returning an invalidated value.
+                cache.set_password("synthetic-v1").unwrap(); // gitleaks:allow
+                let reads = store.lock().unwrap().read_attempts;
+                assert_eq!(get(key).as_deref(), Some("synthetic-v1")); // gitleaks:allow
+                assert_eq!(store.lock().unwrap().read_attempts, reads);
+                assert!(matches!(
+                    persistent.get_password(),
+                    Err(keyring::Error::NoEntry)
+                ));
+            } else {
+                assert_eq!(cache.get_password().unwrap(), "synthetic-v2"); // gitleaks:allow
+                assert_eq!(persistent.get_password().unwrap(), "synthetic-v2"); // gitleaks:allow
+            }
+        }
+
+        #[test]
+        fn racing_set_never_promotes_stale_values() {
+            if run_in_child(
+                "secrets::tests::linux_promotion::racing_set_never_promotes_stale_values",
+            ) {
+                return;
+            }
+            assert_race(OPENROUTER_API_KEY, false, PausePoint::PersistentRead);
+            assert_race(NAN_API_KEY, false, PausePoint::CombinedRead);
+        }
+
+        #[test]
+        fn racing_delete_never_resurrects_a_value() {
+            if run_in_child(
+                "secrets::tests::linux_promotion::racing_delete_never_resurrects_a_value",
+            ) {
+                return;
+            }
+            assert_race(MINIMAX_API_KEY, true, PausePoint::PersistentRead);
+            assert_race(RESEND_API_KEY, true, PausePoint::CombinedRead);
+        }
+
+        #[test]
+        fn existing_set_and_delete_are_delegated_to_the_combined_store() {
+            if run_in_child("secrets::tests::linux_promotion::existing_set_and_delete_are_delegated_to_the_combined_store") {
+                return;
+            }
+            let (store, cache, persistent) = fixture(OPENROUTER_API_KEY);
+            assert_eq!(set(OPENROUTER_API_KEY, "  synthetic-value  "), Ok(())); // gitleaks:allow
+            assert_eq!(cache.get_password().unwrap(), "synthetic-value"); // gitleaks:allow
+            assert_eq!(persistent.get_password().unwrap(), "synthetic-value"); // gitleaks:allow
+            assert_eq!(store.lock().unwrap().write_attempts, 0);
+            assert_eq!(set(OPENROUTER_API_KEY, ""), Ok(()));
+            assert!(matches!(cache.get_password(), Err(keyring::Error::NoEntry)));
+            assert!(matches!(
+                persistent.get_password(),
+                Err(keyring::Error::NoEntry)
+            ));
+            assert_eq!(store.lock().unwrap().write_attempts, 0);
+        }
     }
 
     #[test]
@@ -511,8 +1130,9 @@ mod tests {
     }
 
     /// Smoke manual de Secret Service real: verifica que el backend
-    /// `linux-native` del crate `keyring` persiste y recupera el valor a
-    /// través de Secret Service. Marcado `#[ignore]` para que no forme parte
+    /// `linux-native-sync-persistent` del crate `keyring` guarda y recupera
+    /// el valor. La prueba separada `linux_secret_service_persistent_store`
+    /// comprueba Secret Service directamente, sin pasar por la caché. Marcado `#[ignore]` para que no forme parte
     /// del `cargo test` de CI. NO se ejecuta a mano en un escritorio: corre
     /// en el entorno AISLADO del CI (`dbus-run-session` + `gnome-keyring`
     /// efímero, paso "Secret Service smoke" de linux-ci.yml), que es la única
@@ -563,6 +1183,150 @@ mod tests {
         ); // gitleaks:allow
         set(&key, "").expect("borrado con set vacío");
         assert!(get(&key).is_none(), "la clave debería quedar eliminada");
+    }
+
+    /// Comprueba el almacén persistente directamente y la compatibilidad con
+    /// entradas creadas por el backend keyutils anterior, sin usar la caché
+    /// para acreditar la persistencia.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requiere llavero aislado del CI"]
+    fn linux_secret_service_persistent_store() {
+        assert_smoke_isolation();
+        struct CleanupGuard(String);
+        impl Drop for CleanupGuard {
+            fn drop(&mut self) {
+                let _ = set(&self.0, "");
+            }
+        }
+
+        let key = scoped(
+            OPENROUTER_API_KEY,
+            &format!(
+                "openrouter:persistent-smoke-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos()
+            ),
+        );
+        assert!(crate::config::is_account_id(key.split_once('@').unwrap().1));
+        let service = crate::channel::current().identifier;
+        let native = keyring::Entry::new_with_credential(Box::new(
+            keyring::keyutils::KeyutilsCredential::new_with_target(None, service, &key)
+                .expect("entry keyutils anterior"),
+        ));
+        let persistent = keyring::Entry::new_with_credential(Box::new(
+            keyring::secret_service::SsCredential::new_with_target(None, service, &key)
+                .expect("entry directa de Secret Service"),
+        ));
+        assert!(matches!(
+            native.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
+        assert!(matches!(
+            persistent.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
+        let _guard = CleanupGuard(key.clone());
+
+        native
+            .set_password("valor-anterior-en-keyutils")
+            .expect("crear entrada con el backend anterior"); // gitleaks:allow
+        assert!(matches!(
+            persistent.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
+        assert_eq!(get(&key).as_deref(), Some("valor-anterior-en-keyutils")); // gitleaks:allow
+        assert_eq!(
+            persistent.get_password().expect("promoción persistente"),
+            "valor-anterior-en-keyutils"
+        ); // gitleaks:allow
+        assert_eq!(
+            native.get_password().expect("caché tras promoción"),
+            "valor-anterior-en-keyutils"
+        ); // gitleaks:allow
+
+        set(&key, "valor-persistente-de-prueba").expect("set persistente"); // gitleaks:allow
+        assert_eq!(
+            persistent.get_password().expect("lectura persistente"),
+            "valor-persistente-de-prueba"
+        ); // gitleaks:allow
+        set(&key, "").expect("borrado persistente");
+        assert!(matches!(
+            persistent.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
+    }
+
+    /// El fallo de Secret Service no debe aceptar el cambio ni dejar la
+    /// caché alterada. El bus inexistente se limita a un proceso hijo.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requiere llavero aislado del CI"]
+    fn linux_secret_service_unavailable_is_error() {
+        assert_smoke_isolation();
+        const CHILD: &str = "QUORB_SECRETS_SMOKE_NO_SERVICE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "secrets::tests::linux_secret_service_unavailable_is_error",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .expect("iniciar proceso aislado");
+            assert!(
+                result.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+
+        let key = scoped(
+            OPENROUTER_API_KEY,
+            &format!("openrouter:offline-smoke-{}", std::process::id()),
+        );
+        let native = keyring::Entry::new_with_credential(Box::new(
+            keyring::keyutils::KeyutilsCredential::new_with_target(
+                None,
+                crate::channel::current().identifier,
+                &key,
+            )
+            .expect("entry keyutils"),
+        ));
+        assert!(matches!(
+            native.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
+        struct CleanupGuard(keyring::Entry);
+        impl Drop for CleanupGuard {
+            fn drop(&mut self) {
+                let _ = self.0.delete_credential();
+            }
+        }
+        let guard = CleanupGuard(native);
+        guard
+            .0
+            .set_password("valor-anterior-en-cache")
+            .expect("crear valor anterior"); // gitleaks:allow
+        let tmp = std::env::var("QUORB_SECRETS_SMOKE_TMPHOME").unwrap();
+        std::env::set_var(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={tmp}/no-secret-service-bus"),
+        );
+        let err = set(&key, "valor-rechazado").expect_err("Secret Service ausente debe fallar"); // gitleaks:allow
+        assert!(!err.is_empty());
+        assert!(!err.contains("valor-rechazado"));
+        assert_eq!(
+            guard.0.get_password().expect("lectura de caché"),
+            "valor-anterior-en-cache"
+        ); // gitleaks:allow
     }
 
     /// Smoke manual de MIGRACIÓN del servicio legado, también `#[ignore]`:

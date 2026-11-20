@@ -1,0 +1,223 @@
+name: Attach Linux installers to existing release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable version of the existing release
+        required: true
+        type: string
+      source_sha:
+        description: Full lowercase SHA of the release tag, ancestor of main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-release-attach
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate the existing release and source
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.validate.outputs.sourceSha }}
+      version: ${{ steps.validate.outputs.version }}
+      release_id: ${{ steps.validate.outputs.releaseId }}
+    steps:
+      - name: Checkout trusted workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Validate release, tag and bundle names
+        id: validate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import { preflightRelease } from './scripts/linux-release-preflight.mjs';
+          const result = await preflightRelease();
+          for (const [key, value] of Object.entries(result)) {
+            appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + value + '\n');
+          }
+          NODE
+
+  build:
+    name: Build and verify Linux bundles
+    needs: preflight
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    outputs:
+      deb_sha256: ${{ steps.fingerprints.outputs.deb_sha256 }}
+      appimage_sha256: ${{ steps.fingerprints.outputs.appimage_sha256 }}
+      artifact_id: ${{ steps.bundles.outputs.artifact-id }}
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      # `runner` is not allowed in job-level env; derive the path at runtime.
+      - name: Set bundle directory
+        run: echo "BUNDLE_DIR=$RUNNER_TEMP/quorb-bundles" >> "$GITHUB_ENV"
+
+      - name: Checkout trusted verification tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Checkout validated build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+
+      - name: Install Tauri 2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libwebkit2gtk-4.1-dev \
+            libdbus-1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsecret-1-dev \
+            gnome-keyring \
+            libnotify-dev \
+            libfuse2 \
+            xvfb \
+            dbus \
+            dbus-x11
+
+      - name: Install locked frontend dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Build Linux bundles (deb + AppImage)
+        working-directory: source
+        run: npm run app:build
+
+      - name: Stage exactly the expected bundles
+        run: |
+          mkdir -p "$BUNDLE_DIR"
+          cp "source/src-tauri/target/release/bundle/deb/Quorb_${RELEASE_VERSION}_amd64.deb" "$BUNDLE_DIR/"
+          cp "source/src-tauri/target/release/bundle/appimage/Quorb_${RELEASE_VERSION}_amd64.AppImage" "$BUNDLE_DIR/"
+
+      - name: Launch AppImage directly (FUSE mount path)
+        run: |
+          APPIMAGE="$BUNDLE_DIR/Quorb_${RELEASE_VERSION}_amd64.AppImage"
+          chmod +x "$APPIMAGE"
+          set +e
+          timeout -k 10 60 dbus-run-session -- xvfb-run -a "$APPIMAGE" >/tmp/appimage-launch.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 124 ]; then
+            echo "AppImage launch failed (code $code)" >&2
+            tail -40 /tmp/appimage-launch.log >&2
+            exit 1
+          fi
+
+      - name: Build build-verify image
+        run: docker build -t quorb-build-verify .testcontainer
+
+      - name: Verify bundles in clean Ubuntu 22.04
+        run: |
+          test -f "$BUNDLE_DIR/Quorb_${RELEASE_VERSION}_amd64.deb"
+          test -f "$BUNDLE_DIR/Quorb_${RELEASE_VERSION}_amd64.AppImage"
+          docker run --rm -v "$BUNDLE_DIR:/artifacts" --platform linux/amd64 quorb-build-verify
+
+      - name: Fingerprint verified bundles
+        id: fingerprints
+        run: |
+          deb_hash="$(sha256sum "$BUNDLE_DIR/Quorb_${RELEASE_VERSION}_amd64.deb")"
+          appimage_hash="$(sha256sum "$BUNDLE_DIR/Quorb_${RELEASE_VERSION}_amd64.AppImage")"
+          echo "deb_sha256=${deb_hash%% *}" >> "$GITHUB_OUTPUT"
+          echo "appimage_sha256=${appimage_hash%% *}" >> "$GITHUB_OUTPUT"
+
+      - name: Retain verified bundles for this run
+        id: bundles
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: linux-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/quorb-bundles/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          overwrite: false
+
+  attach:
+    name: Attach verified bundles without overwrite
+    needs: [preflight, build]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      RELEASE_SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      RELEASE_ID: ${{ needs.preflight.outputs.release_id }}
+      DEB_SHA256: ${{ needs.build.outputs.deb_sha256 }}
+      APPIMAGE_SHA256: ${{ needs.build.outputs.appimage_sha256 }}
+    steps:
+      - name: Checkout trusted publication tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Download this run's verified bundles by artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/linux-release-verified
+
+      - name: Revalidate release and attach only the verified files and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # `runner` is allowed in step-level env, not in job-level env.
+          BUNDLE_DIR: ${{ runner.temp }}/linux-release-verified
+        run: node scripts/linux-release-attach.mjs

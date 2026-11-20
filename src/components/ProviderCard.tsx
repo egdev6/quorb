@@ -1,6 +1,18 @@
 import { useState } from 'react';
 import type { Locale, UsageReport } from '../lib/types';
-import { formatMoney, currentMeters, isStaleMeter, isStaleSpend, staleMark } from '../lib/format';
+import {
+  declaredLabel,
+  formatAmount,
+  formatBreakdownAmount,
+  formatExpiry,
+  formatMoney,
+  currentMeters,
+  isStaleMeter,
+  isStaleSpend,
+  planLabel,
+  staleMark,
+  unitLabel,
+} from '../lib/format';
 import { t } from '../i18n';
 import { MeterBar } from './MeterBar';
 import { popupMeterColor } from '../lib/popup-preferences';
@@ -57,6 +69,11 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
   const tone = STATUS_TONE[report.status];
   // Los medidores vigentes con porcentaje: la lista que comparte con el orbe y el detalle.
   const currentRings = currentMeters(report).filter((m) => m.percent != null);
+  // El saldo que declara el backend (id `balance`): es un saldo, no un límite, así que
+  // va en su propia línea, sin barra y sin porcentaje (con su caducidad).
+  const balances = report.meters.filter((m) => m.id === 'balance');
+  const limits = report.meters.filter((m) => m.id !== 'balance');
+  const breakdown = report.breakdown ?? [];
   // El gasto conservado (informe entero viejo) no se presenta como una cifra actual:
   // se ve, pero marcado como viejo y con la hora de su última lectura. La marca es la
   // misma que la de los medidores viejos (un solo texto: `staleMark`).
@@ -79,7 +96,7 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
         </span>
         <h2 className="eg-module-card__name">{report.name}</h2>
         {report.plan ? (
-          <span className="eg-status eg-status--neutral">{report.plan}</span>
+          <span className="eg-status eg-status--neutral">{planLabel(report.plan, locale)}</span>
         ) : (
           report.status !== 'ok' && <span className={`eg-status eg-status--${tone}`}>{t(locale, `details.status.${report.status}`)}</span>
         )}
@@ -90,9 +107,9 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
         )}
       </div>
 
-      {report.meters.length > 0 && (
+      {limits.length > 0 && (
         <div className="q-card__meters">
-          {report.meters.map((m) => {
+          {limits.map((m) => {
             // El índice de anillo se cuenta sobre la MISMA lista que usan el orbe y
             // el detalle: los medidores vigentes con porcentaje. Lo viejo no ocupa
             // lugar en la leyenda (ni aporta color ni clave de anillo).
@@ -113,6 +130,47 @@ export function ProviderCard({ report, locale = 'es' }: { report: UsageReport; l
             );
           })}
         </div>
+      )}
+
+      {balances.length > 0 && (
+        <div className="q-card__balances">
+          {balances.map((m) => {
+            const unit = unitLabel(m.unit, locale);
+            const expiry = formatExpiry(m.resetsAt, locale);
+            const stale = isStaleMeter(report, m);
+            return (
+              <div key={m.id || m.label} className={`q-balance${stale ? ' q-balance--stale' : ''}`} data-stale={stale ? 'true' : undefined}>
+                <span className="q-balance__label">
+                  {declaredLabel(m, locale)}
+                  {expiry && <span className="q-balance__expiry">{t(locale, 'details.balanceExpires', { when: expiry })}</span>}
+                </span>
+                <span className="q-balance__value">
+                  {m.used != null ? `${formatAmount(m.used, m.unit, locale)}${unit ? ` ${unit}` : ''}` : '—'}
+                  {stale && (
+                    <span className="eg-status eg-status--neutral q-balance__stale" title={t(locale, 'details.staleChipTitle')}>
+                      {staleMark(m.readAt ?? report.fetchedAt, locale)}
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {breakdown.length > 0 && (
+        <section className="q-breakdown">
+          <h4 className="q-breakdown__title">{t(locale, 'details.breakdown.title')}</h4>
+          <ul className="q-breakdown__list">
+            {breakdown.map((b) => (
+              <li className="q-breakdown__item" key={b.label}>
+                <span className="q-breakdown__label">{b.label}</span>
+                <span className="q-breakdown__value">{formatBreakdownAmount(b, locale)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="q-breakdown__note">{t(locale, 'details.breakdown.note')}</p>
+        </section>
       )}
 
       {spend && (

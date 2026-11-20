@@ -1,6 +1,6 @@
 [package]
 name = "quorb"
-version = "0.8.0"
+version = "0.9.1"
 description = "Edge-docked usage rings for your AI subscriptions and APIs"
 license = "MIT"
 repository = "https://github.com/egdev6/quorb"
@@ -36,7 +36,7 @@ base64 = "0.22"
 # Lectura (solo lectura) de la sesión local de Cursor
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Windows Credential Manager (y Keychain / Secret Service en otros SO)
-keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent", "crypto-rust"] }
 
 # Solo Windows: registro (PATH fresco), Job Objects (contención del árbol de
 # procesos) y el plugin de la bandeja unificada de Nexo (#281). El plugin se

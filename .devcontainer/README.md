@@ -31,7 +31,7 @@ from any host: Windows (Docker Desktop / WSL2) or Linux directly.
 - Node 22 + Rust stable (official devcontainer features, no remote scripts)
 - Tauri 2 Linux system dependencies (`libwebkit2gtk-4.1-dev`,
   `libayatana-appindicator3-dev`, `librsvg2-dev`, `libsecret-1-dev`,
-  `patchelf`, `build-essential`, …)
+  `libdbus-1-dev`, `pkg-config`, `patchelf`, `build-essential`, …)
 - `xvfb` + `dbus-run-session` for the headless smoke
 - cargo/npm caches in named volumes (`quorb-cargo-home`, `quorb-npm-cache`),
   persistent across rebuilds
