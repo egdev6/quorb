@@ -28,3 +28,5 @@ L5 — Lint fix rules for T3a/T3b: no behavior change. No `<form>` exists in `sr
 L6 — Slice boundary: T1-T2 form the tooling+format slice (format commit is mechanical, ~9.7k lines, reviewed by reproduction: `npx biome format --write` on `81e387f` yields `ef1b86c`). Inventory `docs/i18n-inventory.md` is refreshed once at the end (tree hashes move with every commit).
 
 L4 — Decision: exclude vendored `src/ds/egdev/` from Biome (header says it is a copied bundle, not to be edited by hand). lineWidth 160 chosen because it produced the smallest diff among 100/120/140/160 for the existing code.
+
+L7 — User verbatim: "fallan checks". PR #307 CI: (a) Static code safety blocked `lifecycle-hook` in package.json: `.github/security/policy.json` sets `allowedRootLifecycleHooks: []` on purpose, so `prepare` was replaced by `npm run hooks:install` (policy not weakened). (b) Windows `biome ci` failed on every file because the runner checks out with core.autocrlf (CRLF); `.gitattributes` now pins LF for Biome-checked files. Reproduced and fixed locally with a `core.autocrlf=true` clone (`biome ci` exit 0); `check-repository.mjs` ok: true. Commits `389506a` and its parent.
