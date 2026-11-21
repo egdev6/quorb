@@ -54,16 +54,43 @@ export function isUiText(s) {
 // ---------------------------------------------------------------------------
 
 const SKIP_ATTRS = new Set([
-  'accept', 'autoComplete', 'class', 'className', 'd', 'dir', 'fill', 'height', 'href', 'htmlFor', 'id', 'inputMode',
-  'key', 'lang', 'method', 'mode', 'name', 'pattern', 'rel', 'role', 'src', 'stroke', 'style', 'tabIndex', 'target',
-  'type', 'viewBox', 'width', 'xmlns',
+  'accept',
+  'autoComplete',
+  'class',
+  'className',
+  'd',
+  'dir',
+  'fill',
+  'height',
+  'href',
+  'htmlFor',
+  'id',
+  'inputMode',
+  'key',
+  'lang',
+  'method',
+  'mode',
+  'name',
+  'pattern',
+  'rel',
+  'role',
+  'src',
+  'stroke',
+  'style',
+  'tabIndex',
+  'target',
+  'type',
+  'viewBox',
+  'width',
+  'xmlns',
 ]);
 // Always visible to the user: kept whenever they hold a letter (except whole URLs).
 // Only ARIA attributes that carry readable text; state ones (aria-hidden, aria-live…) hold tokens.
 const VISIBLE_ATTR = /^(placeholder|title|alt|label|hint|aria-(label|description|placeholder|roledescription|valuetext))$/;
 // Wrappers a visible attribute value may hide its literals behind (`cond ? 'a' : 'b'`, `x ?? 'y'`).
 const isValueWrapper = (n) => ts.isJsxExpression(n) || ts.isConditionalExpression(n) || ts.isParenthesizedExpression(n) || ts.isBinaryExpression(n);
-const SKIP_CALLS = /^(console\.\w+|invoke|listen|emit|emitTo|once|\w+\.(addEventListener|removeEventListener|querySelector|querySelectorAll|getElementById|setAttribute|getItem|setItem|removeItem|matchMedia|toggle|add|remove|contains)|clsx|cn|classNames|require)$/;
+const SKIP_CALLS =
+  /^(console\.\w+|invoke|listen|emit|emitTo|once|\w+\.(addEventListener|removeEventListener|querySelector|querySelectorAll|getElementById|setAttribute|getItem|setItem|removeItem|matchMedia|toggle|add|remove|contains)|clsx|cn|classNames|require)$/;
 
 /** Visible-text candidates of one TS/TSX source, ordered by position. */
 export function extractTs(source, fileName) {
@@ -74,16 +101,16 @@ export function extractTs(source, fileName) {
   // URL, otherwise the `isUiText` shape heuristic.
   const add = (pos, raw, context) => {
     const text = raw.replace(/\s+/g, ' ').trim();
-    const keep = context === 'jsx' ? /\p{L}/u.test(text)
-      : context === 'attr' ? /\p{L}/u.test(text) && !/^\S+:\/\/\S*$/.test(text)
-      : isUiText(text);
+    const keep = context === 'jsx' ? /\p{L}/u.test(text) : context === 'attr' ? /\p{L}/u.test(text) && !/^\S+:\/\/\S*$/.test(text) : isUiText(text);
     if (keep) found.push({ pos, line: sf.getLineAndCharacterOfPosition(pos).line + 1, text });
   };
   // A literal compared with `===`/`!==` or used as a `case` label is a code value, not text.
   const isComparedLiteral = (node) => {
     const p = node.parent;
-    return (ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(p.operatorToken.kind))
-      || (ts.isCaseClause(p) && p.expression === node);
+    return (
+      (ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(p.operatorToken.kind)) ||
+      (ts.isCaseClause(p) && p.expression === node)
+    );
   };
   const visit = (node, context) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
@@ -185,7 +212,7 @@ export function extractRust(source) {
           j = close + 1;
           continue;
         }
-        out += { n: '\n', t: '\t', r: '', '0': '', '"': '"', "'": "'", '\\': '\\' }[e] ?? e;
+        out += { n: '\n', t: '\t', r: '', 0: '', '"': '"', "'": "'", '\\': '\\' }[e] ?? e;
         j += 2;
         continue;
       }
@@ -207,9 +234,13 @@ export function extractRust(source) {
       let level = 0;
       let j = i;
       do {
-        if (src[j] === '/' && src[j + 1] === '*') { level++; j += 2; }
-        else if (src[j] === '*' && src[j + 1] === '/') { level--; j += 2; }
-        else j++;
+        if (src[j] === '/' && src[j + 1] === '*') {
+          level++;
+          j += 2;
+        } else if (src[j] === '*' && src[j + 1] === '/') {
+          level--;
+          j += 2;
+        } else j++;
       } while (level > 0 && j < n);
       advance(j);
       continue;
@@ -229,7 +260,10 @@ export function extractRust(source) {
     if ((c === 'r' || (c === 'b' && next === 'r')) && !isIdent(src[i - 1])) {
       let j = c === 'b' ? i + 2 : i + 1;
       let hashes = 0;
-      while (src[j] === '#') { hashes++; j++; }
+      while (src[j] === '#') {
+        hashes++;
+        j++;
+      }
       if (src[j] === '"') {
         const close = '"' + '#'.repeat(hashes);
         const end = src.indexOf(close, j + 1);
@@ -390,7 +424,9 @@ function main(argv) {
     }
   }
   if (sites && (check || out !== DEFAULT_OUT)) {
-    process.stderr.write(`--sites prints site rows on stdout and cannot be combined with --check or --out\nusage: node scripts/i18n-inventory.mjs [--ref <commit>] [--out <file>] [--check] [--sites]\n`);
+    process.stderr.write(
+      `--sites prints site rows on stdout and cannot be combined with --check or --out\nusage: node scripts/i18n-inventory.mjs [--ref <commit>] [--out <file>] [--check] [--sites]\n`,
+    );
     return 2;
   }
   const { trees, files } = collect(process.cwd(), ref);
@@ -410,9 +446,13 @@ function main(argv) {
       const withoutHashes = (s) => s.replace(/^Generated by .* from the source trees .*$/m, '');
       if (current !== null && withoutHashes(current) === withoutHashes(doc)) {
         // Hashes-only drift: main moved the source trees without changing any text.
-        process.stderr.write(`${out} is out of date in its header tree hashes only (the listed texts still match); refresh them with: node scripts/i18n-inventory.mjs --out ${out}\n`);
+        process.stderr.write(
+          `${out} is out of date in its header tree hashes only (the listed texts still match); refresh them with: node scripts/i18n-inventory.mjs --out ${out}\n`,
+        );
       } else {
-        process.stderr.write(`${out} is out of date; regenerate with: node scripts/i18n-inventory.mjs --out ${out}\nnote: CI validates the merge of this branch with main; if main changed texts under src/ or src-tauri/src/, merge main into the branch and regenerate\n`);
+        process.stderr.write(
+          `${out} is out of date; regenerate with: node scripts/i18n-inventory.mjs --out ${out}\nnote: CI validates the merge of this branch with main; if main changed texts under src/ or src-tauri/src/, merge main into the branch and regenerate\n`,
+        );
       }
       return 1;
     }

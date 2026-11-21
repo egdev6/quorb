@@ -3,16 +3,7 @@
 // contrato sin DOM ni servidor X.
 
 import { describe, expect, it, vi } from 'vitest';
-import {
-  clickPanel,
-  closePanel,
-  createPanelCoordinator,
-  hoverPanel,
-  isReorderGesture,
-  NO_PANEL,
-  panelHoldsOpen,
-  type PanelState,
-} from './anchor-panel';
+import { clickPanel, closePanel, createPanelCoordinator, hoverPanel, isReorderGesture, NO_PANEL, panelHoldsOpen, type PanelState } from './anchor-panel';
 
 describe('the anchored panel state', () => {
   it('starts closed', () => {

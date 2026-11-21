@@ -47,16 +47,17 @@ describe('SettingsNav (SSR)', () => {
   // «Atajos», sumados a los errores de registro.
   it('counts shortcut warnings together with errors in the shortcuts nav badge', () => {
     const html = renderToStaticMarkup(
-      <SettingsNav {...navProps('es')} {...{ shortcutErrors: ['Ctrl+Alt+U: no se pudo registrar'], shortcutWarnings: ['Mostrar / ocultar (Ctrl+Alt+H): vía X11/XWayland'] }} />,
+      <SettingsNav
+        {...navProps('es')}
+        {...{ shortcutErrors: ['Ctrl+Alt+U: no se pudo registrar'], shortcutWarnings: ['Mostrar / ocultar (Ctrl+Alt+H): vía X11/XWayland'] }}
+      />,
     );
     expect(html).toContain('eg-menu__count">2</span>');
     expect(html).not.toContain('eg-menu__count">1</span>');
   });
 
   it('shows a badge for warnings alone when there are no errors', () => {
-    const html = renderToStaticMarkup(
-      <SettingsNav {...navProps('es')} {...{ shortcutErrors: [], shortcutWarnings: ['a', 'b', 'c'] }} />,
-    );
+    const html = renderToStaticMarkup(<SettingsNav {...navProps('es')} {...{ shortcutErrors: [], shortcutWarnings: ['a', 'b', 'c'] }} />);
     expect(html).toContain('eg-menu__count">3</span>');
   });
 
@@ -96,12 +97,8 @@ describe('SettingsHeadTitles (SSR)', () => {
   });
 
   it('renders the section descriptions in both locales', () => {
-    expect(renderToStaticMarkup(<SettingsHeadTitles locale="es" section="providers" />)).toContain(
-      'Qué se consulta y cómo se conecta cada proveedor.',
-    );
-    expect(renderToStaticMarkup(<SettingsHeadTitles locale="en" section="providers" />)).toContain(
-      'What gets checked and how each provider connects.',
-    );
+    expect(renderToStaticMarkup(<SettingsHeadTitles locale="es" section="providers" />)).toContain('Qué se consulta y cómo se conecta cada proveedor.');
+    expect(renderToStaticMarkup(<SettingsHeadTitles locale="en" section="providers" />)).toContain('What gets checked and how each provider connects.');
   });
 });
 

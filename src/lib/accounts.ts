@@ -7,8 +7,7 @@ import type { MessageKey } from '../i18n';
 export const providerOf = (id: string): string => id.split(':')[0];
 
 /** Secreto de la cuenta principal (`id` = proveedor) o de una adicional. */
-export const secretKey = (key: SecretKey, accountId: string): ScopedSecretKey =>
-  accountId.includes(':') ? `${key}@${accountId}` : key;
+export const secretKey = (key: SecretKey, accountId: string): ScopedSecretKey => (accountId.includes(':') ? `${key}@${accountId}` : key);
 
 /** Proveedores con login por CLI y carpeta de sesión propia por cuenta. */
 export const SESSION_DIR: Partial<Record<AccountProvider, { env: string; file: string }>> = {

@@ -4,16 +4,30 @@ import { ProviderGauge } from './ProviderGauge';
 import type { Meter, UsageReport } from '../lib/types';
 
 const meter = (label: string, windowSeconds: number | null, percent: number | null = 20): Meter => ({
-  id: '', label, windowSeconds, percent, used: null, limit: null, unit: null, resetsAt: null,
+  id: '',
+  label,
+  windowSeconds,
+  percent,
+  used: null,
+  limit: null,
+  unit: null,
+  resetsAt: null,
 });
 function colors(meters: Meter[], small = false, size = 60, id = 'claude') {
   const report: UsageReport = {
-    id, name: id, kind: 'subscription', status: 'ok', plan: null,
-    meters, spend: null, message: null, action: null, fetchedAt: '',
+    id,
+    name: id,
+    kind: 'subscription',
+    status: 'ok',
+    plan: null,
+    meters,
+    spend: null,
+    message: null,
+    action: null,
+    fetchedAt: '',
   };
   const html = renderToStaticMarkup(<ProviderGauge report={report} small={small} size={size} active={false} onHover={() => {}} />);
-  return [...html.matchAll(/class="eg-gauge__ring" style="([^"]*)"/g)]
-    .map((match) => match[1].match(/--c:([^;]+)/)?.[1]);
+  return [...html.matchAll(/class="eg-gauge__ring" style="([^"]*)"/g)].map((match) => match[1].match(/--c:([^;]+)/)?.[1]);
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -21,8 +35,16 @@ afterEach(() => vi.unstubAllGlobals());
 describe('ProviderGauge credential status badge', () => {
   function statusReport(status: Exclude<UsageReport['status'], 'warning'>): UsageReport {
     return {
-      id: 'claude', name: 'Claude', kind: 'subscription', status, plan: null,
-      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+      id: 'claude',
+      name: 'Claude',
+      kind: 'subscription',
+      status,
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '',
     };
   }
   function gauge(status: Exclude<UsageReport['status'], 'warning'>) {
@@ -57,8 +79,16 @@ describe('ProviderGauge popup focus', () => {
     vi.stubGlobal('navigator', { userAgent });
     const onHover = vi.fn();
     const report: UsageReport = {
-      id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
-      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+      id: 'claude',
+      name: 'Claude',
+      kind: 'subscription',
+      status: 'ok',
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '',
     };
     const button = ProviderGauge({ report, small: false, size: 60, active: false, onHover });
     const target = { matches: vi.fn(() => focusVisible) };
@@ -85,16 +115,14 @@ describe('ProviderGauge popup focus', () => {
     expect(pointer.onHover).toHaveBeenCalledWith(pointer.target);
   });
 
-  it.each(['Macintosh; Intel Mac OS X', 'X11; Linux x86_64'])(
-    'leaves all focus opening behavior unchanged on %s', (userAgent) => {
-      for (const focusVisible of [false, true]) {
-        const { button, event, onHover, target } = gauge(userAgent, focusVisible);
-        button.props.onFocus(event);
-        expect(onHover).toHaveBeenCalledWith(target);
-        expect(target.matches).not.toHaveBeenCalled();
-      }
-    },
-  );
+  it.each(['Macintosh; Intel Mac OS X', 'X11; Linux x86_64'])('leaves all focus opening behavior unchanged on %s', (userAgent) => {
+    for (const focusVisible of [false, true]) {
+      const { button, event, onHover, target } = gauge(userAgent, focusVisible);
+      button.props.onFocus(event);
+      expect(onHover).toHaveBeenCalledWith(target);
+      expect(target.matches).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe('ProviderGauge pointer-only enter', () => {
@@ -102,8 +130,16 @@ describe('ProviderGauge pointer-only enter', () => {
     vi.stubGlobal('navigator', { userAgent: 'X11; Linux x86_64' });
     const onHover = vi.fn();
     const report: UsageReport = {
-      id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
-      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+      id: 'claude',
+      name: 'Claude',
+      kind: 'subscription',
+      status: 'ok',
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '',
     };
     const button = ProviderGauge({ report, small: false, size: 60, active: false, onHover, onPointerEnter, onPointerLeave });
     const target = { matches: vi.fn(() => true) };
@@ -149,11 +185,23 @@ describe('ProviderGauge pointer-only enter', () => {
     const onPointerUp = vi.fn();
     const onPointerCancel = vi.fn();
     const report: UsageReport = {
-      id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
-      meters: [], spend: null, message: null, action: null, fetchedAt: '',
+      id: 'claude',
+      name: 'Claude',
+      kind: 'subscription',
+      status: 'ok',
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '',
     };
     const button = ProviderGauge({
-      report, small: false, size: 60, active: false, onHover: () => {},
+      report,
+      small: false,
+      size: 60,
+      active: false,
+      onHover: () => {},
       pointer: { onPointerUp, onPointerCancel },
     });
     button.props.onPointerCancel({ currentTarget: {} });
@@ -167,13 +215,19 @@ describe('ProviderGauge visual order', () => {
   // CSS `order`; el DOM no se reordena, así que el orbe necesita su posición
   // visual sin tocar su contrato (props, foco, puntero).
   const report: UsageReport = {
-    id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null,
-    meters: [], spend: null, message: null, action: null, fetchedAt: '',
+    id: 'claude',
+    name: 'Claude',
+    kind: 'subscription',
+    status: 'ok',
+    plan: null,
+    meters: [],
+    spend: null,
+    message: null,
+    action: null,
+    fetchedAt: '',
   };
   const gauge = (order?: number) =>
-    renderToStaticMarkup(
-      <ProviderGauge report={report} small={false} size={60} active={false} onHover={() => {}} order={order} />,
-    );
+    renderToStaticMarkup(<ProviderGauge report={report} small={false} size={60} active={false} onHover={() => {}} order={order} />);
 
   it('applies the visual position as the CSS order', () => {
     const html = gauge(2);
@@ -196,35 +250,31 @@ describe('ProviderGauge semantic colors', () => {
     expect(colors(meters, true, 60, id)).toEqual(['var(--ring-1)']);
   });
   it.each(['claude:work', 'codex', 'codex:work'])('retains semantic colors for session-based accounts %s', (id) => {
-    expect(colors([meter('Sesión', 18000), meter('Semana', 604800)], false, 60, id))
-      .toEqual(['var(--ring-2)', 'var(--ring-1)']);
+    expect(colors([meter('Sesión', 18000), meter('Semana', 604800)], false, 60, id)).toEqual(['var(--ring-2)', 'var(--ring-1)']);
   });
   it('uses configured weekly, hourly and other colors instead of ring positions', () => {
-    expect(colors([meter('Sesión · 5 h', 18000), meter('Semana', 604800), meter('Mes', 2592000)]))
-      .toEqual(['var(--ring-2)', 'var(--ring-1)', 'var(--ring-3)']);
+    expect(colors([meter('Sesión · 5 h', 18000), meter('Semana', 604800), meter('Mes', 2592000)])).toEqual(['var(--ring-2)', 'var(--ring-1)', 'var(--ring-3)']);
   });
   it('does not change color when provider order changes or a meter is missing', () => {
-    expect(colors([meter('Semana', 604800), meter('Sesión', 18000)]))
-      .toEqual(['var(--ring-1)', 'var(--ring-2)']);
+    expect(colors([meter('Semana', 604800), meter('Sesión', 18000)])).toEqual(['var(--ring-1)', 'var(--ring-2)']);
     expect(colors([meter('Diario', 86400)])).toEqual(['var(--ring-3)']);
   });
   it('keeps the peak meter category in compact mode', () => {
-    expect(colors([meter('Semana', 604800, 10), meter('Sesión', 18000, 90)], true))
-      .toEqual(['var(--ring-2)']);
-    expect(colors([meter('Semana', 604800, 90), meter('Sesión', 18000, 10)], true))
-      .toEqual(['var(--ring-1)']);
+    expect(colors([meter('Semana', 604800, 10), meter('Sesión', 18000, 90)], true)).toEqual(['var(--ring-2)']);
+    expect(colors([meter('Semana', 604800, 90), meter('Sesión', 18000, 10)], true)).toEqual(['var(--ring-1)']);
   });
   it('recognizes legacy labels without durations', () => {
-    expect(colors([meter('Sesión · 5 h', null), meter('Semana · todos', null), meter('Uso extra (mes)', null)]))
-      .toEqual(['var(--ring-2)', 'var(--ring-1)', 'var(--ring-3)']);
+    expect(colors([meter('Sesión · 5 h', null), meter('Semana · todos', null), meter('Uso extra (mes)', null)])).toEqual([
+      'var(--ring-2)',
+      'var(--ring-1)',
+      'var(--ring-3)',
+    ]);
   });
   it('uses duration metadata even with unrelated labels', () => {
-    expect(colors([meter('Quota A', 604800), meter('Quota B', 14400), meter('Quota C', null)]))
-      .toEqual(['var(--ring-1)', 'var(--ring-2)', 'var(--ring-3)']);
+    expect(colors([meter('Quota A', 604800), meter('Quota B', 14400), meter('Quota C', null)])).toEqual(['var(--ring-1)', 'var(--ring-2)', 'var(--ring-3)']);
   });
   it('filters unknown percentages, limits small circles, and renders a fallback', () => {
-    expect(colors([meter('Semana', 604800, null), meter('Sesión', 18000), meter('Mes', 2592000)], false, 32))
-      .toEqual(['var(--ring-2)', 'var(--ring-3)']);
+    expect(colors([meter('Semana', 604800, null), meter('Sesión', 18000), meter('Mes', 2592000)], false, 32)).toEqual(['var(--ring-2)', 'var(--ring-3)']);
     expect(colors([])).toEqual(['var(--ring-1)']);
   });
 });

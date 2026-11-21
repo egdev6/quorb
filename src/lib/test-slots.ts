@@ -31,16 +31,16 @@ export interface SlotSpec {
 
 /** Estados que `Widget` crea en un render, en orden de ejecución. */
 export const WIDGET_STATES = [
-  { name: 'config', initial: null },          // useWidgetStartup
-  { name: 'configFailed', initial: false },   // useWidgetStartup
-  { name: 'configError', initial: null },     // useWidgetStartup
+  { name: 'config', initial: null }, // useWidgetStartup
+  { name: 'configFailed', initial: false }, // useWidgetStartup
+  { name: 'configError', initial: null }, // useWidgetStartup
   { name: 'reports', initial: [] },
   { name: 'loading', initial: false },
   { name: 'updatedAt', initial: null },
   { name: 'error', initial: null },
   { name: 'geo', initial: null },
   { name: 'stripSize', initial: null },
-  { name: 'panel', initial: SKIP },           // NO_PANEL
+  { name: 'panel', initial: SKIP }, // NO_PANEL
   { name: 'anchorRel', initial: 0 },
   { name: 'dragging', initial: false },
   { name: 'pos', initial: { strip: { x: 0, y: 0 } } },
@@ -58,22 +58,22 @@ export const WIDGET_STATES = [
 
 /** Refs que `Widget` crea en un render, en orden de ejecución. */
 export const WIDGET_REFS = [
-  { name: 'generation', initial: 0 },         // useWidgetStartup
+  { name: 'generation', initial: 0 }, // useWidgetStartup
   { name: 'stripRef', initial: null },
   { name: 'peekRef', initial: null },
-  { name: 'widgetQueue', initial: SKIP },     // createLatestQueue()
+  { name: 'widgetQueue', initial: SKIP }, // createLatestQueue()
   { name: 'widgetBounds', initial: null },
   { name: 'widgetBoundsReadBack', initial: false },
   { name: 'placementInFlight', initial: false },
   { name: 'orbsRef', initial: null },
   { name: 'detailStateRef', initial: null },
   { name: 'detailReadyRef', initial: false },
-  { name: 'detailRevision', initial: SKIP },  // Date.now()
+  { name: 'detailRevision', initial: SKIP }, // Date.now()
   // #264/S32 (merge de #275): el puntero del detalle ya no se lee por ref,
   // lo comunica el propio detalle por eventos. Tres refs nuevas del Widget:
   { name: 'hoverRef', initial: 'outside' },
   { name: 'hoverAtRef', initial: 0 },
-  { name: 'nativeCrossingsRef', initial: SKIP },  // { widget: false, detail: false }
+  { name: 'nativeCrossingsRef', initial: SKIP }, // { widget: false, detail: false }
   { name: 'configRef', initial: null },
   { name: 'appliedConfigRef', initial: null },
   { name: 'reportsRef', initial: [] },
@@ -84,15 +84,15 @@ export const WIDGET_REFS = [
   { name: 'refreshEnv', initial: '' },
   { name: 'closeTimer', initial: undefined },
   { name: 'openTimer', initial: undefined },
-  { name: 'presenceRef', initial: SKIP },     // createDetailPresence(...)
+  { name: 'presenceRef', initial: SKIP }, // createDetailPresence(...)
   { name: 'shown', initial: false },
   { name: 'hiddenByUser', initial: false },
   { name: 'drag', initial: null },
   { name: 'orbDrag', initial: null },
   { name: 'lastReorderAt', initial: 0 },
-  { name: 'reorderHold', initial: SKIP },     // NO_HOLD (ReorderHold, #264/S23)
-  { name: 'openPeakRef', initial: SKIP },     // () => {}
-  { name: 'dragWork', initial: SKIP },        // Promise.resolve()
+  { name: 'reorderHold', initial: SKIP }, // NO_HOLD (ReorderHold, #264/S23)
+  { name: 'openPeakRef', initial: SKIP }, // () => {}
+  { name: 'dragWork', initial: SKIP }, // Promise.resolve()
   { name: 'dragMounted', initial: true },
 ] as const satisfies readonly SlotSpec[];
 

@@ -39,18 +39,13 @@ describe('StripTools i18n (SSR)', () => {
   });
 
   it('shows the update button with a localized tooltip when an update is available', () => {
-    const html = renderToStaticMarkup(
-      <StripTools {...props('en')} update={{ phase: 'available', info: { version: '1.2.3' } } as never} />,
-    );
+    const html = renderToStaticMarkup(<StripTools {...props('en')} update={{ phase: 'available', info: { version: '1.2.3' } } as never} />);
     expect(html).toContain('icon-btn--update');
     // `widget.updateTo` con interpolación de versión.
     expect(html).toContain('1.2.3');
     // Instalando: título `widget.updatingTo` + `data-spin`.
     const installing = renderToStaticMarkup(
-      <StripTools
-        {...props('en')}
-        update={{ phase: 'installing', info: { version: '1.2.3' }, progress: 50 } as never}
-      />,
+      <StripTools {...props('en')} update={{ phase: 'installing', info: { version: '1.2.3' }, progress: 50 } as never} />,
     );
     expect(installing).toContain('data-spin="true"');
     expect(installing).toContain('50 %');

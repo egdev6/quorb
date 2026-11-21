@@ -10,7 +10,9 @@ function assertWorkflowContract(workflow, active, windows) {
   assert.equal(active, workflow);
   const parts = workflow.split('    steps:\n');
   assert.equal(parts.length, 2);
-  assert.equal(parts[0], `name: macOS CI
+  assert.equal(
+    parts[0],
+    `name: macOS CI
 
 on:
   pull_request:
@@ -30,8 +32,12 @@ jobs:
     name: Tests and bundle (macOS ARM64)
     runs-on: macos-15
     timeout-minutes: 30
-`);
-  const steps = parts[1].split(/      - name: /).slice(1).map((step) => step.trimEnd());
+`,
+  );
+  const steps = parts[1]
+    .split(/      - name: /)
+    .slice(1)
+    .map((step) => step.trimEnd());
   const action = (name, ref, options) => `${name}\n        uses: ${ref}\n        with:\n${options}`;
   const refs = windows.match(/uses: (\S+)/g).map((line) => line.slice(6));
   assert.deepEqual(refs, [

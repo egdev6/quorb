@@ -30,7 +30,9 @@ export function useTextScale(): number {
     };
     const schedule = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => { read().catch(() => {}); }, SETTLE_MS);
+      timer = window.setTimeout(() => {
+        read().catch(() => {});
+      }, SETTLE_MS);
     };
     // A resolution query matches one exact ratio: re-arm it after every change.
     const arm = () => {
@@ -49,7 +51,10 @@ export function useTextScale(): number {
     read().catch(() => {});
     getCurrentWindow()
       .onScaleChanged(onChange)
-      .then((stop) => { if (disposed) stop(); else unlisten = stop; })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
       .catch(() => {});
     return () => {
       disposed = true;

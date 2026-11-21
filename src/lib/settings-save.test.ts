@@ -2,10 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Account, AppConfig, SecretStatus } from './types';
 import type { AutostartApplyOutcome } from './autostart-controller';
 import { accountReady } from './accounts';
-import { configPersistedAfterSave, createWriteQueue, enqueueCanonicalConfig, mixedSaveMessage, reloadSecretsAfterSave, runMixedSave, type MixedSaveDeps, type MixedSaveInput, type MixedSaveResult } from './settings-save';
+import {
+  configPersistedAfterSave,
+  createWriteQueue,
+  enqueueCanonicalConfig,
+  mixedSaveMessage,
+  reloadSecretsAfterSave,
+  runMixedSave,
+  type MixedSaveDeps,
+  type MixedSaveInput,
+  type MixedSaveResult,
+} from './settings-save';
 
-const config = (over: Record<string, unknown> = {}) =>
-  ({ refreshMinutes: 5, orbSize: 48, accentColor: '#ff0036', ...over }) as unknown as AppConfig;
+const config = (over: Record<string, unknown> = {}) => ({ refreshMinutes: 5, orbSize: 48, accentColor: '#ff0036', ...over }) as unknown as AppConfig;
 
 const confirmed = (desired: boolean): AutostartApplyOutcome => ({ ok: true, confirmed: desired, skipped: false });
 const failure = (message: string): Extract<AutostartApplyOutcome, { ok: false }> => ({ ok: false, stage: 'apply', message });
@@ -70,14 +79,18 @@ describe('enqueueCanonicalConfig', () => {
     let canonical: Partial<AppConfig> = { opacity: 0.2 };
     let release!: () => void;
     const live = queue.run(async () => {
-      await new Promise<void>((resolve) => { release = resolve; });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
       canonical = { opacity: 0.8 };
     });
     await Promise.resolve();
     const snapshot = config({ opacity: 0.2, refreshMinutes: 30 });
     const persisted = vi.fn(async (cfg: AppConfig) => cfg);
     const manual = enqueueCanonicalConfig(
-      (build) => queue.run(() => persisted(build())), snapshot, () => canonical,
+      (build) => queue.run(() => persisted(build())),
+      snapshot,
+      () => canonical,
     );
     expect(persisted).not.toHaveBeenCalled();
     release();
@@ -88,7 +101,7 @@ describe('enqueueCanonicalConfig', () => {
   });
 });
 
- describe('runMixedSave', () => {
+describe('runMixedSave', () => {
   it('does nothing when no part is dirty', async () => {
     const deps = setup();
     const result = await runMixedSave(input(), deps);

@@ -25,8 +25,7 @@ function fakeGit(files, { ancestor = true, tag = false } = {}) {
   return { fileAt: (_sha, file) => files[file] ?? null, isAncestor: () => ancestor, tagExists: () => tag };
 }
 
-const run = (overrides = {}, opts = {}) =>
-  checkRelease({ version: '0.1.1', sourceSha: SHA, git: fakeGit({ ...manifest('0.1.1'), ...overrides }, opts) });
+const run = (overrides = {}, opts = {}) => checkRelease({ version: '0.1.1', sourceSha: SHA, git: fakeGit({ ...manifest('0.1.1'), ...overrides }, opts) });
 
 test('acepta una fuente coherente, anclada en origin/main y con notas', () => {
   assert.deepEqual(run(), []);
@@ -35,7 +34,10 @@ test('acepta una fuente coherente, anclada en origin/main y con notas', () => {
 test('rechaza versiones inválidas o con inyección de shell', () => {
   for (const version of ['0.1', '0.1.1; touch pwned', '0.1.1$(id)', '0.1.1\nfoo', '../0.1.1']) {
     const errors = checkRelease({ version, sourceSha: SHA, git: fakeGit(manifest('0.1.1')) });
-    assert.ok(errors.some((e) => /version inválida/i.test(e)), `esperaba error para ${JSON.stringify(version)}`);
+    assert.ok(
+      errors.some((e) => /version inválida/i.test(e)),
+      `esperaba error para ${JSON.stringify(version)}`,
+    );
   }
 });
 
@@ -45,7 +47,10 @@ test('rechaza SHA incompleto, no hexadecimal o alterado', () => {
   assert.equal(isValidSha('Z'.repeat(40)), false);
   for (const sha of ['a'.repeat(39), 'Z'.repeat(40), `${SHA}; id`, `${SHA}\n`]) {
     const errors = checkRelease({ version: '0.1.1', sourceSha: sha, git: fakeGit(manifest('0.1.1')) });
-    assert.ok(errors.some((e) => /source_sha/i.test(e)), `esperaba error para ${JSON.stringify(sha)}`);
+    assert.ok(
+      errors.some((e) => /source_sha/i.test(e)),
+      `esperaba error para ${JSON.stringify(sha)}`,
+    );
   }
 });
 
@@ -57,7 +62,10 @@ test('rechaza una fuente que no es ancestro de origin/main', () => {
 test('rechaza manifiestos cuya versión no coincide con la solicitada', () => {
   for (const file of ['package.json', 'package-lock.json', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock']) {
     const errors = run({ [file]: manifest('0.1.1')[file].replaceAll('0.1.1', '0.1.0') });
-    assert.ok(errors.some((e) => e.includes(file)), `esperaba error para ${file}`);
+    assert.ok(
+      errors.some((e) => e.includes(file)),
+      `esperaba error para ${file}`,
+    );
   }
 });
 
@@ -66,7 +74,10 @@ test('exige notas de la versión no vacías dentro del commit fuente', () => {
   assert.ok(errors.some((e) => /docs\/releases\/v0\.1\.1\.md/.test(e)));
   for (const notes of ['', '   \n  ', '\r\n']) {
     const blank = run({ 'docs/releases/v0.1.1.md': notes });
-    assert.ok(blank.some((e) => /docs\/releases\/v0\.1\.1\.md/.test(e)), `esperaba error para notas ${JSON.stringify(notes)}`);
+    assert.ok(
+      blank.some((e) => /docs\/releases\/v0\.1\.1\.md/.test(e)),
+      `esperaba error para notas ${JSON.stringify(notes)}`,
+    );
   }
 });
 
@@ -84,7 +95,10 @@ test('exige una clave pública de updater minisign real, no placeholder ni basur
   ];
   for (const pubkey of bad) {
     const errors = run({ 'src-tauri/tauri.conf.json': JSON.stringify({ plugins: { updater: { pubkey } } }) });
-    assert.ok(errors.some((e) => /clave pública/.test(e)), `esperaba error para ${JSON.stringify(pubkey)}`);
+    assert.ok(
+      errors.some((e) => /clave pública/.test(e)),
+      `esperaba error para ${JSON.stringify(pubkey)}`,
+    );
   }
   assert.equal(isValidUpdaterPubkey(REAL_PUBKEY), true);
 });

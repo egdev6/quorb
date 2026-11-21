@@ -24,25 +24,31 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal() as typeof import('react');
+  const react = (await importOriginal()) as typeof import('react');
   return {
     ...react,
     useState: ((initial?: unknown) => {
       const index = harness.stateIndex++;
-      const value = index in harness.states ? harness.states[index]
-        : typeof initial === 'function' ? (initial as () => unknown)() : initial;
-      return [value, vi.fn((next: unknown) => {
-        harness.stateWrite(index, next);
-        const previous = index in harness.states ? harness.states[index] : value;
-        harness.states[index] = typeof next === 'function' ? (next as (p: unknown) => unknown)(previous) : next;
-      })] as unknown as ReturnType<typeof react.useState>;
+      const value = index in harness.states ? harness.states[index] : typeof initial === 'function' ? (initial as () => unknown)() : initial;
+      return [
+        value,
+        vi.fn((next: unknown) => {
+          harness.stateWrite(index, next);
+          const previous = index in harness.states ? harness.states[index] : value;
+          harness.states[index] = typeof next === 'function' ? (next as (p: unknown) => unknown)(previous) : next;
+        }),
+      ] as unknown as ReturnType<typeof react.useState>;
     }) as unknown as typeof react.useState,
     useRef: ((initial: unknown) => {
       const index = harness.refIndex++;
-      return harness.refs[index] ??= { current: initial };
+      return (harness.refs[index] ??= { current: initial });
     }) as unknown as typeof react.useRef,
-    useEffect: ((run: () => void | (() => void)) => { harness.effects.push({ run }); }) as unknown as typeof react.useEffect,
-    useLayoutEffect: ((run: () => void | (() => void)) => { harness.layoutEffects.push({ run }); }) as unknown as typeof react.useLayoutEffect,
+    useEffect: ((run: () => void | (() => void)) => {
+      harness.effects.push({ run });
+    }) as unknown as typeof react.useEffect,
+    useLayoutEffect: ((run: () => void | (() => void)) => {
+      harness.layoutEffects.push({ run });
+    }) as unknown as typeof react.useLayoutEffect,
   };
 });
 
@@ -55,11 +61,13 @@ const native = vi.hoisted(() => ({
   emitTo: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
-vi.mock('./lib/api', () => ({ api: {
-  setDetailBounds: native.setDetailBounds,
-  setSurfaceClip: native.setSurfaceClip,
-  showDetail: native.showDetail,
-} }));
+vi.mock('./lib/api', () => ({
+  api: {
+    setDetailBounds: native.setDetailBounds,
+    setSurfaceClip: native.setSurfaceClip,
+    showDetail: native.showDetail,
+  },
+}));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ hide: native.hide }) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}), emitTo: native.emitTo }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn(async () => {}) }));
@@ -70,17 +78,25 @@ const granted: PhysicalBounds = { x: 815, y: 88, w: 330, h: 400 };
 
 /** La llamada nativa no se pudo confirmar: la geometría no se aplicó. */
 const readFailed = (): DetailPlacementReport => ({
-  status: 'unverified', bounds: null, reason: 'read_failed', read_back: false,
+  status: 'unverified',
+  bounds: null,
+  reason: 'read_failed',
+  read_back: false,
 });
 
 /** La ventana todavía no era legible: informe blando, la geometría sí se pidió. */
 const notViewable = (): DetailPlacementReport => ({
-  status: 'unverified', bounds: null, reason: 'not_viewable', read_back: false,
+  status: 'unverified',
+  bounds: null,
+  reason: 'not_viewable',
+  read_back: false,
 });
 
 /** Colocación confirmada: el compositor informó la geometría efectiva. */
 const applied = (): DetailPlacementReport => ({
-  status: 'applied', bounds: granted, read_back: true,
+  status: 'applied',
+  bounds: granted,
+  read_back: true,
 });
 
 const detailState: DetailState = {
@@ -133,20 +149,19 @@ const flush = async () => {
  * componente también emite `ready` e `interaction`, así que se filtra por
  * destino, evento y tipo.
  */
-const failureNotices = () => native.emitTo.mock.calls
-  .filter(([target, event, payload]) => target === 'widget'
-    && event === DETAIL_EVENTS.interaction
-    && (payload as { kind?: string } | undefined)?.kind === 'placement-failed')
-  .map(([, , payload]) => payload as unknown as { revision: number; provider: string; kind: string });
+const failureNotices = () =>
+  native.emitTo.mock.calls
+    .filter(
+      ([target, event, payload]) =>
+        target === 'widget' && event === DETAIL_EVENTS.interaction && (payload as { kind?: string } | undefined)?.kind === 'placement-failed',
+    )
+    .map(([, , payload]) => payload as unknown as { revision: number; provider: string; kind: string });
 
 /**
  * Monta el panel con estado y ejecuta su efecto de placement real con la
  * secuencia de informes nativa indicada.
  */
-const runPlacement = async (
-  reports: DetailPlacementReport[],
-  place?: () => Promise<DetailPlacementReport>,
-) => {
+const runPlacement = async (reports: DetailPlacementReport[], place?: () => Promise<DetailPlacementReport>) => {
   harness.states = [];
   harness.stateIndex = 0;
   harness.refs = [];
@@ -172,7 +187,10 @@ describe('the detail placement effect (#250/S17)', () => {
   beforeEach(() => {
     // El lazo de reintento usa `window.setTimeout`: sin esperas reales.
     vi.stubGlobal('window', {
-      setTimeout: (fn: () => void) => { fn(); return 0; },
+      setTimeout: (fn: () => void) => {
+        fn();
+        return 0;
+      },
       clearTimeout: () => {},
       addEventListener: () => {},
       removeEventListener: () => {},
@@ -180,15 +198,22 @@ describe('the detail placement effect (#250/S17)', () => {
     });
     panelHeight = 400;
     resize = null;
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(callback: (entries: unknown[]) => void) { resize = callback; }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    });
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: (entries: unknown[]) => void) {
+          resize = callback;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     vi.stubGlobal('getComputedStyle', () => ({
-      borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
-      borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
+      borderTopLeftRadius: '14px',
+      borderTopRightRadius: '14px',
+      borderBottomRightRadius: '0px',
+      borderBottomLeftRadius: '0px',
     }));
     // El aviso a la tira es una promesa (el componente le encadena `.catch`).
     native.emitTo.mockImplementation(async () => {});
@@ -214,9 +239,7 @@ describe('the detail placement effect (#250/S17)', () => {
     // El cierre seguro avisa a la tira aunque el panel nunca se mostrara
     // (#250/S22): la tira debe saber que el detalle no pudo colocarse.
     expect(native.hide).toHaveBeenCalledTimes(1);
-    expect(failureNotices()).toEqual([
-      { revision: 1, provider: 'a', kind: 'placement-failed' },
-    ]);
+    expect(failureNotices()).toEqual([{ revision: 1, provider: 'a', kind: 'placement-failed' }]);
     if (typeof cleanup === 'function') cleanup();
   });
 
@@ -266,9 +289,7 @@ describe('the detail placement effect (#250/S17)', () => {
     expect(native.showDetail).toHaveBeenCalledTimes(1);
     expect(native.setSurfaceClip).toHaveBeenCalledTimes(1);
     // El cierre seguro avisa a la tira (#250/S22): el panel ya no está.
-    expect(failureNotices()).toEqual([
-      { revision: 1, provider: 'a', kind: 'placement-failed' },
-    ]);
+    expect(failureNotices()).toEqual([{ revision: 1, provider: 'a', kind: 'placement-failed' }]);
     if (typeof cleanup === 'function') cleanup();
   });
 
@@ -319,16 +340,16 @@ describe('the detail placement effect (#250/S17)', () => {
     expect(positioned()).toBe(false);
     expect(positionedMark()).toBe(false);
     // Y la tira se entera con un único aviso.
-    expect(failureNotices()).toEqual([
-      { revision: 1, provider: 'a', kind: 'placement-failed' },
-    ]);
+    expect(failureNotices()).toEqual([{ revision: 1, provider: 'a', kind: 'placement-failed' }]);
     if (typeof cleanup === 'function') cleanup();
   });
 
   it('neither hides nor notifies the strip when a newer layout superseded the failing job (#250/S22)', async () => {
     // La primera colocación se queda esperando...
     let release!: (report: DetailPlacementReport) => void;
-    const pending = new Promise<DetailPlacementReport>((resolve) => { release = resolve; });
+    const pending = new Promise<DetailPlacementReport>((resolve) => {
+      release = resolve;
+    });
     native.setDetailBounds.mockImplementationOnce(() => pending);
     const cleanup = await runPlacement([applied()]);
     // ...y mientras tanto llega un reajuste: el job viejo queda superado.
@@ -354,9 +375,7 @@ describe('the detail placement effect (#250/S17)', () => {
     const cleanup = await runPlacement([readFailed()]);
     expect(native.hide).toHaveBeenCalledTimes(1);
     // El aviso llega igual, una sola vez.
-    expect(failureNotices()).toEqual([
-      { revision: 1, provider: 'a', kind: 'placement-failed' },
-    ]);
+    expect(failureNotices()).toEqual([{ revision: 1, provider: 'a', kind: 'placement-failed' }]);
     warn.mockRestore();
     if (typeof cleanup === 'function') cleanup();
   });
@@ -366,7 +385,12 @@ describe('the detail placement effect (#250/S17)', () => {
     // oculta la ventana un reajuste nuevo lo supera.
     let calls = 0;
     let releaseHide!: () => void;
-    native.hide.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseHide = resolve; }));
+    native.hide.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseHide = resolve;
+        }),
+    );
     const cleanup = await runPlacement([], async () => (calls++ < 6 ? readFailed() : applied()));
     expect(native.hide).toHaveBeenCalledTimes(1);
     panelHeight = 500;

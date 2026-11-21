@@ -10,7 +10,20 @@ import { useLocale } from './i18n/use-locale';
 import { useTextScale } from './lib/useTextScale';
 import { reportSummary } from './lib/format';
 import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
-import { createLatestQueue, basePanelZoom, detailBounds, fitPanel, panelScaleFromTransform, physicalPanelBounds, sameFit, DETAIL_EVENTS, type DetailInteraction, type DetailState, type PanelFit, type PhysicalBounds } from './lib/detail-panel';
+import {
+  createLatestQueue,
+  basePanelZoom,
+  detailBounds,
+  fitPanel,
+  panelScaleFromTransform,
+  physicalPanelBounds,
+  sameFit,
+  DETAIL_EVENTS,
+  type DetailInteraction,
+  type DetailState,
+  type PanelFit,
+  type PhysicalBounds,
+} from './lib/detail-panel';
 import { samePlacement } from './lib/widget-placement';
 import { confirmDetailPlacement, detailPlacementFailed, retryDetailPlacement } from './detail-placement';
 
@@ -55,7 +68,9 @@ export function DetailPanel() {
     const state = dataRef.current;
     if (!state) return;
     emitTo('widget', DETAIL_EVENTS.interaction, {
-      revision: state.revision, provider: state.report.id, kind,
+      revision: state.revision,
+      provider: state.report.id,
+      kind,
     } satisfies DetailInteraction).catch(console.warn);
   };
 
@@ -69,16 +84,29 @@ export function DetailPanel() {
         const wasClosed = dataRef.current === null;
         dataRef.current = payload;
         // Invalidate an in-flight show immediately, before React commits new content.
-        enqueue(async () => { if (!payload) await getCurrentWindow().hide(); }).catch(console.warn);
+        enqueue(async () => {
+          if (!payload) await getCurrentWindow().hide();
+        }).catch(console.warn);
         // #215: the read-back cache resets with `positioned` so the first
         // placement after a reopen is never deduped against the old geometry.
-        if (!payload || wasClosed) { setPositioned(false); positionedRef.current = false; lastAppliedRef.current = null; lastAppliedReadBackRef.current = false; }
+        if (!payload || wasClosed) {
+          setPositioned(false);
+          positionedRef.current = false;
+          lastAppliedRef.current = null;
+          lastAppliedReadBackRef.current = false;
+        }
         setData(payload);
       });
-      if (disposed) { stateListener(); return; }
+      if (disposed) {
+        stateListener();
+        return;
+      }
       unlisteners.push(stateListener);
       const requestListener = await listen(DETAIL_EVENTS.requestReady, ready);
-      if (disposed) { requestListener(); return; }
+      if (disposed) {
+        requestListener();
+        return;
+      }
       unlisteners.push(requestListener);
       await ready();
     };
@@ -87,7 +115,9 @@ export function DetailPanel() {
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
       dataRef.current = null;
-      enqueue(async () => { await getCurrentWindow().hide(); }).catch(console.warn);
+      enqueue(async () => {
+        await getCurrentWindow().hide();
+      }).catch(console.warn);
     };
   }, [enqueue]);
 
@@ -138,7 +168,10 @@ export function DetailPanel() {
         // covers the widget below it. Physical bounds already include DPI rounding.
         // Only the confirmed (read-back) geometry reaches the cache; the requested
         // one never does (S3/D2).
-        const cache = (confirmed: PhysicalBounds) => { lastAppliedRef.current = confirmed; lastAppliedReadBackRef.current = true; };
+        const cache = (confirmed: PhysicalBounds) => {
+          lastAppliedRef.current = confirmed;
+          lastAppliedReadBackRef.current = true;
+        };
         /**
          * Cierre seguro uniforme (#250/S22): el panel deja de estar colocado,
          * se oculta y la tira se entera con un aviso. Lo usan las dos ramas
@@ -213,7 +246,10 @@ export function DetailPanel() {
     layout();
     const observer = new ResizeObserver((entries) => layout(entries[0]));
     observer.observe(panelRef.current);
-    return () => { disposed = true; observer.disconnect(); };
+    return () => {
+      disposed = true;
+      observer.disconnect();
+    };
   }, [data, enqueue, textScale]);
 
   useEffect(() => {
@@ -232,7 +268,15 @@ export function DetailPanel() {
     <div
       className="dock detail-dock"
       data-edge={data.edge}
-      style={{ '--panel-alpha': String(data.opacity), '--popup-primary': data.colors[0], '--ring-1': data.colors[0], '--ring-2': data.colors[1], '--ring-3': data.colors[2] } as CSSProperties}
+      style={
+        {
+          '--panel-alpha': String(data.opacity),
+          '--popup-primary': data.colors[0],
+          '--ring-1': data.colors[0],
+          '--ring-2': data.colors[1],
+          '--ring-3': data.colors[2],
+        } as CSSProperties
+      }
       onMouseEnter={() => interact('enter')}
       onMouseLeave={() => interact('leave')}
     >
@@ -243,18 +287,48 @@ export function DetailPanel() {
         aria-label={t(locale, 'details.panel.title', { name: data.report.name })}
         // No transitions/animations: a transitioned `transform` would make the measured
         // rect lag behind the fitted scale and corrupt the next measurement.
-        style={{ left: 0, top: 0, width: data.width / base, transform: `scale(${scale})`, transformOrigin: 'top left', transition: 'none', animation: 'none', overflow: 'hidden', '--orb': data.orbSize, visibility: positioned ? 'visible' : 'hidden' } as CSSProperties}
+        style={
+          {
+            left: 0,
+            top: 0,
+            width: data.width / base,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            transition: 'none',
+            animation: 'none',
+            overflow: 'hidden',
+            '--orb': data.orbSize,
+            visibility: positioned ? 'visible' : 'hidden',
+          } as CSSProperties
+        }
       >
         <ProviderCard report={data.report} locale={locale} />
         <section className="panel__insights" aria-labelledby="panel-insights-title">
-          <h2 id="panel-insights-title" className="panel__heading">{t(locale, 'details.panel.insightsHeading')}</h2>
+          <h2 id="panel-insights-title" className="panel__heading">
+            {t(locale, 'details.panel.insightsHeading')}
+          </h2>
           <ProviderDetails key={data.report.id} report={data.report} locale={locale} />
         </section>
         <div className="panel__actions">
-          {usageUrl && <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(usageUrl).catch(console.warn)}>{t(locale, 'details.panel.officialUsage')}</button>}
-          <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={async () => setToast((await copyText(reportSummary(data.report, new Date(), locale))) ? t(locale, 'details.copy.copied') : t(locale, 'details.copy.failed'))}>{toast ?? t(locale, 'details.copy.summary')}</button>
+          {usageUrl && (
+            <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(usageUrl).catch(console.warn)}>
+              {t(locale, 'details.panel.officialUsage')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="eg-btn eg-btn--ghost eg-btn--sm"
+            onClick={async () =>
+              setToast((await copyText(reportSummary(data.report, new Date(), locale))) ? t(locale, 'details.copy.copied') : t(locale, 'details.copy.failed'))
+            }
+          >
+            {toast ?? t(locale, 'details.copy.summary')}
+          </button>
         </div>
-        <footer className="panel__foot"><span>{t(locale, 'details.panel.updated', { when: updated })}</span><span>{t(locale, 'details.panel.everyMinutes', { mins: data.refreshMinutes })}</span></footer>
+        <footer className="panel__foot">
+          <span>{t(locale, 'details.panel.updated', { when: updated })}</span>
+          <span>{t(locale, 'details.panel.everyMinutes', { mins: data.refreshMinutes })}</span>
+        </footer>
         {data.error && <p className="panel__error">{data.error}</p>}
       </div>
     </div>

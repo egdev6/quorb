@@ -62,12 +62,7 @@ function assertStableIdentityAllowlist(source) {
   assert.equal(allowlist, '("es.egdev.quorb", ".quorb")');
 }
 
-const allowlistFixtureLines = [
-  'if !matches!(',
-  '    (profile.identifier, profile.home_dir),',
-  '    ("es.egdev.quorb", ".quorb")',
-  ')',
-];
+const allowlistFixtureLines = ['if !matches!(', '    (profile.identifier, profile.home_dir),', '    ("es.egdev.quorb", ".quorb")', ')'];
 for (const [label, endings] of [
   ['LF', ['\n', '\n', '\n']],
   ['CRLF', ['\r\n', '\r\n', '\r\n']],
@@ -80,10 +75,11 @@ for (const [label, endings] of [
   test(`stable identity allowlist rejects a foreign identity or extra profile with ${label}`, () => {
     assert.throws(() => assertStableIdentityAllowlist(fixture.replace('es.egdev.quorb', 'org.example.foreign')), assert.AssertionError);
     assert.throws(() => assertStableIdentityAllowlist(fixture.replace('".quorb"', '".foreign"')), assert.AssertionError);
-    assert.throws(() => assertStableIdentityAllowlist(fixture.replace(
-      '("es.egdev.quorb", ".quorb")',
-      '("es.egdev.quorb", ".quorb") | ("org.example.foreign", ".foreign")',
-    )), assert.AssertionError);
+    assert.throws(
+      () =>
+        assertStableIdentityAllowlist(fixture.replace('("es.egdev.quorb", ".quorb")', '("es.egdev.quorb", ".quorb") | ("org.example.foreign", ".foreign")')),
+      assert.AssertionError,
+    );
   });
 }
 

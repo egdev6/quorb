@@ -4,7 +4,17 @@ import { createElement, isValidElement, type PointerEvent as ReactPointerEvent, 
 import { renderToStaticMarkup } from 'react-dom/server';
 import hook from './useDockReveal.ts?raw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { finishReveal, peekRect, readyReveal, requestReveal, usesPeekWindow, waitForViewport, watchPreparation, REVEAL_DURATION, type RevealPhase } from './auto-hide';
+import {
+  finishReveal,
+  peekRect,
+  readyReveal,
+  requestReveal,
+  usesPeekWindow,
+  waitForViewport,
+  watchPreparation,
+  REVEAL_DURATION,
+  type RevealPhase,
+} from './auto-hide';
 import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
 import { DETAIL_EVENTS, physicalPanelBounds } from './detail-panel';
@@ -96,7 +106,8 @@ function findOrbPointers(node: ReactNode, out: OrbPointer[] = []): OrbPointer[] 
     for (const child of node) findOrbPointers(child, out);
     return out;
   }
-  if (!isValidElement<{ report?: { id: string }; pointer?: Omit<OrbPointer, 'id'>; onClick?: (el: HTMLElement) => void; children?: ReactNode }>(node)) return out;
+  if (!isValidElement<{ report?: { id: string }; pointer?: Omit<OrbPointer, 'id'>; onClick?: (el: HTMLElement) => void; children?: ReactNode }>(node))
+    return out;
   if (node.props.pointer && node.props.report) out.push({ id: node.props.report.id, ...node.props.pointer, onClick: node.props.onClick });
   return findOrbPointers(node.props.children, out);
 }
@@ -120,21 +131,32 @@ function findDock(node: ReactNode): DockHandlers | undefined {
 // Ref slots: useWidgetStartup consumes refs[0] (generation) before Widget's
 // own refs, so the drag/detail refs below start at 1 (#271, revisión).
 const widgetEffects = vi.hoisted(() => ({
-  states: [] as unknown[], stateIndex: 0,
+  states: [] as unknown[],
+  stateIndex: 0,
   // Iniciales que Widget pasa a cada useState/useRef, en orden de render.
   // El test de coherencia (#286) los compara contra la tabla de slots.
-  stateInitials: [] as unknown[], refInitials: [] as unknown[],
+  stateInitials: [] as unknown[],
+  refInitials: [] as unknown[],
   // Recuentos esperados de la tabla de slots (#286): el mock no puede importar
   // el módulo (hoisting), así que el test los inyecta aquí ANTES de renderizar
   // (`widgetEffects.expectedStateCount = WIDGET_STATE_COUNT`). Si un render
   // crea más hooks de los declarados, el guard estalla en el punto exacto.
   expectedStateCount: null as number | null,
   expectedRefCount: null as number | null,
-  refs: [] as { current: unknown }[], refIndex: 0,
-  getConfig: vi.fn(), openSettings: vi.fn(),
+  refs: [] as { current: unknown }[],
+  refIndex: 0,
+  getConfig: vi.fn(),
+  openSettings: vi.fn(),
   effects: [] as { run: () => void | (() => void); deps?: readonly unknown[]; name?: string }[],
-  bounds: vi.fn(), clip: vi.fn(), show: vi.fn(), innerSize: vi.fn(),
-  outerPosition: vi.fn(), setPosition: vi.fn(), monitors: vi.fn(), patch: vi.fn(), stateWrite: vi.fn(),
+  bounds: vi.fn(),
+  clip: vi.fn(),
+  show: vi.fn(),
+  innerSize: vi.fn(),
+  outerPosition: vi.fn(),
+  setPosition: vi.fn(),
+  monitors: vi.fn(),
+  patch: vi.fn(),
+  stateWrite: vi.fn(),
   cancel: vi.fn(async () => {}),
   listeners: new Map<string, ((event?: { payload?: unknown }) => void)[]>(),
   // Hook results isolated from the useState slots: text scale (#228) and reveal phase.
@@ -142,7 +164,7 @@ const widgetEffects = vi.hoisted(() => ({
   phase: undefined as RevealPhase | undefined,
 }));
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal() as typeof import('react');
+  const react = (await importOriginal()) as typeof import('react');
   return {
     ...react,
     useState: ((initial?: unknown) => {
@@ -155,14 +177,16 @@ vi.mock('react', async (importOriginal) => {
       if (expected != null && index >= expected) {
         throw new Error(`El Widget crea más useState (${index + 1}) de los que declara la tabla de slots (#286). Actualiza src/lib/test-slots.ts.`);
       }
-      const value = index in widgetEffects.states ? widgetEffects.states[index]
-        : typeof initial === 'function' ? initial() : initial;
+      const value = index in widgetEffects.states ? widgetEffects.states[index] : typeof initial === 'function' ? initial() : initial;
       // Commit state explicitly in tests, but preserve the actual updater result.
-      return [value, vi.fn((next: unknown) => {
-        widgetEffects.stateWrite(index, next);
-        const previous = index in widgetEffects.states ? widgetEffects.states[index] : value;
-        widgetEffects.states[index] = typeof next === 'function' ? next(previous) : next;
-      })];
+      return [
+        value,
+        vi.fn((next: unknown) => {
+          widgetEffects.stateWrite(index, next);
+          const previous = index in widgetEffects.states ? widgetEffects.states[index] : value;
+          widgetEffects.states[index] = typeof next === 'function' ? next(previous) : next;
+        }),
+      ];
     }) as typeof react.useState,
     useRef: ((initial: unknown) => {
       const index = widgetEffects.refIndex++;
@@ -171,7 +195,7 @@ vi.mock('react', async (importOriginal) => {
       if (expected != null && index >= expected) {
         throw new Error(`El Widget crea más useRef (${index + 1}) de los que declara la tabla de slots (#286). Actualiza src/lib/test-slots.ts.`);
       }
-      return widgetEffects.refs[index] ??= { current: initial };
+      return (widgetEffects.refs[index] ??= { current: initial });
     }) as typeof react.useRef,
     useEffect: ((run, deps) => {
       // El nombre del efecto: el arnés lo busca por nombre y no por el texto
@@ -192,18 +216,22 @@ vi.mock('./useUpdater', () => ({ useUpdaterMode: () => 'unknown' }));
 vi.mock('./wm-detect', () => ({
   detectWindowManager: vi.fn(async () => ({ displayBackend: 'x11' })),
 }));
-vi.mock('./api', () => ({ api: {
-  setWidgetBounds: widgetEffects.bounds,
-  setSurfaceClip: widgetEffects.clip,
-  patchConfig: widgetEffects.patch,
-  cancelWidgetPlacement: widgetEffects.cancel,
-  getConfig: widgetEffects.getConfig,
-  openSettings: widgetEffects.openSettings,
-} }));
+vi.mock('./api', () => ({
+  api: {
+    setWidgetBounds: widgetEffects.bounds,
+    setSurfaceClip: widgetEffects.clip,
+    patchConfig: widgetEffects.patch,
+    cancelWidgetPlacement: widgetEffects.cancel,
+    getConfig: widgetEffects.getConfig,
+    openSettings: widgetEffects.openSettings,
+  },
+}));
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
-    show: widgetEffects.show, innerSize: widgetEffects.innerSize,
-    outerPosition: widgetEffects.outerPosition, setPosition: widgetEffects.setPosition,
+    show: widgetEffects.show,
+    innerSize: widgetEffects.innerSize,
+    outerPosition: widgetEffects.outerPosition,
+    setPosition: widgetEffects.setPosition,
   }),
   availableMonitors: widgetEffects.monitors,
 }));
@@ -302,18 +330,32 @@ describe('auto-hide geometry and phases', () => {
 });
 
 describe('viewport handoff', () => {
-  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   function clock() {
     vi.useFakeTimers();
     const frames = new Map<number, FrameRequestCallback>();
     let next = 0;
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
-      requestAnimationFrame: (cb: FrameRequestCallback) => { frames.set(++next, cb); return next; },
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      requestAnimationFrame: (cb: FrameRequestCallback) => {
+        frames.set(++next, cb);
+        return next;
+      },
       cancelAnimationFrame: (id: number) => frames.delete(id),
     });
-    return { frames, frame: () => { const batch = [...frames.values()]; frames.clear(); for (const cb of batch) cb(0); } };
+    return {
+      frames,
+      frame: () => {
+        const batch = [...frames.values()];
+        frames.clear();
+        for (const cb of batch) cb(0);
+      },
+    };
   }
 
   it.each(['preparing', 'settling'] as RevealPhase[])('reports stalled %s once without advancing its phase or invoking a native retry', async (phase) => {
@@ -351,7 +393,9 @@ describe('viewport handoff', () => {
   it('waits for two rendered frames, then cancels the fallback timer', async () => {
     const c = clock();
     let done = false;
-    const pending = waitForViewport().then(() => { done = true; });
+    const pending = waitForViewport().then(() => {
+      done = true;
+    });
     c.frame();
     await Promise.resolve();
     expect(done).toBe(false);
@@ -433,10 +477,14 @@ describe('auto-hide reveal integration', () => {
 
 describe('Widget effect mutation ordering', () => {
   const geo = {
-    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    area: { x: 0, y: 0, w: 1920, h: 1080 },
+    sf: 1,
+    monitor: null,
     screen: { x: 0, y: 0, width: 1920, height: 1080 },
   };
-  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  const flush = async () => {
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+  };
   const commitWidget = () => {
     widgetEffects.stateIndex = 0;
     widgetEffects.refIndex = 0;
@@ -452,9 +500,8 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.refs[SLOT.stripRef].current = { dataset: {} };
     widgetEffects.refs[SLOT.peekRef].current = { dataset: {} };
     return {
-      placement: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[SLOT.geo])!,
-      drag: widgetEffects.effects.find(e => e.deps?.[0] === widgetEffects.states[SLOT.dragging]
-        && e.deps?.[1] === widgetEffects.states[SLOT.geo])!,
+      placement: widgetEffects.effects.find((e) => e.deps?.[0] === widgetEffects.states[SLOT.geo])!,
+      drag: widgetEffects.effects.find((e) => e.deps?.[0] === widgetEffects.states[SLOT.dragging] && e.deps?.[1] === widgetEffects.states[SLOT.geo])!,
       grip: grip!,
     };
   };
@@ -484,7 +531,8 @@ describe('Widget effect mutation ordering', () => {
     const strip = stripRect(geo.area, 'top', 0.5, 400 * scale, 80 * scale);
     const win = usesPeekWindow(phase) ? peekRect(strip, 'top', scale) : strip;
     return {
-      strip, win,
+      strip,
+      win,
       bounds: widgetEffects.bounds.mock.calls[0]?.[0],
       clip: widgetEffects.clip.mock.calls[0]?.[0],
       pos: widgetEffects.states[SLOT.pos],
@@ -496,8 +544,10 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.show.mockResolvedValue(undefined);
     widgetEffects.innerSize.mockResolvedValue({ width: 400, height: 80 });
     vi.stubGlobal('getComputedStyle', () => ({
-      borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
-      borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
+      borderTopLeftRadius: '14px',
+      borderTopRightRadius: '14px',
+      borderBottomRightRadius: '0px',
+      borderBottomLeftRadius: '0px',
     }));
     // SSR runs no React effects, so the #180 module decision store never sees
     // the mount-effect write; these tests drive the native branch directly.
@@ -545,10 +595,22 @@ describe('Widget effect mutation ordering', () => {
     expect(peek.pos).toEqual({ strip: { x: -176, y: 0 } });
   });
 
-  it.each([[1, 1], [1.06, 1.02], [1.25, 1.5]])('sends the detail the text-scaled strip and orb anchor (text %s, monitor %s)', (scale, sf) => {
+  it.each([
+    [1, 1],
+    [1.06, 1.02],
+    [1.25, 1.5],
+  ])('sends the detail the text-scaled strip and orb anchor (text %s, monitor %s)', (scale, sf) => {
     const report = {
-      id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
-      message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+      id: 'a',
+      name: 'A',
+      kind: 'subscription',
+      status: 'ok',
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '2026-11-01T00:00:00Z',
     } as unknown as UsageReport;
     widgetEffects.states[SLOT.reports] = [report];
     widgetEffects.states[SLOT.panel] = { providerId: 'a', anchored: true };
@@ -559,7 +621,9 @@ describe('Widget effect mutation ordering', () => {
     const sent = widgetEffects.refs.find((r) => (r.current as { report?: unknown } | null)?.report === report)!.current;
     const strip = stripRect(geo.area, 'top', 0.5, 400 * scale, 80 * scale);
     expect(sent).toMatchObject({
-      strip, anchor: strip.x + 30 * scale, scaleFactor: sf,
+      strip,
+      anchor: strip.x + 30 * scale,
+      scaleFactor: sf,
       maxHeight: panelHeightLimit(geo.area, 'top', strip),
     });
   });
@@ -606,7 +670,8 @@ describe('Widget effect mutation ordering', () => {
     configureNative();
     vi.useFakeTimers();
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
     });
     renderWidget(false);
     // El usuario oculta la tira desde la bandeja: la visibilidad es suya.
@@ -629,7 +694,8 @@ describe('Widget effect mutation ordering', () => {
     configureNative();
     vi.useFakeTimers();
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
     });
     renderWidget(false);
     const safetyNet = widgetEffects.effects.find((e) => e.deps?.length === 1 && e.run.toString().includes('setTimeout'));
@@ -653,14 +719,18 @@ describe('Widget effect mutation ordering', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
     widgetEffects.outerPosition.mockImplementation(async () => ({ ...nativePosition }));
-    widgetEffects.monitors.mockResolvedValue([{
-      name: 'display', scaleFactor: 1, position: { x: 0, y: 0 },
-      size: { width: 1920, height: 1080 },
-    }]);
+    widgetEffects.monitors.mockResolvedValue([
+      {
+        name: 'display',
+        scaleFactor: 1,
+        position: { x: 0, y: 0 },
+        size: { width: 1920, height: 1080 },
+      },
+    ]);
     widgetEffects.setPosition.mockImplementation((position: { x: number; y: number }) => {
       // Hold the async core command BEFORE native enqueue/ack. Once released,
       // apply and acknowledge together: there is no post-ack FIFO reordering.
-      return new Promise<void>(resolve => {
+      return new Promise<void>((resolve) => {
         releasePosition = () => {
           nativeDispatches++;
           nativePosition = { x: position.x, y: position.y };
@@ -670,19 +740,28 @@ describe('Widget effect mutation ordering', () => {
       });
     });
     widgetEffects.patch.mockImplementation(async (patch: { dockEdge: Edge; dockOffset: number; dockMonitor: string | null }) => ({
-      accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+      accounts: [],
+      nineRouter: { baseUrl: '' },
+      ...patch,
     }));
     widgetEffects.bounds.mockImplementation(async (bounds: { x: number; y: number }) => {
       nativePosition = { x: bounds.x, y: bounds.y };
     });
     const target = {
-      setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(),
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn(),
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 16, height: 80 }),
     };
-    const pointer = (screenY: number) => ({
-      button: 0, pointerId: 7, screenX: 768, screenY,
-      currentTarget: target, target: { closest: () => target }, preventDefault: vi.fn(),
-    }) as unknown as ReactPointerEvent<HTMLSpanElement>;
+    const pointer = (screenY: number) =>
+      ({
+        button: 0,
+        pointerId: 7,
+        screenX: 768,
+        screenY,
+        currentTarget: target,
+        target: { closest: () => target },
+        preventDefault: vi.fn(),
+      }) as unknown as ReactPointerEvent<HTMLSpanElement>;
 
     const { grip } = renderWidget(false);
     grip.onPointerDown(pointer(40));
@@ -721,13 +800,13 @@ describe('Widget effect mutation ordering', () => {
       await flush();
       await commitSnapIfReady();
       const canonical = widgetEffects.states[SLOT.config] as { dockEdge: Edge; dockOffset: number };
-      expect({ earlyReads, earlySnaps, edge: canonical.dockEdge, offset: canonical.dockOffset, nativePosition })
-        .toEqual({
-          earlyReads: delayBeforeDispatch ? 0 : 1,
-          earlySnaps: delayBeforeDispatch ? 0 : 1,
-          edge: 'bottom', offset: 0.4,
-          nativePosition: { x: 568, y: 1000 },
-        });
+      expect({ earlyReads, earlySnaps, edge: canonical.dockEdge, offset: canonical.dockOffset, nativePosition }).toEqual({
+        earlyReads: delayBeforeDispatch ? 0 : 1,
+        earlySnaps: delayBeforeDispatch ? 0 : 1,
+        edge: 'bottom',
+        offset: 0.4,
+        nativePosition: { x: 568, y: 1000 },
+      });
       expect(nativeDispatches).toBe(1);
       expect(widgetEffects.bounds).toHaveBeenCalledTimes(1);
       expect(frames.size).toBe(0);
@@ -750,24 +829,40 @@ describe('Widget effect mutation ordering', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
     widgetEffects.outerPosition.mockImplementation(async () => ({ ...position }));
-    widgetEffects.monitors.mockResolvedValue([{
-      name: 'display', scaleFactor: 1, position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 },
-    }]);
-    widgetEffects.setPosition.mockImplementation(async (next: { x: number; y: number }) => { position = { ...next }; });
+    widgetEffects.monitors.mockResolvedValue([
+      {
+        name: 'display',
+        scaleFactor: 1,
+        position: { x: 0, y: 0 },
+        size: { width: 1920, height: 1080 },
+      },
+    ]);
+    widgetEffects.setPosition.mockImplementation(async (next: { x: number; y: number }) => {
+      position = { ...next };
+    });
     widgetEffects.patch.mockImplementation(async (patch: { dockEdge: Edge; dockOffset: number }) => ({
-      accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+      accounts: [],
+      nineRouter: { baseUrl: '' },
+      ...patch,
     }));
     widgetEffects.bounds.mockImplementation(async (bounds: { x: number; y: number }) => {
       position = { x: bounds.x, y: bounds.y };
     });
     const target = {
-      setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(),
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn(),
       getBoundingClientRect: () => ({ left: gripLeft, top: 0, width: 16, height: 80 }),
     };
-    const pointer = (screenY: number, pointerId = 7) => ({
-      button: 0, pointerId, screenX: 768, screenY, currentTarget: target,
-      target: { closest: () => target }, preventDefault: vi.fn(),
-    }) as unknown as ReactPointerEvent<HTMLSpanElement>;
+    const pointer = (screenY: number, pointerId = 7) =>
+      ({
+        button: 0,
+        pointerId,
+        screenX: 768,
+        screenY,
+        currentTarget: target,
+        target: { closest: () => target },
+        preventDefault: vi.fn(),
+      }) as unknown as ReactPointerEvent<HTMLSpanElement>;
     const { grip } = renderWidget(false, false, sf);
     const runFrame = () => {
       const [id, callback] = [...frames.entries()][0];
@@ -778,15 +873,26 @@ describe('Widget effect mutation ordering', () => {
       grip.onPointerMove(pointer(screenY, pointerId));
       runFrame();
     };
-    const unmount = widgetEffects.effects.find(e => e.name === 'dragMountLifecycle')!.run();
+    const unmount = widgetEffects.effects.find((e) => e.name === 'dragMountLifecycle')!.run();
     return {
-      grip, pointer, acceptFrame, runFrame, frames, position: () => position, unmount,
-      applyPosition: (next: { x: number; y: number }) => { position = { x: next.x, y: next.y }; },
+      grip,
+      pointer,
+      acceptFrame,
+      runFrame,
+      frames,
+      position: () => position,
+      unmount,
+      applyPosition: (next: { x: number; y: number }) => {
+        position = { x: next.x, y: next.y };
+      },
     };
   };
 
   // PointerEvent.screenX is CSS px on Windows (#228, L7): physical = Δcss × sf × t.
-  it.each([[1.06, 1], [1.2, 1.25]])('moves the window by the CSS pointer delta times text scale %s and monitor scale %s', async (scale, sf) => {
+  it.each([
+    [1.06, 1],
+    [1.2, 1.25],
+  ])('moves the window by the CSS pointer delta times text scale %s and monitor scale %s', async (scale, sf) => {
     const f = dragFixture(scale, sf);
     f.grip.onPointerDown(f.pointer(40));
     await flush();
@@ -833,10 +939,17 @@ describe('Widget effect mutation ordering', () => {
     const f = dragFixture();
     const releases: (() => void)[] = [];
     const dispatched = new Set<number>();
-    widgetEffects.setPosition.mockImplementation((position: { x: number; y: number }) => new Promise<void>(resolve => {
-      const index = releases.length;
-      releases.push(() => { dispatched.add(index); f.applyPosition(position); resolve(); });
-    }));
+    widgetEffects.setPosition.mockImplementation(
+      (position: { x: number; y: number }) =>
+        new Promise<void>((resolve) => {
+          const index = releases.length;
+          releases.push(() => {
+            dispatched.add(index);
+            f.applyPosition(position);
+            resolve();
+          });
+        }),
+    );
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     f.acceptFrame(1000);
@@ -854,7 +967,7 @@ describe('Widget effect mutation ordering', () => {
     await up;
     expect(earlyReads).toBe(0);
     expect(dispatched.size).toBe(2);
-    expect(widgetEffects.setPosition.mock.calls.map(call => call[0].y)).toEqual([960, 860]);
+    expect(widgetEffects.setPosition.mock.calls.map((call) => call[0].y)).toEqual([960, 860]);
     expect(widgetEffects.states[SLOT.dragging]).toBe(false);
     expect(widgetEffects.states[SLOT.config]).toMatchObject({ dockEdge: 'bottom', dockOffset: 0.4 });
     const cleanup = commitWidget().placement.run();
@@ -866,9 +979,15 @@ describe('Widget effect mutation ordering', () => {
   it.each(['new gesture', 'unmount'])('drops accepted but undispatched frames after %s', async (cancel) => {
     const f = dragFixture();
     const releases: (() => void)[] = [];
-    widgetEffects.setPosition.mockImplementation((position: { x: number; y: number }) => new Promise<void>(resolve => {
-      releases.push(() => { f.applyPosition(position); resolve(); });
-    }));
+    widgetEffects.setPosition.mockImplementation(
+      (position: { x: number; y: number }) =>
+        new Promise<void>((resolve) => {
+          releases.push(() => {
+            f.applyPosition(position);
+            resolve();
+          });
+        }),
+    );
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     f.acceptFrame(1000);
@@ -889,15 +1008,19 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     let releaseRead!: (position: { x: number; y: number }) => void;
-    widgetEffects.outerPosition.mockImplementationOnce(() => new Promise(resolve => { releaseRead = resolve; }));
+    widgetEffects.outerPosition.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseRead = resolve;
+        }),
+    );
     const oldUp = f.grip.onPointerUp(f.pointer(40));
     await flush();
     f.grip.onPointerDown(f.pointer(40, 8));
     releaseRead({ x: 760, y: 0 });
     await oldUp;
     await flush();
-    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[SLOT.dragging] })
-      .toEqual({ patches: 0, dragging: true });
+    expect({ patches: widgetEffects.patch.mock.calls.length, dragging: widgetEffects.states[SLOT.dragging] }).toEqual({ patches: 0, dragging: true });
     f.acceptFrame(1000, 8);
     await flush();
     await f.grip.onPointerUp(f.pointer(1000, 8));
@@ -910,7 +1033,12 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     let releaseRead!: (position: { x: number; y: number }) => void;
-    widgetEffects.outerPosition.mockImplementationOnce(() => new Promise(resolve => { releaseRead = resolve; }));
+    widgetEffects.outerPosition.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseRead = resolve;
+        }),
+    );
     const up = f.grip.onPointerUp(f.pointer(40));
     await flush();
     if (typeof f.unmount === 'function') f.unmount();
@@ -982,7 +1110,12 @@ describe('Widget effect mutation ordering', () => {
     f.grip.onPointerDown(f.pointer(40));
     await flush();
     let releasePatch!: (config: unknown) => void;
-    widgetEffects.patch.mockImplementationOnce(() => new Promise(resolve => { releasePatch = resolve; }));
+    widgetEffects.patch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releasePatch = resolve;
+        }),
+    );
     const oldUp = f.grip.onPointerUp(f.pointer(40));
     await flush();
     expect(widgetEffects.patch).toHaveBeenCalledTimes(1);
@@ -1006,7 +1139,9 @@ describe('Widget effect mutation ordering', () => {
   it('cancels a queued drag clip when a newer placement supersedes it', async () => {
     configureNative();
     let releaseBounds!: () => void;
-    const pending = new Promise<void>(resolve => { releaseBounds = resolve; });
+    const pending = new Promise<void>((resolve) => {
+      releaseBounds = resolve;
+    });
     widgetEffects.bounds.mockImplementationOnce(() => pending);
     const cleanupDock = renderWidget(false).placement.run();
     await flush();
@@ -1029,7 +1164,9 @@ describe('Widget effect mutation ordering', () => {
   it('rejects a late drag size result before clipping or showing a newer placement', async () => {
     configureNative();
     let releaseSize!: (size: { width: number; height: number }) => void;
-    const pending = new Promise<{ width: number; height: number }>(resolve => { releaseSize = resolve; });
+    const pending = new Promise<{ width: number; height: number }>((resolve) => {
+      releaseSize = resolve;
+    });
     widgetEffects.innerSize.mockImplementationOnce(() => pending);
     const cleanupDrag = renderWidget(true).drag.run();
     await flush();
@@ -1056,10 +1193,16 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.clip.mockImplementation((clip: { radii: number[] }) => {
       const name = clip.radii[2] === 0 ? 'docked' : 'drag';
       events.push(`${name}:start`);
-      return new Promise<void>((resolve) => releases.push(() => { events.push(`${name}:end`); resolve(); }));
+      return new Promise<void>((resolve) =>
+        releases.push(() => {
+          events.push(`${name}:end`);
+          resolve();
+        }),
+      );
     });
     vi.stubGlobal('getComputedStyle', () => ({
-      borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
+      borderTopLeftRadius: '14px',
+      borderTopRightRadius: '14px',
       borderBottomRightRadius: rounded ? '14px' : '0px',
       borderBottomLeftRadius: rounded ? '14px' : '0px',
     }));
@@ -1079,9 +1222,11 @@ describe('Widget effect mutation ordering', () => {
     await flush();
     expect(events).toEqual(['docked:start', 'docked:end', 'drag:start', 'drag:end']);
     expect(widgetEffects.show).not.toHaveBeenCalled();
-    expect(widgetEffects.clip.mock.calls.map(call => [call[0].width, call[0].height]))
-      .toEqual([[400, 80], [400, 80]]);
-    expect(widgetEffects.clip.mock.calls.map(call => call[1])).toEqual([true, !autoHide]);
+    expect(widgetEffects.clip.mock.calls.map((call) => [call[0].width, call[0].height])).toEqual([
+      [400, 80],
+      [400, 80],
+    ]);
+    expect(widgetEffects.clip.mock.calls.map((call) => call[1])).toEqual([true, !autoHide]);
     if (typeof cleanupDrag === 'function') cleanupDrag();
   });
 
@@ -1097,7 +1242,10 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
     widgetEffects.states[SLOT.dragging] = false;
     let tree: ReactNode = null;
-    function CaptureStrip() { tree = Widget(); return tree; }
+    function CaptureStrip() {
+      tree = Widget();
+      return tree;
+    }
     renderToStaticMarkup(createElement(CaptureStrip));
     // La sesión de detalle vigente: revisión 5, proveedor 'a'.
     widgetEffects.refs[SLOT.detailStateRef].current = { revision: 5, report: { id: 'a' } };
@@ -1134,7 +1282,7 @@ describe('Widget effect mutation ordering', () => {
     // El detalle declara que no pudo colocarse...
     for (const handler of handlers) handler({ payload: { revision: 5, provider: 'a', kind: 'placement-failed' } });
     // ...la tira cierra el panel...
-expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: false });
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: false });
     // ...y la tira queda libre: el auto-ocultar puede replegarla (abajo).
     // Con el panel cerrado, la tira ya no está ocupada: el auto-ocultar vuelve
     // a replegarla (la tira se repinta con el panel ya cerrado).
@@ -1184,14 +1332,26 @@ expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: f
   it('cancels the pending open timer when the detail declares a placement failure (#250/S22)', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
-      addEventListener: () => {}, removeEventListener: () => {},
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      addEventListener: () => {},
+      removeEventListener: () => {},
     });
     // Un orbe visible: el puntero puede pasar por encima y agendar la apertura.
-    widgetEffects.states[SLOT.reports] = [{
-      id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
-      message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
-    } as unknown as UsageReport];
+    widgetEffects.states[SLOT.reports] = [
+      {
+        id: 'a',
+        name: 'A',
+        kind: 'subscription',
+        status: 'ok',
+        plan: null,
+        meters: [],
+        spend: null,
+        message: null,
+        action: null,
+        fetchedAt: '2026-11-01T00:00:00Z',
+      } as unknown as UsageReport,
+    ];
     // El panel está cerrado: la apertura del orbe queda pendiente.
     widgetEffects.states[SLOT.panel] = { providerId: null, anchored: false };
     const { listener, tree } = renderStrip(false);
@@ -1214,7 +1374,9 @@ expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: null, anchored: f
 
 describe('the localized placement reason', () => {
   const geo = {
-    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    area: { x: 0, y: 0, w: 1920, h: 1080 },
+    sf: 1,
+    monitor: null,
     screen: { x: 0, y: 0, width: 1920, height: 1080 },
   };
   // Hook slots of Widget (useDockReveal/useUpdaterMode are isolated above);
@@ -1311,10 +1473,14 @@ describe('the localized placement reason', () => {
 // neutro, y la colocación normal (efecto real) mostrando antes del temporizador.
 describe('Widget startup wiring (#271, revisión)', () => {
   const geo = {
-    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    area: { x: 0, y: 0, w: 1920, h: 1080 },
+    sf: 1,
+    monitor: null,
     screen: { x: 0, y: 0, width: 1920, height: 1080 },
   };
-  const flush = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
+  const flush = async () => {
+    for (let i = 0; i < 24; i++) await Promise.resolve();
+  };
   /** Renderiza el Widget completo y devuelve el HTML SSR actual. */
   const renderHtml = () => {
     widgetEffects.stateIndex = 0;
@@ -1326,7 +1492,8 @@ describe('Widget startup wiring (#271, revisión)', () => {
   const useFakeWindowTimers = () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
     });
   };
   const configureNative = () => {
@@ -1338,8 +1505,10 @@ describe('Widget startup wiring (#271, revisión)', () => {
     widgetEffects.show.mockResolvedValue(undefined);
     widgetEffects.innerSize.mockResolvedValue({ width: 400, height: 80 });
     vi.stubGlobal('getComputedStyle', () => ({
-      borderTopLeftRadius: '14px', borderTopRightRadius: '14px',
-      borderBottomRightRadius: '0px', borderBottomLeftRadius: '0px',
+      borderTopLeftRadius: '14px',
+      borderTopRightRadius: '14px',
+      borderBottomRightRadius: '0px',
+      borderBottomLeftRadius: '0px',
     }));
     // El efecto de colocación mide el surface montado; los refs se llenan en
     // el render de SSR, aquí los simulamos para que `measureSurfaceClip` pueda
@@ -1376,7 +1545,11 @@ describe('Widget startup wiring (#271, revisión)', () => {
     useFakeWindowTimers();
     widgetEffects.show.mockResolvedValue(undefined);
     let resolveConfig!: (c: unknown) => void;
-    widgetEffects.getConfig.mockReturnValue(new Promise((res) => { resolveConfig = res; }));
+    widgetEffects.getConfig.mockReturnValue(
+      new Promise((res) => {
+        resolveConfig = res;
+      }),
+    );
     pendingStates();
     const first = renderHtml();
     // Neutro sin texto localizado, aunque el idioma guardado sea inglés.
@@ -1497,14 +1670,26 @@ describe('Widget startup wiring (#271, revisión)', () => {
 // `mouseleave` is dropped, so the detail's own `leave` has to arm the close.
 describe('hover presence wiring', () => {
   const geo = {
-    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    area: { x: 0, y: 0, w: 1920, h: 1080 },
+    sf: 1,
+    monitor: null,
     screen: { x: 0, y: 0, width: 1920, height: 1080 },
   };
   const report = {
-    id: 'a', name: 'A', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
-    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+    id: 'a',
+    name: 'A',
+    kind: 'subscription',
+    status: 'ok',
+    plan: null,
+    meters: [],
+    spend: null,
+    message: null,
+    action: null,
+    fetchedAt: '2026-11-01T00:00:00Z',
   } as unknown as UsageReport;
-  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  const flush = async () => {
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+  };
 
   /**
    * The real strip handlers and the real detail interaction listener: the
@@ -1516,8 +1701,16 @@ describe('hover presence wiring', () => {
 
   /** Un segundo orbe de la tira: el bloqueo tras reordenar no puede cubrir la tira entera (#264/S23). */
   const reportB = {
-    id: 'b', name: 'B', kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
-    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
+    id: 'b',
+    name: 'B',
+    kind: 'subscription',
+    status: 'ok',
+    plan: null,
+    meters: [],
+    spend: null,
+    message: null,
+    action: null,
+    fetchedAt: '2026-11-01T00:00:00Z',
   } as unknown as UsageReport;
 
   const wire = async (anchored = false, panel: PanelState = { providerId: 'a', anchored }) => {
@@ -1549,13 +1742,12 @@ describe('hover presence wiring', () => {
     // Its deps start with the active report; with no panel there is no active
     // report and they start with `null`. Either way it is the only effect whose
     // second dep is the geometry and whose dep list is the long one.
-    const detailState = widgetEffects.effects.find((e) => e.deps?.[0] === report)
-      ?? widgetEffects.effects.find((e) => e.deps?.[1] === geo && e.deps.length > 10)!;
+    const detailState =
+      widgetEffects.effects.find((e) => e.deps?.[0] === report) ?? widgetEffects.effects.find((e) => e.deps?.[1] === geo && e.deps.length > 10)!;
     detailState.run();
     const published = widgetEffects.refs
       .map((r) => r.current)
-      .find((v): v is { revision: number; report: { id: string } } =>
-        !!v && typeof v === 'object' && 'report' in v)!;
+      .find((v): v is { revision: number; report: { id: string } } => !!v && typeof v === 'object' && 'report' in v)!;
     // The listener that receives the detail window's interaction events.
     widgetEffects.listeners.delete(DETAIL_EVENTS.interaction);
     // The listener that receives the native pointer relay (#264/S16).
@@ -1577,23 +1769,21 @@ describe('hover presence wiring', () => {
       orbs,
       /** The effect that publishes the detail state (and its presence write). */
       detailState: () => detailState.run(),
-      detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => (
-        h({ payload: { revision: published.revision, provider: 'a', kind } })
-      )),
+      detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => h({ payload: { revision: published.revision, provider: 'a', kind } })),
       /** The native relay of the backend: GTK's enter/leave (#264/S16). */
-      native: (surface: 'widget' | 'detail', kind: 'enter' | 'leave') => nativeHandlers.forEach((h) => (
-        h({ payload: { surface, kind } })
-      )),
+      native: (surface: 'widget' | 'detail', kind: 'enter' | 'leave') => nativeHandlers.forEach((h) => h({ payload: { surface, kind } })),
     };
   };
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
       // The viewport of the strip: the reorder hold needs to know if the
       // pointer was released inside the window.
-      innerWidth: 1920, innerHeight: 1080,
+      innerWidth: 1920,
+      innerHeight: 1080,
     });
     // #264/S23: el hit-test que lee el orbe bajo el puntero al soltar un orbe.
     // En este arnés no hay layout, así que el orbe es fijo.
@@ -2067,13 +2257,24 @@ describe('hover presence wiring', () => {
 // (`.strip__orbs` es flex).
 describe('the reorder preview keeps the DOM still (#264/L18)', () => {
   const geo = {
-    area: { x: 0, y: 0, w: 1920, h: 1080 }, sf: 1, monitor: null,
+    area: { x: 0, y: 0, w: 1920, h: 1080 },
+    sf: 1,
+    monitor: null,
     screen: { x: 0, y: 0, width: 1920, height: 1080 },
   };
-  const report = (id: string) => ({
-    id, name: id, kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
-    message: null, action: null, fetchedAt: '2026-11-01T00:00:00Z',
-  } as unknown as UsageReport);
+  const report = (id: string) =>
+    ({
+      id,
+      name: id,
+      kind: 'subscription',
+      status: 'ok',
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '2026-11-01T00:00:00Z',
+    }) as unknown as UsageReport;
 
   /** Los orbes del markup: su id y su `order` de CSS, en el orden del DOM. */
   const orbs = (markup: string) =>
@@ -2094,7 +2295,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     widgetEffects.states[SLOT.config] = {
-      providerOrder: ['a', 'b', 'c'], hiddenProviders: [], accounts: [], nineRouter: { baseUrl: '' },
+      providerOrder: ['a', 'b', 'c'],
+      hiddenProviders: [],
+      accounts: [],
+      nineRouter: { baseUrl: '' },
       alerts: { threshold: 90 },
     };
     widgetEffects.states[SLOT.reports] = [report('a'), report('b'), report('c')];
@@ -2103,7 +2307,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     widgetEffects.states[SLOT.dragging] = false;
     if (reorder !== undefined) widgetEffects.states[SLOT.reorder] = reorder;
     let tree: ReactNode = null;
-    function CaptureWidget() { tree = Widget(); return tree; }
+    function CaptureWidget() {
+      tree = Widget();
+      return tree;
+    }
     const markup = renderToStaticMarkup(createElement(CaptureWidget));
     return { markup, tree: tree! };
   };
@@ -2114,12 +2321,11 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
    * posición del hook: reordenar los hooks no puede romper la prueba
    * (#264/S32).
    */
-  const preview = () => widgetEffects.states.find(
-    (s): s is { id: string; order: string[] } =>
-      !!s && typeof s === 'object' && !Array.isArray(s)
-      && typeof (s as { id?: unknown }).id === 'string'
-      && Array.isArray((s as { order?: unknown }).order),
-  );
+  const preview = () =>
+    widgetEffects.states.find(
+      (s): s is { id: string; order: string[] } =>
+        !!s && typeof s === 'object' && !Array.isArray(s) && typeof (s as { id?: unknown }).id === 'string' && Array.isArray((s as { order?: unknown }).order),
+    );
 
   afterEach(() => {
     widgetEffects.states = [];
@@ -2155,11 +2361,15 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
   // el DOM conserva el orden guardado, así que los centros llegan desordenados.
   it('drops the dragged orb at its visual position, not at the DOM one', () => {
     vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
-      innerWidth: 1920, innerHeight: 1080,
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      innerWidth: 1920,
+      innerHeight: 1080,
     });
     widgetEffects.patch.mockImplementation(async (patch: { providerOrder: string[] }) => ({
-      accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+      accounts: [],
+      nineRouter: { baseUrl: '' },
+      ...patch,
     }));
     // La vista previa pone a 'b' al final: en pantalla el orden es a, c, b.
     const { tree } = render({ id: 'a', order: ['a', 'c', 'b'] });
@@ -2174,7 +2384,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       ],
     };
     dragged.onPointerDown({
-      button: 0, clientX: 30, clientY: 30, pointerId: 1,
+      button: 0,
+      clientX: 30,
+      clientY: 30,
+      pointerId: 1,
       currentTarget: { setPointerCapture: () => {} },
     });
     // El puntero cae entre 'c' (centro 130) y 'b' (centro 230).
@@ -2191,7 +2404,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     // del render nuevo, con la vista previa ya escrita.
     const dropped = findOrbPointers(after).find((o) => o.id === 'a')!;
     dropped.onPointerUp({
-      clientX: 150, clientY: 30, pointerId: 1,
+      clientX: 150,
+      clientY: 30,
+      pointerId: 1,
       currentTarget: { releasePointerCapture: () => {} },
     });
     // Lo que se guarda es el orden visual (c, a, b), no el del DOM (a, b, c).
@@ -2216,8 +2431,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       // retardada del hover) necesitan timers falsos.
       vi.useFakeTimers();
       vi.stubGlobal('window', {
-        setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
-        innerWidth: 1920, innerHeight: 1080,
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+        innerWidth: 1920,
+        innerHeight: 1080,
         // #279: Escape cancela el reordenamiento y la tira atiende el teclado
         // en la ventana, así que el arnés guarda el handler.
         addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => {
@@ -2226,7 +2443,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
         removeEventListener: () => {},
       });
       widgetEffects.patch.mockImplementation(async (patch: { providerOrder: string[] }) => ({
-        accounts: [], nineRouter: { baseUrl: '' }, ...patch,
+        accounts: [],
+        nineRouter: { baseUrl: '' },
+        ...patch,
       }));
       // El hit-test del soltar (#264/S23): el puntero quedó sobre el orbe 'a',
       // así que el bloqueo del hover lo cubre y frena el `enter` diferido.
@@ -2251,7 +2470,10 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       strip();
       const dragged = findOrbPointers(tree).find((o) => o.id === 'a')!;
       dragged.onPointerDown({
-        button: 0, clientX: 30, clientY: 30, pointerId: 1,
+        button: 0,
+        clientX: 30,
+        clientY: 30,
+        pointerId: 1,
         currentTarget: { setPointerCapture: () => {} },
       });
       dragged.onPointerMove({ clientX: 150, clientY: 30 });
@@ -2281,7 +2503,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       expect(widgetEffects.states[SLOT.reorder]).toBeNull();
       // El usuario suelta.
       dragged.onPointerUp({
-        clientX: 150, clientY: 30, pointerId: 1,
+        clientX: 150,
+        clientY: 30,
+        pointerId: 1,
         currentTarget: { releasePointerCapture: () => {} },
       });
       // Y el navegador despacha el `click` de la cola sobre el mismo orbe.
@@ -2296,11 +2520,16 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       const { tree } = render(null);
       const plain = findOrbPointers(tree).find((o) => o.id === 'a')!;
       plain.onPointerDown({
-        button: 0, clientX: 30, clientY: 30, pointerId: 1,
+        button: 0,
+        clientX: 30,
+        clientY: 30,
+        pointerId: 1,
         currentTarget: { setPointerCapture: () => {} },
       });
       plain.onPointerUp({
-        clientX: 30, clientY: 30, pointerId: 1,
+        clientX: 30,
+        clientY: 30,
+        pointerId: 1,
         currentTarget: { releasePointerCapture: () => {} },
       });
       plain.onClick?.(orb);
@@ -2315,7 +2544,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       const dragged = drag(tree);
       escapeKey();
       dragged.onPointerUp({
-        clientX: 150, clientY: 30, pointerId: 1,
+        clientX: 150,
+        clientY: 30,
+        pointerId: 1,
         currentTarget: { releasePointerCapture: () => {} },
       });
       await vi.advanceTimersByTimeAsync(400);
@@ -2386,7 +2617,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       const { tree: after } = render(preview);
       const dropped = findOrbPointers(after).find((o) => o.id === 'a')!;
       dropped.onPointerUp({
-        clientX: 150, clientY: 30, pointerId: 1,
+        clientX: 150,
+        clientY: 30,
+        pointerId: 1,
         currentTarget: { releasePointerCapture: () => {} },
       });
       expect(widgetEffects.patch).toHaveBeenCalledTimes(1);

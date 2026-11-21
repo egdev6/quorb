@@ -16,8 +16,7 @@ const rule = (selector: string) => {
 
 describe('settings sidebar icons', () => {
   it('uses the same brand red for the current icon as the foundation hover', () => {
-    expect(rule('.q-settings__nav .eg-menu--nav .eg-menu__item[aria-current] > .eg-icon').trim())
-      .toBe('color: var(--color-fg-brand-default);');
+    expect(rule('.q-settings__nav .eg-menu--nav .eg-menu__item[aria-current] > .eg-icon').trim()).toBe('color: var(--color-fg-brand-default);');
   });
 });
 
@@ -87,12 +86,17 @@ describe('compact banked reset placement', () => {
   it('gives account numbers and compact resets one shared chip style', () => {
     const shared = rule(".orb__acct, .q-validity--compact[data-kind='resets']");
     for (const declaration of [
-      'background: var(--color-surface-2);', 'border: 1px solid var(--color-border-hairline-strong);',
-      'color: var(--color-primitive-white);', 'border-radius: 6px;',
+      'background: var(--color-surface-2);',
+      'border: 1px solid var(--color-border-hairline-strong);',
+      'color: var(--color-primitive-white);',
+      'border-radius: 6px;',
       'height: clamp(14px, calc(var(--size) * 0.3), 22px);',
-      'font-size: clamp(8px, calc(var(--size) * 0.18), 11px);', 'font-weight: 700;',
-      'padding: 1px 2px;', 'box-shadow: var(--shadow-edge);',
-    ]) expect(shared).toContain(declaration);
+      'font-size: clamp(8px, calc(var(--size) * 0.18), 11px);',
+      'font-weight: 700;',
+      'padding: 1px 2px;',
+      'box-shadow: var(--shadow-edge);',
+    ])
+      expect(shared).toContain(declaration);
     expect(rule('.orb__acct')).not.toMatch(/\b(?:background|border|font|font-size|height|padding)\s*:/);
   });
 });
@@ -145,9 +149,7 @@ describe('settings disclosures', () => {
   });
 
   it('disables chevron animation under reduced motion', () => {
-    expect(theme).toMatch(
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.q-details summary::after\s*\{\s*transition:\s*none;\s*\}\s*\}/,
-    );
+    expect(theme).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.q-details summary::after\s*\{\s*transition:\s*none;\s*\}\s*\}/);
   });
 });
 

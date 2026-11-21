@@ -14,7 +14,19 @@ import { t } from '../i18n';
  * barra no copia la regla. Sin ese contexto sólo veía la marca individual, y un
  * informe entero viejo salía sin marcar en la barra (T46).
  */
-export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdict }: { meter: Meter; ring: number | null; color?: string; locale?: Locale; stale?: boolean }) {
+export function MeterBar({
+  meter,
+  ring,
+  color,
+  locale = 'es',
+  stale: staleVerdict,
+}: {
+  meter: Meter;
+  ring: number | null;
+  color?: string;
+  locale?: Locale;
+  stale?: boolean;
+}) {
   const pct = meter.percent;
   // La marca no se puede ocultar: aunque el veredicto venga en falso, un medidor
   // marcado individualmente sigue marcado. El gatillo es `isStaleMeter`, que ya
@@ -39,13 +51,7 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
           amount: `${formatAmount(meter.used - meter.limit, meter.unit, locale)}${unit ? ` ${unit}` : ''}`,
         })
       : null;
-  const meta = [
-    pct != null ? amount : null,
-    excess,
-    reset ? t(locale, 'details.meterResets', { when: reset }) : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  const meta = [pct != null ? amount : null, excess, reset ? t(locale, 'details.meterResets', { when: reset }) : null].filter(Boolean).join(' · ');
 
   return (
     <div
@@ -54,15 +60,10 @@ export function MeterBar({ meter, ring, color, locale = 'es', stale: staleVerdic
       data-level={levelFor(pct)}
       data-stale={stale ? 'true' : undefined}
       data-colored={color ? true : undefined}
-      style={color ? { '--meter-color': color } as CSSProperties : undefined}
+      style={color ? ({ '--meter-color': color } as CSSProperties) : undefined}
     >
       <div className="q-meter__row">
-        {(ring != null || color) && (
-          <span
-            className={`eg-gauge__key${ring != null && ring > 1 ? ` eg-gauge__key--${ring}` : ''}`}
-            aria-hidden="true"
-          />
-        )}
+        {(ring != null || color) && <span className={`eg-gauge__key${ring != null && ring > 1 ? ` eg-gauge__key--${ring}` : ''}`} aria-hidden="true" />}
         <span className="q-meter__label">
           {declaredLabel(meter, locale)}
           {basis && (

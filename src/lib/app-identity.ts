@@ -6,8 +6,14 @@ export function useAppName(): string | null {
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    getName().then(value => { if (alive) setName(value); }).catch(() => {});
-    return () => { alive = false; };
+    getName()
+      .then((value) => {
+        if (alive) setName(value);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
   return name;
 }

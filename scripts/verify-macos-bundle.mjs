@@ -62,11 +62,16 @@ export function verifyMacosBundle({ root = projectRoot, sourceSha = process.env.
   if (typeof executable !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(executable)) throw new Error('Unsafe executable name');
   const binary = io.readFileSync(checked(path.join(apps[0], 'Contents/MacOS', executable), 'file'));
   // A thin, little-endian 64-bit ARM executable, not x86_64 or a universal container.
-  if (binary.length < 32 || binary.readUInt32LE(0) !== 0xfeedfacf ||
-      binary.readUInt32LE(4) !== 0x0100000c || binary.readUInt32LE(12) !== 2) throw new Error('Expected native arm64 Mach-O executable');
+  if (binary.length < 32 || binary.readUInt32LE(0) !== 0xfeedfacf || binary.readUInt32LE(4) !== 0x0100000c || binary.readUInt32LE(12) !== 2)
+    throw new Error('Expected native arm64 Mach-O executable');
   run('/usr/bin/hdiutil', ['verify', dmgs[0]]);
   return {
-    sourceSha, version: pkg.version, arch: 'arm64', minimumSystemVersion, app: apps[0], dmg: dmgs[0],
+    sourceSha,
+    version: pkg.version,
+    arch: 'arm64',
+    minimumSystemVersion,
+    app: apps[0],
+    dmg: dmgs[0],
     dmgSha256: createHash('sha256').update(io.readFileSync(dmgs[0])).digest('hex'),
   };
 }
@@ -80,15 +85,25 @@ const securityCommand = (command, args) => {
 export function verifyDeveloperSignature(target, { run = securityCommand } = {}) {
   run('/usr/bin/codesign', ['--verify', '--deep', '--strict', target]);
   const signature = run('/usr/bin/codesign', ['-dv', '--verbose=4', target]);
-  if (!/^Authority=Developer ID Application: .+ \(SRD8T33RU5\)$/m.test(signature) ||
-      !/^TeamIdentifier=SRD8T33RU5$/m.test(signature)) throw new Error('Unexpected Developer ID authority or team');
+  if (!/^Authority=Developer ID Application: .+ \(SRD8T33RU5\)$/m.test(signature) || !/^TeamIdentifier=SRD8T33RU5$/m.test(signature))
+    throw new Error('Unexpected Developer ID authority or team');
 }
 
 export function validateMountEntities(plist, mount) {
   const entities = plist?.['system-entities'];
-  if (!Array.isArray(entities) || !entities.length || entities.length > 32 ||
-      entities.some((entity) => !entity || typeof entity !== 'object' || Array.isArray(entity) ||
-        typeof entity['dev-entry'] !== 'string' || !/^\/dev\/disk[0-9]+(?:s[0-9]+)*$/.test(entity['dev-entry']))) {
+  if (
+    !Array.isArray(entities) ||
+    !entities.length ||
+    entities.length > 32 ||
+    entities.some(
+      (entity) =>
+        !entity ||
+        typeof entity !== 'object' ||
+        Array.isArray(entity) ||
+        typeof entity['dev-entry'] !== 'string' ||
+        !/^\/dev\/disk[0-9]+(?:s[0-9]+)*$/.test(entity['dev-entry']),
+    )
+  ) {
     throw new Error('Invalid mounted DMG entities');
   }
   const volumes = entities.filter((entity) => Object.hasOwn(entity, 'mount-point'));
@@ -152,10 +167,24 @@ export function verifyMountedApp({ mount, version, io = fs, run = securityComman
 
 // No build, re-sign, app staple, repackaging or execution. Only the retained outer
 // DMG is mutated. Gatekeeper/network failures fail closed, including during cleanup.
-export function stapleAndVerifyDmg({ dmg, version, inputSha256, temp = process.env.RUNNER_TEMP, io = fs, run = securityCommand,
-  parsePlist = (text) => JSON.parse(execFileSync('python3', ['-c', 'import plistlib,json,sys; print(json.dumps(plistlib.loads(sys.stdin.buffer.read())))'], {
-    input: text, encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
-  })) }) {
+export function stapleAndVerifyDmg({
+  dmg,
+  version,
+  inputSha256,
+  temp = process.env.RUNNER_TEMP,
+  io = fs,
+  run = securityCommand,
+  parsePlist = (text) =>
+    JSON.parse(
+      execFileSync('python3', ['-c', 'import plistlib,json,sys; print(json.dumps(plistlib.loads(sys.stdin.buffer.read())))'], {
+        input: text,
+        encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }),
+    ),
+}) {
   if (!path.isAbsolute(temp ?? '') || io.lstatSync(dmg).isSymbolicLink() || !io.lstatSync(dmg).isFile()) throw new Error('Unsafe retained DMG');
   const before = createHash('sha256').update(io.readFileSync(dmg)).digest('hex');
   if (before !== inputSha256) throw new Error('Retained DMG changed before staple');

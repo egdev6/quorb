@@ -23,12 +23,7 @@ describe('hover presence model', () => {
   it('arms the close when the detail reports leave even if the strip never reported mouseleave', () => {
     // The regression of #250: the strip's `mouseleave` is lost on Wayland
     // native, so the detail's own `leave` has to arm the close by itself.
-    const presence = after(
-      outside(),
-      transition('widget', 'enter', 0),
-      transition('detail', 'enter', 0),
-      transition('detail', 'leave', 0),
-    );
+    const presence = after(outside(), transition('widget', 'enter', 0), transition('detail', 'enter', 0), transition('detail', 'leave', 0));
     expect(presence.target).toBe('outside');
     expect(shouldArmClose(presence.target)).toBe(true);
   });
@@ -40,23 +35,13 @@ describe('hover presence model', () => {
   });
 
   it('cancels the close when the detail reports enter (strip -> detail)', () => {
-    const presence = after(
-      outside(),
-      transition('widget', 'enter', 0),
-      transition('widget', 'leave', 0),
-      transition('detail', 'enter', 0),
-    );
+    const presence = after(outside(), transition('widget', 'enter', 0), transition('widget', 'leave', 0), transition('detail', 'enter', 0));
     expect(presence.target).toBe('detail');
     expect(shouldArmClose(presence.target)).toBe(false);
   });
 
   it('cancels the close when the strip reports enter (detail -> strip)', () => {
-    const presence = after(
-      outside(),
-      transition('detail', 'enter', 0),
-      transition('detail', 'leave', 0),
-      transition('widget', 'enter', 0),
-    );
+    const presence = after(outside(), transition('detail', 'enter', 0), transition('detail', 'leave', 0), transition('widget', 'enter', 0));
     expect(presence.target).toBe('widget');
     expect(shouldArmClose(presence.target)).toBe(false);
   });
@@ -83,11 +68,7 @@ describe('hover presence model', () => {
   // autoridad: si la salida de esa superficie se pierde, es la única evidencia
   // real que queda del puntero.
   it('closes when the strip leaves long after the detail entered (#264/S13)', () => {
-    const presence = after(
-      outside(),
-      transition('widget', 'enter', 0),
-      transition('detail', 'enter', 0),
-    );
+    const presence = after(outside(), transition('widget', 'enter', 0), transition('detail', 'enter', 0));
     expect(presence.target).toBe('detail');
     const late = nextPointerTarget(presence, transition('widget', 'leave', 3000));
     expect(late.target).toBe('outside');
@@ -98,11 +79,7 @@ describe('hover presence model', () => {
   // vigente: una salida pegada al `enter` de la otra superficie es el resto
   // del mismo gesto y no cierra un panel que el usuario está leyendo.
   it('ignores the strip leave glued to the detail enter (#264/S14)', () => {
-    const presence = after(
-      outside(),
-      transition('widget', 'enter', 0),
-      transition('detail', 'enter', 0),
-    );
+    const presence = after(outside(), transition('widget', 'enter', 0), transition('detail', 'enter', 0));
     const glued = nextPointerTarget(presence, transition('widget', 'leave', 50));
     expect(glued.target).toBe('detail');
     expect(shouldArmClose(glued.target)).toBe(false);

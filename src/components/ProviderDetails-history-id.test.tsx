@@ -6,7 +6,7 @@ import { ProviderDetails } from './ProviderDetails';
 // SSR does not run effects: seed the history state without a DOM or Tauri calls.
 const history = vi.hoisted(() => ({ samples: null as Sample[] | null }));
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal() as typeof import('react');
+  const react = (await importOriginal()) as typeof import('react');
   return {
     ...react,
     useState: ((initial: unknown) => {
@@ -20,18 +20,32 @@ afterEach(() => {
 });
 
 const meter: Meter = {
-  id: 'session', label: 'Session · 5 h', percent: 40, used: null, limit: null, unit: null,
-  resetsAt: null, windowSeconds: 18000,
+  id: 'session',
+  label: 'Session · 5 h',
+  percent: 40,
+  used: null,
+  limit: null,
+  unit: null,
+  resetsAt: null,
+  windowSeconds: 18000,
 };
 const report = (over: Partial<UsageReport> = {}): UsageReport => ({
-  id: 'claude', name: 'Claude', kind: 'subscription', status: 'ok', plan: null, meters: [meter],
-  spend: null, message: null, action: null, fetchedAt: '2026-10-20T00:00:00Z', ...over,
+  id: 'claude',
+  name: 'Claude',
+  kind: 'subscription',
+  status: 'ok',
+  plan: null,
+  meters: [meter],
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '2026-10-20T00:00:00Z',
+  ...over,
 });
 const sample = (l: string, t: number, v: number): Sample => ({ t, p: 'claude', l, v });
 /** Number of (x,y) pairs drawn by each history polyline. */
 const polylinePoints = (r: UsageReport) =>
-  [...renderToStaticMarkup(<ProviderDetails report={r} />).matchAll(/<polyline[^>]*points="([^"]*)"/g)]
-    .map((m) => m[1].trim().split(/\s+/).length);
+  [...renderToStaticMarkup(<ProviderDetails report={r} />).matchAll(/<polyline[^>]*points="([^"]*)"/g)].map((m) => m[1].trim().split(/\s+/).length);
 
 describe('ProviderDetails history matching', () => {
   it('matches samples by the stable meter id even when the label changed', () => {

@@ -5,11 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { CONFIG_KEY, configKeyFor, isAccountVisible, setAccountVisibility } from './settings-visibility';
 import type { AppConfig } from './types';
 
-const fixture = (): AppConfig => ({
-  accounts: [{ id: 'claude:work', provider: 'claude', label: 'Work', enabled: true }],
-  hiddenProviders: ['claude', 'claude:work', 'openai_api', 'unrelated'],
-  ...Object.fromEntries(Object.values(CONFIG_KEY).map((key) => [key, { enabled: true, retained: 'draft' }])),
-} as unknown as AppConfig);
+const fixture = (): AppConfig =>
+  ({
+    accounts: [{ id: 'claude:work', provider: 'claude', label: 'Work', enabled: true }],
+    hiddenProviders: ['claude', 'claude:work', 'openai_api', 'unrelated'],
+    ...Object.fromEntries(Object.values(CONFIG_KEY).map((key) => [key, { enabled: true, retained: 'draft' }])),
+  }) as unknown as AppConfig;
 
 describe('obsolete hidden-circles block (#98)', () => {
   it('removes both presentations but keeps data and per-account controls', () => {

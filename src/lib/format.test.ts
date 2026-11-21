@@ -1,6 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectAlerts } from './alerts';
-import { currentMeters, declaredLabel, formatAmount, formatBreakdownAmount, formatCompact, formatReadTime, formatResetIn, hasStaleData, isStaleMeter, isStaleSpend, levelFor, mergeReports, peakMeter, planLabel, reportSummary, sessionsLost, shortLabel, trayTooltip, unitLabel } from './format';
+import {
+  currentMeters,
+  declaredLabel,
+  formatAmount,
+  formatBreakdownAmount,
+  formatCompact,
+  formatReadTime,
+  formatResetIn,
+  hasStaleData,
+  isStaleMeter,
+  isStaleSpend,
+  levelFor,
+  mergeReports,
+  peakMeter,
+  planLabel,
+  reportSummary,
+  sessionsLost,
+  shortLabel,
+  trayTooltip,
+  unitLabel,
+} from './format';
 import { meterPace } from './pace';
 import type { Meter, UsageReport } from './types';
 
@@ -53,7 +73,9 @@ describe('localized meter shorts, reset times and summary (T2c-S1)', () => {
   it('reportSummary localizes the reset suffix', () => {
     const r: UsageReport = {
       ...base,
-      meters: [{ id: 'weekly', label: 'Semana · todos', percent: 50, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: null }],
+      meters: [
+        { id: 'weekly', label: 'Semana · todos', percent: 50, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: null },
+      ],
     };
     const now = new Date('2026-10-06T10:00:00Z');
     expect(reportSummary(r, now, 'en')).toContain('(resets in 45 min)');
@@ -173,9 +195,7 @@ describe('format', () => {
       ...base,
       status: 'warning',
       message: 'cuota no disponible',
-      meters: [
-        { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 95, used: 95, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
-      ],
+      meters: [{ id: 'rate_requests', label: 'Peticiones (ventana)', percent: 95, used: 95, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null }],
     };
     const [merged] = mergeReports([previous], [failed], BEFORE_WINDOW_END);
     // El informe NO queda desactualizado: si lo quedara, los avisos lo saltarían entero.
@@ -251,7 +271,18 @@ describe('format', () => {
       ...base,
       meters: [
         { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: 20, limit: 100, unit: 'req', resetsAt: null, windowSeconds: null },
-        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', resetsAt: '2026-12-05T22:15:31Z', windowSeconds: 2_592_000, stale: true, readAt: localReadAt },
+        {
+          id: 'model:deepseek-v4-flash',
+          label: 'deepseek-v4-flash',
+          percent: 95.558,
+          used: 955_581_032,
+          limit: 1_000_000_000,
+          unit: 'tokens',
+          resetsAt: '2026-12-05T22:15:31Z',
+          windowSeconds: 2_592_000,
+          stale: true,
+          readAt: localReadAt,
+        },
       ],
     };
     const lines = reportSummary(report, new Date('2026-11-10T00:00:00Z'), 'es').split('\n');
@@ -297,7 +328,8 @@ describe('format', () => {
     expect(merged.spend).toBeNull();
   });
 
-  it('keeps the whole report stale when the failed cycle brings no meter', () => {    // Aquí no hay nada fresco: todo lo que se ve es viejo, así que el informe entero
+  it('keeps the whole report stale when the failed cycle brings no meter', () => {
+    // Aquí no hay nada fresco: todo lo que se ve es viejo, así que el informe entero
     // sigue marcado como desactualizado y los avisos lo saltan entero.
     const failed: UsageReport = { ...base, status: 'error', meters: [], message: 'sin cuota', plan: null, spend: null };
     const [merged] = mergeReports([base], [failed]);
@@ -478,7 +510,6 @@ describe('stale data is never presented as the current state (T31)', () => {
     expect(merged.meters.every((m) => m.readAt === '2026-11-10T08:00:00Z')).toBe(true);
   });
 });
-
 
 // T31b (S33 caso 2, C-6): el backend declara el régimen de facturación en el informe y
 // el frente sólo compara si cambió. Un aviso de «suscripción inactiva» en una cuenta
@@ -665,7 +696,18 @@ describe('the copied summary never claims the old state is current (F3)', () => 
       ...base,
       meters: [
         { id: 'rate_requests', label: 'Peticiones (ventana)', percent: 20, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null },
-        { id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null, stale: true, readAt },
+        {
+          id: 'model:deepseek-v4-flash',
+          label: 'deepseek-v4-flash',
+          percent: 95,
+          used: null,
+          limit: null,
+          unit: null,
+          resetsAt: null,
+          windowSeconds: null,
+          stale: true,
+          readAt,
+        },
       ],
     };
     const lines = reportSummary(report, now, 'es').split('\n');
@@ -693,7 +735,9 @@ describe('the copied summary never claims the old state is current (F3)', () => 
       fetchedAt: readAt,
       spend: { amount: 12, currency: 'USD', periodLabel: 'Diciembre', budget: 100 },
     };
-    const line = reportSummary(report, now, 'es').split('\n').find((l) => l.includes('Diciembre'))!;
+    const line = reportSummary(report, now, 'es')
+      .split('\n')
+      .find((l) => l.includes('Diciembre'))!;
     expect(line).toContain('caché');
     expect(line).toContain(`leído a las ${readingTime()}`);
   });
@@ -937,5 +981,4 @@ describe('los casos límite de la interfaz de créditos (S13)', () => {
     expect(pace!.ratio).toBeCloseTo(1, 5);
     expect(pace!.projected).toBeCloseTo(100, 5);
   });
-
 });

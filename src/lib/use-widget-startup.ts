@@ -56,14 +56,17 @@ export function useWidgetStartup(options: WidgetStartupOptions = {}): WidgetStar
   // `config-changed` o por un reintento manual (revisión PR #271).
   const generation = useRef(0);
 
-  const applyConfig = useCallback((next: AppConfig) => {
-    generation.current += 1;
-    setConfig(next);
-    // Config válida: deja de estar pendiente y despeja el fallo definitivo.
-    setConfigFailed(false);
-    setConfigError(null);
-    onConfigChange?.(next);
-  }, [onConfigChange]);
+  const applyConfig = useCallback(
+    (next: AppConfig) => {
+      generation.current += 1;
+      setConfig(next);
+      // Config válida: deja de estar pendiente y despeja el fallo definitivo.
+      setConfigFailed(false);
+      setConfigError(null);
+      onConfigChange?.(next);
+    },
+    [onConfigChange],
+  );
 
   // Carga de la config: reintentos en el arranque + `config-changed`.
   useEffect(() => {

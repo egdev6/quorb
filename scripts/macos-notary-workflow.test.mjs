@@ -18,7 +18,10 @@ const digest = (text) => createHash('sha256').update(normalize(text)).digest('he
 function script(text = read(active)) {
   const body = normalize(text).split("          python3 <<'PY'\n")[1]?.split('\n          PY')[0];
   assert.ok(body, 'Expected inline Python diagnostics');
-  return body.split('\n').map((line) => line.slice(10)).join('\n');
+  return body
+    .split('\n')
+    .map((line) => line.slice(10))
+    .join('\n');
 }
 
 function execute(submission = '', status = 'In Progress', fail = '') {
@@ -48,11 +51,21 @@ subprocess.run = fake_run
 `;
   try {
     const result = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', fake + script()], {
-      encoding: 'utf8', timeout: 10000,
-      env: { ...process.env, RUNNER_TEMP: dir,
-        GITHUB_RUN_ID: '42', GITHUB_RUN_ATTEMPT: '1', SUBMISSION_ID: submission,
-        APPLE_API_KEY_P8: 'synthetic-private-key', APPLE_API_KEY: 'synthetic-key-id',
-        APPLE_API_ISSUER: 'synthetic-issuer', CALLS: calls, STATUS: status, FAIL: fail },
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        RUNNER_TEMP: dir,
+        GITHUB_RUN_ID: '42',
+        GITHUB_RUN_ATTEMPT: '1',
+        SUBMISSION_ID: submission,
+        APPLE_API_KEY_P8: 'synthetic-private-key',
+        APPLE_API_KEY: 'synthetic-key-id',
+        APPLE_API_ISSUER: 'synthetic-issuer',
+        CALLS: calls,
+        STATUS: status,
+        FAIL: fail,
+      },
     });
     assert.ifError(result.error);
     return { ...result, calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse) : [], keyExists: existsSync(key) };
@@ -97,7 +110,10 @@ test('reviewed digest rejects changes to every nonempty line', () => {
 test('history only lists IDs without resubmitting or retaining the key', () => {
   const result = execute();
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.calls.map((call) => call[1]), ['history']);
+  assert.deepEqual(
+    result.calls.map((call) => call[1]),
+    ['history'],
+  );
   assert.match(result.stdout, new RegExp(id));
   assert.equal(result.keyExists, false);
   assert.doesNotMatch(result.stdout + result.stderr, /synthetic-private-key/);
@@ -106,7 +122,10 @@ test('history only lists IDs without resubmitting or retaining the key', () => {
 test('pending ID queries info but does not request an unavailable log', () => {
   const result = execute(id);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.calls.map((call) => call[1]), ['history', 'info']);
+  assert.deepEqual(
+    result.calls.map((call) => call[1]),
+    ['history', 'info'],
+  );
   assert.match(result.stdout, /In Progress/);
   assert.equal(result.keyExists, false);
 });
@@ -115,7 +134,10 @@ for (const status of ['Accepted', 'Invalid', 'Rejected']) {
   test(`terminal ${status} fetches log for the exact requested ID`, () => {
     const result = execute(id, status);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(result.calls.map((call) => call[1]), ['history', 'info', 'log']);
+    assert.deepEqual(
+      result.calls.map((call) => call[1]),
+      ['history', 'info', 'log'],
+    );
     for (const call of result.calls.slice(1)) assert.equal(call[2], id);
     for (const call of result.calls) {
       if (call[1] === 'log') assert.ok(!call.includes('--output-format'));

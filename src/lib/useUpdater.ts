@@ -9,8 +9,12 @@ export function useUpdaterMode(): UpdaterMode {
   const [mode, setMode] = useState<UpdaterMode>('unknown');
   useEffect(() => {
     let active = true;
-    void getUpdaterMode().then((value) => { if (active) setMode(value); });
-    return () => { active = false; };
+    void getUpdaterMode().then((value) => {
+      if (active) setMode(value);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
   return mode;
 }

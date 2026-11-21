@@ -206,7 +206,9 @@ describe('codex install controller', () => {
 
   it('keeps the pinned package visible instead of claiming latest', () => {
     expect(CODEX_PACKAGE).toBe('@openai/codex@0.162.1');
-    expect(codexInstallView({ status: null, reading: true, installing: false, outcome: null, message: null, error: null, errorFrom: null })).toEqual({ kind: 'loading' });
+    expect(codexInstallView({ status: null, reading: true, installing: false, outcome: null, message: null, error: null, errorFrom: null })).toEqual({
+      kind: 'loading',
+    });
   });
 
   it('does not turn a successful install into a failure when the recheck or the follow-up read fails', async () => {

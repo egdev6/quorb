@@ -17,7 +17,11 @@ const bitmaps = import.meta.glob<string>('../assets/logos/*.{png,webp}', {
   import: 'default',
 });
 
-const baseName = (path: string) => path.split('/').pop()!.replace(/\.(svg|png|webp)$/, '');
+const baseName = (path: string) =>
+  path
+    .split('/')
+    .pop()!
+    .replace(/\.(svg|png|webp)$/, '');
 
 /** Recortes de viewBox para logos que no son cuadrados (wordmarks). Vacío: los logos ya vienen recortados. */
 const VIEWBOX: Record<string, string> = {};
@@ -160,9 +164,6 @@ export function ProviderLogo({ id: rawId, name }: { id: string; name: string }) 
  * `minimax-cn` -> «MC», `codebuddy-intl` -> «CI», `zed` -> «ZE», `github` -> «GH». */
 function monogramText(id: string): string {
   const parts = id.split(/[^a-z0-9]+/i).filter(Boolean);
-  const letters =
-    parts.length > 1
-      ? parts.map((p) => p[0]).join("")
-      : (parts[0] ?? "").slice(0, 2);
-  return (letters.slice(0, 3) || "??").toUpperCase();
+  const letters = parts.length > 1 ? parts.map((p) => p[0]).join('') : (parts[0] ?? '').slice(0, 2);
+  return (letters.slice(0, 3) || '??').toUpperCase();
 }

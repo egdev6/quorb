@@ -19,7 +19,12 @@ describe('dock', () => {
   });
 
   // Text scale (#228): the CSS strip size enters in monitor units and keeps the anchored edge exact.
-  it.each([[1.0812, 1.02], [1.25, 1], [1.5, 1.25], [2.25, 1.5]])('keeps the right and bottom edges with text scale %s on monitor scale %s', (t, sf) => {
+  it.each([
+    [1.0812, 1.02],
+    [1.25, 1],
+    [1.5, 1.25],
+    [2.25, 1.5],
+  ])('keeps the right and bottom edges with text scale %s on monitor scale %s', (t, sf) => {
     const monitor = { x: -1920 / sf, y: 0, w: 1920 / sf, h: 1040 / sf };
     for (const offset of [0, 0.5, 1]) {
       const right = stripRect(monitor, 'right', offset, toMonitor(64, t), toMonitor(320, t));

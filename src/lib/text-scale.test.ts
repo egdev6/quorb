@@ -19,7 +19,16 @@ describe('text scale (#228)', () => {
   });
 
   it('falls back to 1 for non-finite or non-positive inputs', () => {
-    for (const [dpr, sf] of [[0, 1], [1, 0], [-1.25, 1], [1.25, -1], [NaN, 1], [1, NaN], [Infinity, 1], [1, Infinity]]) {
+    for (const [dpr, sf] of [
+      [0, 1],
+      [1, 0],
+      [-1.25, 1],
+      [1.25, -1],
+      [NaN, 1],
+      [1, NaN],
+      [Infinity, 1],
+      [1, Infinity],
+    ]) {
       expect(textScale(dpr, sf)).toBe(1);
     }
   });

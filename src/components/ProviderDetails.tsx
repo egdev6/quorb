@@ -38,7 +38,17 @@ function PaceBar({ pace, color, locale }: { pace: Pace; color: string; locale: L
   );
 }
 
-function Sparkline({ series, max, height = 46, locale }: { series: { color: string; points: [number, number][] }[]; max: number; height?: number; locale: Locale }) {
+function Sparkline({
+  series,
+  max,
+  height = 46,
+  locale,
+}: {
+  series: { color: string; points: [number, number][] }[];
+  max: number;
+  height?: number;
+  locale: Locale;
+}) {
   const all = series.flatMap((s) => s.points);
   if (all.length < 2) return <p className="hist__empty">{t(locale, 'details.notEnoughReadings')}</p>;
   const t0 = Math.min(...all.map((p) => p[0]));
@@ -162,17 +172,25 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
           </span>
         </div>
       )}
-      <details className="details__sec" open={paceOpen} onToggle={(e) => {
-        const open = e.currentTarget.open;
-        setPaceOpen(open);
-        saveDisclosure(report.id, 'pace', open);
-      }}>
-        <summary className="details__toggle"><h3 className="details__title">{t(locale, 'details.paceTitle')}</h3></summary>
+      <details
+        className="details__sec"
+        open={paceOpen}
+        onToggle={(e) => {
+          const open = e.currentTarget.open;
+          setPaceOpen(open);
+          saveDisclosure(report.id, 'pace', open);
+        }}
+      >
+        <summary className="details__toggle">
+          <h3 className="details__title">{t(locale, 'details.paceTitle')}</h3>
+        </summary>
         <div className="details__body">
           {/* Sin ritmo que proyectar (no hay medidores vigentes) y sin gasto vigente: se
               dice que no hay ventana, en vez de dejar un bloque vacío. El gasto viejo
               no se proyecta nunca, así que el ritmo queda vacío. */}
-          {paces.filter((p) => p.pace).length === 0 && (!report.spend || isStaleSpend(report)) && <p className="hist__empty">{t(locale, 'details.noWindow')}</p>}
+          {paces.filter((p) => p.pace).length === 0 && (!report.spend || isStaleSpend(report)) && (
+            <p className="hist__empty">{t(locale, 'details.noWindow')}</p>
+          )}
           {paces.map(
             ({ m, color, pace }) =>
               pace && (
@@ -216,12 +234,18 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
         </div>
       </details>
 
-      <details className="details__sec" open={historyOpen} onToggle={(e) => {
-        const open = e.currentTarget.open;
-        setHistoryOpen(open);
-        saveDisclosure(report.id, 'history', open);
-      }}>
-        <summary className="details__toggle"><h3 className="details__title">{t(locale, 'details.historyTitle')}</h3></summary>
+      <details
+        className="details__sec"
+        open={historyOpen}
+        onToggle={(e) => {
+          const open = e.currentTarget.open;
+          setHistoryOpen(open);
+          saveDisclosure(report.id, 'history', open);
+        }}
+      >
+        <summary className="details__toggle">
+          <h3 className="details__title">{t(locale, 'details.historyTitle')}</h3>
+        </summary>
         <div className="details__body">
           <div className="details__head">
             <div className="eg-tabs eg-tabs--segmented eg-tabs--sm" role="tablist" aria-label={t(locale, 'details.historyRangeAria')}>

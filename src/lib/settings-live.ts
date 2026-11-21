@@ -59,7 +59,10 @@ type CloseSaver = Pick<LiveSaver, 'hasPending' | 'hasUnresolved' | 'flush'>;
 export function createLiveCloseHandler(getLive: () => CloseSaver | null, close: () => Promise<void>) {
   let phase: 'idle' | 'flushing' | 'closing' = 'idle';
   return async (event: { preventDefault(): void }): Promise<void> => {
-    if (phase === 'flushing') { event.preventDefault(); return; }
+    if (phase === 'flushing') {
+      event.preventDefault();
+      return;
+    }
     const live = getLive();
     // Permite el cierre nativo recursivo una vez guardado todo.
     if (!live || (!live.hasPending() && !live.hasUnresolved())) return;

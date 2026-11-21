@@ -19,7 +19,14 @@ import type { Locale } from '../lib/types';
 
 export type StripFallbackState = 'pending' | 'ready' | 'failed';
 
-export function StripFallback({ state, error, busy, locale, onRetry, onConfigure }: {
+export function StripFallback({
+  state,
+  error,
+  busy,
+  locale,
+  onRetry,
+  onConfigure,
+}: {
   /** Estado del arranque de la configuración (#271). */
   state: StripFallbackState;
   /** Último error visible: el de config en `failed`, o un error de uso

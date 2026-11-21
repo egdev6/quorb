@@ -54,7 +54,10 @@ describe('createDetailPresence', () => {
     let timer: ReturnType<typeof setTimeout>;
     const tracker = createDetailPresence({
       isOpen: () => true,
-      scheduleClose: () => { clearTimeout(timer); timer = setTimeout(close, 280); },
+      scheduleClose: () => {
+        clearTimeout(timer);
+        timer = setTimeout(close, 280);
+      },
       cancelClose: () => clearTimeout(timer),
     });
     tracker.sample(false, false);

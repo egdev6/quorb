@@ -36,7 +36,16 @@ const codexInstall = {} as CodexInstallController;
 const connect = (
   locale: Locale,
   provider: 'claude' | 'codex' | 'gemini',
-  over: { cliMissing?: boolean; persisted?: boolean; extra?: boolean; dirty?: boolean; connected?: boolean; loginError?: string | null; sessionEnv?: 'host' | 'wsl'; wslDistro?: string } = {},
+  over: {
+    cliMissing?: boolean;
+    persisted?: boolean;
+    extra?: boolean;
+    dirty?: boolean;
+    connected?: boolean;
+    loginError?: string | null;
+    sessionEnv?: 'host' | 'wsl';
+    wslDistro?: string;
+  } = {},
 ) =>
   renderToStaticMarkup(
     <CliConnectView
@@ -304,11 +313,7 @@ describe('AccountEditor (SSR, i18n)', () => {
       'es',
     );
     expectAll(editor('es', account('zai')), ['<b>API key</b>', 'Créala en <a href=', '>z.ai › API Keys</a>.'], 'es');
-    expectAll(
-      editor('es', account('opencode_go')),
-      ['API key de OpenCode Go', 'Créala en <a href=', '>OpenCode › Console</a>.'],
-      'es',
-    );
+    expectAll(editor('es', account('opencode_go')), ['API key de OpenCode Go', 'Créala en <a href=', '>OpenCode › Console</a>.'], 'es');
     expectAll(
       editor('es', account('anthropic_api')),
       [
@@ -397,7 +402,11 @@ describe('AccountEditor (SSR, i18n)', () => {
       'en',
     );
     const zai = editor('en', account('zai'));
-    expectAll(openrouter, ['<b>API key</b>', 'It can be from another account or from the same one with a different limit. <a href=', '>openrouter.ai › Keys</a>'], 'en');
+    expectAll(
+      openrouter,
+      ['<b>API key</b>', 'It can be from another account or from the same one with a different limit. <a href=', '>openrouter.ai › Keys</a>'],
+      'en',
+    );
     expectAll(zai, ['<b>API key</b>', 'Create it at <a href=', '>z.ai › API Keys</a>.'], 'en');
     const opencode = editor('en', account('opencode_go'));
     expectAll(opencode, ['OpenCode Go API key', 'Create it at <a href=', '>OpenCode › Console</a>.'], 'en');
@@ -531,13 +540,9 @@ describe('Missing CLI per environment (SSR, i18n)', () => {
   });
 
   it('CliMissingWsl keeps the distro optional and translates to en', () => {
-    const withDistro = renderToStaticMarkup(
-      <CliMissingWsl provider="codex" locale="en" wslDistro="Ubuntu-24.04" />,
-    );
+    const withDistro = renderToStaticMarkup(<CliMissingWsl provider="codex" locale="en" wslDistro="Ubuntu-24.04" />);
     expectAll(withDistro, ['is missing inside the WSL distro', 'Ubuntu-24.04', 'npm install -g @openai/codex'], 'en');
-    const withoutDistro = renderToStaticMarkup(
-      <CliMissingWsl provider="gemini" locale="es" />,
-    );
+    const withoutDistro = renderToStaticMarkup(<CliMissingWsl provider="gemini" locale="es" />);
     expectAll(withoutDistro, ['dentro de la distro WSL', 'npm install -g @google/gemini-cli'], 'es');
     expectNone(withoutDistro, ['install.ps1'], 'es');
   });

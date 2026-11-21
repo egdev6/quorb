@@ -168,11 +168,7 @@ function CustomFx({ path, size, sound, onDone }: { path: string; size: Payload['
 
   return (
     <div className="fx-media" data-size={size}>
-      {isImage ? (
-        <img src={src} alt="" onError={onDone} />
-      ) : (
-        <video src={src} autoPlay muted={!sound} playsInline onEnded={onDone} onError={onDone} />
-      )}
+      {isImage ? <img src={src} alt="" onError={onDone} /> : <video src={src} autoPlay muted={!sound} playsInline onEnded={onDone} onError={onDone} />}
     </div>
   );
 }

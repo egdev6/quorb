@@ -26,24 +26,35 @@ const controllerWith = (state: CodexInstallState): CodexInstallController => ({
   requestInstall: async () => ({ ok: false, reason: 'inactive', message: 'inactivo' }),
 });
 
-const render = (state: CodexInstallState) =>
-  renderToStaticMarkup(<CodexInstall controller={controllerWith(state)} onRecheck={() => {}} />);
+const render = (state: CodexInstallState) => renderToStaticMarkup(<CodexInstall controller={controllerWith(state)} onRecheck={() => {}} />);
 
 describe('CodexInstall (SSR)', () => {
   it('offers install only when the metadata is ready', () => {
-    const html = render(stateFor({ status: { supported: true, busy: false, nodeAvailable: true, installed: false, package: '@openai/codex@0.162.1', message: null, outcome: null } }));
+    const html = render(
+      stateFor({
+        status: { supported: true, busy: false, nodeAvailable: true, installed: false, package: '@openai/codex@0.162.1', message: null, outcome: null },
+      }),
+    );
     expect(html).toContain('Instalar Codex');
   });
 
   it('offers recheck and copy, never install, when Node/npm is missing', () => {
-    const html = render(stateFor({ status: { supported: true, busy: false, nodeAvailable: false, installed: false, package: '@openai/codex@0.162.1', message: null, outcome: null } }));
+    const html = render(
+      stateFor({
+        status: { supported: true, busy: false, nodeAvailable: false, installed: false, package: '@openai/codex@0.162.1', message: null, outcome: null },
+      }),
+    );
     expect(html).toContain('Volver a comprobar');
     expect(html).toContain('Copiar orden');
     expect(html).not.toContain('Instalar Codex');
   });
 
   it('offers recheck and copy, never install, on an unsupported platform', () => {
-    const html = render(stateFor({ status: { supported: false, busy: false, nodeAvailable: true, installed: false, package: '@openai/codex@0.162.1', message: null, outcome: null } }));
+    const html = render(
+      stateFor({
+        status: { supported: false, busy: false, nodeAvailable: true, installed: false, package: '@openai/codex@0.162.1', message: null, outcome: null },
+      }),
+    );
     expect(html).toContain('Volver a comprobar');
     expect(html).toContain('Copiar orden');
     expect(html).not.toContain('Instalar Codex');

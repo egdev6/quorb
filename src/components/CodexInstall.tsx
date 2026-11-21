@@ -90,7 +90,8 @@ export function CodexInstall({ locale = 'es', controller, onRecheck }: { locale?
         )}
         {view.kind === 'error' && view.origin !== 'read' && (
           <>
-            <b>{t(locale, 'settings.providers.codexInstall.errorInstallBold')}</b> {view.message} {t(locale, 'settings.providers.codexInstall.errorInstallRest')}
+            <b>{t(locale, 'settings.providers.codexInstall.errorInstallBold')}</b> {view.message}{' '}
+            {t(locale, 'settings.providers.codexInstall.errorInstallRest')}
           </>
         )}
       </span>

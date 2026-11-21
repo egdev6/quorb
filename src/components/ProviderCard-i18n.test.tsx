@@ -15,9 +15,7 @@ const report: UsageReport = {
   kind: 'subscription',
   status: 'needsLogin',
   plan: null,
-  meters: [
-    { id: 'weekly', label: 'Semana · todos', percent: 40, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: null },
-  ],
+  meters: [{ id: 'weekly', label: 'Semana · todos', percent: 40, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: null }],
   spend: { amount: 28.12, currency: 'USD', periodLabel: 'Este mes', budget: 40 },
   message: null,
   action: 'login',

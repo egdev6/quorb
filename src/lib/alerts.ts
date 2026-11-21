@@ -68,7 +68,15 @@ export function detectAlerts(
       if (m.stale) continue;
       if (m.percent == null) continue;
       const pct = m.percent;
-      const ev = { providerId: r.id, providerName: r.name, meterId: meterKey(m), realMeterId: m.id, window: windowKey(m.resetsAt), label: m.label, percent: pct };
+      const ev = {
+        providerId: r.id,
+        providerName: r.name,
+        meterId: meterKey(m),
+        realMeterId: m.id,
+        window: windowKey(m.resetsAt),
+        label: m.label,
+        percent: pct,
+      };
 
       // 1. Límite superado (una vez por ventana). La ventana entra en la clave: al
       // cambiar de base de medición el reinicio también cambia, así que puede salir
@@ -148,10 +156,7 @@ function resetAcrossBasis(old: Meter, next: Meter): boolean {
 }
 
 /** El efecto de pantalla se lanza una vez por ciclo: si hay algún límite superado, ese manda. */
-export function effectFor(
-  events: AlertEvent[],
-  cfg: Pick<AlertsConfig, 'exceededEffect' | 'resetEffect'>,
-): { effect: Effect; moment: AlertMoment } | null {
+export function effectFor(events: AlertEvent[], cfg: Pick<AlertsConfig, 'exceededEffect' | 'resetEffect'>): { effect: Effect; moment: AlertMoment } | null {
   if (events.some((e) => e.kind === 'exceeded')) return { effect: cfg.exceededEffect, moment: 'exceeded' };
   if (events.length) return { effect: cfg.resetEffect, moment: 'reset' };
   return null;

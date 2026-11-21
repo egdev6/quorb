@@ -30,13 +30,13 @@ function fixture() {
   put(path.join(root, 'package.json'), 'file', Buffer.from('{"version":"0.6.0"}'));
   put(dmg, 'file', bytes);
   put(readme, 'file', Buffer.from('Injected README only; no real preview delivery.'));
-  const writes = [], calls = [];
+  const writes = [],
+    calls = [];
   const io = {
     lstatSync(name) {
       const entry = files.get(name);
       if (!entry) throw new Error(secret);
-      return Object.fromEntries(['file', 'directory', 'symbolicLink'].map((type) =>
-        [`is${type[0].toUpperCase()}${type.slice(1)}`, () => entry.type === type]));
+      return Object.fromEntries(['file', 'directory', 'symbolicLink'].map((type) => [`is${type[0].toUpperCase()}${type.slice(1)}`, () => entry.type === type]));
     },
     readFileSync(name, encoding) {
       if (!files.has(name)) throw new Error(secret);
@@ -56,11 +56,28 @@ function fixture() {
       put(name, 'file', Buffer.from(data));
     },
   };
-  const env = { GITHUB_REPOSITORY: 'egdev6/quorb', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: sha,
-    PREVIEW_SOURCE_SHA: sha, PREVIEW_VERSION: '0.6.0', GITHUB_WORKSPACE: secret };
+  const env = {
+    GITHUB_REPOSITORY: 'egdev6/quorb',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_SHA: sha,
+    PREVIEW_SOURCE_SHA: sha,
+    PREVIEW_VERSION: '0.6.0',
+    GITHUB_WORKSPACE: secret,
+  };
   const report = { sourceSha: sha, version: '0.6.0', arch: 'arm64', minimumSystemVersion: '15.0', dmg, dmgSha256: digest };
-  const options = { root, env, io, execFileSync: (...args) => { calls.push(args); return `${sha}\r\n`; },
-    verifyBundle: (args) => { calls.push(args); return report; } };
+  const options = {
+    root,
+    env,
+    io,
+    execFileSync: (...args) => {
+      calls.push(args);
+      return `${sha}\r\n`;
+    },
+    verifyBundle: (args) => {
+      calls.push(args);
+      return report;
+    },
+  };
   const stage = (patch = {}) => stagePreview({ ...options, ...patch });
   const readback = (patch = {}) => readbackPreview({ ...options, ...patch });
   function copied() {
@@ -91,9 +108,19 @@ test('stages three exclusive files with canonical basename/source manifest; simu
   assert.deepEqual(f.io.readFileSync(path.join(upload, 'Quorb.dmg')), bytes);
   assert.deepEqual(f.readback(), { sourceSha: sha, version: '0.6.0' });
   assert.deepEqual(f.writes, []);
-  assert.deepEqual(f.calls, [['git', ['rev-parse', 'HEAD'], {
-    cwd: root, encoding: 'utf8', timeout: 10_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'],
-  }]]);
+  assert.deepEqual(f.calls, [
+    [
+      'git',
+      ['rev-parse', 'HEAD'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 4096,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    ],
+  ]);
 });
 test('rejects environment, package and HEAD mismatches before writes', () => {
   for (const key of Object.keys(fixture().env).filter((key) => key !== 'GITHUB_WORKSPACE')) {
@@ -115,10 +142,17 @@ test('rejects environment, package and HEAD mismatches before writes', () => {
   }
 });
 test('checks verifier metadata, safe subtree and final DMG hash before writing', () => {
-  for (const [key, value] of [['sourceSha', 'b'.repeat(40)], ['version', '0.6.1'], ['arch', 'x64'],
-    ['minimumSystemVersion', '14.0'], ['dmgSha256', 'b'.repeat(64)], ['dmg', path.join(`${root}-sibling`, 'Quorb.dmg')],
-    ['dmg', path.join(root, 'elsewhere.dmg')], ['dmg', path.join(path.dirname(dmg), 'a:b.dmg')],
-    ['dmg', path.join(path.dirname(dmg), 'a\\b.dmg')]]) {
+  for (const [key, value] of [
+    ['sourceSha', 'b'.repeat(40)],
+    ['version', '0.6.1'],
+    ['arch', 'x64'],
+    ['minimumSystemVersion', '14.0'],
+    ['dmgSha256', 'b'.repeat(64)],
+    ['dmg', path.join(`${root}-sibling`, 'Quorb.dmg')],
+    ['dmg', path.join(root, 'elsewhere.dmg')],
+    ['dmg', path.join(path.dirname(dmg), 'a:b.dmg')],
+    ['dmg', path.join(path.dirname(dmg), 'a\\b.dmg')],
+  ]) {
     const f = fixture();
     f.report[key] = value;
     rejected(f);
@@ -146,14 +180,21 @@ test('rejects symlinks, missing entries and wrong kinds at every consumed level'
 });
 test('readback rejects tampering, unsafe manifest names, extra entries and nonregular files on either side', () => {
   for (const directory of [upload, download]) {
-    for (const [key, value] of [['delivery', 'signed'], ['sourceSha', 'b'.repeat(40)], ['version', '0.6.1'],
+    for (const [key, value] of [
+      ['delivery', 'signed'],
+      ['sourceSha', 'b'.repeat(40)],
+      ['version', '0.6.1'],
       ['dmg', { name: '../escape.dmg', sha256: digest, size: bytes.length }],
       ['dmg', { name: 'a:b.dmg', sha256: digest, size: bytes.length }],
       ['dmg', { name: 'a\\b.dmg', sha256: digest, size: bytes.length }],
       ['dmg', { name: 'Other.dmg', sha256: digest, size: bytes.length }],
       ['dmg', { name: 'Quorb.dmg', sha256: 'b'.repeat(64), size: bytes.length }],
       ['dmg', { name: 'Quorb.dmg', sha256: digest, size: bytes.length + 1 }],
-      ['notarized', true], ['retentionDays', 90], ['arch', 'x64'], ['updater', 'automatic']]) {
+      ['notarized', true],
+      ['retentionDays', 90],
+      ['arch', 'x64'],
+      ['updater', 'automatic'],
+    ]) {
       const f = fixture();
       f.copied();
       const name = path.join(directory, 'manifest.json');
@@ -166,8 +207,9 @@ test('readback rejects tampering, unsafe manifest names, extra entries and nonre
         const f = fixture();
         f.copied();
         const target = path.join(directory, name);
-        if (type === 'missing') { if (!f.files.delete(target)) continue; }
-        else f.put(target, type, Buffer.from(secret));
+        if (type === 'missing') {
+          if (!f.files.delete(target)) continue;
+        } else f.put(target, type, Buffer.from(secret));
         rejected(f, () => f.readback());
       }
     }
@@ -187,30 +229,61 @@ test('readback rejects tampering, unsafe manifest names, extra entries and nonre
 test('sanitizes filesystem, verifier and command errors without raw causes', () => {
   for (const key of ['execFileSync', 'verifyBundle']) {
     const f = fixture();
-    rejected(f, () => f.stage({ [key]: () => { throw new Error(secret); } }));
+    rejected(f, () =>
+      f.stage({
+        [key]: () => {
+          throw new Error(secret);
+        },
+      }),
+    );
   }
   for (const key of ['lstatSync', 'readFileSync', 'mkdirSync', 'writeFileSync', 'readdirSync']) {
     const f = fixture();
-    f.io[key] = () => { throw new Error(secret); };
+    f.io[key] = () => {
+      throw new Error(secret);
+    };
     if (key === 'readdirSync') f.copied();
-    rejected(f, () => key === 'readdirSync' ? f.readback() : f.stage(), key !== 'writeFileSync');
+    rejected(f, () => (key === 'readdirSync' ? f.readback() : f.stage()), key !== 'writeFileSync');
   }
 });
 test('module-relative default ignores workspace; verifier commands capture stderr with a finite timeout', () => {
   const f = fixture();
   const seen = [];
-  rejected(f, () => f.stage({ root: undefined, io: { lstatSync: (name) => { seen.push(name); throw new Error(secret); } } }));
+  rejected(f, () =>
+    f.stage({
+      root: undefined,
+      io: {
+        lstatSync: (name) => {
+          seen.push(name);
+          throw new Error(secret);
+        },
+      },
+    }),
+  );
   assert.deepEqual(seen, [path.resolve(fileURLToPath(new URL('../', import.meta.url)))]);
-  assert.deepEqual(f.stage({ verifyBundle: ({ run }) => { run('/usr/bin/plutil', ['fixed']); return f.report; } }),
-    { sourceSha: sha, version: '0.6.0' });
-  assert.deepEqual(f.calls.at(-1), ['/usr/bin/plutil', ['fixed'], {
-    cwd: root, encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'],
-  }]);
+  assert.deepEqual(
+    f.stage({
+      verifyBundle: ({ run }) => {
+        run('/usr/bin/plutil', ['fixed']);
+        return f.report;
+      },
+    }),
+    { sourceSha: sha, version: '0.6.0' },
+  );
+  assert.deepEqual(f.calls.at(-1), [
+    '/usr/bin/plutil',
+    ['fixed'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 120_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  ]);
 });
 test('import is inert; CLI guards native paths/modes and emits sanitized JSON without touching real artifacts', () => {
   const target = new URL('./macos-preview-artifact.mjs', import.meta.url).href;
-  const modules = ['macos-preview-artifact.mjs', 'macos-preview-policy.mjs', 'verify-macos-bundle.mjs']
-    .map((name) => new URL(name, import.meta.url).href);
+  const modules = ['macos-preview-artifact.mjs', 'macos-preview-policy.mjs', 'verify-macos-bundle.mjs'].map((name) => new URL(name, import.meta.url).href);
   const f = fixture();
   f.copied();
   const entries = [...f.files].map(([name, entry]) => [path.relative(root, name), entry.type, entry.data?.toString('base64')]);
@@ -227,17 +300,20 @@ test('import is inert; CLI guards native paths/modes and emits sanitized JSON wi
     fs.lstatSync = fs.readdirSync = fs.mkdirSync = fs.writeFileSync = cp.execFileSync = unexpected;
     process.env = {};
   `;
-  const child = (code) => execFileSync(process.execPath, ['--input-type=module', '-e', setup + code],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = (code) => execFileSync(process.execPath, ['--input-type=module', '-e', setup + code], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   assert.equal(child(`syncBuiltinESMExports(); await import('${target}'); process.stdout.write('inert');`), 'inert');
   for (const args of [[], ['unknown'], ['stage', '--root=elsewhere'], ['stage'], ['readback']]) {
-    assert.throws(() => child(`process.argv = [process.execPath, fileURLToPath('${target}'), ...${JSON.stringify(args)}];
-      syncBuiltinESMExports(); await import('${target}');`), (error) => {
-      assert.equal(error.status, 1);
-      assert.equal(error.stdout, '');
-      assert.equal(error.stderr.replace(/\r\n/g, '\n'), 'Preview artifact rejected\n');
-      return true;
-    });
+    assert.throws(
+      () =>
+        child(`process.argv = [process.execPath, fileURLToPath('${target}'), ...${JSON.stringify(args)}];
+      syncBuiltinESMExports(); await import('${target}');`),
+      (error) => {
+        assert.equal(error.status, 1);
+        assert.equal(error.stdout, '');
+        assert.equal(error.stderr.replace(/\r\n/g, '\n'), 'Preview artifact rejected\n');
+        return true;
+      },
+    );
   }
   const runtime = `
     const root = fileURLToPath(new URL('../', '${target}'));
@@ -262,11 +338,14 @@ test('import is inert; CLI guards native paths/modes and emits sanitized JSON wi
     `fs.lstatSync = () => { throw new Error('${secret}'); };`,
     `process.argv[2] = 'stage';`,
   ]) {
-    assert.throws(() => child(runtime + fault + invoke), (error) => {
-      assert.equal(error.status, 1);
-      assert.equal(error.stdout, '');
-      assert.equal(error.stderr.replace(/\r\n/g, '\n'), 'Preview artifact rejected\n');
-      return true;
-    });
+    assert.throws(
+      () => child(runtime + fault + invoke),
+      (error) => {
+        assert.equal(error.status, 1);
+        assert.equal(error.stdout, '');
+        assert.equal(error.stderr.replace(/\r\n/g, '\n'), 'Preview artifact rejected\n');
+        return true;
+      },
+    );
   }
 });

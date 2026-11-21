@@ -41,7 +41,14 @@ function fakeFetch(responses) {
     if (r?.ok === false) return { ok: false, status: r.status ?? 500, body: null };
     if (r?.body === false) return { ok: true, status: 200, body: null };
     const list = Array.isArray(r?.chunks) ? r.chunks : [r?.chunks ?? Buffer.alloc(0)];
-    return new Response(new ReadableStream({ start(c) { for (const chunk of list) c.enqueue(chunk); c.close(); } }));
+    return new Response(
+      new ReadableStream({
+        start(c) {
+          for (const chunk of list) c.enqueue(chunk);
+          c.close();
+        },
+      }),
+    );
   };
   return { fetch, calls };
 }
@@ -73,8 +80,7 @@ test('accepts the actual PyPI 2/2/60 hexadecimal URL layout', async (t) => {
   const a = wheel();
   const h = a.entry.sha256;
   a.entry.url = `https://files.pythonhosted.org/packages/${h.slice(0, 2)}/${h.slice(2, 4)}/${h.slice(4)}/${a.entry.filename}`;
-  const result = await provisionTools({ manifest: manifest(a.entry), destination: join(base, 'out') },
-    { fetch: fakeFetch([{ chunks: [a.bytes] }]).fetch });
+  const result = await provisionTools({ manifest: manifest(a.entry), destination: join(base, 'out') }, { fetch: fakeFetch([{ chunks: [a.bytes] }]).fetch });
   assert.equal(result.artifacts, 1);
 });
 
@@ -82,15 +88,16 @@ test('never publishes bytes lost by a short filesystem write', async (t) => {
   const base = tempBase(t);
   const a = wheel();
   const original = fs.writeSync;
-  fs.writeSync = (fd, bytes, offset = 0, length = bytes.length - offset) =>
-    original(fd, bytes, offset, Math.min(length, 2));
+  fs.writeSync = (fd, bytes, offset = 0, length = bytes.length - offset) => original(fd, bytes, offset, Math.min(length, 2));
   syncBuiltinESMExports();
   try {
     const destination = join(base, 'out');
-    await provisionTools({ manifest: manifest(a.entry), destination },
-      { fetch: fakeFetch([{ chunks: [a.bytes] }]).fetch });
+    await provisionTools({ manifest: manifest(a.entry), destination }, { fetch: fakeFetch([{ chunks: [a.bytes] }]).fetch });
     assert.deepEqual(readFileSync(join(destination, a.entry.filename)), a.bytes);
-  } finally { fs.writeSync = original; syncBuiltinESMExports(); }
+  } finally {
+    fs.writeSync = original;
+    syncBuiltinESMExports();
+  }
 });
 
 test('rejects malformed manifests before any fetch', async (t) => {

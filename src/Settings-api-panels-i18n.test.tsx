@@ -10,16 +10,7 @@ import { CodexInstall } from './components/CodexInstall';
 import type { CodexInstallController, CodexInstallState, CodexSetupStatus } from './lib/codex-install';
 import { secretKey } from './lib/accounts';
 import type { Account, AppConfig, Locale } from './lib/types';
-import {
-  AccountEditor,
-  AdminApiPanel,
-  CliConnectView,
-  NanConnect,
-  NanPanel,
-  NineRouterConnect,
-  NineRouterPanel,
-  OpenRouterPanel,
-} from './Settings';
+import { AccountEditor, AdminApiPanel, CliConnectView, NanConnect, NanPanel, NineRouterConnect, NineRouterPanel, OpenRouterPanel } from './Settings';
 
 const noop = () => {};
 
@@ -34,7 +25,16 @@ const expectNone = (html: string, texts: string[], label: string) => {
 const base = {
   hiddenProviders: [],
   openrouter: { enabled: true },
-  nan: { enabled: true, plan: 'community', baseUrl: 'https://api.nan.builders', billingDay: 1, usageUrl: null, usedPointer: null, limitPointer: null, usageLabel: null },
+  nan: {
+    enabled: true,
+    plan: 'community',
+    baseUrl: 'https://api.nan.builders',
+    billingDay: 1,
+    usageUrl: null,
+    usedPointer: null,
+    limitPointer: null,
+    usageLabel: null,
+  },
   nineRouter: { enabled: true, period: '7d', showSubProviders: false, minSpendUsd: 0, monthlyBudgetUsd: null, baseUrl: 'http://localhost:20128' },
   anthropicApi: { enabled: true, monthlyBudgetUsd: null },
   openaiApi: { enabled: true, monthlyBudgetUsd: null },
@@ -99,7 +99,8 @@ const controllerFor = (state: CodexInstallState): CodexInstallController => ({
   refresh: async () => state,
   requestInstall: async () => ({ ok: true, outcome: 'installed' }),
 });
-const codex = (locale: Locale, state: CodexInstallState) => renderToStaticMarkup(<CodexInstall locale={locale} controller={controllerFor(state)} onRecheck={noop} />);
+const codex = (locale: Locale, state: CodexInstallState) =>
+  renderToStaticMarkup(<CodexInstall locale={locale} controller={controllerFor(state)} onRecheck={noop} />);
 
 describe('API provider panels (SSR, i18n)', () => {
   it('renders the Spanish literals of OpenRouter copied verbatim from the current code', () => {
@@ -123,7 +124,14 @@ describe('API provider panels (SSR, i18n)', () => {
     const html = openrouter('en');
     expectAll(
       html,
-      ['Pay-as-you-go · Official API', 'Show in the widget', 'This month&#x27;s and today&#x27;s spend, key limit (if any) and account balance.', 'aria-label="How to connect the account"', 'Create it at', 'openrouter.ai › Keys'],
+      [
+        'Pay-as-you-go · Official API',
+        'Show in the widget',
+        'This month&#x27;s and today&#x27;s spend, key limit (if any) and account balance.',
+        'aria-label="How to connect the account"',
+        'Create it at',
+        'openrouter.ai › Keys',
+      ],
       'en openrouter',
     );
     expectNone(html, ['Pago por uso', 'Mostrar en el widget', 'Cómo conectar la cuenta', 'Créala en', 'Gasto del mes'], 'en openrouter');
@@ -191,7 +199,11 @@ describe('API provider panels (SSR, i18n)', () => {
       ],
       'en nan',
     );
-    expectNone(html, ['Suscripción · cuenta o API key', 'Conecta tu cuenta o pega una API key', 'Día de inicio de facturación', 'Etiqueta', 'Probar la API de NaN', 'p. ej.'], 'en nan');
+    expectNone(
+      html,
+      ['Suscripción · cuenta o API key', 'Conecta tu cuenta o pega una API key', 'Día de inicio de facturación', 'Etiqueta', 'Probar la API de NaN', 'p. ej.'],
+      'en nan',
+    );
   });
 
   it('renders the Spanish literals of the connected NaN account copied verbatim', () => {
@@ -284,7 +296,18 @@ describe('API provider panels (SSR, i18n)', () => {
   it('renders the Spanish literals of the Anthropic API and OpenAI API panels copied verbatim', () => {
     expectAll(
       adminApi('es', 'anthropic_api'),
-      ['Pago por uso · Admin key', 'Anthropic API', 'Mostrar gasto del mes', '<b>Admin key</b>', 'Admin API key (sk-ant-admin…)', 'Las APIs de coste no admiten OAuth: hace falta una', '(solo lectura de la organización).', 'Admin key</a> (solo lectura de la organización).', 'Presupuesto mensual (opcional)', 'USD al mes'],
+      [
+        'Pago por uso · Admin key',
+        'Anthropic API',
+        'Mostrar gasto del mes',
+        '<b>Admin key</b>',
+        'Admin API key (sk-ant-admin…)',
+        'Las APIs de coste no admiten OAuth: hace falta una',
+        '(solo lectura de la organización).',
+        'Admin key</a> (solo lectura de la organización).',
+        'Presupuesto mensual (opcional)',
+        'USD al mes',
+      ],
       'es anthropic',
     );
     expectAll(adminApi('es', 'openai_api'), ['OpenAI API', 'class="eg-field__label">Admin key<', 'Créala en', 'Organization › Admin keys'], 'es openai');
@@ -292,7 +315,19 @@ describe('API provider panels (SSR, i18n)', () => {
 
   it('renders the Anthropic API and OpenAI API panels in English and drops the Spanish literals', () => {
     const anthropic = adminApi('en', 'anthropic_api');
-    expectAll(anthropic, ['Pay-as-you-go · Admin key', 'Show month spend', 'Cost APIs do not support OAuth: you need an', '(organization read-only).', 'Admin key</a> (organization read-only).', 'Monthly budget (optional)', 'USD per month'], 'en anthropic');
+    expectAll(
+      anthropic,
+      [
+        'Pay-as-you-go · Admin key',
+        'Show month spend',
+        'Cost APIs do not support OAuth: you need an',
+        '(organization read-only).',
+        'Admin key</a> (organization read-only).',
+        'Monthly budget (optional)',
+        'USD per month',
+      ],
+      'en anthropic',
+    );
     expectNone(anthropic, ['Pago por uso', 'Mostrar gasto del mes', 'Presupuesto mensual', 'hace falta una'], 'en anthropic');
     const openai = adminApi('en', 'openai_api');
     expectAll(openai, ['Pay-as-you-go · Admin key', 'Create it at', 'Organization › Admin keys'], 'en openai');
@@ -367,7 +402,11 @@ describe('Locale propagation to nested components (SSR, i18n)', () => {
 
   it('AccountEditor passes the locale to NanConnect in Spanish', () => {
     const html = accountEditor('es');
-    expectAll(html, ['Conectar tu cuenta (recomendado)', 'placeholder="tu@correo.com"', 'Enviar enlace', 'Igual que «nan auth login --email»'], 'es editor→nan');
+    expectAll(
+      html,
+      ['Conectar tu cuenta (recomendado)', 'placeholder="tu@correo.com"', 'Enviar enlace', 'Igual que «nan auth login --email»'],
+      'es editor→nan',
+    );
   });
 
   it('AccountEditor passes the locale to NanConnect in English with no Spanish left', () => {
@@ -388,23 +427,72 @@ describe('Locale propagation to nested components (SSR, i18n)', () => {
 describe('CodexInstall notice (SSR, i18n)', () => {
   it('renders every Spanish view copied verbatim from the current code', () => {
     expectAll(codex('es', codexState({})), ['<b>Comprobando Codex CLI…</b>', 'Quorb solo consulta el estado del equipo.'], 'es loading');
-    expectAll(codex('es', codexState({ status: codexStatus({}) })), ['<b>Falta Codex CLI en este equipo.</b>', 'Quorb puede instalarlo desde aquí: Windows pedirá confirmación antes de instalar nada.', 'Instalar Codex', 'Qué instala exactamente'], 'es ready');
+    expectAll(
+      codex('es', codexState({ status: codexStatus({}) })),
+      [
+        '<b>Falta Codex CLI en este equipo.</b>',
+        'Quorb puede instalarlo desde aquí: Windows pedirá confirmación antes de instalar nada.',
+        'Instalar Codex',
+        'Qué instala exactamente',
+      ],
+      'es ready',
+    );
     expectAll(codex('es', codexState({ installing: true })), ['<b>Instalando Codex CLI…</b>', 'Instalando…'], 'es installing');
-    expectAll(codex('es', codexState({ outcome: 'installed' })), ['<b>Codex CLI instalado.</b>', 'La instalación no crea la sesión: usa «Iniciar sesión» cuando quieras.'], 'es installed fresh');
-    expectAll(codex('es', codexState({ status: codexStatus({ installed: true }) })), ['<b>Codex está instalado; revisa tu comando de login.</b>', 'Quorb ya detecta el CLI en este equipo.'], 'es installed stale');
-    expectAll(codex('es', codexState({ outcome: 'cancelled' })), ['<b>Instalación cancelada.</b>', 'No se cambió nada. Puedes intentarlo de nuevo.', 'Reintentar'], 'es cancelled');
-    expectAll(codex('es', codexState({ status: codexStatus({ busy: true }) })), ['<b>El instalador está trabajando en otra ventana.</b>', 'Espera a que termine; Quorb lo detecta solo.'], 'es busy');
-    expectAll(codex('es', codexState({ status: codexStatus({ supported: false }) })), ['<b>Este sistema no permite la instalación asistida.</b>', 'Está pensada para Windows; puedes instalarlo a mano y Quorb lo detectará.', 'Volver a comprobar', 'Copiar orden'], 'es unsupported');
-    expectAll(codex('es', codexState({ status: codexStatus({ nodeAvailable: false }) })), ['<b>No se detecta Node.js y npm.</b>', 'Quorb solo comprueba que existan; la versión (Node.js 22 o superior) la valida el instalador al confirmar. Instálalos y vuelve a comprobar.'], 'es no-node');
+    expectAll(
+      codex('es', codexState({ outcome: 'installed' })),
+      ['<b>Codex CLI instalado.</b>', 'La instalación no crea la sesión: usa «Iniciar sesión» cuando quieras.'],
+      'es installed fresh',
+    );
+    expectAll(
+      codex('es', codexState({ status: codexStatus({ installed: true }) })),
+      ['<b>Codex está instalado; revisa tu comando de login.</b>', 'Quorb ya detecta el CLI en este equipo.'],
+      'es installed stale',
+    );
+    expectAll(
+      codex('es', codexState({ outcome: 'cancelled' })),
+      ['<b>Instalación cancelada.</b>', 'No se cambió nada. Puedes intentarlo de nuevo.', 'Reintentar'],
+      'es cancelled',
+    );
+    expectAll(
+      codex('es', codexState({ status: codexStatus({ busy: true }) })),
+      ['<b>El instalador está trabajando en otra ventana.</b>', 'Espera a que termine; Quorb lo detecta solo.'],
+      'es busy',
+    );
+    expectAll(
+      codex('es', codexState({ status: codexStatus({ supported: false }) })),
+      [
+        '<b>Este sistema no permite la instalación asistida.</b>',
+        'Está pensada para Windows; puedes instalarlo a mano y Quorb lo detectará.',
+        'Volver a comprobar',
+        'Copiar orden',
+      ],
+      'es unsupported',
+    );
+    expectAll(
+      codex('es', codexState({ status: codexStatus({ nodeAvailable: false }) })),
+      [
+        '<b>No se detecta Node.js y npm.</b>',
+        'Quorb solo comprueba que existan; la versión (Node.js 22 o superior) la valida el instalador al confirmar. Instálalos y vuelve a comprobar.',
+      ],
+      'es no-node',
+    );
     expectAll(
       codex('es', codexState({ error: 'boom', errorFrom: 'read' })),
       ['<b>No se pudo consultar el instalador.</b>', 'boom', 'Vuelve a comprobar el estado.'],
       'es error read',
     );
-    expectAll(codex('es', codexState({ error: 'boom', errorFrom: 'install' })), ['<b>No se pudo instalar Codex CLI.</b>', 'Puedes reintentarlo.'], 'es error install');
+    expectAll(
+      codex('es', codexState({ error: 'boom', errorFrom: 'install' })),
+      ['<b>No se pudo instalar Codex CLI.</b>', 'Puedes reintentarlo.'],
+      'es error install',
+    );
     expectAll(
       codex('es', codexState({ status: codexStatus({}) })),
-      ['Paquete fijado: <code>@openai/codex@0.162.1</code> desde el registro oficial de npm. No se instala «la última».', 'Carpeta de destino: <code>%USERPROFILE%\\…\\tools\\codex-0.162.1</code>, dentro de la carpeta de Quorb. No se toca el npm global ni las variables de entorno.', 'Se ignoran los scripts de ciclo de vida del paquete y se valida la versión real antes de darlo por bueno.'],
+      [
+        'Paquete fijado: <code>@openai/codex@0.162.1</code> desde el registro oficial de npm. No se instala «la última».',
+        'Carpeta de destino: <code>%USERPROFILE%\\…\\tools\\codex-0.162.1</code>, dentro de la carpeta de Quorb. No se toca el npm global ni las variables de entorno.',
+        'Se ignoran los scripts de ciclo de vida del paquete y se valida la versión real antes de darlo por bueno.',
+      ],
       'es details',
     );
   });
@@ -426,10 +514,26 @@ describe('CodexInstall notice (SSR, i18n)', () => {
     const busy = codex('en', codexState({ status: codexStatus({ busy: true }) }));
     expectAll(busy, ['<b>The installer is working in another window.</b>', 'Wait for it to finish; Quorb detects it on its own.'], 'en busy');
     expectNone(busy, ['El instalador está trabajando', 'Espera a que termine'], 'en busy');
-    expectAll(codex('en', codexState({ outcome: 'cancelled' })), ['<b>Installation cancelled.</b>', 'Nothing was changed. You can try again.', 'Retry'], 'en cancelled');
-    expectAll(codex('en', codexState({ status: codexStatus({ supported: false }) })), ['<b>This system does not support assisted installation.</b>', 'Check again', 'Copy command'], 'en unsupported');
+    expectAll(
+      codex('en', codexState({ outcome: 'cancelled' })),
+      ['<b>Installation cancelled.</b>', 'Nothing was changed. You can try again.', 'Retry'],
+      'en cancelled',
+    );
+    expectAll(
+      codex('en', codexState({ status: codexStatus({ supported: false }) })),
+      ['<b>This system does not support assisted installation.</b>', 'Check again', 'Copy command'],
+      'en unsupported',
+    );
     expectAll(codex('en', codexState({ status: codexStatus({ nodeAvailable: false }) })), ['<b>Node.js and npm are not detected.</b>'], 'en no-node');
-    expectAll(codex('en', codexState({ error: 'boom', errorFrom: 'read' })), ['<b>The installer could not be queried.</b>', 'boom', 'Check the state again.'], 'en error read');
-    expectAll(codex('en', codexState({ error: 'boom', errorFrom: 'install' })), ['<b>Codex CLI could not be installed.</b>', 'You can retry.'], 'en error install');
+    expectAll(
+      codex('en', codexState({ error: 'boom', errorFrom: 'read' })),
+      ['<b>The installer could not be queried.</b>', 'boom', 'Check the state again.'],
+      'en error read',
+    );
+    expectAll(
+      codex('en', codexState({ error: 'boom', errorFrom: 'install' })),
+      ['<b>Codex CLI could not be installed.</b>', 'You can retry.'],
+      'en error install',
+    );
   });
 });

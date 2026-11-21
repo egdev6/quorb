@@ -14,9 +14,19 @@ function fixture() {
   const files = new Map();
   const dir = (name) => files.set(name, { type: 'directory' });
   const file = (name, data) => files.set(name, { type: 'file', data });
-  for (const name of [root, path.join(root, 'src-tauri'), path.join(root, 'src-tauri', 'target'),
-    path.join(root, 'src-tauri', 'target', 'release'), bundle, path.join(bundle, 'macos'), path.join(bundle, 'dmg'),
-    app, path.join(app, 'Contents'), path.join(app, 'Contents', 'MacOS')]) dir(name);
+  for (const name of [
+    root,
+    path.join(root, 'src-tauri'),
+    path.join(root, 'src-tauri', 'target'),
+    path.join(root, 'src-tauri', 'target', 'release'),
+    bundle,
+    path.join(bundle, 'macos'),
+    path.join(bundle, 'dmg'),
+    app,
+    path.join(app, 'Contents'),
+    path.join(app, 'Contents', 'MacOS'),
+  ])
+    dir(name);
   const header = Buffer.alloc(32);
   header.writeUInt32LE(0xfeedfacf);
   header.writeUInt32LE(0x0100000c, 4);
@@ -32,10 +42,12 @@ function fixture() {
     lstatSync(name) {
       const entry = files.get(name);
       if (!entry) throw new Error(`Missing: ${name}`);
-      return Object.fromEntries(['file', 'directory', 'symbolicLink'].map((type) =>
-        [`is${type[0].toUpperCase()}${type.slice(1)}`, () => entry.type === type]));
+      return Object.fromEntries(['file', 'directory', 'symbolicLink'].map((type) => [`is${type[0].toUpperCase()}${type.slice(1)}`, () => entry.type === type]));
     },
-    readdirSync: (name) => [...files.keys()].filter((key) => key.startsWith(`${name}${path.sep}`) && !key.slice(name.length + 1).includes(path.sep)).map((key) => key.slice(name.length + 1)),
+    readdirSync: (name) =>
+      [...files.keys()]
+        .filter((key) => key.startsWith(`${name}${path.sep}`) && !key.slice(name.length + 1).includes(path.sep))
+        .map((key) => key.slice(name.length + 1)),
     readFileSync: (name) => files.get(name).data,
   };
   const run = (command, args) => {
@@ -67,8 +79,7 @@ test('rejects missing, older or incorrect minimum macOS metadata and config', ()
     f.plist.LSMinimumSystemVersion = value;
     assert.throws(() => f.verify(), /minimum macOS/);
     const config = fixture();
-    config.files.get(path.join(root, 'src-tauri', 'tauri.macos.conf.json')).data =
-      JSON.stringify({ bundle: { macOS: { minimumSystemVersion: value } } });
+    config.files.get(path.join(root, 'src-tauri', 'tauri.macos.conf.json')).data = JSON.stringify({ bundle: { macOS: { minimumSystemVersion: value } } });
     assert.throws(() => config.verify(), /minimum macOS/);
   }
 });
@@ -88,8 +99,14 @@ test('macOS config declares the minimum build target using the Tauri 2 field nam
 });
 
 test('rejects mismatched metadata and unsafe executable names', () => {
-  for (const [key, value] of [['CFBundleShortVersionString', '9.0.0'], ['CFBundleIdentifier', 'other'],
-    ['CFBundleExecutable', '../quorb'], ['CFBundleExecutable', '/bin/sh'], ['CFBundleExecutable', '..'], ['CFBundleExecutable', 'a;id']]) {
+  for (const [key, value] of [
+    ['CFBundleShortVersionString', '9.0.0'],
+    ['CFBundleIdentifier', 'other'],
+    ['CFBundleExecutable', '../quorb'],
+    ['CFBundleExecutable', '/bin/sh'],
+    ['CFBundleExecutable', '..'],
+    ['CFBundleExecutable', 'a;id'],
+  ]) {
     const f = fixture();
     f.plist[key] = value;
     assert.throws(() => f.verify(), /version|identifier|executable/);
@@ -117,7 +134,11 @@ test('rejects missing executable, symlinks at every path level and non-native Ma
     f.files.set(target, { type: 'symbolicLink' });
     assert.throws(() => f.verify(), /symlink/);
   }
-  for (const [offset, value] of [[0, 0xcafebabe], [4, 0x01000007], [12, 6]]) {
+  for (const [offset, value] of [
+    [0, 0xcafebabe],
+    [4, 0x01000007],
+    [12, 6],
+  ]) {
     const f = fixture();
     f.files.get(executable).data.writeUInt32LE(value, offset);
     assert.throws(() => f.verify(), /Mach-O/);
@@ -127,10 +148,16 @@ test('rejects missing executable, symlinks at every path level and non-native Ma
 test('fails closed on invalid plist, command failures, truncated binary and missing source SHA', () => {
   const f = fixture();
   assert.throws(() => f.verify({ run: () => '{' }), /JSON/);
-  assert.throws(() => f.verify({ run: (command) => {
-    if (command.endsWith('plutil')) return JSON.stringify(f.plist);
-    throw new Error('hdiutil exit 1');
-  } }), /hdiutil exit 1/);
+  assert.throws(
+    () =>
+      f.verify({
+        run: (command) => {
+          if (command.endsWith('plutil')) return JSON.stringify(f.plist);
+          throw new Error('hdiutil exit 1');
+        },
+      }),
+    /hdiutil exit 1/,
+  );
   f.files.get(path.join(app, 'Contents', 'MacOS', 'quorb')).data = Buffer.alloc(4);
   assert.throws(() => f.verify(), /Mach-O/);
   assert.throws(() => f.verify({ sourceSha: '' }), /SHA/);
@@ -140,7 +167,15 @@ test('rejects malformed source provenance and propagates plist tool failure', ()
   for (const sha of ['', 'a'.repeat(39), 'g'.repeat(40), `${sourceSha}\n`, `${sourceSha};id`]) {
     assert.throws(() => fixture().verify({ sourceSha: sha }), /SHA/);
   }
-  assert.throws(() => fixture().verify({ run: () => { throw new Error('plutil exit 1'); } }), /plutil exit 1/);
+  assert.throws(
+    () =>
+      fixture().verify({
+        run: () => {
+          throw new Error('plutil exit 1');
+        },
+      }),
+    /plutil exit 1/,
+  );
 });
 
 const signature = 'Authority=Developer ID Application: Synthetic (SRD8T33RU5)\nTeamIdentifier=SRD8T33RU5\n';
@@ -160,8 +195,14 @@ test('verifies only the exact app inside the DMG, with authority, metadata, nati
   const f = mountedFixture();
   assert.equal(f.mounted(), app);
   assert.ok(f.calls.some(([command, args]) => command.endsWith('/spctl') && args.at(-1) === app));
-  for (const [field, value] of [['CFBundleShortVersionString', '0.7.0'], ['CFBundleIdentifier', 'wrong'], ['LSMinimumSystemVersion', '14.0'], ['CFBundleExecutable', '../escape']]) {
-    const bad = mountedFixture(); bad.plist[field] = value;
+  for (const [field, value] of [
+    ['CFBundleShortVersionString', '0.7.0'],
+    ['CFBundleIdentifier', 'wrong'],
+    ['LSMinimumSystemVersion', '14.0'],
+    ['CFBundleExecutable', '../escape'],
+  ]) {
+    const bad = mountedFixture();
+    bad.plist[field] = value;
     assert.throws(() => bad.mounted(), /mismatch|executable/);
   }
   const binary = mountedFixture();
@@ -169,27 +210,39 @@ test('verifies only the exact app inside the DMG, with authority, metadata, nati
   assert.throws(() => binary.mounted(), /arm64/);
   for (const value of [signature.replaceAll('SRD8T33RU5', 'WRONGTEAM1'), 'TeamIdentifier=SRD8T33RU5\n']) {
     const bad = mountedFixture();
-    assert.throws(() => bad.mounted({ run: (command, args) => command.endsWith('/codesign') ? value : bad.run(command, args) }), /authority or team/);
+    assert.throws(() => bad.mounted({ run: (command, args) => (command.endsWith('/codesign') ? value : bad.run(command, args)) }), /authority or team/);
   }
   const network = mountedFixture();
-  assert.throws(() => network.mounted({ run: (command, args) => {
-    if (command.endsWith('/spctl')) throw new Error('Gatekeeper offline');
-    return network.run(command, args);
-  } }), /Gatekeeper offline/);
+  assert.throws(
+    () =>
+      network.mounted({
+        run: (command, args) => {
+          if (command.endsWith('/spctl')) throw new Error('Gatekeeper offline');
+          return network.run(command, args);
+        },
+      }),
+    /Gatekeeper offline/,
+  );
 });
 
 test('mounted app paths reject symlinks, extra or renamed apps and unsafe volume entities', () => {
   for (const target of [mount, app, path.join(app, 'Contents'), path.join(app, 'Contents/Info.plist'), path.join(app, 'Contents/MacOS/quorb')]) {
-    const f = mountedFixture(); f.files.set(target, { type: 'symbolicLink' });
+    const f = mountedFixture();
+    f.files.set(target, { type: 'symbolicLink' });
     assert.throws(() => f.mounted(), /symlink/);
   }
-  const extra = mountedFixture(); extra.files.set(path.join(mount, 'Other.app'), { type: 'directory' });
+  const extra = mountedFixture();
+  extra.files.set(path.join(mount, 'Other.app'), { type: 'directory' });
   assert.throws(() => extra.mounted(), /only contained/);
   const good = { 'system-entities': [{ 'dev-entry': '/dev/disk4' }, { 'dev-entry': '/dev/disk4s1', 'mount-point': mount }] };
   assert.doesNotThrow(() => validateMountEntities(good, mount));
-  for (const bad of [{}, { 'system-entities': [] }, { 'system-entities': [{ 'dev-entry': '/dev/disk4', 'mount-point': '/Volumes/Other' }] },
+  for (const bad of [
+    {},
+    { 'system-entities': [] },
+    { 'system-entities': [{ 'dev-entry': '/dev/disk4', 'mount-point': '/Volumes/Other' }] },
     { 'system-entities': [...good['system-entities'], { 'dev-entry': '/dev/disk5', 'mount-point': mount }] },
-    { 'system-entities': [{ 'dev-entry': '/dev/disk4; injected', 'mount-point': mount }] }]) {
+    { 'system-entities': [{ 'dev-entry': '/dev/disk4; injected', 'mount-point': mount }] },
+  ]) {
     assert.throws(() => validateMountEntities(bad, mount), /entities|volume/);
   }
 });
@@ -203,12 +256,21 @@ test('staples only retained outer DMG, mounts readonly, always detaches, hashes 
     const run = (command, args) => {
       if (args[0] === 'stapler' && args[1] === 'staple') f.files.get(dmg).data = Buffer.from('stapled disk image');
       if (args[0] === fail || (fail === 'metadata' && command.endsWith('/plutil'))) {
-        f.calls.push([command, args]); throw new Error('synthetic failure');
+        f.calls.push([command, args]);
+        throw new Error('synthetic failure');
       }
       return f.run(command, args);
     };
-    const verify = () => stapleAndVerifyDmg({ dmg, version: '0.6.0', inputSha256, temp: '/controlled', io: f.io, run,
-      parsePlist: () => fail === 'entities' ? {} : { 'system-entities': [{ 'dev-entry': '/dev/disk4', 'mount-point': mount }] } });
+    const verify = () =>
+      stapleAndVerifyDmg({
+        dmg,
+        version: '0.6.0',
+        inputSha256,
+        temp: '/controlled',
+        io: f.io,
+        run,
+        parsePlist: () => (fail === 'entities' ? {} : { 'system-entities': [{ 'dev-entry': '/dev/disk4', 'mount-point': mount }] }),
+      });
     if (fail) assert.throws(verify);
     else {
       const result = verify();
@@ -232,10 +294,14 @@ test('real Python plist parser accepts XML entities and malformed plist still tr
     f.io.rmdirSync = () => {};
     const xml = `<?xml version="1.0"?><plist version="1.0"><dict><key>system-entities</key><array><dict><key>dev-entry</key><string>/dev/disk4</string><key>mount-point</key><string>${mount}</string></dict></array></dict></plist>`;
     const run = (command, args) => {
-      if (args[0] === 'attach') { f.calls.push([command, args]); return malformed ? 'not plist' : xml; }
+      if (args[0] === 'attach') {
+        f.calls.push([command, args]);
+        return malformed ? 'not plist' : xml;
+      }
       return f.run(command, args);
     };
-    const verify = () => stapleAndVerifyDmg({ dmg, version: '0.6.0', inputSha256: createHash('sha256').update('disk image').digest('hex'), temp: '/controlled', io: f.io, run });
+    const verify = () =>
+      stapleAndVerifyDmg({ dmg, version: '0.6.0', inputSha256: createHash('sha256').update('disk image').digest('hex'), temp: '/controlled', io: f.io, run });
     if (malformed) assert.throws(verify);
     else assert.equal(verify().version, '0.6.0');
     assert.ok(f.calls.some(([, args]) => args?.[0] === 'detach' && args[1] === mount));

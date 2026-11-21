@@ -116,9 +116,7 @@ export function nextPointerTarget(presence: PointerPresence, event: HoverEvent):
   // The pointer is on the other surface. Within the window the leave is the
   // remainder of the same gesture and changes nothing; after it the leave is
   // the only evidence left, so the pointer is outside.
-  return event.at - presence.at <= STALE_LEAVE_WINDOW_MS
-    ? presence
-    : { target: 'outside', at: event.at };
+  return event.at - presence.at <= STALE_LEAVE_WINDOW_MS ? presence : { target: 'outside', at: event.at };
 }
 
 /** The close timer is armed only while the pointer is outside both surfaces. */

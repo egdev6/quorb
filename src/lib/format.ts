@@ -132,10 +132,7 @@ export function formatExpiry(iso: string | null, locale: Locale = 'es'): string 
  * viene de la lectura de la cuenta no se lea como el estado real. Un medidor de la
  * cuenta no se anota: es el caso normal.
  */
-export function quotaBasisNote(
-  source: string | undefined,
-  locale: Locale = 'es',
-): { label: string; title: string } | null {
+export function quotaBasisNote(source: string | undefined, locale: Locale = 'es'): { label: string; title: string } | null {
   if (source !== 'published') return null;
   return {
     label: t(locale, 'details.quotaBasisPublished'),
@@ -410,12 +407,7 @@ export function reportSummary(r: UsageReport, now: Date = new Date(), locale: Lo
     // de su última lectura.
     const mark = isStaleMeter(r, m) ? staleMark(m.readAt ?? (r.stale ? r.fetchedAt : null), locale) : null;
     const unit = unitLabel(m.unit, locale);
-    const value =
-      m.percent != null
-        ? `${Math.round(m.percent)} %`
-        : m.used != null
-          ? `${formatAmount(m.used, m.unit, locale)}${unit ? ` ${unit}` : ''}`
-          : '—';
+    const value = m.percent != null ? `${Math.round(m.percent)} %` : m.used != null ? `${formatAmount(m.used, m.unit, locale)}${unit ? ` ${unit}` : ''}` : '—';
     lines.push(`· ${declaredLabel(m, locale)}: ${value}${reset ? ` (${t(locale, 'details.summaryReset', { when: reset })})` : ''}${mark ? ` · ${mark}` : ''}`);
   }
   // El desglose que declara el proveedor: rótulo + importe + unidad, sin saber qué son.

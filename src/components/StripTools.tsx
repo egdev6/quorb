@@ -12,7 +12,16 @@ import type { UpdaterMode } from '../lib/updater-policy';
 import type { UpdatePhase } from '../lib/updater';
 import type { ReactNode } from 'react';
 
-export function StripTools({ locale, loading, updaterMode, update, onRefresh, onOpenSettings, onStartUpdate, icons }: {
+export function StripTools({
+  locale,
+  loading,
+  updaterMode,
+  update,
+  onRefresh,
+  onOpenSettings,
+  onStartUpdate,
+  icons,
+}: {
   locale: Locale;
   loading: boolean;
   updaterMode: UpdaterMode;
