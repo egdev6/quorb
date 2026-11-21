@@ -10,3 +10,8 @@
 *.mjs text eol=lf
 *.cjs text eol=lf
 *.css text eol=lf
+/biome.json text eol=lf
+/src/**/*.md text eol=lf
+/scripts/**/*.md text eol=lf
+/src/**/*.json text eol=lf
+/scripts/**/*.json text eol=lf
