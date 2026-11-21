@@ -547,7 +547,7 @@ export function Widget() {
       }),
     ];
     return () => {
-      unlisten.forEach((p) => p.then((f) => f()));
+      for (const p of unlisten) p.then((f) => f());
     };
   }, [refresh]);
 
@@ -720,6 +720,7 @@ export function Widget() {
 
   // Expand before entering; shrink only after the exit transition. Hovering between
   // providers never changes this window, and each native rectangle is applied atomically.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     if (dragging) {
       // El arrastre manda: cancela la estabilización pendiente (#179).
@@ -874,6 +875,7 @@ export function Widget() {
     };
   }, [dockMonitor, phase]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => watchPreparation(phase, () => setPlacementFailed(true)), [phase, placementRetry]);
 
   useLayoutEffect(() => {
@@ -921,6 +923,7 @@ export function Widget() {
   }, [dragging]);
 
   // The detail window owns its dimensions; hovering never mutates widget geometry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     const strip = geo && stripSize ? stripRect(geo.area, edge, offset, toMonitor(stripSize.w, textScale), toMonitor(stripSize.h, textScale)) : null;
     const state: DetailState | null =
@@ -1010,6 +1013,7 @@ export function Widget() {
     setPanel(closePanel());
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     let disposed = false;
     const unlisteners: (() => void)[] = [];
@@ -1108,7 +1112,7 @@ export function Widget() {
     return () => {
       disposed = true;
       detailReadyRef.current = false;
-      unlisteners.forEach((unlisten) => unlisten());
+      for (const unlisten of unlisteners) unlisten();
       emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, null).catch(console.warn);
     };
   }, [patchConfig]);
@@ -1176,6 +1180,7 @@ export function Widget() {
     return () => window.removeEventListener('keydown', onKey);
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(onEscapeKey, []);
 
   /** La posición del panel respecto de la tira, según el orbe. */
@@ -1245,6 +1250,7 @@ export function Widget() {
   // posición global del cursor frente a los bounds nativos de ambas ventanas
   // alimenta el tracker. Falla en silencio (Wayland puede no exponer la
   // posición): el muestreo degrada, nunca adivina.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
     // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
@@ -1340,6 +1346,7 @@ export function Widget() {
     };
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(dragMountLifecycle, []);
 
   // La red de seguridad (mostrar la ventana a los 2,5 s si sigue pendiente)

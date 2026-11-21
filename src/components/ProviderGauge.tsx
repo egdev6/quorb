@@ -153,6 +153,7 @@ export function ProviderGauge({
       onPointerCancel={pointer?.onPointerCancel}
     >
       {list.map(({ percent, color }, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: positional list with a fixed order that is never reordered or filtered; the index is its identity.
         <span key={i} className="eg-gauge__ring" style={{ '--p': Math.max(0, Math.min(100, percent)) / 100, '--c': color } as CSSProperties} />
       ))}
       <span className="eg-gauge__logo logo">

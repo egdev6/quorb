@@ -36,6 +36,7 @@ export function StripTools({
     <div className="strip__tools">
       {updaterMode === 'native' && (update.phase === 'available' || update.phase === 'installing') && (
         <button
+          type="button"
           className="icon-btn icon-btn--update"
           data-spin={update.phase === 'installing' || undefined}
           onClick={onStartUpdate}
@@ -49,10 +50,10 @@ export function StripTools({
           {icons.update}
         </button>
       )}
-      <button className="icon-btn" data-spin={loading || undefined} onClick={onRefresh} title={t(locale, 'widget.refreshNow')}>
+      <button type="button" className="icon-btn" data-spin={loading || undefined} onClick={onRefresh} title={t(locale, 'widget.refreshNow')}>
         {icons.refresh}
       </button>
-      <button className="icon-btn" onClick={onOpenSettings} title={t(locale, 'widget.settings')}>
+      <button type="button" className="icon-btn" onClick={onOpenSettings} title={t(locale, 'widget.settings')}>
         {icons.gear}
       </button>
     </div>

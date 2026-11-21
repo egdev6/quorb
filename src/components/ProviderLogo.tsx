@@ -139,6 +139,7 @@ export function ProviderLogo({ id: rawId, name }: { id: string; name: string }) 
     if (logo.kind === 'svg') {
       return (
         <span className="logo__art" data-id={id} role="img" aria-label={name}>
+          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: markup comes from the bundled src/assets/logos/*.svg at build time, never from user or network input, and is validated by the provider-logo security tests. */}
           <span className="logo__svg" dangerouslySetInnerHTML={{ __html: logo.markup }} />
           {tag}
         </span>
@@ -154,7 +155,7 @@ export function ProviderLogo({ id: rawId, name }: { id: string; name: string }) 
 
   const m = MONOGRAM[id] ?? { text: monogramText(id) };
   return (
-    <span className="logo__mono" data-len={m.text.length} aria-label={name}>
+    <span className="logo__mono" data-len={m.text.length} role="img" aria-label={name}>
       {m.text}
       {m.sub && <small>{m.sub}</small>}
     </span>

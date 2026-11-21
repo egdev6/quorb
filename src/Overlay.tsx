@@ -40,6 +40,7 @@ export function Overlay() {
   }, []);
 
   // Red de seguridad: nunca dejamos la capa visible más de 20 s.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     if (!fx) return;
     const t = window.setTimeout(() => finish(), MAX_MS);
@@ -75,6 +76,7 @@ interface Piece {
 function Confetti({ accent, onDone }: { accent: string; onDone: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     const canvas = ref.current!;
     const ctx = canvas.getContext('2d')!;
@@ -160,6 +162,7 @@ function CustomFx({ path, size, sound, onDone }: { path: string; size: Payload['
   const src = convertFileSrc(path);
   const isImage = IMAGE_EXT.test(path);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     if (!isImage) return;
     const t = window.setTimeout(onDone, IMAGE_MS);

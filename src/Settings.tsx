@@ -211,6 +211,7 @@ function Rows({ children }: { children: ReactNode }) {
 
 function Field({ label, hint, value, children }: { label: string; hint?: ReactNode; value?: ReactNode; children: ReactNode }) {
   return (
+    // biome-ignore lint/a11y/noLabelWithoutControl: the control is passed in as children and stays wrapped by this label.
     <label className={`eg-field${value != null ? ' eg-field--range' : ''}`}>
       <span className="eg-field__label">
         {label}
@@ -286,11 +287,17 @@ export function SecretInput({
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
-        <button className="eg-btn eg-btn--primary" disabled={busy || !value.trim()} onClick={() => save(value)}>
+        <button type="button" className="eg-btn eg-btn--primary" disabled={busy || !value.trim()} onClick={() => save(value)}>
           {t(locale, 'settings.common.save')}
         </button>
         {configured && (
-          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title={t(locale, 'settings.common.deleteKeyTitle')}>
+          <button
+            type="button"
+            className="eg-btn eg-btn--destructive"
+            disabled={busy}
+            onClick={() => save('')}
+            title={t(locale, 'settings.common.deleteKeyTitle')}
+          >
             {t(locale, 'settings.common.remove')}
           </button>
         )}
@@ -327,6 +334,7 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
           {msg ? ` · ${msg}` : ''}
         </span>
         <button
+          type="button"
           className="eg-btn eg-btn--destructive eg-btn--sm"
           disabled={busy}
           onClick={() =>
@@ -354,6 +362,7 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
             onChange={(e) => setEmail(e.target.value)}
           />
           <button
+            type="button"
             className="eg-btn eg-btn--primary"
             disabled={busy || !email.includes('@')}
             onClick={() =>
@@ -371,6 +380,7 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
         <div className="q-inline">
           <input type="text" spellCheck={false} placeholder="https://…nan.builders/…" value={link} onChange={(e) => setLink(e.target.value)} />
           <button
+            type="button"
             className="eg-btn eg-btn--primary"
             disabled={busy || !link.trim()}
             onClick={() =>
@@ -384,7 +394,7 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
           >
             {t(locale, 'settings.providers.connect')}
           </button>
-          <button className="eg-btn eg-btn--ghost" disabled={busy} onClick={() => setStep('email')}>
+          <button type="button" className="eg-btn eg-btn--ghost" disabled={busy} onClick={() => setStep('email')}>
             {t(locale, 'settings.providers.nanConnect.back')}
           </button>
         </div>
@@ -402,6 +412,7 @@ export function NanProbe({ locale = 'es' }: { locale?: Locale } = {}) {
     <details className="q-details">
       <summary>{t(locale, 'settings.providers.nanProbe.title')}</summary>
       <button
+        type="button"
         className="eg-btn eg-btn--ghost"
         disabled={busy}
         onClick={async () => {
@@ -479,11 +490,12 @@ export function NineRouterConnect({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <button className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
+        <button type="button" className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
           {t(locale, 'settings.providers.nineRouterConnect.saveAndTest')}
         </button>
         {connected && (
           <button
+            type="button"
             className="eg-btn eg-btn--destructive"
             disabled={busy}
             onClick={() => save('')}
@@ -556,6 +568,7 @@ export function MomentEffect({
           </select>
         </label>
         <button
+          type="button"
           className="eg-btn eg-btn--ghost"
           disabled={effect === 'none' || (effect === 'custom' && !media)}
           onClick={() => testEffect(effect, moment, alerts, onPersist).catch((e) => onError(String(e)))}
@@ -569,6 +582,7 @@ export function MomentEffect({
           <div className="q-inline">
             <input type="text" readOnly value={fileName(media) ?? ''} placeholder={t(locale, 'settings.alerts.noFile')} title={media ?? ''} />
             <button
+              type="button"
               className="eg-btn eg-btn--ghost"
               onClick={async () => {
                 const file = await openDialog({ multiple: false, directory: false, filters: mediaFilters(locale) });
@@ -578,7 +592,7 @@ export function MomentEffect({
               {t(locale, 'settings.alerts.choose')}
             </button>
             {media && (
-              <button className="eg-btn eg-btn--ghost" onClick={() => onMedia(null)}>
+              <button type="button" className="eg-btn eg-btn--ghost" onClick={() => onMedia(null)}>
                 {t(locale, 'settings.common.remove')}
               </button>
             )}
@@ -817,6 +831,7 @@ function HealthStep({
       .catch((e) => alive.current && n === seq.current && setH({ phase: 'failed', error: String(e) }));
   }, [id]);
   // Al abrir, al guardar, al cambiar una clave o al aparecer la sesión del CLI.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     const t = window.setTimeout(run, 300);
     return () => window.clearTimeout(t);
@@ -940,6 +955,7 @@ export function HealthStepView({
  *  #92, punto 11): jamás se muestra conectada por omisión. */
 function useCliSession(id: string, active: boolean, envKey: string): boolean {
   const [connected, setConnected] = useState<boolean | null>(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     if (!active) {
       setConnected(false);
@@ -1145,6 +1161,7 @@ export function CliConnectView({
         </span>
         <span className="q-steps__actions">
           <button
+            type="button"
             className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`}
             disabled={busy || cliMissing || health.saving}
             onClick={onConnect}
@@ -1982,8 +1999,9 @@ export function LookSection({
               <span aria-hidden="true">+</span>
             </label>
           </div>
-          <span className="q-palette" aria-label={t(locale, 'settings.look.palette')}>
+          <span className="q-palette" role="img" aria-label={t(locale, 'settings.look.palette')}>
             {palette.map((c, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional list with a fixed order that is never reordered or filtered; the index is its identity.
               <span key={i}>
                 <i style={{ background: c }} />
                 {c}
@@ -2031,6 +2049,7 @@ export function LookSection({
           </span>
           <div className="q-chips" role="radiogroup" aria-labelledby="lb-edge">
             {EDGES.map((e) => (
+              // biome-ignore lint/a11y/useSemanticElements: segmented chip control styled as buttons inside a radiogroup; a native radio input would change its structure and styling.
               <button
                 key={e.id}
                 type="button"
@@ -3200,6 +3219,7 @@ export function Settings() {
   const cliRecheck = useCallback(() => {
     void requestCliStatus();
   }, [requestCliStatus]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     let alive = true;
     // Entorno nuevo: el estado anterior es de otro sitio; no se muestra hasta
@@ -3353,6 +3373,7 @@ export function Settings() {
 
   const loadSecrets = () => api.secretStatus().then(setSecrets).catch(console.error);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     api
       .getConfig()

@@ -36,6 +36,7 @@ function ActionButton({ report, locale = 'es' }: { report: UsageReport; locale?:
     return (
       <>
         <button
+          type="button"
           className="eg-btn eg-btn--primary eg-btn--sm"
           title={report.stale ? t(locale, 'details.action.renewHint') : undefined}
           onClick={() => {
@@ -55,7 +56,7 @@ function ActionButton({ report, locale = 'es' }: { report: UsageReport; locale?:
   }
   if (report.action === 'settings') {
     return (
-      <button className="eg-btn eg-btn--secondary eg-btn--sm" onClick={() => api.openSettings().catch(console.error)}>
+      <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" onClick={() => api.openSettings().catch(console.error)}>
         {t(locale, 'details.action.configure')}
       </button>
     );

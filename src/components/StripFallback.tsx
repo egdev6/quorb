@@ -49,14 +49,14 @@ export function StripFallback({
   // `pending` arriba, así que aquí `state` solo puede ser `ready` o `failed`.)
   if (error) {
     return (
-      <button className="btn btn--accent btn--sm" onClick={onRetry} title={error ?? undefined}>
+      <button type="button" className="btn btn--accent btn--sm" onClick={onRetry} title={error ?? undefined}>
         {t(locale, 'widget.retry')}
       </button>
     );
   }
   if (state === 'failed') {
     return (
-      <button className="btn btn--accent btn--sm" onClick={onRetry}>
+      <button type="button" className="btn btn--accent btn--sm" onClick={onRetry}>
         {t(locale, 'widget.retry')}
       </button>
     );
@@ -65,7 +65,7 @@ export function StripFallback({
     return <span style={{ color: 'var(--text-2)', fontSize: 11, padding: '0 6px' }}>{t(locale, 'widget.loading')}</span>;
   }
   return (
-    <button className="btn btn--accent btn--sm" onClick={onConfigure}>
+    <button type="button" className="btn btn--accent btn--sm" onClick={onConfigure}>
       {t(locale, 'widget.configure')}
     </button>
   );

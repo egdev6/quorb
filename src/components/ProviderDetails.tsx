@@ -63,6 +63,7 @@ function Sparkline({
       ))}
       {series.map((s, i) => (
         <polyline
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional list with a fixed order that is never reordered or filtered; the index is its identity.
           key={i}
           fill="none"
           stroke={s.color}
@@ -110,6 +111,7 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
   const [hours, setHours] = useState<number>(24 * 7);
   const [samples, setSamples] = useState<Sample[] | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     let alive = true;
     api
@@ -132,6 +134,7 @@ export function ProviderDetails({ report, locale = 'es' }: { report: UsageReport
   const staleSpend = isStaleSpend(report);
   const sp = report.spend && !staleSpend ? spendPace(report.spend) : null;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   const series = useMemo(() => {
     if (!samples) return { pct: [], spend: [] as [number, number][] };
     // History includes every percentage quota, not just the gauge's visible rings.

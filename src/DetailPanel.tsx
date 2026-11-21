@@ -113,7 +113,7 @@ export function DetailPanel() {
     register().catch(console.warn);
     return () => {
       disposed = true;
-      unlisteners.forEach((unlisten) => unlisten());
+      for (const unlisten of unlisteners) unlisten();
       dataRef.current = null;
       enqueue(async () => {
         await getCurrentWindow().hide();
@@ -133,6 +133,7 @@ export function DetailPanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useLayoutEffect(() => {
     if (!data || !panelRef.current) return;
     let disposed = false;
@@ -265,6 +266,7 @@ export function DetailPanel() {
   const scale = fit?.zoom ?? base;
   const updated = data.updatedAt == null ? '—' : new Date(data.updatedAt).toLocaleTimeString(intlLocale(locale), { hour: '2-digit', minute: '2-digit' });
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer handlers only track hover presence for the native popup; there is no actionable control here.
     <div
       className="dock detail-dock"
       data-edge={data.edge}
