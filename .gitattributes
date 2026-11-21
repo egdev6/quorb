@@ -1,3 +1,12 @@
 # Keep trusted lock bytes exactly LF so their pinned SHA-256 hashes hold on
 # every platform. core.autocrlf must never rewrite these files.
 .github/security-drafts/*.lock text eol=lf
+
+# Biome checks LF line endings; keep the files it formats LF on Windows checkouts
+# too, so `biome ci` gives the same result with any core.autocrlf setting.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.css text eol=lf

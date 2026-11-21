@@ -1,5 +1,6 @@
 # Git hooks managed by Lefthook (https://lefthook.dev).
-# Installed automatically by `npm install` (the `prepare` script runs `lefthook install`).
+# Install once per clone with `npm run hooks:install`. There is no `prepare` script on purpose:
+# the repository policy (.github/security/policy.json) allows no root npm lifecycle hooks.
 # CI runs the same checks, so skipping the hook with `--no-verify` only delays the failure.
 pre-push:
   parallel: true
