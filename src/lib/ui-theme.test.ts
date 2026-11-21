@@ -162,7 +162,7 @@ describe('detail panel surface (#95)', () => {
   });
 
   it('does not publish a detail popup until reveal reaches the open phase', () => {
-    expect(widget).toMatch(/const state: DetailState \| null = active[^?]*phase === 'open'/);
+    expect(widget).toMatch(/const state: DetailState \| null =\s+active[^?]*phase === 'open'/);
   });
   it('applies popup position and size atomically so its old height never covers the strip', () => {
     expect(detail).toContain('await api.setDetailBounds(physical)');

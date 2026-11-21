@@ -30,7 +30,7 @@ describe('obsolete hidden-circles block (#98)', () => {
     const toggles = [...source.matchAll(/<Toggle\s+label=\{t\(locale,\s*'settings\.providers\.showInWidget'\)\}[\s\S]*?\/>/g)].map((m) => m[0]);
     expect(toggles.length).toBeGreaterThan(0);
     for (const t of toggles) expect(t).toMatch(/onChange=\{(onVisibility|\(v\) => setVisibility\()/);
-    expect(source).toContain("checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)}");
+    expect(source).toMatch(/checked=\{isAccountVisible\(cfg, 'zai', cfg\.zai\.enabled\)\}\s+onChange=\{\(v\) => setVisibility\('zai', v\)\}/);
   });
 
   it('shows an enabled but hidden circle as unchecked, without disabling polling', () => {

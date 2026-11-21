@@ -10,9 +10,11 @@ Risk: item 5 (dev dependencies, git hooks and CI gates); item 6 for lint fixes t
 
 ## Tasks
 
-- T1 | S1-S2 | parent inline | pending | `biome.json`, `lefthook.yml` (pre-push: `biome ci` + `cargo fmt --check`), npm scripts (`lint`, `format`, `check`, `prepare`), CI step in `ci.yml` and `linux-pr-ci.yml`, CONTRIBUTING EN/ES. Commit: -
+- T1 | S1-S2 | parent inline | done | `biome.json`, `lefthook.yml` (pre-push: `biome ci` + `cargo fmt --check`), npm scripts (`lint`, `format`, `check`, `prepare`), CI step in `ci.yml` and `linux-pr-ci.yml`, CONTRIBUTING EN/ES. Commit: `7006d90`
 - T2 | S2-S3 | parent inline | pending | Format-only commit with `biome format --write`, plus `.git-blame-ignore-revs`. Commit: -
-- T3 | S2-S3 | parent inline | pending | Fix all lint errors so `biome ci` passes; warnings stay visible. Commit: -
+- T3 | S2-S3 | parent inline | pending | Exclude raw-imported `src/assets/logos/*.svg` (vendored brand marks, validated by security tests) from Biome. Commit: -
+- T3a | S2-S3 | worker | pending | Fix every Biome lint error in test files and scripts: `scripts/**`, `src/**/*.test.ts`, `src/**/*.test.tsx`. Commit: -
+- T3b | S2-S3 | worker | pending | Fix every Biome lint error in app source: `src/*.tsx`, `src/components/**` (non-test). Commit: -
 - T4 | S1-S2 | parent inline | pending | Verify: `npm test`, `npm run build`, `npx biome ci`, `cargo fmt --check`, lefthook pre-push dry run. Commit: -
 - T5 | S2 | parent | pending | Discord announcement draft (sync instructions: `npm install`, hooks, rebase over the format commit); publish after merge to `main`. Commit: n/a
 
@@ -21,4 +23,6 @@ Risk: item 5 (dev dependencies, git hooks and CI gates); item 6 for lint fixes t
 L1 — User verbatim: "tenemos metido biome y lefthook para hacer lint en pre-push?"
 L2 — User verbatim: "si" (accepting: add Biome lint/format, Lefthook pre-push and the same check in CI).
 L3 — User verbatim scope answer: "lint + format + arreglo de errores + aviso en dicord de que lo hemos añadido avisando de que tienen que sincronizar"
+L5 — Lint fix rules for T3a/T3b: no behavior change. No `<form>` exists in `src/`, so `type="button"` is neutral. `useExhaustiveDependencies`: add or remove a dependency only when provably safe (stable setters/refs, or the effect is idempotent); otherwise keep the deps and add `// biome-ignore lint/correctness/useExhaustiveDependencies: <concrete reason>`. Same for any rule where the fix would change runtime behavior: a justified `biome-ignore` beats a risky rewrite. Never disable a rule globally. `npm test` and `npm run typecheck` must stay green.
+
 L4 — Decision: exclude vendored `src/ds/egdev/` from Biome (header says it is a copied bundle, not to be edited by hand). lineWidth 160 chosen because it produced the smallest diff among 100/120/140/160 for the existing code.

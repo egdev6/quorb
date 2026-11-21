@@ -7,7 +7,7 @@
     "defaultBranch": "main"
   },
   "files": {
-    "includes": ["src/**", "scripts/**", "vite.config.ts", "!src/ds/egdev"]
+    "includes": ["src/**", "scripts/**", "vite.config.ts", "!src/ds/egdev", "!src/assets/logos"]
   },
   "formatter": {
     "enabled": true,
@@ -28,6 +28,11 @@
     "enabled": true,
     "rules": {
       "recommended": true
+    }
+  },
+  "css": {
+    "formatter": {
+      "enabled": false
     }
   }
 }
