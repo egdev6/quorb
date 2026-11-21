@@ -42,6 +42,9 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci
 
+      - name: Biome lint and format
+        run: npx biome ci
+
       - name: Frontend and script tests
         run: npm test
 

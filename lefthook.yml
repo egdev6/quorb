@@ -1,0 +1,10 @@
+# Git hooks managed by Lefthook (https://lefthook.dev).
+# Installed automatically by `npm install` (the `prepare` script runs `lefthook install`).
+# CI runs the same checks, so skipping the hook with `--no-verify` only delays the failure.
+pre-push:
+  parallel: true
+  jobs:
+    - name: biome
+      run: npx biome ci
+    - name: cargo-fmt
+      run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
