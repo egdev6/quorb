@@ -39,7 +39,9 @@ const MAX_REPORT_BYTES = 8 * 1024 * 1024;
 const MOUNT_BREAK = /[,\r\n]/;
 const COMMIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 
-const fail = (stage) => { throw new Error(`semgrep-run-failed:${stage}`); };
+const fail = (stage) => {
+  throw new Error(`semgrep-run-failed:${stage}`);
+};
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 function mountPath(value) {
@@ -50,68 +52,113 @@ function mountPath(value) {
 function wheelhousePath(value) {
   mountPath(value);
   let info;
-  try { info = statSync(value); } catch { fail('wheelhouse'); }
+  try {
+    info = statSync(value);
+  } catch {
+    fail('wheelhouse');
+  }
   if (!info.isDirectory()) fail('wheelhouse');
   return value;
 }
 
 function readBytes(path, stage) {
-  try { return readFileSync(path); } catch { fail(stage); }
+  try {
+    return readFileSync(path);
+  } catch {
+    fail(stage);
+  }
 }
 
 function writeControl(dir, name, bytes) {
-  try { writeFileSync(join(dir, name), bytes, { flag: 'wx', mode: 0o400 }); } catch { fail('control'); }
+  try {
+    writeFileSync(join(dir, name), bytes, { flag: 'wx', mode: 0o400 });
+  } catch {
+    fail('control');
+  }
 }
 
 function removeDir(path) {
-  try { rmSync(path, { recursive: true, force: true }); return true; } catch { return false; }
+  try {
+    rmSync(path, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function call(execute, args, timeout, maxBuffer) {
-  try { return execute('docker', ['--host', 'unix:///var/run/docker.sock', ...args], { shell: false, encoding: 'utf8', timeout, maxBuffer }) ?? {}; }
-  catch { return { error: true }; }
+  try {
+    return execute('docker', ['--host', 'unix:///var/run/docker.sock', ...args], { shell: false, encoding: 'utf8', timeout, maxBuffer }) ?? {};
+  } catch {
+    return { error: true };
+  }
 }
 
 const succeeded = (result) => result.error === undefined && result.status === 0;
 
 function snapshotFingerprint(inventory, verifyInventory) {
-  return inventory.targets.map((target) => {
-    let bytes;
-    try { bytes = readFileSync(target.path); } catch { fail('snapshot-hash'); }
-    const digest = sha256(bytes);
-    // The initial read must match the exporter's independent claim; later reads only
-    // need to prove the bytes did not change while the scanner was running.
-    if (verifyInventory && digest !== target.sha256) fail('snapshot-hash');
-    return `${target.path}\0${digest}`;
-  }).join('\n');
+  return inventory.targets
+    .map((target) => {
+      let bytes;
+      try {
+        bytes = readFileSync(target.path);
+      } catch {
+        fail('snapshot-hash');
+      }
+      const digest = sha256(bytes);
+      // The initial read must match the exporter's independent claim; later reads only
+      // need to prove the bytes did not change while the scanner was running.
+      if (verifyInventory && digest !== target.sha256) fail('snapshot-hash');
+      return `${target.path}\0${digest}`;
+    })
+    .join('\n');
 }
 
 function createArgs({ name, wheelhouse, snapshot, control, uid, gid }) {
   return [
-    'create', '--name', name,
+    'create',
+    '--name',
+    name,
     '--pull=never',
-    '--platform', 'linux/amd64',
+    '--platform',
+    'linux/amd64',
     '--network=none',
     '--read-only',
     '--cap-drop=ALL',
-    '--security-opt', 'no-new-privileges',
-    '--pids-limit', '256',
-    '--memory', '2g',
-    '--cpus', '2',
-    '--user', `${uid}:${gid}`,
-    '--tmpfs', '/tmp:rw,exec,nosuid,nodev,size=1073741824,mode=1777',
-    '--mount', `type=bind,src=${mountPath(wheelhouse)},dst=/wheels,readonly`,
-    '--mount', `type=bind,src=${mountPath(snapshot)},dst=/inputs,readonly`,
-    '--mount', `type=bind,src=${mountPath(control)},dst=/control,readonly`,
-    '--workdir', '/tmp',
-    '--env', 'HOME=/tmp',
-    '--env', 'SEMGREP_SEND_METRICS=off',
-    '--env', 'SEMGREP_ENABLE_VERSION_CHECK=0',
-    '--env', 'PIP_NO_INDEX=1',
-    '--env', 'PIP_DISABLE_PIP_VERSION_CHECK=1',
+    '--security-opt',
+    'no-new-privileges',
+    '--pids-limit',
+    '256',
+    '--memory',
+    '2g',
+    '--cpus',
+    '2',
+    '--user',
+    `${uid}:${gid}`,
+    '--tmpfs',
+    '/tmp:rw,exec,nosuid,nodev,size=1073741824,mode=1777',
+    '--mount',
+    `type=bind,src=${mountPath(wheelhouse)},dst=/wheels,readonly`,
+    '--mount',
+    `type=bind,src=${mountPath(snapshot)},dst=/inputs,readonly`,
+    '--mount',
+    `type=bind,src=${mountPath(control)},dst=/control,readonly`,
+    '--workdir',
+    '/tmp',
+    '--env',
+    'HOME=/tmp',
+    '--env',
+    'SEMGREP_SEND_METRICS=off',
+    '--env',
+    'SEMGREP_ENABLE_VERSION_CHECK=0',
+    '--env',
+    'PIP_NO_INDEX=1',
+    '--env',
+    'PIP_DISABLE_PIP_VERSION_CHECK=1',
     '--log-driver=none',
     IMAGE,
-    'python', '/control/runner.py',
+    'python',
+    '/control/runner.py',
   ];
 }
 
@@ -159,8 +206,16 @@ function runScanner(input, deps = {}, workflow = false) {
     if (rules.length === 0 || entry.length === 0 || gate.length === 0) fail('trusted-files');
     if (sha256(lock) !== lockHash) fail('trusted-lock');
 
-    try { inventory = exportSnapshot({ repo, commit, parent, scope: workflow ? 'workflows' : 'js-ts' }); } catch { fail('snapshot'); }
-    try { control = mkdtempSync(join(resolve(parent), 'semgrep-control-')); } catch { fail('control'); }
+    try {
+      inventory = exportSnapshot({ repo, commit, parent, scope: workflow ? 'workflows' : 'js-ts' });
+    } catch {
+      fail('snapshot');
+    }
+    try {
+      control = mkdtempSync(join(resolve(parent), 'semgrep-control-'));
+    } catch {
+      fail('control');
+    }
 
     // Copy trusted rules/lock/entrypoint into a fresh control dir mounted read-only.
     // targets.json is generated from the independent inventory, mapping flat export
@@ -172,8 +227,10 @@ function runScanner(input, deps = {}, workflow = false) {
     const targets = { targets: inventory.targets.map((t) => ({ path: `/inputs/${basename(t.path)}`, originalPath: t.originalPath, sha256: t.sha256 })) };
     writeControl(control, 'targets.json', Buffer.from(JSON.stringify(targets)));
 
-    const controlFingerprint = () => ['rules.yml', 'requirements.lock', 'runner.py', 'targets.json', 'parse_gate.py']
-      .map(file => sha256(readBytes(join(control, file), 'control-hash'))).join(':');
+    const controlFingerprint = () =>
+      ['rules.yml', 'requirements.lock', 'runner.py', 'targets.json', 'parse_gate.py']
+        .map((file) => sha256(readBytes(join(control, file), 'control-hash')))
+        .join(':');
     const beforeControl = controlFingerprint();
     const beforeSnapshot = snapshotFingerprint(inventory, true);
 
@@ -182,12 +239,19 @@ function runScanner(input, deps = {}, workflow = false) {
     if (!succeeded(create)) fail('docker-create');
     const start = call(execute, ['start', '--attach', name], SCAN_TIMEOUT_MS, MAX_REPORT_BYTES);
     if (!succeeded(start) || typeof start.stdout !== 'string') fail('scanner');
-    if (controlFingerprint() !== beforeControl
-      || snapshotFingerprint(inventory, false) !== beforeSnapshot) fail('tamper');
+    if (controlFingerprint() !== beforeControl || snapshotFingerprint(inventory, false) !== beforeSnapshot) fail('tamper');
 
     let parsed;
-    try { parsed = JSON.parse(start.stdout); } catch { fail('report'); }
-    try { report = workflow ? normalizeZizmor(parsed, inventory) : normalizeSnapshotReport(parsed, inventory); } catch { fail('report'); }
+    try {
+      parsed = JSON.parse(start.stdout);
+    } catch {
+      fail('report');
+    }
+    try {
+      report = workflow ? normalizeZizmor(parsed, inventory) : normalizeSnapshotReport(parsed, inventory);
+    } catch {
+      fail('report');
+    }
   } catch (error) {
     failure = error;
   } finally {

@@ -78,16 +78,20 @@ export const es = {
     alerts: {
       email: {
         title: 'Email con Resend',
-        availability: 'Los avisos por email requieren Quorb abierto, el ordenador despierto y conexión a Internet. Con Quorb cerrado o el equipo suspendido no se consulta el consumo ni se detectan o envían avisos. La aceptación de Resend no garantiza la entrega del correo.',
-        privacy: 'Resend procesa remitente y destinatario (datos personales), proveedor, medidor/ventana, porcentaje y tipo de evento. Sin prompts, código, cuentas, secretos ni contenido de sesiones.',
+        availability:
+          'Los avisos por email requieren Quorb abierto, el ordenador despierto y conexión a Internet. Con Quorb cerrado o el equipo suspendido no se consulta el consumo ni se detectan o envían avisos. La aceptación de Resend no garantiza la entrega del correo.',
+        privacy:
+          'Resend procesa remitente y destinatario (datos personales), proveedor, medidor/ventana, porcentaje y tipo de evento. Sin prompts, código, cuentas, secretos ni contenido de sesiones.',
         consent: 'Consiento enviar estos datos a Resend',
         enable: 'Activar avisos automáticos por email',
-        switches: 'Requiere también Alertas activadas; es independiente de la notificación del sistema. Guardar no activa email. Desactivar conserva la clave; eliminarla impide nuevos envíos.',
+        switches:
+          'Requiere también Alertas activadas; es independiente de la notificación del sistema. Guardar no activa email. Desactivar conserva la clave; eliminarla impide nuevos envíos.',
         attempts: 'Sin reintentos automáticos, cola ni replay. Un timeout puede dejar incierto si Resend aceptó la solicitud.',
         sender: 'Remitente',
         recipient: 'Destinatario',
         key: 'API key de Resend',
-        senderHint: 'Sin dominio propio, usa onboarding@resend.dev para pruebas hacia el correo de tu cuenta de Resend. Para otros destinatarios, usa un remitente de tu dominio verificado.',
+        senderHint:
+          'Sin dominio propio, usa onboarding@resend.dev para pruebas hacia el correo de tu cuenta de Resend. Para otros destinatarios, usa un remitente de tu dominio verificado.',
         linux: 'En algunos sistemas Linux, tendrás que volver a introducir la clave después de reiniciar.',
         test: 'Enviar prueba',
         testing: 'Enviando prueba…',
@@ -325,7 +329,8 @@ export const es = {
         nameStepBody: 'Arriba, para distinguirla de la principal en la tira (por ejemplo, «Trabajo»).',
         checkSave: 'Guarda la cuenta para comprobar que funciona.',
         cursorTokenTitle: 'Pega el token de esta cuenta',
-        cursorTokenBody: 'La app de Cursor guarda una sola sesión (la principal). Entra en cursor.com con esta cuenta y copia la cookie WorkosCursorSessionToken.',
+        cursorTokenBody:
+          'La app de Cursor guarda una sola sesión (la principal). Entra en cursor.com con esta cuenta y copia la cookie WorkosCursorSessionToken.',
         cursorTokenLabel: 'Token de la cuenta',
         copilotUserPlan: 'Usuario y plan de GitHub',
         githubUser: 'Usuario de GitHub',
@@ -405,7 +410,8 @@ export const es = {
         unsupportedBold: 'Este sistema no permite la instalación asistida.',
         unsupportedRest: 'Está pensada para Windows; puedes instalarlo a mano y Quorb lo detectará.',
         noNodeBold: 'No se detecta Node.js y npm.',
-        noNodeRest: 'Quorb solo comprueba que existan; la versión (Node.js 22 o superior) la valida el instalador al confirmar. Instálalos y vuelve a comprobar.',
+        noNodeRest:
+          'Quorb solo comprueba que existan; la versión (Node.js 22 o superior) la valida el instalador al confirmar. Instálalos y vuelve a comprobar.',
         errorReadBold: 'No se pudo consultar el instalador.',
         errorReadRest: 'Vuelve a comprobar el estado.',
         errorInstallBold: 'No se pudo instalar Codex CLI.',
@@ -421,7 +427,8 @@ export const es = {
         detailsFolderBefore: 'Carpeta de destino: ',
         detailsFolderAfter: ', dentro de la carpeta de Quorb. No se toca el npm global ni las variables de entorno.',
         detailsScripts: 'Se ignoran los scripts de ciclo de vida del paquete y se valida la versión real antes de darlo por bueno.',
-        detailsNode: 'Antes de instalar, Quorb solo comprueba que Node.js y npm existan (sin ejecutarlos); la versión mínima se valida al confirmar la instalación. No se instala Node ni se piden permisos de administrador.',
+        detailsNode:
+          'Antes de instalar, Quorb solo comprueba que Node.js y npm existan (sin ejecutarlos); la versión mínima se valida al confirmar la instalación. No se instala Node ni se piden permisos de administrador.',
       },
       // Paneles por proveedor de suscripción (T2c slice 2 C1b, #66). Los títulos son
       // marcas con su plan y no se traducen; tampoco `Subscription Key`, `API key PAYG`
@@ -458,7 +465,8 @@ export const es = {
           kicker: 'Suscripción · sesión de la app',
           note: 'Uso del plan en el ciclo actual (total, Auto y modelos API) y gasto on-demand. Endpoint no oficial.',
           loginTitle: 'Inicia sesión en la app de Cursor',
-          loginBody: 'Quorb lee la sesión que guarda la app de Cursor en este equipo (solo lectura). Si no usas la app aquí, pega un token manual: tiene prioridad sobre la sesión de la app.',
+          loginBody:
+            'Quorb lee la sesión que guarda la app de Cursor en este equipo (solo lectura). Si no usas la app aquí, pega un token manual: tiene prioridad sobre la sesión de la app.',
           tokenLabel: 'Token manual (opcional)',
           advanced: 'Avanzado · base de datos de Cursor',
           dbLabel: 'Base de datos de Cursor',
@@ -467,7 +475,8 @@ export const es = {
           kicker: 'Suscripción · IDE de escritorio',
           note: 'Cuota de cada modelo del agente de Antigravity (ventanas de 5 h y semanales). Es un grupo distinto del de Gemini CLI. Endpoint local no oficial. Sesión del IDE de escritorio. El agy CLI en macOS no expone el token CSRF que exige este endpoint.',
           openTitle: 'Abre Antigravity con tu cuenta de Google',
-          openBody: 'Quorb consulta el servidor local que arranca el IDE de escritorio en este equipo. Solo se lee con ese IDE abierto; no se guarda ningún token. El agy CLI en macOS no expone el token CSRF, así que esa sesión no se puede leer.',
+          openBody:
+            'Quorb consulta el servidor local que arranca el IDE de escritorio en este equipo. Solo se lee con ese IDE abierto; no se guarda ningún token. El agy CLI en macOS no expone el token CSRF, así que esa sesión no se puede leer.',
         },
         copilot: {
           note: 'Peticiones premium del mes con la API de facturación de GitHub. Se reinician el día 1 (UTC).',
@@ -486,7 +495,8 @@ export const es = {
           paygTitle: 'API key de pago por uso (opcional)',
           paygHint: 'Sin ella solo se muestra la cuota del plan; el saldo es opcional y su fallo no lo degrade.',
           advanced: 'Avanzado · URL del API',
-          baseUrlHint: 'Las claves son por región: global en api.minimax.io, China en api.minimaxi.com. Si el anillo sale con error 1004 o 2049, prueba con la de tu región.',
+          baseUrlHint:
+            'Las claves son por región: global en api.minimax.io, China en api.minimaxi.com. Si el anillo sale con error 1004 o 2049, prueba con la de tu región.',
         },
         zai: {
           kicker: 'Suscripción · GLM Coding Plan',
@@ -505,12 +515,14 @@ export const es = {
         },
         nan: {
           kicker: 'Suscripción · cuenta o API key',
-          noteBefore: 'Con la cuenta conectada ves lo mismo que en tu dashboard: tokens usados frente a la cuota de cada modelo, cuándo se reinicia y la serie diaria. Sin cuenta, la API key usa',
+          noteBefore:
+            'Con la cuenta conectada ves lo mismo que en tu dashboard: tokens usados frente a la cuota de cada modelo, cuándo se reinicia y la serie diaria. Sin cuenta, la API key usa',
           noteAfter: 'y las cuotas publicadas.',
           stepTitle: 'Conecta tu cuenta o pega una API key',
           advancedSummary: 'Avanzado · URL, facturación y endpoint de consumo',
           billingDayLabel: 'Día de inicio de facturación',
-          billingDayHint: 'El día del mes en que empieza tu periodo de facturación. Solo se usa si el panel de NaN no responde: para el periodo de GLM 5.3 y para cortar el consumo agregado.',
+          billingDayHint:
+            'El día del mes en que empieza tu periodo de facturación. Solo se usa si el panel de NaN no responde: para el periodo de GLM 5.3 y para cortar el consumo agregado.',
           usageEndpointLabel: 'Endpoint de consumo · URL',
           usageEndpointHint: 'Se llama con tu key como Bearer y debe devolver JSON.',
           pointerUsedLabel: 'JSON Pointer · usado',
@@ -523,7 +535,8 @@ export const es = {
         nineRouter: {
           kicker: 'Pasarela local · uso agregado',
           noteBefore: 'Quorb lee el uso y el gasto que',
-          noteAfter: 'ya registra en tu equipo: peticiones, tokens y coste por proveedor del periodo. Además del orbe agregado, cada proveedor que haya visto (Claude, Kiro, GLM…) aparece como su propia cuenta.',
+          noteAfter:
+            'ya registra en tu equipo: peticiones, tokens y coste por proveedor del periodo. Además del orbe agregado, cada proveedor que haya visto (Claude, Kiro, GLM…) aparece como su propia cuenta.',
           stepsAria: 'Cómo conectar 9Router',
           connectTitle: 'Conecta tu dashboard local',
           periodTitle: 'Periodo y desglose',
@@ -686,8 +699,7 @@ export const es = {
     staleReadAtTime: 'leído a las {time}',
     // La base de la cuota, cuando el medidor no se midió contra la cuota de la cuenta.
     quotaBasisPublished: 'publicada',
-    quotaBasisPublishedTitle:
-      'No se pudo leer la cuota de tu cuenta: aquí se usa la asignación conocida del plan, que puede haber cambiado.',
+    quotaBasisPublishedTitle: 'No se pudo leer la cuota de tu cuenta: aquí se usa la asignación conocida del plan, que puede haber cambiado.',
     budget: 'Presupuesto',
     copy: {
       summary: 'Copiar resumen',

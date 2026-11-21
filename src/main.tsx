@@ -17,5 +17,17 @@ const label = getCurrentWindow().label;
 document.documentElement.dataset.window = label;
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>{label === 'locale' ? <LocalePicker /> : label === 'settings' ? <Settings /> : label === 'overlay' ? <Overlay /> : label === 'detail' ? <DetailPanel /> : <Widget />}</StrictMode>,
+  <StrictMode>
+    {label === 'locale' ? (
+      <LocalePicker />
+    ) : label === 'settings' ? (
+      <Settings />
+    ) : label === 'overlay' ? (
+      <Overlay />
+    ) : label === 'detail' ? (
+      <DetailPanel />
+    ) : (
+      <Widget />
+    )}
+  </StrictMode>,
 );

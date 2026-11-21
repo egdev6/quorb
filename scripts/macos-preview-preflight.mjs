@@ -12,7 +12,9 @@ const versionFormat = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 async function readChecks(response, signal) {
   if (!response?.ok || response.status !== 200 || typeof response.body?.getReader !== 'function') throw new Error();
   const reader = response.body.getReader();
-  const cancel = () => { void reader.cancel().catch(() => {}); };
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
   signal.addEventListener('abort', cancel, { once: true });
   let complete = false;
   try {
@@ -38,15 +40,34 @@ async function readChecks(response, signal) {
 }
 
 // Dependencies are acquired only on invocation; imports never read provenance or contact GitHub.
-export async function preflightPreview({ root = projectRoot, env = process.env,
-  readFileSync = readFile, execFileSync = execute, fetch = globalThis.fetch } = {}) {
+export async function preflightPreview({
+  root = projectRoot,
+  env = process.env,
+  readFileSync = readFile,
+  execFileSync = execute,
+  fetch = globalThis.fetch,
+} = {}) {
   let failure = 'Invalid preview inputs';
   try {
-    const { GITHUB_REPOSITORY: repository, GITHUB_REF: ref, GITHUB_SHA: workflowSha,
-      PREVIEW_SOURCE_SHA: sourceSha, PREVIEW_VERSION: expectedVersion, GH_TOKEN: token } = env;
-    if (repository !== 'egdev6/quorb' || ref !== 'refs/heads/main' ||
-        !matches(workflowSha, shaFormat) || !matches(sourceSha, shaFormat) || sourceSha !== workflowSha ||
-        !matches(expectedVersion, versionFormat) || typeof token !== 'string' || !token.trim() || /[\r\n]/.test(token)) {
+    const {
+      GITHUB_REPOSITORY: repository,
+      GITHUB_REF: ref,
+      GITHUB_SHA: workflowSha,
+      PREVIEW_SOURCE_SHA: sourceSha,
+      PREVIEW_VERSION: expectedVersion,
+      GH_TOKEN: token,
+    } = env;
+    if (
+      repository !== 'egdev6/quorb' ||
+      ref !== 'refs/heads/main' ||
+      !matches(workflowSha, shaFormat) ||
+      !matches(sourceSha, shaFormat) ||
+      sourceSha !== workflowSha ||
+      !matches(expectedVersion, versionFormat) ||
+      typeof token !== 'string' ||
+      !token.trim() ||
+      /[\r\n]/.test(token)
+    ) {
       throw new Error();
     }
     failure = 'Invalid preview package version';
@@ -54,16 +75,21 @@ export async function preflightPreview({ root = projectRoot, env = process.env,
     if (!matches(version, versionFormat) || version !== expectedVersion) throw new Error();
     failure = 'Unable to verify preview HEAD';
     const output = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: root, encoding: 'utf8', timeout: 10_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 4096,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     const headSha = output.replace(/\r?\n$/, '');
     if (!matches(headSha, shaFormat) || headSha !== workflowSha) throw new Error();
     failure = 'Unable to read preview checks';
     const signal = AbortSignal.timeout(10_000);
     const response = await fetch(`https://api.github.com/repos/egdev6/quorb/commits/${workflowSha}/check-runs?per_page=100`, {
-      method: 'GET', redirect: 'error', signal,
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28' },
+      method: 'GET',
+      redirect: 'error',
+      signal,
+      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
     });
     const checks = await readChecks(response, signal);
     failure = 'Preview source checks rejected';

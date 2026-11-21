@@ -125,7 +125,10 @@ test('restrictPrivateKey endurece permisos laxos sin relajar permisos estrictos'
     restrictPrivateKey({
       keyPath,
       fsImpl: {
-        statSync: (file) => { assert.equal(file, keyPath); return { mode }; },
+        statSync: (file) => {
+          assert.equal(file, keyPath);
+          return { mode };
+        },
         chmodSync: (file, permissions) => calls.push([file, permissions]),
       },
     });
@@ -181,16 +184,29 @@ test('assertOwnerTty exige TTY en stdin y stdout y rechaza CI', async () => {
 
 test('inspectKeyPair distingue none/complete/partial/symlink sin seguir enlaces', async () => {
   const { inspectKeyPair } = await load();
-  for (const [pair, expected] of [['none', 'none'], ['complete', 'complete'], ['partial', 'partial'], ['symlink', 'unsafe']]) {
+  for (const [pair, expected] of [
+    ['none', 'none'],
+    ['complete', 'complete'],
+    ['partial', 'partial'],
+    ['symlink', 'unsafe'],
+  ]) {
     assert.equal(inspectKeyPair({ fsImpl: fs, ...keys(mkHome({ pair })) }), expected, `estado de ${pair}`);
   }
 });
 
 test('lstatOrNull falla cerrado: EACCES lanza y solo ENOENT devuelve none', async () => {
   const { inspectKeyPair } = await load();
-  const denied = () => { const error = new Error('permiso denegado'); error.code = 'EACCES'; throw error; };
+  const denied = () => {
+    const error = new Error('permiso denegado');
+    error.code = 'EACCES';
+    throw error;
+  };
   assert.throws(() => inspectKeyPair({ fsImpl: { lstatSync: denied }, keyPath: '/x', pubPath: '/y' }), /permiso/);
-  const missing = () => { const error = new Error('no existe'); error.code = 'ENOENT'; throw error; };
+  const missing = () => {
+    const error = new Error('no existe');
+    error.code = 'ENOENT';
+    throw error;
+  };
   assert.equal(inspectKeyPair({ fsImpl: { lstatSync: missing }, keyPath: '/x', pubPath: '/y' }), 'none');
 });
 
@@ -234,7 +250,16 @@ test('parseGitHubRemote reconoce https/ssh de GitHub y rechaza el resto', async 
   assert.equal(parseGitHubRemote('git@github.com:egdev6/quorb.git'), REPO);
   assert.equal(parseGitHubRemote('ssh://git@github.com/egdev6/quorb.git'), REPO);
   assert.equal(parseGitHubRemote('ssh://git@github.com:22/egdev6/quorb.git'), REPO);
-  const bad = ['https://gitlab.com/egdev6/quorb.git', 'git@bitbucket.org:egdev6/quorb.git', 'https://x-token-abc@github.com/egdev6/quorb.git', 'github.com/egdev6/quorb', 'weird', '', null, 42];
+  const bad = [
+    'https://gitlab.com/egdev6/quorb.git',
+    'git@bitbucket.org:egdev6/quorb.git',
+    'https://x-token-abc@github.com/egdev6/quorb.git',
+    'github.com/egdev6/quorb',
+    'weird',
+    '',
+    null,
+    42,
+  ];
   for (const value of bad) assert.equal(parseGitHubRemote(value), null, `debe rechazar ${JSON.stringify(value)}`);
 });
 
@@ -274,8 +299,14 @@ test('runSetup exige raíz git igual al cwd antes de generar o tocar gh', async 
   const { run, calls } = fakeRunner();
   await assert.rejects(runSetup(baseDeps({ run, cwd, gitToplevel: null })), /raíz git/i);
   await assert.rejects(runSetup(baseDeps({ run, cwd, gitToplevel: '/otro/sitio' })), /raíz git/i);
-  assert.equal(calls.some((c) => c.cmd === process.execPath), false);
-  assert.equal(calls.some((c) => c.cmd === 'gh'), false);
+  assert.equal(
+    calls.some((c) => c.cmd === process.execPath),
+    false,
+  );
+  assert.equal(
+    calls.some((c) => c.cmd === 'gh'),
+    false,
+  );
 });
 
 test('runSetup ata --repo al remoto origin y rechaza desajustes sin subir nada', async () => {
@@ -284,8 +315,16 @@ test('runSetup ata --repo al remoto origin y rechaza desajustes sin subir nada',
   for (const origin of origins) {
     const { run, calls } = fakeRunner({ origin });
     await assert.rejects(runSetup(baseDeps({ run })), /origin|reconocida|coincide/i, `origin ${origin}`);
-    assert.equal(calls.some((c) => c.cmd === 'gh'), false, `sin gh para ${origin}`);
-    assert.equal(calls.some((c) => c.cmd === process.execPath), false, `sin generar para ${origin}`);
+    assert.equal(
+      calls.some((c) => c.cmd === 'gh'),
+      false,
+      `sin gh para ${origin}`,
+    );
+    assert.equal(
+      calls.some((c) => c.cmd === process.execPath),
+      false,
+      `sin generar para ${origin}`,
+    );
   }
 });
 
@@ -316,7 +355,10 @@ test('runSetup rechaza pares parciales, symlinks y .tauri enlazado sin escribir'
     const before = fs.readFileSync(path.join(cwd, 'src-tauri', 'tauri.conf.json'), 'utf8');
     const { run, calls } = fakeRunner();
     await assert.rejects(runSetup(baseDeps({ run, home, cwd })), rx);
-    assert.equal(calls.some((c) => c.cmd === process.execPath), false);
+    assert.equal(
+      calls.some((c) => c.cmd === process.execPath),
+      false,
+    );
     assert.equal(fs.readFileSync(path.join(cwd, 'src-tauri', 'tauri.conf.json'), 'utf8'), before);
   }
 });
@@ -372,17 +414,26 @@ test('runSetup sube base64 canónico aunque el fichero nativo sea crudo', async 
 test('runSetup no reutiliza un par existente sin confirmación explícita', async () => {
   const { runSetup } = await load();
   let n = 0;
-  const confirm = async () => { n += 1; return n === 1; };
+  const confirm = async () => {
+    n += 1;
+    return n === 1;
+  };
   const { run, calls } = fakeRunner();
   await assert.rejects(runSetup(baseDeps({ run, home: mkHome({ pair: 'complete' }), confirm })), /reutiliz|cancelad/i);
-  assert.equal(calls.some((c) => c.args[1] === 'set'), false);
+  assert.equal(
+    calls.some((c) => c.args[1] === 'set'),
+    false,
+  );
 });
 
 test('runSetup exige contraseña no vacía y no sube nada si está en blanco', async () => {
   const { runSetup } = await load();
   const { run, calls } = fakeRunner();
   await assert.rejects(runSetup(baseDeps({ run, home: mkHome({ pair: 'complete' }), promptHidden: async () => '' })), /contraseña/i);
-  assert.equal(calls.some((c) => c.args[1] === 'set'), false);
+  assert.equal(
+    calls.some((c) => c.args[1] === 'set'),
+    false,
+  );
 });
 
 test('runSetup aborta si listar secretos falla y no escribe config ni sube', async () => {
@@ -392,7 +443,10 @@ test('runSetup aborta si listar secretos falla y no escribe config ni sube', asy
   const before = fs.readFileSync(path.join(cwd, 'src-tauri', 'tauri.conf.json'), 'utf8');
   const { run, calls } = fakeRunner({ secretListStatus: 1 });
   await assert.rejects(runSetup(baseDeps({ run, home, cwd })), /listar|secretos/i);
-  assert.equal(calls.some((c) => c.cmd === 'gh' && c.args[1] === 'set'), false);
+  assert.equal(
+    calls.some((c) => c.cmd === 'gh' && c.args[1] === 'set'),
+    false,
+  );
   assert.equal(fs.readFileSync(path.join(cwd, 'src-tauri', 'tauri.conf.json'), 'utf8'), before);
 });
 
@@ -404,7 +458,10 @@ test('runSetup aborta si la lista de secretos es inválida y no escribe config',
   for (const secretList of ['not json', '{"a":1}', '[{"nope":"x"}]']) {
     const { run, calls } = fakeRunner({ secretList });
     await assert.rejects(runSetup(baseDeps({ run, home, cwd })), /abort|formato|válidas|interpretar/i);
-    assert.equal(calls.some((c) => c.cmd === 'gh' && c.args[1] === 'set'), false);
+    assert.equal(
+      calls.some((c) => c.cmd === 'gh' && c.args[1] === 'set'),
+      false,
+    );
     assert.equal(fs.readFileSync(path.join(cwd, 'src-tauri', 'tauri.conf.json'), 'utf8'), before);
   }
 });
@@ -419,16 +476,26 @@ test('runSetup no reporta éxito si solo sube uno de los dos secretos', async ()
     return true;
   });
   const sets = calls.filter((c) => c.cmd === 'gh' && c.args[1] === 'set');
-  assert.deepEqual(sets.map((s) => s.args[2]), [SECRET_KEY, SECRET_PASSWORD], 'un intento por secreto, sin reintentos');
+  assert.deepEqual(
+    sets.map((s) => s.args[2]),
+    [SECRET_KEY, SECRET_PASSWORD],
+    'un intento por secreto, sin reintentos',
+  );
 });
 
 test('runSetup exige confirmación para reemplazar secretos existentes', async () => {
   const { runSetup } = await load();
   let n = 0;
-  const confirm = async () => { n += 1; return n <= 2; }; // plan + reutilizar sí; reemplazar no
+  const confirm = async () => {
+    n += 1;
+    return n <= 2;
+  }; // plan + reutilizar sí; reemplazar no
   const { run, calls } = fakeRunner({ secretList: JSON.stringify([{ name: 'TAURI_SIGNING_PRIVATE_KEY' }]) });
   await assert.rejects(runSetup(baseDeps({ run, home: mkHome({ pair: 'complete' }), confirm })), /reemplaz|rotan/i);
-  assert.equal(calls.some((c) => c.args[1] === 'set'), false);
+  assert.equal(
+    calls.some((c) => c.args[1] === 'set'),
+    false,
+  );
 });
 
 test('runSetup sanea el entorno del generador, descarta stdout y no filtra valores', async () => {

@@ -89,8 +89,7 @@ export function reconcileLive(current: AppConfig, patch: Partial<AppConfig>, con
   return next;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * Reconcilia el guardado con ediciones hechas mientras estaba en vuelo:

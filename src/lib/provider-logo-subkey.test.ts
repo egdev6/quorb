@@ -9,9 +9,7 @@ import { findLogo, normalizeLogoKey, ProviderLogo, subLogoKey } from '../compone
 describe('9Router custom node logo keys', () => {
   it('uses the pretty node name when present', () => {
     expect(subLogoKey('nine_router:anthropic-compatible-0c354d0a-4d67-4c4e-a6ff-1360bc9c9344', '9Router · Zhipu')).toBe('zhipu');
-    expect(
-      subLogoKey('nine_router:openai-compatible-responses-1855f0b7-4442-4046-8368-4d11dda27b96', '9Router · QWEN - Alibaba'),
-    ).toBe('qwen-alibaba');
+    expect(subLogoKey('nine_router:openai-compatible-responses-1855f0b7-4442-4046-8368-4d11dda27b96', '9Router · QWEN - Alibaba')).toBe('qwen-alibaba');
   });
 
   it('renders monograms for sub-providers without an SVG', () => {

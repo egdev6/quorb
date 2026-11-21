@@ -23,8 +23,16 @@ const NOW = Date.parse('2026-10-06T12:00:00Z');
 
 /** Configuración de avisos con el email listo (consentimiento y direcciones válidas). */
 const emailCfg: AlertsConfig = {
-  enabled: true, native: true, threshold: 90, onReset: true,
-  exceededEffect: 'glow', resetEffect: 'confetti', exceededMedia: null, resetMedia: null, mediaSize: 'small', mediaSound: false,
+  enabled: true,
+  native: true,
+  threshold: 90,
+  onReset: true,
+  exceededEffect: 'glow',
+  resetEffect: 'confetti',
+  exceededMedia: null,
+  resetMedia: null,
+  mediaSize: 'small',
+  mediaSound: false,
   email: { enabled: true, consent: true, sender: 'sender@example.test', recipient: 'recipient@example.test' },
 };
 
@@ -74,8 +82,7 @@ const plainMeter = (id: string, label: string, pct: number): Meter => ({
 });
 
 /** Los cuatro datos con los que se identifica cada aviso. */
-const eventsOf = (r: { events: AlertEvent[] }) =>
-  r.events.map((e) => ({ kind: e.kind, providerId: e.providerId, label: e.label, percent: e.percent }));
+const eventsOf = (r: { events: AlertEvent[] }) => r.events.map((e) => ({ kind: e.kind, providerId: e.providerId, label: e.label, percent: e.percent }));
 
 /** Sólo los avisos de reinicio (un cambio de base puede disparar además el de «superado»). */
 const resetsOf = (r: { events: AlertEvent[] }) => eventsOf(r).filter((e) => e.kind === 'reset');
@@ -120,9 +127,7 @@ describe('alerts', () => {
     // el reinicio es real y hay que avisar.
     const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
     const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
-    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
-      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 2 },
-    ]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([{ kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 2 }]);
   });
 
   it('reports a reset that renews within the same UTC day', () => {
@@ -134,9 +139,7 @@ describe('alerts', () => {
     // renovación: el mismo día no significa el mismo periodo.
     const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
     const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2026-12-31T22:15:31Z' })]);
-    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
-      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 2 },
-    ]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([{ kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 2 }]);
   });
 
   it('does not report a reset when the new window starts before the old one ends', () => {
@@ -145,7 +148,9 @@ describe('alerts', () => {
     // nueva empezó el 1-dic, ANTES de que terminara la vieja (5-dic). No es una
     // renovación, así que no hay reinicio que afirme.
     const prev = reportWith([quotaMeterOf({ pct: 95.558, quotaSource: 'account' })]);
-    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'published', resetsAt: '2027-01-01T00:00:00Z', windowSeconds: 2_678_400 })]);
+    const next = reportWith([
+      quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'published', resetsAt: '2027-01-01T00:00:00Z', windowSeconds: 2_678_400 }),
+    ]);
     expect(resetsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
   });
 
@@ -175,7 +180,9 @@ describe('alerts', () => {
   it('does not report a reset when the units differ between the readings', () => {
     // Tokens contra créditos: el frente no sabe qué son las unidades, sólo las compara.
     const prev = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: '2026-12-01T00:00:00Z' })]);
-    const next = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, unit: 'credits', quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
+    const next = reportWith([
+      quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, unit: 'credits', quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' }),
+    ]);
     expect(resetsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([]);
   });
 
@@ -185,11 +192,25 @@ describe('alerts', () => {
     const withoutUsed = reportWith([quotaMeterOf({ pct: 2, used: null, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })]);
     expect(resetsOf(detectAlerts([prev], [withoutUsed], {}, cfg, NOW))).toEqual([]);
     // Sin ventana en la lectura nueva.
-    const withoutWindow = reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: null, windowSeconds: null })]);
+    const withoutWindow = reportWith([
+      quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: null, windowSeconds: null }),
+    ]);
     expect(resetsOf(detectAlerts([prev], [withoutWindow], {}, cfg, NOW))).toEqual([]);
     // Sin ventana en la lectura vieja.
-    const oldWithoutWindow = reportWith([quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: null, windowSeconds: null })]);
-    expect(resetsOf(detectAlerts([oldWithoutWindow], [reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })])], {}, cfg, NOW))).toEqual([]);
+    const oldWithoutWindow = reportWith([
+      quotaMeterOf({ pct: 95, used: 950_000_000, limit: 1_000_000_000, quotaSource: 'published', resetsAt: null, windowSeconds: null }),
+    ]);
+    expect(
+      resetsOf(
+        detectAlerts(
+          [oldWithoutWindow],
+          [reportWith([quotaMeterOf({ pct: 2, used: 60_000_000, limit: 3_000_000_000, quotaSource: 'account', resetsAt: '2027-01-05T22:15:31Z' })])],
+          {},
+          cfg,
+          NOW,
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it('reports the reset of the custom meter when the quota meter changes its basis', () => {
@@ -197,35 +218,27 @@ describe('alerts', () => {
     // el reinicio es del personalizado, que es independiente de la cuota.
     const prev = reportWith([quotaMeter(95.558, 'account'), plainMeter('custom', 'Consumo', 95)]);
     const next = reportWith([quotaMeter(31.853, 'published'), plainMeter('custom', 'Consumo', 2)]);
-    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
-      { kind: 'reset', providerId: 'claude', label: 'Consumo', percent: 2 },
-    ]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([{ kind: 'reset', providerId: 'claude', label: 'Consumo', percent: 2 }]);
   });
 
   it('reports the reset of a rate limit meter without a declared basis', () => {
     // Las cabeceras de rate limit no declaran base: se comparan como siempre.
     const prev = reportWith([quotaMeter(95.558, 'account'), plainMeter('rate_requests', 'Peticiones (ventana)', 95)]);
     const next = reportWith([quotaMeter(31.853, 'published'), plainMeter('rate_requests', 'Peticiones (ventana)', 2)]);
-    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
-      { kind: 'reset', providerId: 'claude', label: 'Peticiones (ventana)', percent: 2 },
-    ]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([{ kind: 'reset', providerId: 'claude', label: 'Peticiones (ventana)', percent: 2 }]);
   });
 
   it('reports the reset of a quota meter that kept its basis', () => {
     const prev = reportWith([quotaMeter(95.558, 'account')]);
     const next = reportWith([quotaMeter(3, 'account')]);
-    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([
-      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 },
-    ]);
+    expect(eventsOf(detectAlerts([prev], [next], {}, cfg, NOW))).toEqual([{ kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 }]);
   });
 
   it('compares a meter as always when one of the readings has no basis', () => {
     // Sin base en una de las dos lecturas no hay cambio de base: el reinicio se avisa.
     const older = reportWith([quotaMeter(95.558)]);
     const newer = reportWith([quotaMeter(3, 'account')]);
-    expect(eventsOf(detectAlerts([older], [newer], {}, cfg, NOW))).toEqual([
-      { kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 },
-    ]);
+    expect(eventsOf(detectAlerts([older], [newer], {}, cfg, NOW))).toEqual([{ kind: 'reset', providerId: 'claude', label: 'deepseek-v4-flash', percent: 3 }]);
     const olderWith = reportWith([quotaMeter(95.558, 'account')]);
     const newerWithout = reportWith([quotaMeter(3)]);
     expect(eventsOf(detectAlerts([olderWith], [newerWithout], {}, cfg, NOW))).toEqual([
@@ -267,10 +280,7 @@ describe('alerts', () => {
     // El informe llega MIXTO: la cuota no se pudo actualizar (medidor viejo, marcado
     // uno por uno) pero las cabeceras de rate limit son de este ciclo. Sólo el
     // fresco avisa; el viejo no puede disparar nada porque sus datos son viejos.
-    const next = reportWith([
-      { ...quotaMeter(95), stale: true },
-      plainMeter('rate_requests', 'Peticiones (ventana)', 95),
-    ]);
+    const next = reportWith([{ ...quotaMeter(95), stale: true }, plainMeter('rate_requests', 'Peticiones (ventana)', 95)]);
     const { events } = detectAlerts([], [next], {}, cfg, NOW);
     expect(events.map((e) => e.kind)).toEqual(['exceeded']);
     expect(events[0].meterId).toBe('rate_requests');
@@ -296,10 +306,7 @@ describe('alerts', () => {
 
   it('emails the fresh meter of a mixed report only', async () => {
     // El email se calcula con los mismos eventos: sale el fresco, no el viejo.
-    const next = reportWith([
-      { ...quotaMeter(95), stale: true },
-      plainMeter('rate_requests', 'Peticiones (ventana)', 95),
-    ]);
+    const next = reportWith([{ ...quotaMeter(95), stale: true }, plainMeter('rate_requests', 'Peticiones (ventana)', 95)]);
     const { events } = detectAlerts([], [next], {}, cfg, NOW);
     const send = vi.fn().mockResolvedValue('accepted');
     await dispatchEmailAlerts(events, emailCfg, send);

@@ -82,7 +82,20 @@ export function LocalePicker() {
   };
 
   return (
-    <main ref={contentRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, width: 'max-content', margin: '0 auto', minHeight: MIN_HEIGHT, padding: 24 }}>
+    <main
+      ref={contentRef}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 16,
+        width: 'max-content',
+        margin: '0 auto',
+        minHeight: MIN_HEIGHT,
+        padding: 24,
+      }}
+    >
       <h1 style={{ margin: 0, fontSize: 22 }}>Quorb</h1>
       <div style={{ display: 'flex', gap: 12 }}>
         {PICKER_OPTIONS.map((option) => (
@@ -91,7 +104,11 @@ export function LocalePicker() {
           </button>
         ))}
       </div>
-      {error && <p role="alert" style={{ margin: 0 }}>{error}</p>}
+      {error && (
+        <p role="alert" style={{ margin: 0 }}>
+          {error}
+        </p>
+      )}
     </main>
   );
 }

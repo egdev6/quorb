@@ -30,7 +30,7 @@ test('only checked, interactive, non-update uninstall invokes native cleanup', (
   assert.match(hook, /--quorb-uninstall-cleanup --delete-data/);
   assert.match(hook, /\$\{BUNDLEID\}/);
   assert.match(hook, /\$\{If\} \$\{Errors\}\s*StrCpy \$0 2/);
-  assert.match(hook, /\$\{If\} \$0 <> 0[^]*?MessageBox[^]*?SetErrorLevel 2\s*Abort/);
+  assert.match(hook, /\$\{If\} \$0 <> 0[\s\S]*?MessageBox[\s\S]*?SetErrorLevel 2\s*Abort/);
   assert.doesNotMatch(hook, /PowerShell|cmd\.exe|RmDir|DeleteRegKey/);
 });
 
@@ -50,7 +50,7 @@ test('helper dispatch happens before Tauri and preserves the macOS updater guard
   const builder = lib.indexOf('tauri::Builder::default()');
   assert.ok(dispatch !== -1 && builder !== -1 && dispatch < builder);
   assert.match(lib, /mod uninstall;/);
-  assert.match(lib, /if let Some\(code\) = uninstall::dispatch[^]*?std::process::exit\(code\)/);
+  assert.match(lib, /if let Some\(code\) = uninstall::dispatch[\s\S]*?std::process::exit\(code\)/);
   assert.match(lib, /#\[cfg\(not\(target_os = "macos"\)\)\][\s\S]*?let builder = builder\.plugin\(tauri_plugin_updater/);
 });
 
@@ -58,16 +58,11 @@ function assertStableIdentityAllowlist(source) {
   // Normalize only CRLF; keep the tuple comparison exact across checkout styles.
   source = source.replace(/\r\n/g, '\n');
   // The production allowlist has exactly the shipped identity, not a second profile.
-  const allowlist = source.match(/if !matches!\(\s*\(profile\.identifier, profile\.home_dir\),\s*([^]*?)\n\s*\)/)?.[1];
+  const allowlist = source.match(/if !matches!\(\s*\(profile\.identifier, profile\.home_dir\),\s*([\s\S]*?)\n\s*\)/)?.[1];
   assert.equal(allowlist, '("es.egdev.quorb", ".quorb")');
 }
 
-const allowlistFixtureLines = [
-  'if !matches!(',
-  '    (profile.identifier, profile.home_dir),',
-  '    ("es.egdev.quorb", ".quorb")',
-  ')',
-];
+const allowlistFixtureLines = ['if !matches!(', '    (profile.identifier, profile.home_dir),', '    ("es.egdev.quorb", ".quorb")', ')'];
 for (const [label, endings] of [
   ['LF', ['\n', '\n', '\n']],
   ['CRLF', ['\r\n', '\r\n', '\r\n']],
@@ -80,10 +75,11 @@ for (const [label, endings] of [
   test(`stable identity allowlist rejects a foreign identity or extra profile with ${label}`, () => {
     assert.throws(() => assertStableIdentityAllowlist(fixture.replace('es.egdev.quorb', 'org.example.foreign')), assert.AssertionError);
     assert.throws(() => assertStableIdentityAllowlist(fixture.replace('".quorb"', '".foreign"')), assert.AssertionError);
-    assert.throws(() => assertStableIdentityAllowlist(fixture.replace(
-      '("es.egdev.quorb", ".quorb")',
-      '("es.egdev.quorb", ".quorb") | ("org.example.foreign", ".foreign")',
-    )), assert.AssertionError);
+    assert.throws(
+      () =>
+        assertStableIdentityAllowlist(fixture.replace('("es.egdev.quorb", ".quorb")', '("es.egdev.quorb", ".quorb") | ("org.example.foreign", ".foreign")')),
+      assert.AssertionError,
+    );
   });
 }
 
@@ -95,7 +91,7 @@ test('cleanup keeps the stable identity allowlist and exact credential ownership
   assert.match(source, /account\.is_none_or\(crate::config::is_account_id\)/);
   assert.match(source, /entry\.Type != CRED_TYPE_GENERIC/);
   assert.doesNotMatch(source, /get_password|CredentialBlob\s*[),;=]/);
-  assert.match(source, /fn authorized[^]*?args == \[[^]*?"--quorb-uninstall-cleanup",\s*"--delete-data",\s*"--channel",\s*identifier,/);
+  assert.match(source, /fn authorized[\s\S]*?args == \[[\s\S]*?"--quorb-uninstall-cleanup",\s*"--delete-data",\s*"--channel",\s*identifier,/);
 });
 
 test('Rust safety fixtures never dispatch cleanup or call the real credential backend', () => {

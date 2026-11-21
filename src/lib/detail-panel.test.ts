@@ -176,14 +176,23 @@ describe('panel fit with text scale', () => {
     expect(fit.height).toBe(803.9216);
   });
 
-  it.each([[1.0812, 1.02], [1.25, 1], [1.5, 1.25], [2.25, 1.5]])('keeps the exact gap to a bottom and right strip with text scale %s on monitor scale %s', (scale, sf) => {
+  it.each([
+    [1.0812, 1.02],
+    [1.25, 1],
+    [1.5, 1.25],
+    [2.25, 1.5],
+  ])('keeps the exact gap to a bottom and right strip with text scale %s on monitor scale %s', (scale, sf) => {
     const monitor = { x: 0, y: 0, w: 1920 / sf, h: 1040 / sf };
     for (const edge of ['bottom', 'right'] as Edge[]) {
       const vertical = edge === 'right';
       const strip = stripRect(monitor, edge, 0.5, toMonitor(vertical ? 80 : 400, scale), toMonitor(vertical ? 400 : 80, scale));
       const p: DetailPlacement = {
-        area: monitor, strip, edge, anchor: (vertical ? strip.y : strip.x) + toMonitor(40, scale),
-        width: 300, maxHeight: panelHeightLimit(monitor, edge, strip),
+        area: monitor,
+        strip,
+        edge,
+        anchor: (vertical ? strip.y : strip.x) + toMonitor(40, scale),
+        width: 300,
+        maxHeight: panelHeightLimit(monitor, edge, strip),
       };
       for (const layoutHeight of [260, 5000]) {
         const rect = detailBounds(p, fitPanel(p, layoutHeight, 1, scale));
@@ -193,14 +202,24 @@ describe('panel fit with text scale', () => {
     }
   });
 
-  it.each([[1.06, 1.02], [1.25, 1.5]])('clips the CSS radii by zoom × text scale %s × monitor scale %s', (scale, sf) => {
+  it.each([
+    [1.06, 1.02],
+    [1.25, 1.5],
+  ])('clips the CSS radii by zoom × text scale %s × monitor scale %s', (scale, sf) => {
     const fit = fitPanel(placement({ maxHeight: 900 }), 5000, 0.75, scale);
     const clip = surfaceClipFor({ w: 400, h: 900 }, [16, 16, 16, 16], fit.zoom * scale * sf);
     expect(clip.radii).toEqual(Array(4).fill(16 * (fit.zoom * scale * sf)));
   });
 
   it('fits exactly as before without a text scale', () => {
-    for (const [layoutHeight, base] of [[260, 1], [760, 1], [900, 0.75], [2400, 1], [1000.1, 1], [1401.5, 1.5]]) {
+    for (const [layoutHeight, base] of [
+      [260, 1],
+      [760, 1],
+      [900, 0.75],
+      [2400, 1],
+      [1000.1, 1],
+      [1401.5, 1.5],
+    ]) {
       const p = placement();
       expect(fitPanel(p, layoutHeight, base, 1)).toEqual(fitPanel(p, layoutHeight, base));
     }
@@ -208,29 +227,26 @@ describe('panel fit with text scale', () => {
 });
 
 describe('independent detail window', () => {
-  it.each(['top', 'bottom', 'left', 'right'] as Edge[])(
-    'fits the natural and scaled panel inside the monitor on %s without changing the strip',
-    (edge) => {
-      const vertical = edge === 'left' || edge === 'right';
-      for (const offset of [0, 0.5, 1]) {
-        const strip = stripRect(area, edge, offset, vertical ? 80 : 400, vertical ? 400 : 80);
-        const original = { ...strip };
-        const anchor = vertical ? strip.y + 40 : strip.x + 40;
-        for (const layoutHeight of [120, 320, 5000]) {
-          const p: DetailPlacement = { area, strip, edge, anchor, width: 300, maxHeight: panelHeightLimit(area, edge, strip) };
-          const fit = fitPanel(p, layoutHeight, 1);
-          const rect = detailBounds(p, fit);
-          expect(contains(area, rect.x, rect.y)).toBe(true);
-          expect(rect.x + rect.w).toBeLessThanOrEqual(area.x + area.w + 1e-9);
-          expect(rect.y + rect.h).toBeLessThanOrEqual(area.y + area.h + 1e-9);
-          // Scaling never widens the panel beyond its baseline width.
-          expect(rect.w).toBeLessThanOrEqual(p.width + 1e-9);
-          expect(fit.height).toBeLessThanOrEqual(p.maxHeight);
-          expect(strip).toEqual(original);
-        }
+  it.each(['top', 'bottom', 'left', 'right'] as Edge[])('fits the natural and scaled panel inside the monitor on %s without changing the strip', (edge) => {
+    const vertical = edge === 'left' || edge === 'right';
+    for (const offset of [0, 0.5, 1]) {
+      const strip = stripRect(area, edge, offset, vertical ? 80 : 400, vertical ? 400 : 80);
+      const original = { ...strip };
+      const anchor = vertical ? strip.y + 40 : strip.x + 40;
+      for (const layoutHeight of [120, 320, 5000]) {
+        const p: DetailPlacement = { area, strip, edge, anchor, width: 300, maxHeight: panelHeightLimit(area, edge, strip) };
+        const fit = fitPanel(p, layoutHeight, 1);
+        const rect = detailBounds(p, fit);
+        expect(contains(area, rect.x, rect.y)).toBe(true);
+        expect(rect.x + rect.w).toBeLessThanOrEqual(area.x + area.w + 1e-9);
+        expect(rect.y + rect.h).toBeLessThanOrEqual(area.y + area.h + 1e-9);
+        // Scaling never widens the panel beyond its baseline width.
+        expect(rect.w).toBeLessThanOrEqual(p.width + 1e-9);
+        expect(fit.height).toBeLessThanOrEqual(p.maxHeight);
+        expect(strip).toEqual(original);
       }
-    },
-  );
+    }
+  });
 
   it.each(['top', 'bottom', 'left', 'right'] as Edge[])('keeps fractional DPI geometry from clipping on %s', (edge) => {
     const vertical = edge === 'left' || edge === 'right';
@@ -271,7 +287,9 @@ describe('independent detail window', () => {
     const queue = createLatestQueue();
     const calls: string[] = [];
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const first = queue(async (current: () => boolean) => {
       calls.push('first:start');
       await blocked;
@@ -279,8 +297,12 @@ describe('independent detail window', () => {
     });
     // Allow the first job to start before replacing it.
     await Promise.resolve();
-    const stale = queue(async () => { calls.push('stale'); });
-    const latest = queue(async () => { calls.push('latest'); });
+    const stale = queue(async () => {
+      calls.push('stale');
+    });
+    const latest = queue(async () => {
+      calls.push('latest');
+    });
     release();
     await Promise.all([first, stale, latest]);
     expect(calls).toEqual(['first:start', 'latest']);
@@ -289,19 +311,29 @@ describe('independent detail window', () => {
   it('invalidates an opening layout before hiding and recovers after errors', async () => {
     const queue = createLatestQueue();
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let shown = false;
     const opening = queue(async (current: () => boolean) => {
       await blocked;
       if (current()) shown = true;
     });
     await Promise.resolve();
-    const hide = queue(async () => { shown = false; });
+    const hide = queue(async () => {
+      shown = false;
+    });
     release();
     await Promise.all([opening, hide]);
     expect(shown).toBe(false);
-    await expect(queue(async () => { throw new Error('native failure'); })).rejects.toThrow('native failure');
-    await queue(async () => { shown = true; });
+    await expect(
+      queue(async () => {
+        throw new Error('native failure');
+      }),
+    ).rejects.toThrow('native failure');
+    await queue(async () => {
+      shown = true;
+    });
     expect(shown).toBe(true);
   });
 });

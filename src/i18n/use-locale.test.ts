@@ -35,9 +35,15 @@ describe('changeLocale', () => {
     let backend = config({ locale: 'es', refreshMinutes: 7 });
     let baseline = backend;
     await changeLocale('en', {
-      setDraft: (update) => { draft = update(draft); },
+      setDraft: (update) => {
+        draft = update(draft);
+      },
       getConfig: async () => backend,
-      enqueueSave: async (build) => { backend = await build(); baseline = backend; return backend; },
+      enqueueSave: async (build) => {
+        backend = await build();
+        baseline = backend;
+        return backend;
+      },
     });
     expect(backend.locale).toBe('en');
     expect(backend.refreshMinutes).toBe(7); // la base es el backend, no el borrador
@@ -52,7 +58,9 @@ describe('changeLocale', () => {
   it('leaves a missing draft untouched', async () => {
     let draft: AppConfig | null = null;
     await changeLocale('en', {
-      setDraft: (update) => { draft = update(draft); },
+      setDraft: (update) => {
+        draft = update(draft);
+      },
       getConfig: async () => config({ locale: 'es' }),
       enqueueSave: async (build) => build(),
     });
@@ -66,11 +74,17 @@ describe('changeLocale', () => {
   it('reverts the draft to the backend locale and rethrows when the save fails', async () => {
     let draft: AppConfig | null = config({ locale: 'es', refreshMinutes: 9 });
     const backend = config({ locale: 'es', refreshMinutes: 7 });
-    await expect(changeLocale('en', {
-      setDraft: (update) => { draft = update(draft); },
-      getConfig: async () => backend,
-      enqueueSave: async () => { throw new Error('disk full'); },
-    })).rejects.toThrow('disk full');
+    await expect(
+      changeLocale('en', {
+        setDraft: (update) => {
+          draft = update(draft);
+        },
+        getConfig: async () => backend,
+        enqueueSave: async () => {
+          throw new Error('disk full');
+        },
+      }),
+    ).rejects.toThrow('disk full');
     expect(backend.locale).toBe('es');
     expect(draft?.locale).toBe('es'); // reconciliado con el backend, no «en»
     expect(draft?.refreshMinutes).toBe(9); // el resto del borrador se conserva
@@ -81,11 +95,17 @@ describe('changeLocale', () => {
     const getConfig = async (): Promise<AppConfig> => {
       throw new Error('unreadable');
     };
-    await expect(changeLocale('en', {
-      setDraft: (update) => { draft = update(draft); },
-      getConfig,
-      enqueueSave: async () => { throw new Error('disk full'); },
-    })).rejects.toThrow('disk full'); // el error original, no el de la relectura
+    await expect(
+      changeLocale('en', {
+        setDraft: (update) => {
+          draft = update(draft);
+        },
+        getConfig,
+        enqueueSave: async () => {
+          throw new Error('disk full');
+        },
+      }),
+    ).rejects.toThrow('disk full'); // el error original, no el de la relectura
     expect(draft?.locale).toBe('en'); // sin relectura no hay reconciliación
   });
 });

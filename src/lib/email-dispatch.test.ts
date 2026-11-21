@@ -7,20 +7,41 @@ const now = Date.parse('2026-10-06T12:00:00Z');
 const window = '2026-10-06T15:00:00Z';
 const nextWindow = '2026-10-06T20:00:00Z';
 const report = (percent: number, resetsAt = window, id = 'claude'): UsageReport => ({
-  id, name: 'Private account name', kind: 'subscription', status: 'ok', plan: null,
+  id,
+  name: 'Private account name',
+  kind: 'subscription',
+  status: 'ok',
+  plan: null,
   meters: [{ id: 'session', label: 'Private meter label', percent, used: null, limit: null, unit: null, resetsAt, windowSeconds: 18000 }],
-  spend: null, message: null, action: null, fetchedAt: '',
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '',
 });
 const config: AlertsConfig = {
-  enabled: true, native: true, threshold: 90, onReset: true,
-  exceededEffect: 'glow', resetEffect: 'confetti', exceededMedia: null, resetMedia: null, mediaSize: 'small', mediaSound: false,
+  enabled: true,
+  native: true,
+  threshold: 90,
+  onReset: true,
+  exceededEffect: 'glow',
+  resetEffect: 'confetti',
+  exceededMedia: null,
+  resetMedia: null,
+  mediaSize: 'small',
+  mediaSound: false,
   email: { enabled: true, consent: true, sender: 'sender@example.test', recipient: 'recipient@example.test' },
 };
 
 describe('automatic email uses the existing detectAlerts stream', () => {
   it('projects exact provider/meter/window/type identity without exporting account identities or labels', async () => {
     const detected = detectAlerts([], [report(95, window, 'claude:private-account')], {}, config, now);
-    expect(detected.events[0]).toMatchObject({ providerId: 'claude:private-account', meterId: 'session', realMeterId: 'session', window: windowKey(window), kind: 'exceeded' });
+    expect(detected.events[0]).toMatchObject({
+      providerId: 'claude:private-account',
+      meterId: 'session',
+      realMeterId: 'session',
+      window: windowKey(window),
+      kind: 'exceeded',
+    });
     const send = vi.fn().mockResolvedValue('accepted');
     await dispatchEmailAlerts(detected.events, config, send);
     expect(send).toHaveBeenCalledExactlyOnceWith({ provider: 'claude', meter: 'session', window: windowKey(window), percent: 95, kind: 'exceeded' });
@@ -30,7 +51,8 @@ describe('automatic email uses the existing detectAlerts stream', () => {
   });
 
   it.each(['alice_private', 'session', 'Alice Private', 'alice-private', 'Sesión · 5 h'])(
-    'keeps the legacy label %s local even when it looks like a valid meter ID', async (label) => {
+    'keeps the legacy label %s local even when it looks like a valid meter ID',
+    async (label) => {
       const legacy = (percent: number, resetsAt = window): UsageReport => {
         const r = report(percent, resetsAt);
         r.meters[0] = { ...r.meters[0], id: '', label };
@@ -39,7 +61,16 @@ describe('automatic email uses the existing detectAlerts stream', () => {
       const first = detectAlerts([], [legacy(95)], {}, config, now);
       const memory = { [`claude|${label}|${windowKey(window)}`]: 'exceeded' };
       expect(first.events).toHaveLength(1);
-      expect(first.events[0]).toMatchObject({ kind: 'exceeded', providerId: 'claude', providerName: 'Private account name', meterId: label, realMeterId: '', window: windowKey(window), label, percent: 95 });
+      expect(first.events[0]).toMatchObject({
+        kind: 'exceeded',
+        providerId: 'claude',
+        providerName: 'Private account name',
+        meterId: label,
+        realMeterId: '',
+        window: windowKey(window),
+        label,
+        percent: 95,
+      });
       expect(first.memory).toEqual(memory);
       expect(notificationText(first.events)).toEqual({ title: 'Límite superado', body: `Private account name · ${label}: 95 %` });
       const snapshot = JSON.stringify(first);
@@ -89,21 +120,28 @@ describe('automatic email uses the existing detectAlerts stream', () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith({ provider: 'claude', meter: 'session', window: windowKey(nextWindow), percent: 2, kind: 'reset' });
     expect(reset.memory).toEqual(first.memory);
-    expect(notificationText(reset.events)).toEqual({ title: 'Límite reiniciado', body: 'Private account name · Private meter label: disponible de nuevo (2 %)' });
+    expect(notificationText(reset.events)).toEqual({
+      title: 'Límite reiniciado',
+      body: 'Private account name · Private meter label: disponible de nuevo (2 %)',
+    });
     expect(effectFor(reset.events, config)).toEqual({ effect: 'confetti', moment: 'reset' });
   });
 
   it('global/email govern remote sends independently of native and require valid consent/config', async () => {
     const events = detectAlerts([], [report(95)], {}, config, now).events;
-    for (const enabled of [false, true]) for (const email of [false, true]) for (const native of [false, true]) {
-      const cfg = { ...config, enabled, native, email: { ...config.email!, enabled: email } };
-      const send = vi.fn().mockResolvedValue('accepted');
-      await dispatchEmailAlerts(events, cfg, send);
-      expect(send).toHaveBeenCalledTimes(enabled && email ? 1 : 0);
-      expect(nativeAlertsEnabled(cfg)).toBe(enabled && native);
-    }
+    for (const enabled of [false, true])
+      for (const email of [false, true])
+        for (const native of [false, true]) {
+          const cfg = { ...config, enabled, native, email: { ...config.email!, enabled: email } };
+          const send = vi.fn().mockResolvedValue('accepted');
+          await dispatchEmailAlerts(events, cfg, send);
+          expect(send).toHaveBeenCalledTimes(enabled && email ? 1 : 0);
+          expect(nativeAlertsEnabled(cfg)).toBe(enabled && native);
+        }
     for (const email of [undefined, { ...config.email!, consent: false }, { ...config.email!, recipient: '' }]) {
-      const send = vi.fn(); await dispatchEmailAlerts(events, { ...config, email }, send); expect(send).not.toHaveBeenCalled();
+      const send = vi.fn();
+      await dispatchEmailAlerts(events, { ...config, email }, send);
+      expect(send).not.toHaveBeenCalled();
     }
   });
 
@@ -117,7 +155,9 @@ describe('automatic email uses the existing detectAlerts stream', () => {
   });
 
   it('keeps legacy/no-window behavior and does not leak arbitrary legacy meter labels', async () => {
-    const legacy = report(95); legacy.meters[0].id = ''; legacy.meters[0].resetsAt = null;
+    const legacy = report(95);
+    legacy.meters[0].id = '';
+    legacy.meters[0].resetsAt = null;
     const first = detectAlerts([], [legacy], {}, config, now);
     const send = vi.fn().mockResolvedValue('accepted');
     await dispatchEmailAlerts(first.events, config, send);
@@ -129,10 +169,14 @@ describe('automatic email uses the existing detectAlerts stream', () => {
 
   it('HTTP rejection or a synchronous send failure never changes local text/effects or blocks siblings', async () => {
     const events = detectAlerts([], [report(95), report(98, window, 'codex')], {}, config, now).events;
-    const local = notificationText(events); const fx = effectFor(events, config);
-    const send = vi.fn(() => { throw Error('private'); });
+    const local = notificationText(events);
+    const fx = effectFor(events, config);
+    const send = vi.fn(() => {
+      throw Error('private');
+    });
     await expect(dispatchEmailAlerts(events, config, send)).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(2);
-    expect(notificationText(events)).toEqual(local); expect(effectFor(events, config)).toEqual(fx);
+    expect(notificationText(events)).toEqual(local);
+    expect(effectFor(events, config)).toEqual(fx);
   });
 });

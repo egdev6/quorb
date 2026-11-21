@@ -10,13 +10,37 @@ import { getVersion } from '@tauri-apps/api/app';
 import { useAppName } from './lib/app-identity';
 import { api } from './lib/api';
 import { configKeyFor, isAccountVisible, setAccountVisibility } from './lib/settings-visibility';
-import { ORB_SIZE, type Account, type AccountProvider, type AlertMoment, type AlertsConfig, type AppConfig, type Effect, type Locale, type MediaSize, type NineRouterPeriod, type ScopedSecretKey, type SecretKey, type SecretStatus, type ShortcutsConfig, type UsageReport } from './lib/types';
+import {
+  ORB_SIZE,
+  type Account,
+  type AccountProvider,
+  type AlertMoment,
+  type AlertsConfig,
+  type AppConfig,
+  type Effect,
+  type Locale,
+  type MediaSize,
+  type NineRouterPeriod,
+  type ScopedSecretKey,
+  type SecretKey,
+  type SecretStatus,
+  type ShortcutsConfig,
+  type UsageReport,
+} from './lib/types';
 import { ACCOUNT_SECRETS, CLI_INSTALL, SESSION_DIR, accountReady, accountsOf, defaultSessionDir, newAccount, secretKey } from './lib/accounts';
 import { ACCENT_PRESETS, DEFAULT_ACCENT, derivePalette, normalizeHex } from './lib/palette';
 import { isDirty, isSettingsDirty, reconcileLive, reconcileSaved, withCanonicalLive } from './lib/settings-dirty';
 import { createLiveCloseHandler, createLiveSaver, type LiveSaver, type LiveState } from './lib/settings-live';
 import { createAutostartController } from './lib/autostart-controller';
-import { configPersistedAfterSave, createWriteQueue, enqueueCanonicalConfig, runMixedSave, mixedSaveMessage, reloadSecretsAfterSave, type WriteQueue } from './lib/settings-save';
+import {
+  configPersistedAfterSave,
+  createWriteQueue,
+  enqueueCanonicalConfig,
+  runMixedSave,
+  mixedSaveMessage,
+  reloadSecretsAfterSave,
+  type WriteQueue,
+} from './lib/settings-save';
 import { hiddenNineRouterIds, nineRouterSubName, revealIds } from './lib/visibility';
 import { openAccountLogin } from './lib/account-login';
 import { createPresencePoller, effectivePersisted, isConnectionDirty } from './lib/account-health';
@@ -84,19 +108,26 @@ export function UpdatesSection({ auto, onAuto, locale = 'es' }: { auto: boolean;
   const [version, setVersion] = useState<string>('');
   const { mode, state, check, install } = useUpdater(auto);
   useEffect(() => {
-    getVersion().then(setVersion).catch(() => setVersion('?'));
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion('?'));
   }, []);
 
-  if (mode !== 'native') return (
-    <Section title={t(locale, 'settings.updates.versionCurrent')}>
-      <p className="q-note">{appName ?? '…'} <b>{version ? `v${version}` : ''}</b></p>
-      <p className="q-note" role="status">
-        {mode === 'manual' ? t(locale, 'settings.updates.manualMode')
-          : mode === 'error' ? t(locale, 'settings.updates.modeError')
-          : t(locale, 'settings.updates.modeChecking')}
-      </p>
-    </Section>
-  );
+  if (mode !== 'native')
+    return (
+      <Section title={t(locale, 'settings.updates.versionCurrent')}>
+        <p className="q-note">
+          {appName ?? '…'} <b>{version ? `v${version}` : ''}</b>
+        </p>
+        <p className="q-note" role="status">
+          {mode === 'manual'
+            ? t(locale, 'settings.updates.manualMode')
+            : mode === 'error'
+              ? t(locale, 'settings.updates.modeError')
+              : t(locale, 'settings.updates.modeChecking')}
+        </p>
+      </Section>
+    );
 
   return (
     <Section title={t(locale, 'settings.updates.installedTitle')}>
@@ -113,7 +144,9 @@ export function UpdatesSection({ auto, onAuto, locale = 'es' }: { auto: boolean;
           </span>
           <span className="eg-notice__actions">
             <button type="button" className="eg-btn eg-btn--secondary eg-btn--sm" disabled={state.phase === 'installing'} onClick={install}>
-              {state.phase === 'installing' ? `${t(locale, 'settings.updates.installing')}${state.progress != null ? ` · ${state.progress} %` : '…'}` : t(locale, 'settings.updates.installNow')}
+              {state.phase === 'installing'
+                ? `${t(locale, 'settings.updates.installing')}${state.progress != null ? ` · ${state.progress} %` : '…'}`
+                : t(locale, 'settings.updates.installNow')}
             </button>
           </span>
         </div>
@@ -129,11 +162,20 @@ export function UpdatesSection({ auto, onAuto, locale = 'es' }: { auto: boolean;
           {appName ?? '…'} <b>{version ? `v${version}` : ''}</b>
           {state.phase === 'none' && t(locale, 'settings.updates.upToDate')}
         </span>
-        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" disabled={state.phase === 'checking' || state.phase === 'installing'} onClick={() => check()}>
+        <button
+          type="button"
+          className="eg-btn eg-btn--ghost eg-btn--sm"
+          disabled={state.phase === 'checking' || state.phase === 'installing'}
+          onClick={() => check()}
+        >
           {state.phase === 'checking' ? t(locale, 'settings.updates.checking') : t(locale, 'settings.updates.checkNow')}
         </button>
       </div>
-      {state.phase === 'error' && <div className="eg-notice eg-notice--warning eg-notice--sm"><span className="eg-notice__text">{state.message}</span></div>}
+      {state.phase === 'error' && (
+        <div className="eg-notice eg-notice--warning eg-notice--sm">
+          <span className="eg-notice__text">{state.message}</span>
+        </div>
+      )}
       <Rows>
         <Toggle label={t(locale, 'settings.updates.autoLabel')} hint={t(locale, 'settings.updates.autoHint')} checked={auto} onChange={onAuto} />
       </Rows>
@@ -169,6 +211,7 @@ function Rows({ children }: { children: ReactNode }) {
 
 function Field({ label, hint, value, children }: { label: string; hint?: ReactNode; value?: ReactNode; children: ReactNode }) {
   return (
+    // biome-ignore lint/a11y/noLabelWithoutControl: the control is passed in as children and stays wrapped by this label.
     <label className={`eg-field${value != null ? ' eg-field--range' : ''}`}>
       <span className="eg-field__label">
         {label}
@@ -197,7 +240,21 @@ function Link({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-export function SecretInput({ id, label, configured, onSaved, hint, locale = 'es' }: { id: ScopedSecretKey; label: string; configured: boolean; onSaved: () => void; hint?: ReactNode; locale?: Locale }) {
+export function SecretInput({
+  id,
+  label,
+  configured,
+  onSaved,
+  hint,
+  locale = 'es',
+}: {
+  id: ScopedSecretKey;
+  label: string;
+  configured: boolean;
+  onSaved: () => void;
+  hint?: ReactNode;
+  locale?: Locale;
+}) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -230,11 +287,17 @@ export function SecretInput({ id, label, configured, onSaved, hint, locale = 'es
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
-        <button className="eg-btn eg-btn--primary" disabled={busy || !value.trim()} onClick={() => save(value)}>
+        <button type="button" className="eg-btn eg-btn--primary" disabled={busy || !value.trim()} onClick={() => save(value)}>
           {t(locale, 'settings.common.save')}
         </button>
         {configured && (
-          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title={t(locale, 'settings.common.deleteKeyTitle')}>
+          <button
+            type="button"
+            className="eg-btn eg-btn--destructive"
+            disabled={busy}
+            onClick={() => save('')}
+            title={t(locale, 'settings.common.deleteKeyTitle')}
+          >
             {t(locale, 'settings.common.remove')}
           </button>
         )}
@@ -266,8 +329,12 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
   if (connected) {
     return (
       <div className="q-inline">
-        <span className="eg-status eg-status--success">{t(locale, 'settings.providers.nanConnect.connectedAccount')}{msg ? ` · ${msg}` : ''}</span>
+        <span className="eg-status eg-status--success">
+          {t(locale, 'settings.providers.nanConnect.connectedAccount')}
+          {msg ? ` · ${msg}` : ''}
+        </span>
         <button
+          type="button"
           className="eg-btn eg-btn--destructive eg-btn--sm"
           disabled={busy}
           onClick={() =>
@@ -288,8 +355,14 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
       <span className="eg-field__label">{t(locale, 'settings.providers.nanConnect.label')}</span>
       {step === 'email' ? (
         <div className="q-inline">
-          <input type="email" placeholder={t(locale, 'settings.providers.nanConnect.emailPlaceholder')} value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            type="email"
+            placeholder={t(locale, 'settings.providers.nanConnect.emailPlaceholder')}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
           <button
+            type="button"
             className="eg-btn eg-btn--primary"
             disabled={busy || !email.includes('@')}
             onClick={() =>
@@ -307,6 +380,7 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
         <div className="q-inline">
           <input type="text" spellCheck={false} placeholder="https://…nan.builders/…" value={link} onChange={(e) => setLink(e.target.value)} />
           <button
+            type="button"
             className="eg-btn eg-btn--primary"
             disabled={busy || !link.trim()}
             onClick={() =>
@@ -320,7 +394,7 @@ export function NanConnect({ locale = 'es', connected, onChange, account }: { lo
           >
             {t(locale, 'settings.providers.connect')}
           </button>
-          <button className="eg-btn eg-btn--ghost" disabled={busy} onClick={() => setStep('email')}>
+          <button type="button" className="eg-btn eg-btn--ghost" disabled={busy} onClick={() => setStep('email')}>
             {t(locale, 'settings.providers.nanConnect.back')}
           </button>
         </div>
@@ -338,6 +412,7 @@ export function NanProbe({ locale = 'es' }: { locale?: Locale } = {}) {
     <details className="q-details">
       <summary>{t(locale, 'settings.providers.nanProbe.title')}</summary>
       <button
+        type="button"
         className="eg-btn eg-btn--ghost"
         disabled={busy}
         onClick={async () => {
@@ -359,7 +434,17 @@ export function NanProbe({ locale = 'es' }: { locale?: Locale } = {}) {
 }
 
 /** Contraseña del dashboard de 9Router: se guarda y se prueba el login a la vez. */
-export function NineRouterConnect({ locale = 'es', connected, baseUrl, onChange }: { locale?: Locale; connected: boolean; baseUrl: string; onChange: () => void }) {
+export function NineRouterConnect({
+  locale = 'es',
+  connected,
+  baseUrl,
+  onChange,
+}: {
+  locale?: Locale;
+  connected: boolean;
+  baseUrl: string;
+  onChange: () => void;
+}) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -389,21 +474,33 @@ export function NineRouterConnect({ locale = 'es', connected, baseUrl, onChange 
 
   return (
     <details className="q-details" open={!connected}>
-      <summary>{connected ? t(locale, 'settings.providers.nineRouterConnect.connectedSummary') : t(locale, 'settings.providers.nineRouterConnect.connectSummary')}</summary>
+      <summary>
+        {connected ? t(locale, 'settings.providers.nineRouterConnect.connectedSummary') : t(locale, 'settings.providers.nineRouterConnect.connectSummary')}
+      </summary>
       <div className="q-inline">
         <input
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={connected ? t(locale, 'settings.providers.nineRouterConnect.placeholderConfigured') : t(locale, 'settings.providers.nineRouterConnect.placeholderPassword')}
+          placeholder={
+            connected
+              ? t(locale, 'settings.providers.nineRouterConnect.placeholderConfigured')
+              : t(locale, 'settings.providers.nineRouterConnect.placeholderPassword')
+          }
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <button className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
+        <button type="button" className="eg-btn eg-btn--primary" disabled={busy || !password.trim()} onClick={() => save(password)}>
           {t(locale, 'settings.providers.nineRouterConnect.saveAndTest')}
         </button>
         {connected && (
-          <button className="eg-btn eg-btn--destructive" disabled={busy} onClick={() => save('')} title={t(locale, 'settings.providers.nineRouterConnect.removeTitle')}>
+          <button
+            type="button"
+            className="eg-btn eg-btn--destructive"
+            disabled={busy}
+            onClick={() => save('')}
+            title={t(locale, 'settings.providers.nineRouterConnect.removeTitle')}
+          >
             {t(locale, 'settings.providers.nineRouterConnect.remove')}
           </button>
         )}
@@ -471,6 +568,7 @@ export function MomentEffect({
           </select>
         </label>
         <button
+          type="button"
           className="eg-btn eg-btn--ghost"
           disabled={effect === 'none' || (effect === 'custom' && !media)}
           onClick={() => testEffect(effect, moment, alerts, onPersist).catch((e) => onError(String(e)))}
@@ -484,6 +582,7 @@ export function MomentEffect({
           <div className="q-inline">
             <input type="text" readOnly value={fileName(media) ?? ''} placeholder={t(locale, 'settings.alerts.noFile')} title={media ?? ''} />
             <button
+              type="button"
               className="eg-btn eg-btn--ghost"
               onClick={async () => {
                 const file = await openDialog({ multiple: false, directory: false, filters: mediaFilters(locale) });
@@ -493,7 +592,7 @@ export function MomentEffect({
               {t(locale, 'settings.alerts.choose')}
             </button>
             {media && (
-              <button className="eg-btn eg-btn--ghost" onClick={() => onMedia(null)}>
+              <button type="button" className="eg-btn eg-btn--ghost" onClick={() => onMedia(null)}>
                 {t(locale, 'settings.common.remove')}
               </button>
             )}
@@ -534,11 +633,28 @@ export function ShortcutRow({ label, value, onChange, locale = 'es' }: { label: 
             }
           }}
         >
-          {rec ? t(locale, 'settings.shortcuts.recording') : value ? prettyCombo(value).split(' + ').map((k) => <kbd key={k} className="eg-kbd">{k}</kbd>) : t(locale, 'settings.shortcuts.none')}
+          {rec
+            ? t(locale, 'settings.shortcuts.recording')
+            : value
+              ? prettyCombo(value)
+                  .split(' + ')
+                  .map((k) => (
+                    <kbd key={k} className="eg-kbd">
+                      {k}
+                    </kbd>
+                  ))
+              : t(locale, 'settings.shortcuts.none')}
         </button>
       </td>
       <td className="eg-table__acts">
-        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => { setRec(true); btn.current?.focus(); }}>
+        <button
+          type="button"
+          className="eg-btn eg-btn--ghost eg-btn--sm"
+          onClick={() => {
+            setRec(true);
+            btn.current?.focus();
+          }}
+        >
           {t(locale, 'settings.shortcuts.change')}
         </button>
         {value && (
@@ -682,7 +798,19 @@ export function healthSummary(r: UsageReport, locale: Locale = 'es'): string {
  * Último paso de cada proveedor y cuenta: consulta la cuenta con lo guardado y dice si
  * funciona y, si no, por qué (sesión caducada, clave rechazada, falta un dato…).
  */
-function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLogin, loginBusy, refreshKey, locale = 'es' }: HealthProps & { id: string; refreshKey?: unknown }) {
+function HealthStep({
+  id,
+  saved,
+  secretsSig,
+  dirty,
+  hidden,
+  saving,
+  onSave,
+  onLogin,
+  loginBusy,
+  refreshKey,
+  locale = 'es',
+}: HealthProps & { id: string; refreshKey?: unknown }) {
   const [h, setH] = useState<Health>({ phase: 'checking' });
   const [busy, setBusy] = useState(false);
   const seq = useRef(0);
@@ -703,6 +831,7 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
       .catch((e) => alive.current && n === seq.current && setH({ phase: 'failed', error: String(e) }));
   }, [id]);
   // Al abrir, al guardar, al cambiar una clave o al aparecer la sesión del CLI.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     const t = window.setTimeout(run, 300);
     return () => window.clearTimeout(t);
@@ -729,7 +858,18 @@ function HealthStep({ id, saved, secretsSig, dirty, hidden, saving, onSave, onLo
 
 /** Vista del paso de comprobación a partir de su estado. Extraída para poder
  *  renderizar en pruebas cada estado con el locale explícito. */
-export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBusy, onRun, onSave, onLogin }: {
+export function HealthStepView({
+  locale,
+  h,
+  hidden,
+  dirty,
+  busy,
+  saving,
+  loginBusy,
+  onRun,
+  onSave,
+  onLogin,
+}: {
   locale: Locale;
   h: Health;
   hidden: boolean;
@@ -782,7 +922,10 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
       )}
       {state === 'checking' && <span>{t(locale, 'settings.providers.health.consulting')}</span>}
       {message && state !== 'checking' && (
-        <span className={`eg-notice eg-notice--sm eg-notice--${state === 'ok' ? 'info' : state === 'error' ? 'danger' : 'warning'} q-steps__notice`} role={state === 'ok' ? undefined : 'alert'}>
+        <span
+          className={`eg-notice eg-notice--sm eg-notice--${state === 'ok' ? 'info' : state === 'error' ? 'danger' : 'warning'} q-steps__notice`}
+          role={state === 'ok' ? undefined : 'alert'}
+        >
           <span className="eg-notice__text">{message}</span>
         </span>
       )}
@@ -798,12 +941,7 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
           </button>
         )}
         {state === 'warn' && r?.status === 'needsLogin' && onLogin && (
-          <button
-            type="button"
-            className="eg-btn eg-btn--primary eg-btn--sm"
-            disabled={busy || saving || loginBusy}
-            onClick={onLogin}
-          >
+          <button type="button" className="eg-btn eg-btn--primary eg-btn--sm" disabled={busy || saving || loginBusy} onClick={onLogin}>
             {t(locale, 'settings.providers.health.login')}
           </button>
         )}
@@ -817,6 +955,7 @@ export function HealthStepView({ locale, h, hidden, dirty, busy, saving, loginBu
  *  #92, punto 11): jamás se muestra conectada por omisión. */
 function useCliSession(id: string, active: boolean, envKey: string): boolean {
   const [connected, setConnected] = useState<boolean | null>(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     if (!active) {
       setConnected(false);
@@ -985,25 +1124,48 @@ export function CliConnectView({
             <CliMissingWsl provider={provider} locale={locale} wslDistro={wslDistro} />
           ) : (
             <>
-              <b>{t(locale, 'settings.providers.cliConnect.installTitle', { name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback') })}</b>
+              <b>
+                {t(locale, 'settings.providers.cliConnect.installTitle', {
+                  name: CLI_INSTALL[provider]?.name ?? t(locale, 'settings.providers.cliConnect.cliFallback'),
+                })}
+              </b>
               <span>{t(locale, 'settings.providers.cliConnect.installBody')}</span>
-              {provider === 'codex' ? <CodexInstall locale={locale} controller={codexInstall} onRecheck={onCodexRecheck} /> : <CliMissing provider={provider} locale={locale} />}
+              {provider === 'codex' ? (
+                <CodexInstall locale={locale} controller={codexInstall} onRecheck={onCodexRecheck} />
+              ) : (
+                <CliMissing provider={provider} locale={locale} />
+              )}
             </>
           )}
         </li>
       )}
       <li data-done={connected || undefined}>
-        <b>{connected ? t(locale, 'settings.providers.cliConnect.sessionFound') : extra ? t(locale, 'settings.providers.cliConnect.loginOther') : t(locale, 'settings.providers.cliConnect.login')}</b>
+        <b>
+          {connected
+            ? t(locale, 'settings.providers.cliConnect.sessionFound')
+            : extra
+              ? t(locale, 'settings.providers.cliConnect.loginOther')
+              : t(locale, 'settings.providers.cliConnect.login')}
+        </b>
         <span>
-          {t(locale, 'settings.providers.cliConnect.opensTerminal')}{' '}
-          <code>{loginCommand}</code>
-          {provider === 'claude' && <>{t(locale, 'settings.providers.cliConnect.claudeLoginHint')} <code>/login</code>)</>}
-          {provider === 'gemini' && <>{t(locale, 'settings.providers.cliConnect.geminiLoginHint')}</>}{t(locale, 'settings.providers.cliConnect.browserLogin')}
+          {t(locale, 'settings.providers.cliConnect.opensTerminal')} <code>{loginCommand}</code>
+          {provider === 'claude' && (
+            <>
+              {t(locale, 'settings.providers.cliConnect.claudeLoginHint')} <code>/login</code>)
+            </>
+          )}
+          {provider === 'gemini' && <>{t(locale, 'settings.providers.cliConnect.geminiLoginHint')}</>}
+          {t(locale, 'settings.providers.cliConnect.browserLogin')}
           {connected && t(locale, 'settings.providers.cliConnect.fileExists')}
           {extra && t(locale, 'settings.providers.cliConnect.extraNote')}
         </span>
         <span className="q-steps__actions">
-          <button className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`} disabled={busy || cliMissing || health.saving} onClick={onConnect}>
+          <button
+            type="button"
+            className={`eg-btn ${connected ? 'eg-btn--secondary' : 'eg-btn--primary'}`}
+            disabled={busy || cliMissing || health.saving}
+            onClick={onConnect}
+          >
             {connected
               ? t(locale, 'settings.providers.cliConnect.reopenLogin')
               : effectivePersisted(persisted, health.dirty)
@@ -1108,7 +1270,20 @@ export function AccountEditor({
         </li>
 
         {session && (
-          <CliConnect locale={locale} id={a.id} provider={a.provider} loginCommand={loginCommand} cliMissing={cliMissing} persisted={persisted} extra health={health} codexInstall={codexInstall} onCodexRecheck={onCodexRecheck} sessionEnv={sessionEnv} wslDistro={wslDistro} />
+          <CliConnect
+            locale={locale}
+            id={a.id}
+            provider={a.provider}
+            loginCommand={loginCommand}
+            cliMissing={cliMissing}
+            persisted={persisted}
+            extra
+            health={health}
+            codexInstall={codexInstall}
+            onCodexRecheck={onCodexRecheck}
+            sessionEnv={sessionEnv}
+            wslDistro={wslDistro}
+          />
         )}
 
         {a.provider === 'cursor' && (
@@ -1116,7 +1291,13 @@ export function AccountEditor({
             <li data-done={has('cursor_token') || undefined}>
               <b>{t(locale, 'settings.providers.accountEditor.cursorTokenTitle')}</b>
               <span>{t(locale, 'settings.providers.accountEditor.cursorTokenBody')}</span>
-              <SecretInput locale={locale} id={key('cursor_token')} label={t(locale, 'settings.providers.accountEditor.cursorTokenLabel')} configured={has('cursor_token')} onSaved={onSecrets} />
+              <SecretInput
+                locale={locale}
+                id={key('cursor_token')}
+                label={t(locale, 'settings.providers.accountEditor.cursorTokenLabel')}
+                configured={has('cursor_token')}
+                onSaved={onSecrets}
+              />
             </li>
             {check}
           </>
@@ -1155,7 +1336,12 @@ export function AccountEditor({
                 label={t(locale, 'settings.providers.accountEditor.githubTokenLabel')}
                 configured={has('github_token')}
                 onSaved={onSecrets}
-                hint={<>{t(locale, 'settings.providers.accountEditor.githubTokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> {t(locale, 'settings.providers.accountEditor.githubTokenPermission')}</>}
+                hint={
+                  <>
+                    {t(locale, 'settings.providers.accountEditor.githubTokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link>{' '}
+                    {t(locale, 'settings.providers.accountEditor.githubTokenPermission')}
+                  </>
+                }
               />
             </li>
             {check}
@@ -1167,7 +1353,13 @@ export function AccountEditor({
             <li data-done={has('nan_session') || has('nan_api_key') || undefined}>
               <b>{t(locale, 'settings.providers.accountEditor.nanTitle')}</b>
               <NanConnect locale={locale} account={a.id} connected={has('nan_session')} onChange={onSecrets} />
-              <SecretInput locale={locale} id={key('nan_api_key')} label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')} configured={has('nan_api_key')} onSaved={onSecrets} />
+              <SecretInput
+                locale={locale}
+                id={key('nan_api_key')}
+                label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')}
+                configured={has('nan_api_key')}
+                onSaved={onSecrets}
+              />
             </li>
             <li data-done>
               <b>{t(locale, 'settings.providers.planLabel')}</b>
@@ -1195,7 +1387,11 @@ export function AccountEditor({
                 label={t(locale, 'settings.providers.apiKey')}
                 configured={has('openrouter_api_key')}
                 onSaved={onSecrets}
-                hint={<>{t(locale, 'settings.providers.accountEditor.openrouterHint')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link></>}
+                hint={
+                  <>
+                    {t(locale, 'settings.providers.accountEditor.openrouterHint')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>
+                  </>
+                }
               />
             </li>
             {check}
@@ -1212,7 +1408,11 @@ export function AccountEditor({
                 label={t(locale, 'settings.providers.apiKey')}
                 configured={has('zai_api_key')}
                 onSaved={onSecrets}
-                hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+                hint={
+                  <>
+                    {t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.
+                  </>
+                }
               />
             </li>
             {check}
@@ -1229,7 +1429,11 @@ export function AccountEditor({
                 label={t(locale, 'settings.providers.accountEditor.apiKeyOf', { name: 'OpenCode Go' })}
                 configured={has('opencode_go_api_key')}
                 onSaved={onSecrets}
-                hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
+                hint={
+                  <>
+                    {t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.
+                  </>
+                }
               />
             </li>
             {check}
@@ -1246,13 +1450,27 @@ export function AccountEditor({
                 label={t(locale, 'settings.providers.accountEditor.adminKey')}
                 configured={has(adminKey)}
                 onSaved={onSecrets}
-                hint={<>{t(locale, 'settings.providers.accountEditor.adminKeyOwn')} <Link href={a.provider === 'anthropic_api' ? LINKS.anthropicAdmin : LINKS.openaiAdmin}>{t(locale, 'settings.providers.accountEditor.adminKey')}</Link>.</>}
+                hint={
+                  <>
+                    {t(locale, 'settings.providers.accountEditor.adminKeyOwn')}{' '}
+                    <Link href={a.provider === 'anthropic_api' ? LINKS.anthropicAdmin : LINKS.openaiAdmin}>
+                      {t(locale, 'settings.providers.accountEditor.adminKey')}
+                    </Link>
+                    .
+                  </>
+                }
               />
             </li>
             <li data-done={a.monthlyBudgetUsd != null || undefined}>
               <b>{t(locale, 'settings.providers.accountEditor.budgetTitle')}</b>
               <Field label={t(locale, 'settings.providers.accountEditor.budgetLabel')}>
-                <input type="number" min={0} step="any" value={a.monthlyBudgetUsd ?? ''} onChange={(e) => onChange({ monthlyBudgetUsd: numOrNull(e.target.value) })} />
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={a.monthlyBudgetUsd ?? ''}
+                  onChange={(e) => onChange({ monthlyBudgetUsd: numOrNull(e.target.value) })}
+                />
               </Field>
             </li>
             {check}
@@ -1269,9 +1487,21 @@ export function AccountEditor({
           </p>
           <Field
             label={t(locale, 'settings.providers.accountEditor.sessionDir')}
-            hint={<>{t(locale, 'settings.providers.accountEditor.sessionDirEmpty')} <code>{defaultSessionDir(a, appName)}</code>{t(locale, 'settings.providers.accountEditor.sessionDirMiddle')} <code>{session.file}</code> {t(locale, 'settings.providers.accountEditor.sessionDirEnd')}</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.accountEditor.sessionDirEmpty')} <code>{defaultSessionDir(a, appName)}</code>
+                {t(locale, 'settings.providers.accountEditor.sessionDirMiddle')} <code>{session.file}</code>{' '}
+                {t(locale, 'settings.providers.accountEditor.sessionDirEnd')}
+              </>
+            }
           >
-            <input type="text" spellCheck={false} value={a.configDir ?? ''} placeholder={defaultSessionDir(a, appName)} onChange={(e) => onChange({ configDir: strOrNull(e.target.value) })} />
+            <input
+              type="text"
+              spellCheck={false}
+              value={a.configDir ?? ''}
+              placeholder={defaultSessionDir(a, appName)}
+              onChange={(e) => onChange({ configDir: strOrNull(e.target.value) })}
+            />
           </Field>
         </details>
       )}
@@ -1311,8 +1541,14 @@ const providerName = (p: { name: string; nameKey?: MessageKey }, locale: Locale)
  *  Los textos de cada una viven en el catálogo (`settings.nav.*` y `settings.pages.*`). */
 const PAGES = [
   { id: 'providers', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z' },
-  { id: 'look', icon: 'M12 2a10 10 0 1 0 0 20c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2zM13.5 6.5h0M17.5 10.5h0M8.5 7.5h0M6.5 12.5h0' },
-  { id: 'alerts', icon: 'M10.27 21a2 2 0 0 0 3.46 0M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33' },
+  {
+    id: 'look',
+    icon: 'M12 2a10 10 0 1 0 0 20c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2zM13.5 6.5h0M17.5 10.5h0M8.5 7.5h0M6.5 12.5h0',
+  },
+  {
+    id: 'alerts',
+    icon: 'M10.27 21a2 2 0 0 0 3.46 0M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33',
+  },
   { id: 'shortcuts', icon: 'M2 4h20v16H2zM6 8h0M10 8h0M14 8h0M18 8h0M8 12h0M12 12h0M16 12h0M7 16h10' },
   { id: 'updates', icon: 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5' },
 ] as const;
@@ -1355,7 +1591,14 @@ function providerState(id: ProviderTab, cfg: AppConfig, s: SecretStatus): Provid
 }
 
 /** Tarjeta de cada proveedor en la lista de «Proveedores». */
-function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect }: {
+function ProviderCard({
+  locale,
+  tab: p,
+  state: st,
+  extraAccounts,
+  open,
+  onSelect,
+}: {
   locale: Locale;
   tab: (typeof PROVIDER_TABS)[number];
   state: ProviderState;
@@ -1365,14 +1608,7 @@ function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect
 }) {
   const badge = PROVIDER_BADGE[st];
   return (
-    <button
-      type="button"
-      className="eg-module-card q-provider"
-      aria-current={open}
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      onClick={onSelect}
-    >
+    <button type="button" className="eg-module-card q-provider" aria-current={open} aria-haspopup="dialog" aria-expanded={open} onClick={onSelect}>
       <span className="eg-module-card__head">
         <span className="q-provider__logo logo">
           <ProviderLogo id={p.id} name={providerName(p, locale)} />
@@ -1395,7 +1631,18 @@ function ProviderCard({ locale, tab: p, state: st, extraAccounts, open, onSelect
 
 /** Tarjeta de la página «Proveedores»: intervalo de consulta y las dos listas
  *  (suscripciones y APIs). Extraída para poder renderizarla en pruebas de i18n. */
-export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectTab, onRefreshMinutes, onSessionEnv, onWslDistro, platform = 'windows' }: {
+export function ProvidersCard({
+  locale,
+  cfg,
+  secrets,
+  tab,
+  drawerOpen,
+  onSelectTab,
+  onRefreshMinutes,
+  onSessionEnv,
+  onWslDistro,
+  platform = 'windows',
+}: {
   locale: Locale;
   cfg: AppConfig;
   secrets: SecretStatus;
@@ -1450,9 +1697,7 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
                   {/* WSL sin distro se resuelve como HOST (config.rs;
                       revisiones PR #92/#248): el campo lo dice hasta que se
                       escribe una distro. */}
-                  {cfg.wslDistro.trim() === ''
-                    ? t(locale, 'settings.providers.wslDistroMissing')
-                    : t(locale, 'settings.providers.wslDistroHint')}
+                  {cfg.wslDistro.trim() === '' ? t(locale, 'settings.providers.wslDistroMissing') : t(locale, 'settings.providers.wslDistroHint')}
                 </small>
               </label>
             )}
@@ -1460,18 +1705,24 @@ export function ProvidersCard({ locale, cfg, secrets, tab, drawerOpen, onSelectT
         )}
       </div>
       <div className="eg-module-card__body">
-      <p className="eg-eyebrow">{t(locale, 'settings.providers.subscriptions')}</p>
-      <div className="q-providers">{PROVIDER_TABS.filter((p) => p.group === 'sub').map(providerCard)}</div>
-      <p className="eg-eyebrow">{t(locale, 'settings.providers.apis')}</p>
-      <div className="q-providers">{PROVIDER_TABS.filter((p) => p.group === 'api').map(providerCard)}</div>
-      <small className="eg-field__hint">{t(locale, 'settings.providers.orderHint')}</small>
+        <p className="eg-eyebrow">{t(locale, 'settings.providers.subscriptions')}</p>
+        <div className="q-providers">{PROVIDER_TABS.filter((p) => p.group === 'sub').map(providerCard)}</div>
+        <p className="eg-eyebrow">{t(locale, 'settings.providers.apis')}</p>
+        <div className="q-providers">{PROVIDER_TABS.filter((p) => p.group === 'api').map(providerCard)}</div>
+        <small className="eg-field__hint">{t(locale, 'settings.providers.orderHint')}</small>
       </div>
     </section>
   );
 }
 
 /** Cabecera del panel lateral del proveedor abierto. */
-export function ProviderDrawerHead({ locale, tab, state, closeRef, onClose }: {
+export function ProviderDrawerHead({
+  locale,
+  tab,
+  state,
+  closeRef,
+  onClose,
+}: {
   locale: Locale;
   tab: ProviderTab;
   state: ProviderState;
@@ -1500,7 +1751,14 @@ export function ProviderDrawerHead({ locale, tab, state, closeRef, onClose }: {
 }
 
 /** Pestañas de cuentas del panel del proveedor (principal + adicionales). */
-export function AccountsBar({ locale, tab, accounts, selectedId, onSelect, onAdd }: {
+export function AccountsBar({
+  locale,
+  tab,
+  accounts,
+  selectedId,
+  onSelect,
+  onAdd,
+}: {
   locale: Locale;
   tab: ProviderTab;
   accounts: Account[];
@@ -1512,14 +1770,7 @@ export function AccountsBar({ locale, tab, accounts, selectedId, onSelect, onAdd
     <div className="q-accounts">
       <div className="eg-tabs eg-tabs--sm" role="tablist" aria-label={t(locale, 'settings.providers.accountsAria')}>
         {[{ id: tab as string, label: t(locale, 'settings.providers.mainAccount') }, ...accounts].map((a) => (
-          <button
-            key={a.id}
-            type="button"
-            role="tab"
-            className="eg-tabs__item"
-            aria-selected={selectedId === a.id}
-            onClick={() => onSelect(a.id)}
-          >
+          <button key={a.id} type="button" role="tab" className="eg-tabs__item" aria-selected={selectedId === a.id} onClick={() => onSelect(a.id)}>
             {a.label}
           </button>
         ))}
@@ -1537,7 +1788,15 @@ export function AccountsBar({ locale, tab, accounts, selectedId, onSelect, onAdd
 
 /** Pie con el mensaje de guardado y los botones; el del panel lateral cierra el
  *  panel («Listo») y el de la ventana cierra Ajustes («Cerrar»). */
-export function SettingsFoot({ locale, variant, saved, dirty, saving, onSave, onClose }: {
+export function SettingsFoot({
+  locale,
+  variant,
+  saved,
+  dirty,
+  saving,
+  onSave,
+  onClose,
+}: {
   locale: Locale;
   variant: 'drawer' | 'window';
   saved: string | null;
@@ -1548,7 +1807,9 @@ export function SettingsFoot({ locale, variant, saved, dirty, saving, onSave, on
 }) {
   return (
     <footer className={variant === 'drawer' ? 'q-drawer__foot' : 'q-foot'}>
-      <span className="q-foot__msg" role="status">{saved}</span>
+      <span className="q-foot__msg" role="status">
+        {saved}
+      </span>
       {variant === 'drawer' ? (
         <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={onClose}>
           {t(locale, 'settings.shell.done')}
@@ -1566,7 +1827,12 @@ export function SettingsFoot({ locale, variant, saved, dirty, saving, onSave, on
 }
 
 /** Interruptor «Arrancar al iniciar sesión» de la cabecera de Ajustes. */
-export function AutostartSwitch({ locale, checked, disabled, onChange }: {
+export function AutostartSwitch({
+  locale,
+  checked,
+  disabled,
+  onChange,
+}: {
   locale: Locale;
   checked: boolean;
   disabled: boolean;
@@ -1574,14 +1840,19 @@ export function AutostartSwitch({ locale, checked, disabled, onChange }: {
 }) {
   return (
     <label className="eg-check eg-check--switch">
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />{' '}
-      {t(locale, 'settings.shell.autostart')}
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} /> {t(locale, 'settings.shell.autostart')}
     </label>
   );
 }
 
 /** Aviso de fallo del autostart; si ni se pudo leer, ofrece reintentar. */
-export function AutostartNotice({ locale, error, unread, busy, onRetry }: {
+export function AutostartNotice({
+  locale,
+  error,
+  unread,
+  busy,
+  onRetry,
+}: {
   locale: Locale;
   error: string;
   unread: boolean;
@@ -1611,7 +1882,7 @@ export function DesktopSessionNotice({ locale, wmInfo }: { locale: Locale; wmInf
     <div className="eg-notice eg-notice--sm" role="status">
       <span className="eg-notice__text">
         <strong>
-          {t(locale, 'settings.shell.desktopSession', { session: wmInfo.isWayland ? 'Wayland' : wmInfo.xdgSessionType ?? 'X11' })}
+          {t(locale, 'settings.shell.desktopSession', { session: wmInfo.isWayland ? 'Wayland' : (wmInfo.xdgSessionType ?? 'X11') })}
           {wmInfo.desktopSession ? ` · ${wmInfo.desktopSession}` : ''}
         </strong>
       </span>
@@ -1620,7 +1891,8 @@ export function DesktopSessionNotice({ locale, wmInfo }: { locale: Locale; wmInf
         {desktopCompatRows(wmInfo.surfaces, locale).map((row) => (
           <li key={row.label}>
             <strong>{row.label}</strong> ·{' '}
-            {row.state === 'limited' ? <em>{t(locale, 'settings.shell.surfaceLimited')}</em> : <em>{t(locale, 'settings.shell.surfaceUnlimited')}</em>} {row.note}
+            {row.state === 'limited' ? <em>{t(locale, 'settings.shell.surfaceLimited')}</em> : <em>{t(locale, 'settings.shell.surfaceUnlimited')}</em>}{' '}
+            {row.note}
           </li>
         ))}
       </ul>
@@ -1653,7 +1925,15 @@ export function ShortcutNotices({ errors, warnings }: { errors: string[]; warnin
 /** Sección «Apariencia»: anillos, color de acento y tira. Extraída igual que
  *  SettingsNav para poder renderizarla en pruebas de i18n con el locale
  *  explícito sin montar la ventana completa. */
-export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiveChange, onRetry }: {
+export function LookSection({
+  locale,
+  cfg,
+  liveError,
+  onOrbSize,
+  onAccent,
+  onLiveChange,
+  onRetry,
+}: {
   locale: Locale;
   cfg: AppConfig;
   liveError: string | null;
@@ -1667,7 +1947,12 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
     <>
       <Section title={t(locale, 'settings.look.rings')}>
         <div className="q-preview">
-          <span className="eg-gauge" role="img" aria-label={t(locale, 'settings.look.previewAria', { size: cfg.orbSize })} style={{ '--size': `${cfg.orbSize}px` } as CSSProperties}>
+          <span
+            className="eg-gauge"
+            role="img"
+            aria-label={t(locale, 'settings.look.previewAria', { size: cfg.orbSize })}
+            style={{ '--size': `${cfg.orbSize}px` } as CSSProperties}
+          >
             <span className="eg-gauge__ring" style={{ '--p': 0.82 } as CSSProperties} />
             {!cfg.compact && <span className="eg-gauge__ring" style={{ '--p': 0.46 } as CSSProperties} />}
             {!cfg.compact && cfg.orbSize >= 40 && <span className="eg-gauge__ring" style={{ '--p': 0.31 } as CSSProperties} />}
@@ -1675,23 +1960,48 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
               <ProviderLogo id="claude" name="Claude" />
             </span>
           </span>
-          <Field label={t(locale, 'settings.look.ringSize')} value={`${cfg.orbSize} px`} hint={<button type="button" className="q-link" onClick={() => onOrbSize(ORB_SIZE.default)}>{t(locale, 'settings.look.resetSize', { size: ORB_SIZE.default })}</button>}>
-            <input type="range" min={ORB_SIZE.min} max={ORB_SIZE.max} step={2} value={cfg.orbSize} style={rangeFill(cfg.orbSize, ORB_SIZE.min, ORB_SIZE.max)} onChange={(e) => onOrbSize(Number(e.target.value))} />
+          <Field
+            label={t(locale, 'settings.look.ringSize')}
+            value={`${cfg.orbSize} px`}
+            hint={
+              <button type="button" className="q-link" onClick={() => onOrbSize(ORB_SIZE.default)}>
+                {t(locale, 'settings.look.resetSize', { size: ORB_SIZE.default })}
+              </button>
+            }
+          >
+            <input
+              type="range"
+              min={ORB_SIZE.min}
+              max={ORB_SIZE.max}
+              step={2}
+              value={cfg.orbSize}
+              style={rangeFill(cfg.orbSize, ORB_SIZE.min, ORB_SIZE.max)}
+              onChange={(e) => onOrbSize(Number(e.target.value))}
+            />
           </Field>
         </div>
         <div className="eg-field">
           <span className="eg-field__label">{t(locale, 'settings.look.accent')}</span>
           <div className="q-swatches">
             {ACCENT_PRESETS.map((c) => (
-              <button key={c} type="button" className="q-swatch" style={{ background: c }} aria-label={t(locale, 'settings.look.useSwatch', { color: c })} aria-pressed={normalizeHex(cfg.accentColor) === c} onClick={() => onAccent(c)} />
+              <button
+                key={c}
+                type="button"
+                className="q-swatch"
+                style={{ background: c }}
+                aria-label={t(locale, 'settings.look.useSwatch', { color: c })}
+                aria-pressed={normalizeHex(cfg.accentColor) === c}
+                onClick={() => onAccent(c)}
+              />
             ))}
             <label className="q-swatch q-swatch--picker" title={t(locale, 'settings.look.pickAnyColor')}>
               <input type="color" value={normalizeHex(cfg.accentColor)} onChange={(e) => onAccent(e.target.value)} />
               <span aria-hidden="true">+</span>
             </label>
           </div>
-          <span className="q-palette" aria-label={t(locale, 'settings.look.palette')}>
+          <span className="q-palette" role="img" aria-label={t(locale, 'settings.look.palette')}>
             {palette.map((c, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional list with a fixed order that is never reordered or filtered; the index is its identity.
               <span key={i}>
                 <i style={{ background: c }} />
                 {c}
@@ -1700,24 +2010,54 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
           </span>
           <small className="eg-field__hint">
             {t(locale, 'settings.look.accentHint')}{' '}
-            <button type="button" className="q-link" onClick={() => onAccent(DEFAULT_ACCENT)}>{t(locale, 'settings.look.resetEgdevRed')}</button>
+            <button type="button" className="q-link" onClick={() => onAccent(DEFAULT_ACCENT)}>
+              {t(locale, 'settings.look.resetEgdevRed')}
+            </button>
           </small>
         </div>
         <Field label={t(locale, 'settings.look.stripOpacity')} value={`${Math.round(cfg.opacity * 100)} %`}>
-          <input type="range" min={0.3} max={1} step={0.02} value={cfg.opacity} style={rangeFill(cfg.opacity, 0.3, 1)} onChange={(e) => onLiveChange({ opacity: Number(e.target.value) })} />
+          <input
+            type="range"
+            min={0.3}
+            max={1}
+            step={0.02}
+            value={cfg.opacity}
+            style={rangeFill(cfg.opacity, 0.3, 1)}
+            onChange={(e) => onLiveChange({ opacity: Number(e.target.value) })}
+          />
         </Field>
         <Rows>
-          <Toggle label={t(locale, 'settings.look.compact')} hint={t(locale, 'settings.look.compactHint')} checked={cfg.compact} onChange={(v) => onLiveChange({ compact: v })} />
-          <Toggle label={t(locale, 'settings.look.showResets')} hint={t(locale, 'settings.look.showResetsHint')} checked={cfg.showResets ?? true} onChange={(v) => onLiveChange({ showResets: v })} />
+          <Toggle
+            label={t(locale, 'settings.look.compact')}
+            hint={t(locale, 'settings.look.compactHint')}
+            checked={cfg.compact}
+            onChange={(v) => onLiveChange({ compact: v })}
+          />
+          <Toggle
+            label={t(locale, 'settings.look.showResets')}
+            hint={t(locale, 'settings.look.showResetsHint')}
+            checked={cfg.showResets ?? true}
+            onChange={(v) => onLiveChange({ showResets: v })}
+          />
         </Rows>
       </Section>
 
       <Section title={t(locale, 'settings.look.strip')}>
         <div className="eg-field">
-          <span className="eg-field__label" id="lb-edge">{t(locale, 'settings.look.edge')}</span>
+          <span className="eg-field__label" id="lb-edge">
+            {t(locale, 'settings.look.edge')}
+          </span>
           <div className="q-chips" role="radiogroup" aria-labelledby="lb-edge">
             {EDGES.map((e) => (
-              <button key={e.id} type="button" role="radio" aria-checked={cfg.dockEdge === e.id} className={`eg-chip${cfg.dockEdge === e.id ? ' is-active' : ''}`} onClick={() => onLiveChange({ dockEdge: e.id })}>
+              // biome-ignore lint/a11y/useSemanticElements: segmented chip control styled as buttons inside a radiogroup; a native radio input would change its structure and styling.
+              <button
+                key={e.id}
+                type="button"
+                role="radio"
+                aria-checked={cfg.dockEdge === e.id}
+                className={`eg-chip${cfg.dockEdge === e.id ? ' is-active' : ''}`}
+                onClick={() => onLiveChange({ dockEdge: e.id })}
+              >
                 {t(locale, e.key)}
               </button>
             ))}
@@ -1725,17 +2065,37 @@ export function LookSection({ locale, cfg, liveError, onOrbSize, onAccent, onLiv
           <small className="eg-field__hint">{t(locale, 'settings.look.dragHint')}</small>
         </div>
         <Field label={t(locale, 'settings.look.dockPosition')} value={`${Math.round(cfg.dockOffset * 100)} %`}>
-          <input type="range" min={0} max={1} step={0.01} value={cfg.dockOffset} style={rangeFill(cfg.dockOffset, 0, 1)} onChange={(e) => onLiveChange({ dockOffset: Number(e.target.value) })} />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={cfg.dockOffset}
+            style={rangeFill(cfg.dockOffset, 0, 1)}
+            onChange={(e) => onLiveChange({ dockOffset: Number(e.target.value) })}
+          />
         </Field>
         <Rows>
-          <Toggle label={t(locale, 'settings.look.autoHide')} hint={t(locale, 'settings.look.autoHideHint')} checked={cfg.autoHide} onChange={(v) => onLiveChange({ autoHide: v })} />
-          <Toggle label={t(locale, 'settings.look.alwaysOnTop')} hint={t(locale, 'settings.look.alwaysOnTopHint')} checked={cfg.alwaysOnTop} onChange={(v) => onLiveChange({ alwaysOnTop: v })} />
+          <Toggle
+            label={t(locale, 'settings.look.autoHide')}
+            hint={t(locale, 'settings.look.autoHideHint')}
+            checked={cfg.autoHide}
+            onChange={(v) => onLiveChange({ autoHide: v })}
+          />
+          <Toggle
+            label={t(locale, 'settings.look.alwaysOnTop')}
+            hint={t(locale, 'settings.look.alwaysOnTopHint')}
+            checked={cfg.alwaysOnTop}
+            onChange={(v) => onLiveChange({ alwaysOnTop: v })}
+          />
         </Rows>
         {liveError && (
           <div className="eg-field" role="alert">
             <span className="eg-field__label">{t(locale, 'settings.look.liveError')}</span>
             <small className="eg-field__hint">{liveError}</small>
-            <button type="button" className="q-link" onClick={onRetry}>{t(locale, 'settings.common.retry')}</button>
+            <button type="button" className="q-link" onClick={onRetry}>
+              {t(locale, 'settings.common.retry')}
+            </button>
           </div>
         )}
       </Section>
@@ -1774,28 +2134,61 @@ export function EmailStatusLine({ locale, status }: { locale: Locale; status: Em
   );
 }
 
-function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }: {
-  locale: Locale; alerts: AlertsConfig; onAlerts: (patch: Partial<AlertsConfig>) => void;
-  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>; secrets: SecretStatus; onSecrets: () => void;
+function EmailAlerts({
+  locale,
+  alerts,
+  onAlerts,
+  onPersist,
+  secrets,
+  onSecrets,
+}: {
+  locale: Locale;
+  alerts: AlertsConfig;
+  onAlerts: (patch: Partial<AlertsConfig>) => void;
+  onPersist: (alerts: AlertsConfig, options?: { emailTest: boolean }) => Promise<void>;
+  secrets: SecretStatus;
+  onSecrets: () => void;
 }) {
   const email = alerts.email ?? emailDefaults;
   const [status, setStatus] = useState<EmailStatus>('idle');
   const [busy, setBusy] = useState(false);
   const update = (patch: Partial<typeof email>) => onAlerts({ email: patchEmail(email, patch) });
   useEffect(() => {
-    let alive = true; let updated = false;
+    let alive = true;
+    let updated = false;
     const off = listen<EmailStatus>('email-status', ({ payload }) => {
-      if (alive) { updated = true; setStatus(payload); }
+      if (alive) {
+        updated = true;
+        setStatus(payload);
+      }
     }).catch(() => () => {});
-    api.emailStatus().then((value) => { if (alive && !updated) setStatus(value); }).catch(() => { if (alive) setStatus('serviceError'); });
-    return () => { alive = false; void off.then((stop) => stop()).catch(() => {}); };
+    api
+      .emailStatus()
+      .then((value) => {
+        if (alive && !updated) setStatus(value);
+      })
+      .catch(() => {
+        if (alive) setStatus('serviceError');
+      });
+    return () => {
+      alive = false;
+      void off.then((stop) => stop()).catch(() => {});
+    };
   }, []);
   const test = async () => {
     if (busy) return;
     setBusy(true);
     try {
-      setStatus(await sendEmailTest(email, () => onPersist(alerts, { emailTest: true }), () => api.sendEmailAlert(null)));
-    } finally { setBusy(false); }
+      setStatus(
+        await sendEmailTest(
+          email,
+          () => onPersist(alerts, { emailTest: true }),
+          () => api.sendEmailAlert(null),
+        ),
+      );
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <Section title={t(locale, 'settings.alerts.email.title')}>
@@ -1813,10 +2206,14 @@ function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }
       <Field label={t(locale, 'settings.alerts.email.recipient')}>
         <input type="email" autoComplete="off" value={email.recipient} onChange={(e) => update({ recipient: e.target.value.trim() })} />
       </Field>
-      <SecretInput locale={locale} id="resend_api_key" label={t(locale, 'settings.alerts.email.key')} configured={!!secrets.resend_api_key} onSaved={onSecrets} />
-      {typeof navigator !== 'undefined' && osFromUA(navigator.userAgent) === 'linux' && (
-        <p className="q-note">{t(locale, 'settings.alerts.email.linux')}</p>
-      )}
+      <SecretInput
+        locale={locale}
+        id="resend_api_key"
+        label={t(locale, 'settings.alerts.email.key')}
+        configured={!!secrets.resend_api_key}
+        onSaved={onSecrets}
+      />
+      {typeof navigator !== 'undefined' && osFromUA(navigator.userAgent) === 'linux' && <p className="q-note">{t(locale, 'settings.alerts.email.linux')}</p>}
       <p className="q-note">{t(locale, 'settings.alerts.email.testHint')}</p>
       <button type="button" className="eg-btn eg-btn--ghost" disabled={busy || !emailReady(email) || !secrets.resend_api_key} onClick={() => void test()}>
         {t(locale, busy ? 'settings.alerts.email.testing' : 'settings.alerts.email.test')}
@@ -1828,7 +2225,15 @@ function EmailAlerts({ locale, alerts, onAlerts, onPersist, secrets, onSecrets }
 
 /** Sección «Alertas»: cuándo avisar (dos momentos) y el efecto propio. Extraída
  *  por el mismo motivo que LookSection. */
-export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, secrets = {}, onSecrets = () => {} }: {
+export function AlertsSection({
+  locale,
+  alerts,
+  onAlerts,
+  onPersist,
+  onError,
+  secrets = {},
+  onSecrets = () => {},
+}: {
   locale: Locale;
   alerts: AlertsConfig;
   onAlerts: (patch: Partial<AlertsConfig>) => void;
@@ -1843,30 +2248,66 @@ export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, se
       <Section title={t(locale, 'settings.alerts.when')}>
         <Rows>
           <Toggle label={t(locale, 'settings.alerts.enable')} checked={alerts.enabled} onChange={(v) => onAlerts({ enabled: v })} />
-          <Toggle label={t(locale, 'settings.alerts.native')} hint={t(locale, 'settings.alerts.nativeHint')} checked={alerts.native} onChange={(v) => onAlerts({ native: v })} />
+          <Toggle
+            label={t(locale, 'settings.alerts.native')}
+            hint={t(locale, 'settings.alerts.nativeHint')}
+            checked={alerts.native}
+            onChange={(v) => onAlerts({ native: v })}
+          />
         </Rows>
         <div className="q-moment">
           <h3>{t(locale, 'settings.alerts.exceededTitle')}</h3>
           <Field label={t(locale, 'settings.alerts.threshold')} value={`${Math.round(alerts.threshold)} %`} hint={t(locale, 'settings.alerts.thresholdHint')}>
-            <input type="range" min={50} max={100} step={1} value={alerts.threshold} style={rangeFill(alerts.threshold, 50, 100)} onChange={(e) => onAlerts({ threshold: Number(e.target.value) })} />
+            <input
+              type="range"
+              min={50}
+              max={100}
+              step={1}
+              value={alerts.threshold}
+              style={rangeFill(alerts.threshold, 50, 100)}
+              onChange={(e) => onAlerts({ threshold: Number(e.target.value) })}
+            />
           </Field>
-          <MomentEffect locale={locale} moment="exceeded" effect={alerts.exceededEffect} media={alerts.exceededMedia} alerts={alerts} onEffect={(v) => onAlerts({ exceededEffect: v })} onMedia={(v) => onAlerts({ exceededMedia: v })} onPersist={onPersist} onError={onError} />
+          <MomentEffect
+            locale={locale}
+            moment="exceeded"
+            effect={alerts.exceededEffect}
+            media={alerts.exceededMedia}
+            alerts={alerts}
+            onEffect={(v) => onAlerts({ exceededEffect: v })}
+            onMedia={(v) => onAlerts({ exceededMedia: v })}
+            onPersist={onPersist}
+            onError={onError}
+          />
         </div>
         <div className="q-moment">
           <h3>{t(locale, 'settings.alerts.resetTitle')}</h3>
           <Rows>
-            <Toggle label={t(locale, 'settings.alerts.onReset')} hint={t(locale, 'settings.alerts.onResetHint')} checked={alerts.onReset} onChange={(v) => onAlerts({ onReset: v })} />
+            <Toggle
+              label={t(locale, 'settings.alerts.onReset')}
+              hint={t(locale, 'settings.alerts.onResetHint')}
+              checked={alerts.onReset}
+              onChange={(v) => onAlerts({ onReset: v })}
+            />
           </Rows>
           {alerts.onReset && (
-            <MomentEffect locale={locale} moment="reset" effect={alerts.resetEffect} media={alerts.resetMedia} alerts={alerts} onEffect={(v) => onAlerts({ resetEffect: v })} onMedia={(v) => onAlerts({ resetMedia: v })} onPersist={onPersist} onError={onError} />
+            <MomentEffect
+              locale={locale}
+              moment="reset"
+              effect={alerts.resetEffect}
+              media={alerts.resetMedia}
+              alerts={alerts}
+              onEffect={(v) => onAlerts({ resetEffect: v })}
+              onMedia={(v) => onAlerts({ resetMedia: v })}
+              onPersist={onPersist}
+              onError={onError}
+            />
           )}
         </div>
       </Section>
 
       <Section title={t(locale, 'settings.alerts.custom.title')}>
-        <p className="q-note">
-          {t(locale, 'settings.alerts.custom.note')}
-        </p>
+        <p className="q-note">{t(locale, 'settings.alerts.custom.note')}</p>
         <Field label={t(locale, 'settings.alerts.custom.size')}>
           <select value={alerts.mediaSize} onChange={(e) => onAlerts({ mediaSize: e.target.value as MediaSize })}>
             <option value="small">{t(locale, 'settings.alerts.custom.sizeSmall')}</option>
@@ -1875,7 +2316,12 @@ export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, se
           </select>
         </Field>
         <Rows>
-          <Toggle label={t(locale, 'settings.alerts.custom.sound')} hint={t(locale, 'settings.alerts.custom.soundHint')} checked={alerts.mediaSound} onChange={(v) => onAlerts({ mediaSound: v })} />
+          <Toggle
+            label={t(locale, 'settings.alerts.custom.sound')}
+            hint={t(locale, 'settings.alerts.custom.soundHint')}
+            checked={alerts.mediaSound}
+            onChange={(v) => onAlerts({ mediaSound: v })}
+          />
         </Rows>
       </Section>
     </>
@@ -1884,7 +2330,13 @@ export function AlertsSection({ locale, alerts, onAlerts, onPersist, onError, se
 
 /** Sección «Atajos»: interruptor global, tabla de atajos y avisos del registro.
  *  Extraída por el mismo motivo que LookSection. */
-export function ShortcutsSection({ locale, shortcuts, onShortcuts, errors, warnings }: {
+export function ShortcutsSection({
+  locale,
+  shortcuts,
+  onShortcuts,
+  errors,
+  warnings,
+}: {
   locale: Locale;
   shortcuts: ShortcutsConfig;
   onShortcuts: (patch: Partial<ShortcutsConfig>) => void;
@@ -1894,7 +2346,12 @@ export function ShortcutsSection({ locale, shortcuts, onShortcuts, errors, warni
   return (
     <Section title={t(locale, 'settings.shortcuts.title')}>
       <Rows>
-        <Toggle label={t(locale, 'settings.shortcuts.enable')} hint={t(locale, 'settings.shortcuts.enableHint')} checked={shortcuts.enabled} onChange={(v) => onShortcuts({ enabled: v })} />
+        <Toggle
+          label={t(locale, 'settings.shortcuts.enable')}
+          hint={t(locale, 'settings.shortcuts.enableHint')}
+          checked={shortcuts.enabled}
+          onChange={(v) => onShortcuts({ enabled: v })}
+        />
       </Rows>
       {shortcuts.enabled && (
         <>
@@ -1905,13 +2362,30 @@ export function ShortcutsSection({ locale, shortcuts, onShortcuts, errors, warni
                 <tr>
                   <th scope="col">{t(locale, 'settings.shortcuts.colAction')}</th>
                   <th scope="col">{t(locale, 'settings.shortcuts.colShortcut')}</th>
-                  <th scope="col" className="eg-table__acts"><span className="q-sr">{t(locale, 'settings.shortcuts.colActions')}</span></th>
+                  <th scope="col" className="eg-table__acts">
+                    <span className="q-sr">{t(locale, 'settings.shortcuts.colActions')}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                <ShortcutRow locale={locale} label={t(locale, 'settings.shortcuts.toggleStrip')} value={shortcuts.toggle} onChange={(v) => onShortcuts({ toggle: v })} />
-                <ShortcutRow locale={locale} label={t(locale, 'settings.shortcuts.openPeak')} value={shortcuts.openPeak} onChange={(v) => onShortcuts({ openPeak: v })} />
-                <ShortcutRow locale={locale} label={t(locale, 'settings.shortcuts.refreshNow')} value={shortcuts.refresh} onChange={(v) => onShortcuts({ refresh: v })} />
+                <ShortcutRow
+                  locale={locale}
+                  label={t(locale, 'settings.shortcuts.toggleStrip')}
+                  value={shortcuts.toggle}
+                  onChange={(v) => onShortcuts({ toggle: v })}
+                />
+                <ShortcutRow
+                  locale={locale}
+                  label={t(locale, 'settings.shortcuts.openPeak')}
+                  value={shortcuts.openPeak}
+                  onChange={(v) => onShortcuts({ openPeak: v })}
+                />
+                <ShortcutRow
+                  locale={locale}
+                  label={t(locale, 'settings.shortcuts.refreshNow')}
+                  value={shortcuts.refresh}
+                  onChange={(v) => onShortcuts({ refresh: v })}
+                />
               </tbody>
             </table>
           </div>
@@ -1930,9 +2404,15 @@ export function ProjectSection({ locale }: { locale: Locale }) {
     <Section title={t(locale, 'settings.updates.project')}>
       <p className="q-note">{t(locale, 'settings.updates.projectNote')}</p>
       <div className="q-chips">
-        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.repo)}>GitHub</button>
-        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.issues)}>{t(locale, 'settings.updates.requestProvider')}</button>
-        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.web)}>egdev.es</button>
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.repo)}>
+          GitHub
+        </button>
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.issues)}>
+          {t(locale, 'settings.updates.requestProvider')}
+        </button>
+        <button type="button" className="eg-btn eg-btn--ghost eg-btn--sm" onClick={() => openUrl(LINKS.web)}>
+          egdev.es
+        </button>
       </div>
     </Section>
   );
@@ -2047,7 +2527,9 @@ export function SettingsNav({
                 </svg>
                 <span className="eg-menu__label">{t(locale, `settings.nav.${p.id}`)}</span>
                 {p.id === 'providers' && pendingProviders > 0 && (
-                  <span className="eg-menu__count" title={t(locale, 'settings.nav.pendingTitle')}>{pendingProviders}</span>
+                  <span className="eg-menu__count" title={t(locale, 'settings.nav.pendingTitle')}>
+                    {pendingProviders}
+                  </span>
                 )}
                 {p.id === 'shortcuts' && shortcutErrors.length + shortcutWarnings.length > 0 && (
                   <span className="eg-menu__count">{shortcutErrors.length + shortcutWarnings.length}</span>
@@ -2113,36 +2595,58 @@ export function SubscriptionPanel({
       file: t(locale, 'settings.providers.panels.credentialsFile'),
       // En WSL la ruta es POSIX del GUEST: `\\wsl.localhost\...` (UNC) o
       // `C:\...` se rechazan en modo WSL (revisión PR #248).
-      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>. {t(locale, 'settings.providers.panels.claude.wsl')} <code>/home/{t(locale, 'settings.providers.panels.claude.wslUser')}/.claude/.credentials.json</code></>,
+      hint: (
+        <>
+          {t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.claude\.credentials.json</code>.{' '}
+          {t(locale, 'settings.providers.panels.claude.wsl')}{' '}
+          <code>/home/{t(locale, 'settings.providers.panels.claude.wslUser')}/.claude/.credentials.json</code>
+        </>
+      ),
     },
     codex: {
       kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
       title: 'ChatGPT (Plus / Pro · Codex)',
       note: t(locale, 'settings.providers.panels.codex.note'),
       file: t(locale, 'settings.providers.panels.authJsonFile'),
-      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%CODEX_HOME%</code> {t(locale, 'settings.providers.panels.or')} <code>%USERPROFILE%\.codex\auth.json</code></>,
+      hint: (
+        <>
+          {t(locale, 'settings.providers.panels.emptyEquals')} <code>%CODEX_HOME%</code> {t(locale, 'settings.providers.panels.or')}{' '}
+          <code>%USERPROFILE%\.codex\auth.json</code>
+        </>
+      ),
     },
     gemini: {
       kicker: t(locale, 'settings.providers.panels.gemini.kicker'),
       title: 'Gemini (Google AI Pro / Code Assist)',
       note: (
         <>
-          {t(locale, 'settings.providers.panels.gemini.noteBefore')} <Link href={LINKS.geminiCli}>Gemini CLI</Link>{t(locale, 'settings.providers.panels.gemini.noteAfter')}
+          {t(locale, 'settings.providers.panels.gemini.noteBefore')} <Link href={LINKS.geminiCli}>Gemini CLI</Link>
+          {t(locale, 'settings.providers.panels.gemini.noteAfter')}
         </>
       ),
       file: t(locale, 'settings.providers.panels.credentialsFile'),
-      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.gemini\oauth_creds.json</code></>,
+      hint: (
+        <>
+          {t(locale, 'settings.providers.panels.emptyEquals')} <code>%USERPROFILE%\.gemini\oauth_creds.json</code>
+        </>
+      ),
     },
     grok: {
       kicker: t(locale, 'settings.providers.panels.kickerOAuth'),
       title: 'Grok (SuperGrok)',
       note: (
         <>
-          {t(locale, 'settings.providers.panels.grok.noteBefore')} <code>grok login</code>{t(locale, 'settings.providers.panels.grok.noteAfter')}
+          {t(locale, 'settings.providers.panels.grok.noteBefore')} <code>grok login</code>
+          {t(locale, 'settings.providers.panels.grok.noteAfter')}
         </>
       ),
       file: t(locale, 'settings.providers.panels.authJsonFile'),
-      hint: <>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%GROK_HOME%</code> {t(locale, 'settings.providers.panels.or')} <code>%USERPROFILE%\.grok\auth.json</code></>,
+      hint: (
+        <>
+          {t(locale, 'settings.providers.panels.emptyEquals')} <code>%GROK_HOME%</code> {t(locale, 'settings.providers.panels.or')}{' '}
+          <code>%USERPROFILE%\.grok\auth.json</code>
+        </>
+      ),
     },
   }[p];
   return (
@@ -2155,7 +2659,7 @@ export function SubscriptionPanel({
           id={p}
           provider={p}
           loginCommand={cfg[p].loginCommand}
-          cliMissing={cli[p] === "missing"}
+          cliMissing={cli[p] === 'missing'}
           persisted
           extra={false}
           health={healthFor(p, !cfg[p].enabled)}
@@ -2181,20 +2685,42 @@ export function SubscriptionPanel({
 export function CursorPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.cursor.kicker')} title="Cursor">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)} onChange={(v) => setVisibility('cursor', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'cursor', cfg.cursor.enabled)}
+        onChange={(v) => setVisibility('cursor', v)}
+      />
       <p className="q-note">{t(locale, 'settings.providers.panels.cursor.note')}</p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li>
           <b>{t(locale, 'settings.providers.panels.cursor.loginTitle')}</b>
           <span>{t(locale, 'settings.providers.panels.cursor.loginBody')}</span>
-          <SecretInput locale={locale} id="cursor_token" label={t(locale, 'settings.providers.panels.cursor.tokenLabel')} configured={!!secrets.cursor_token} onSaved={loadSecrets} />
+          <SecretInput
+            locale={locale}
+            id="cursor_token"
+            label={t(locale, 'settings.providers.panels.cursor.tokenLabel')}
+            configured={!!secrets.cursor_token}
+            onSaved={loadSecrets}
+          />
         </li>
         <HealthStep id="cursor" {...healthFor('cursor', !cfg.cursor.enabled)} />
       </ol>
       <details className="q-details">
         <summary>{t(locale, 'settings.providers.panels.cursor.advanced')}</summary>
-        <Field label={t(locale, 'settings.providers.panels.cursor.dbLabel')} hint={<>{t(locale, 'settings.providers.panels.emptyEquals')} <code>%APPDATA%\Cursor\User\globalStorage\state.vscdb</code></>}>
-          <input type="text" spellCheck={false} value={cfg.cursor.credentialsPath ?? ''} onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })} />
+        <Field
+          label={t(locale, 'settings.providers.panels.cursor.dbLabel')}
+          hint={
+            <>
+              {t(locale, 'settings.providers.panels.emptyEquals')} <code>%APPDATA%\Cursor\User\globalStorage\state.vscdb</code>
+            </>
+          }
+        >
+          <input
+            type="text"
+            spellCheck={false}
+            value={cfg.cursor.credentialsPath ?? ''}
+            onChange={(e) => set('cursor', { credentialsPath: strOrNull(e.target.value) })}
+          />
         </Field>
       </details>
     </Section>
@@ -2204,7 +2730,11 @@ export function CursorPanel({ locale, cfg, secrets, set, setVisibility, loadSecr
 export function AntigravityPanel({ locale, cfg, setVisibility, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.antigravity.kicker')} title="Antigravity">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)} onChange={(v) => setVisibility('antigravity', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'antigravity', cfg.antigravity.enabled)}
+        onChange={(v) => setVisibility('antigravity', v)}
+      />
       <p className="q-note">{t(locale, 'settings.providers.panels.antigravity.note')}</p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li>
@@ -2220,14 +2750,24 @@ export function AntigravityPanel({ locale, cfg, setVisibility, healthFor }: Pane
 export function CopilotPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.kickerOfficialApi')} title="GitHub Copilot">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)} onChange={(v) => setVisibility('copilot', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'copilot', cfg.copilot.enabled)}
+        onChange={(v) => setVisibility('copilot', v)}
+      />
       <p className="q-note">{t(locale, 'settings.providers.panels.copilot.note')}</p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li data-done={cfg.copilot.username.trim() !== '' || undefined}>
           <b>{t(locale, 'settings.providers.accountEditor.copilotUserPlan')}</b>
           <div className="q-cols">
             <Field label={t(locale, 'settings.providers.accountEditor.githubUser')}>
-              <input type="text" spellCheck={false} placeholder="egdev6" value={cfg.copilot.username} onChange={(e) => set('copilot', { username: e.target.value })} />
+              <input
+                type="text"
+                spellCheck={false}
+                placeholder="egdev6"
+                value={cfg.copilot.username}
+                onChange={(e) => set('copilot', { username: e.target.value })}
+              />
             </Field>
             <Field label={t(locale, 'settings.providers.planLabel')}>
               <select value={cfg.copilot.plan} onChange={(e) => set('copilot', { plan: e.target.value })}>
@@ -2242,7 +2782,12 @@ export function CopilotPanel({ locale, cfg, secrets, set, setVisibility, loadSec
           </div>
           {cfg.copilot.plan === 'custom' && (
             <Field label={t(locale, 'settings.providers.accountEditor.customAllowance')}>
-              <input type="number" min={1} value={cfg.copilot.customAllowance ?? ''} onChange={(e) => set('copilot', { customAllowance: numOrNull(e.target.value) })} />
+              <input
+                type="number"
+                min={1}
+                value={cfg.copilot.customAllowance ?? ''}
+                onChange={(e) => set('copilot', { customAllowance: numOrNull(e.target.value) })}
+              />
             </Field>
           )}
         </li>
@@ -2254,7 +2799,12 @@ export function CopilotPanel({ locale, cfg, secrets, set, setVisibility, loadSec
             label={t(locale, 'settings.providers.panels.copilot.tokenLabel')}
             configured={!!secrets.github_token}
             onSaved={loadSecrets}
-            hint={<>{t(locale, 'settings.providers.panels.copilot.tokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link> {t(locale, 'settings.providers.panels.copilot.tokenPermission')}</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.panels.copilot.tokenCreateIn')} <Link href={LINKS.githubToken}>GitHub › Fine-grained tokens</Link>{' '}
+                {t(locale, 'settings.providers.panels.copilot.tokenPermission')}
+              </>
+            }
           />
         </li>
         <HealthStep id="copilot" {...healthFor('copilot', !cfg.copilot.enabled)} />
@@ -2266,7 +2816,11 @@ export function CopilotPanel({ locale, cfg, secrets, set, setVisibility, loadSec
 export function MiniMaxPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.kickerOfficialApi')} title="MiniMax">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)} onChange={(v) => setVisibility('minimax', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'minimax', cfg.minimax.enabled)}
+        onChange={(v) => setVisibility('minimax', v)}
+      />
       <p className="q-note">
         {t(locale, 'settings.providers.panels.minimax.noteBefore')}
         <b> {t(locale, 'settings.providers.panels.minimax.noteBold')}</b> {t(locale, 'settings.providers.panels.minimax.noteAfter')}
@@ -2280,7 +2834,13 @@ export function MiniMaxPanel({ locale, cfg, secrets, set, setVisibility, loadSec
             label="Subscription Key"
             configured={!!secrets.minimax_subscription_key}
             onSaved={loadSecrets}
-            hint={<>{t(locale, 'settings.providers.panels.minimax.subscriptionHintBefore')} <Link href={LINKS.minimaxKeys}>minimax.io</Link>{t(locale, 'settings.providers.panels.minimax.subscriptionHintChina')} <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link> {t(locale, 'settings.providers.panels.minimax.subscriptionHintAfter')}</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.panels.minimax.subscriptionHintBefore')} <Link href={LINKS.minimaxKeys}>minimax.io</Link>
+                {t(locale, 'settings.providers.panels.minimax.subscriptionHintChina')} <Link href={LINKS.minimaxKeysCn}>minimaxi.com</Link>{' '}
+                {t(locale, 'settings.providers.panels.minimax.subscriptionHintAfter')}
+              </>
+            }
           />
         </li>
         <li data-done={!!secrets.minimax_api_key || undefined}>
@@ -2298,16 +2858,8 @@ export function MiniMaxPanel({ locale, cfg, secrets, set, setVisibility, loadSec
       </ol>
       <details className="q-details">
         <summary>{t(locale, 'settings.providers.panels.minimax.advanced')}</summary>
-        <Field
-          label="Base URL"
-          hint={t(locale, 'settings.providers.panels.minimax.baseUrlHint')}
-        >
-          <input
-            type="text"
-            spellCheck={false}
-            value={cfg.minimax.baseUrl}
-            onChange={(e) => set('minimax', { baseUrl: e.target.value })}
-          />
+        <Field label="Base URL" hint={t(locale, 'settings.providers.panels.minimax.baseUrlHint')}>
+          <input type="text" spellCheck={false} value={cfg.minimax.baseUrl} onChange={(e) => set('minimax', { baseUrl: e.target.value })} />
         </Field>
       </details>
     </Section>
@@ -2317,7 +2869,11 @@ export function MiniMaxPanel({ locale, cfg, secrets, set, setVisibility, loadSec
 export function ZaiPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.zai.kicker')} title="z.ai">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)} onChange={(v) => setVisibility('zai', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'zai', cfg.zai.enabled)}
+        onChange={(v) => setVisibility('zai', v)}
+      />
       <p className="q-note">{t(locale, 'settings.providers.panels.zai.note')}</p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li data-done={!!secrets.zai_api_key || undefined}>
@@ -2328,7 +2884,11 @@ export function ZaiPanel({ locale, cfg, secrets, setVisibility, loadSecrets, hea
             label={t(locale, 'settings.providers.apiKey')}
             configured={!!secrets.zai_api_key}
             onSaved={loadSecrets}
-            hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.zaiKeys}>z.ai › API Keys</Link>.
+              </>
+            }
           />
         </li>
         <HealthStep id="zai" {...healthFor('zai', !cfg.zai.enabled)} />
@@ -2340,7 +2900,11 @@ export function ZaiPanel({ locale, cfg, secrets, setVisibility, loadSecrets, hea
 export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.opencodeGo.kicker')} title="OpenCode Go">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'opencode_go', cfg.opencodeGo.enabled)} onChange={(v) => setVisibility('opencode_go', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'opencode_go', cfg.opencodeGo.enabled)}
+        onChange={(v) => setVisibility('opencode_go', v)}
+      />
       <p className="q-note">{t(locale, 'settings.providers.panels.opencodeGo.note')}</p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li data-done={!!secrets.opencode_go_api_key || undefined}>
@@ -2351,7 +2915,11 @@ export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecre
             label={t(locale, 'settings.providers.accountEditor.apiKeyOf', { name: 'OpenCode Go' })}
             configured={!!secrets.opencode_go_api_key}
             onSaved={loadSecrets}
-            hint={<>{t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.accountEditor.createIn')} <Link href={LINKS.opencodeConsole}>OpenCode › Console</Link>.
+              </>
+            }
           />
         </li>
         <HealthStep id="opencode_go" {...healthFor('opencode_go', !cfg.opencodeGo.enabled)} />
@@ -2366,7 +2934,11 @@ export function OpenCodeGoPanel({ locale, cfg, secrets, setVisibility, loadSecre
 export function OpenRouterPanel({ locale, cfg, secrets, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.openrouter.kicker')} title="OpenRouter">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)} onChange={(v) => setVisibility('openrouter', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'openrouter', cfg.openrouter.enabled)}
+        onChange={(v) => setVisibility('openrouter', v)}
+      />
       <p className="q-note">{t(locale, 'settings.providers.panels.openrouter.note')}</p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li data-done={!!secrets.openrouter_api_key || undefined}>
@@ -2377,7 +2949,11 @@ export function OpenRouterPanel({ locale, cfg, secrets, setVisibility, loadSecre
             label={t(locale, 'settings.providers.apiKey')}
             configured={!!secrets.openrouter_api_key}
             onSaved={loadSecrets}
-            hint={<>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>.</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openrouterKeys}>openrouter.ai › Keys</Link>.
+              </>
+            }
           />
         </li>
         <HealthStep id="openrouter" {...healthFor('openrouter', !cfg.openrouter.enabled)} />
@@ -2389,9 +2965,14 @@ export function OpenRouterPanel({ locale, cfg, secrets, setVisibility, loadSecre
 export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor }: PanelProps) {
   return (
     <Section kicker={t(locale, 'settings.providers.panels.nan.kicker')} title="NaN Builders">
-      <Toggle label={t(locale, 'settings.providers.showInWidget')} checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)} onChange={(v) => setVisibility('nan', v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.showInWidget')}
+        checked={isAccountVisible(cfg, 'nan', cfg.nan.enabled)}
+        onChange={(v) => setVisibility('nan', v)}
+      />
       <p className="q-note">
-        {t(locale, 'settings.providers.panels.nan.noteBefore')} <code>/v1/usage</code> {t(locale, 'settings.providers.panels.nan.noteAfter')} <Link href={LINKS.nanDocs}>Docs</Link>
+        {t(locale, 'settings.providers.panels.nan.noteBefore')} <code>/v1/usage</code> {t(locale, 'settings.providers.panels.nan.noteAfter')}{' '}
+        <Link href={LINKS.nanDocs}>Docs</Link>
       </p>
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li data-done={!!secrets.nan_session || !!secrets.nan_api_key || undefined}>
@@ -2403,7 +2984,11 @@ export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets
             label={t(locale, 'settings.providers.accountEditor.nanApiKeyAlt')}
             configured={!!secrets.nan_api_key}
             onSaved={loadSecrets}
-            hint={<>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.nanKeys}>cloud.nan.builders</Link> › API Keys</>}
+            hint={
+              <>
+                {t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.nanKeys}>cloud.nan.builders</Link> › API Keys
+              </>
+            }
           />
         </li>
         <li data-done>
@@ -2437,11 +3022,21 @@ export function NanPanel({ locale, cfg, secrets, set, setVisibility, loadSecrets
             <input type="text" spellCheck={false} value={cfg.nan.usedPointer ?? ''} onChange={(e) => set('nan', { usedPointer: strOrNull(e.target.value) })} />
           </Field>
           <Field label={t(locale, 'settings.providers.panels.nan.pointerLimitLabel')} hint={t(locale, 'settings.providers.panels.nan.pointerLimitHint')}>
-            <input type="text" spellCheck={false} value={cfg.nan.limitPointer ?? ''} onChange={(e) => set('nan', { limitPointer: strOrNull(e.target.value) })} />
+            <input
+              type="text"
+              spellCheck={false}
+              value={cfg.nan.limitPointer ?? ''}
+              onChange={(e) => set('nan', { limitPointer: strOrNull(e.target.value) })}
+            />
           </Field>
         </div>
         <Field label={t(locale, 'settings.providers.panels.nan.usageLabelField')}>
-          <input type="text" value={cfg.nan.usageLabel ?? ''} placeholder={t(locale, 'settings.providers.panels.nan.usageLabelPlaceholder')} onChange={(e) => set('nan', { usageLabel: strOrNull(e.target.value) })} />
+          <input
+            type="text"
+            value={cfg.nan.usageLabel ?? ''}
+            placeholder={t(locale, 'settings.providers.panels.nan.usageLabelPlaceholder')}
+            onChange={(e) => set('nan', { usageLabel: strOrNull(e.target.value) })}
+          />
         </Field>
       </details>
     </Section>
@@ -2531,7 +3126,11 @@ export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSe
   const secret: SecretKey = tab === 'anthropic_api' ? 'anthropic_admin_key' : 'openai_admin_key';
   return (
     <Section kicker={t(locale, 'settings.providers.panels.adminApi.kicker')} title={tab === 'anthropic_api' ? 'Anthropic API' : 'OpenAI API'}>
-      <Toggle label={t(locale, 'settings.providers.panels.adminApi.showSpend')} checked={isAccountVisible(cfg, tab, cfg[k].enabled)} onChange={(v) => setVisibility(tab, v)} />
+      <Toggle
+        label={t(locale, 'settings.providers.panels.adminApi.showSpend')}
+        checked={isAccountVisible(cfg, tab, cfg[k].enabled)}
+        onChange={(v) => setVisibility(tab, v)}
+      />
       <ol className="q-steps" aria-label={t(locale, 'settings.providers.panels.stepsAria')}>
         <li data-done={!!secrets[secret] || undefined}>
           <b>{t(locale, 'settings.providers.accountEditor.adminKey')}</b>
@@ -2548,7 +3147,9 @@ export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSe
                   {t(locale, 'settings.providers.panels.adminApi.anthropicHintAfter')}
                 </>
               ) : (
-                <>{t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openaiAdmin}>Organization › Admin keys</Link>.</>
+                <>
+                  {t(locale, 'settings.providers.panels.createApiKeyIn')} <Link href={LINKS.openaiAdmin}>Organization › Admin keys</Link>.
+                </>
               )
             }
           />
@@ -2556,7 +3157,13 @@ export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSe
         <li data-done={cfg[k].monthlyBudgetUsd != null || undefined}>
           <b>{t(locale, 'settings.providers.accountEditor.budgetTitle')}</b>
           <Field label={t(locale, 'settings.providers.accountEditor.budgetLabel')}>
-            <input type="number" min={0} step="any" value={cfg[k].monthlyBudgetUsd ?? ''} onChange={(e) => set(k, { monthlyBudgetUsd: numOrNull(e.target.value) })} />
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={cfg[k].monthlyBudgetUsd ?? ''}
+              onChange={(e) => set(k, { monthlyBudgetUsd: numOrNull(e.target.value) })}
+            />
           </Field>
         </li>
         <HealthStep id={tab} {...healthFor(tab, !cfg[k].enabled)} />
@@ -2564,7 +3171,6 @@ export function AdminApiPanel({ locale, cfg, secrets, set, setVisibility, loadSe
     </Section>
   );
 }
-
 
 export function Settings() {
   const appName = useAppName();
@@ -2613,6 +3219,7 @@ export function Settings() {
   const cliRecheck = useCallback(() => {
     void requestCliStatus();
   }, [requestCliStatus]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     let alive = true;
     // Entorno nuevo: el estado anterior es de otro sitio; no se muestra hasta
@@ -2766,16 +3373,24 @@ export function Settings() {
 
   const loadSecrets = () => api.secretStatus().then(setSecrets).catch(console.error);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
-    api.getConfig()
+    api
+      .getConfig()
       .then((c) => {
         setCfg(c);
         setBaseline(c);
       })
       .catch(console.error);
     loadSecrets();
-    api.shortcutErrors().then(setShortcutErrors).catch(() => {});
-    api.shortcutWarnings().then(setShortcutWarnings).catch(() => {});
+    api
+      .shortcutErrors()
+      .then(setShortcutErrors)
+      .catch(() => {});
+    api
+      .shortcutWarnings()
+      .then(setShortcutWarnings)
+      .catch(() => {});
   }, []);
 
   // Ciclo de vida del autostart (simétrico para StrictMode): la lectura inicial
@@ -2852,7 +3467,12 @@ export function Settings() {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     win
-      .onCloseRequested(createLiveCloseHandler(() => liveRef.current, () => win.close()))
+      .onCloseRequested(
+        createLiveCloseHandler(
+          () => liveRef.current,
+          () => win.close(),
+        ),
+      )
       .then((u) => {
         if (disposed) u();
         else unlisten = u;
@@ -2878,8 +3498,7 @@ export function Settings() {
         : c,
     );
 
-  const setVisibility = (id: string, enabled: boolean) =>
-    setCfg((c) => c ? setAccountVisibility(c, id, enabled) : c);
+  const setVisibility = (id: string, enabled: boolean) => setCfg((c) => (c ? setAccountVisibility(c, id, enabled) : c));
 
   // Personalización inmediata (#97): tamaño, color y los seis controles de la
   // tira se aplican ya y se persisten por patch atómico del backend. No cuentan
@@ -2979,7 +3598,15 @@ export function Settings() {
       baseline ? envOf(baseline) : undefined,
     );
   };
-  const healthFor = (id: string, hidden: boolean): HealthProps => ({ saved: baseline, secretsSig, dirty: sectionDirty(id), hidden, saving, onSave: save, locale });
+  const healthFor = (id: string, hidden: boolean): HealthProps => ({
+    saved: baseline,
+    secretsSig,
+    dirty: sectionDirty(id),
+    hidden,
+    saving,
+    onSave: save,
+    locale,
+  });
   const panel = { locale, cfg, secrets, set, setVisibility, loadSecrets, healthFor };
   const selAccount = tabAccounts.find((a) => a.id === accountSel) ?? null;
   const addAccount = () => {
@@ -2998,7 +3625,10 @@ export function Settings() {
     return !!b && b.configDir === a.configDir;
   };
   const removeAccount = (a: Account) => {
-    set('accounts', cfg.accounts.filter((x) => x.id !== a.id));
+    set(
+      'accounts',
+      cfg.accounts.filter((x) => x.id !== a.id),
+    );
     setAccountSel(tab);
     // Si nunca se guardó, el backend no sabrá borrar sus claves al guardar: se borran ya.
     if (!baseline?.accounts.some((x) => x.id === a.id)) {
@@ -3074,58 +3704,67 @@ export function Settings() {
                 <ProviderDrawerHead locale={locale} tab={tab} state={providerState(tab, cfg, secrets)} closeRef={drawerClose} onClose={closeDrawer} />
                 <div className="q-drawer__body" key={tab}>
                   <InDrawer.Provider value={true}>
-      <AccountsBar locale={locale} tab={tab} accounts={tabAccounts} selectedId={selAccount?.id ?? tab} onSelect={setAccountSel} onAdd={addAccount} />
-      {selAccount && (
-        <AccountEditor
-          locale={locale}
-          key={selAccount.id}
-          account={selAccount}
-          visible={isAccountVisible(cfg, selAccount.id, selAccount.enabled)}
-          onVisibility={(v) => setVisibility(selAccount.id, v)}
-          persisted={accountPersisted(selAccount)}
-          secrets={secrets}
-          onChange={(patch) => patchAccount(selAccount.id, patch)}
-          onRemove={() => removeAccount(selAccount)}
-          onSecrets={loadSecrets}
-          health={healthFor(selAccount.id, !selAccount.enabled)}
-          cliMissing={cli[selAccount.provider] === "missing"}
-          sessionEnv={cfg.sessionEnv}
-          wslDistro={cfg.wslDistro}
-          loginCommand={
-            selAccount.provider === 'claude' || selAccount.provider === 'codex' || selAccount.provider === 'gemini' || selAccount.provider === 'grok'
-              ? cfg[selAccount.provider].loginCommand
-              : ''
-          }
-          codexInstall={codexInstaller}
-          onCodexRecheck={cliRecheck}
-        />
-      )}
-      {!selAccount && (
-        <>
+                    <AccountsBar
+                      locale={locale}
+                      tab={tab}
+                      accounts={tabAccounts}
+                      selectedId={selAccount?.id ?? tab}
+                      onSelect={setAccountSel}
+                      onAdd={addAccount}
+                    />
+                    {selAccount && (
+                      <AccountEditor
+                        locale={locale}
+                        key={selAccount.id}
+                        account={selAccount}
+                        visible={isAccountVisible(cfg, selAccount.id, selAccount.enabled)}
+                        onVisibility={(v) => setVisibility(selAccount.id, v)}
+                        persisted={accountPersisted(selAccount)}
+                        secrets={secrets}
+                        onChange={(patch) => patchAccount(selAccount.id, patch)}
+                        onRemove={() => removeAccount(selAccount)}
+                        onSecrets={loadSecrets}
+                        health={healthFor(selAccount.id, !selAccount.enabled)}
+                        cliMissing={cli[selAccount.provider] === 'missing'}
+                        sessionEnv={cfg.sessionEnv}
+                        wslDistro={cfg.wslDistro}
+                        loginCommand={
+                          selAccount.provider === 'claude' ||
+                          selAccount.provider === 'codex' ||
+                          selAccount.provider === 'gemini' ||
+                          selAccount.provider === 'grok'
+                            ? cfg[selAccount.provider].loginCommand
+                            : ''
+                        }
+                        codexInstall={codexInstaller}
+                        onCodexRecheck={cliRecheck}
+                      />
+                    )}
+                    {!selAccount && (
+                      <>
+                        {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') && (
+                          <SubscriptionPanel {...panel} p={tab} cli={cli} codexInstall={codexInstaller} onCodexRecheck={cliRecheck} />
+                        )}
 
-      {(tab === 'claude' || tab === 'codex' || tab === 'gemini' || tab === 'grok') && (
-        <SubscriptionPanel {...panel} p={tab} cli={cli} codexInstall={codexInstaller} onCodexRecheck={cliRecheck} />
-      )}
+                        {tab === 'cursor' && <CursorPanel {...panel} />}
+                        {tab === 'antigravity' && <AntigravityPanel {...panel} />}
 
-      {tab === 'cursor' && <CursorPanel {...panel} />}
-      {tab === 'antigravity' && <AntigravityPanel {...panel} />}
+                        {tab === 'copilot' && <CopilotPanel {...panel} />}
 
-      {tab === 'copilot' && <CopilotPanel {...panel} />}
+                        {tab === 'minimax' && <MiniMaxPanel {...panel} />}
+                        {tab === 'openrouter' && <OpenRouterPanel {...panel} />}
 
-      {tab === 'minimax' && <MiniMaxPanel {...panel} />}
-      {tab === 'openrouter' && <OpenRouterPanel {...panel} />}
+                        {tab === 'zai' && <ZaiPanel {...panel} />}
 
-      {tab === 'zai' && <ZaiPanel {...panel} />}
+                        {tab === 'opencode_go' && <OpenCodeGoPanel {...panel} />}
 
-      {tab === 'opencode_go' && <OpenCodeGoPanel {...panel} />}
+                        {tab === 'nan' && <NanPanel {...panel} />}
 
-      {tab === 'nan' && <NanPanel {...panel} />}
+                        {tab === 'nine_router' && <NineRouterPanel {...panel} />}
 
-      {tab === 'nine_router' && <NineRouterPanel {...panel} />}
-
-      {(tab === 'anthropic_api' || tab === 'openai_api') && <AdminApiPanel {...panel} tab={tab} />}
-        </>
-      )}
+                        {(tab === 'anthropic_api' || tab === 'openai_api') && <AdminApiPanel {...panel} tab={tab} />}
+                      </>
+                    )}
                   </InDrawer.Provider>
                 </div>
                 <SettingsFoot locale={locale} variant="drawer" saved={saved} dirty={dirty} saving={saving} onSave={save} onClose={closeDrawer} />
@@ -3165,12 +3804,26 @@ export function Settings() {
 
           {section === 'alerts' && (
             <div className="q-grid-2">
-              <AlertsSection locale={locale} alerts={cfg.alerts} onAlerts={(patch) => set('alerts', patch)} onPersist={persistAlerts} onError={setSaved} secrets={secrets} onSecrets={loadSecrets} />
+              <AlertsSection
+                locale={locale}
+                alerts={cfg.alerts}
+                onAlerts={(patch) => set('alerts', patch)}
+                onPersist={persistAlerts}
+                onError={setSaved}
+                secrets={secrets}
+                onSecrets={loadSecrets}
+              />
             </div>
           )}
 
           {section === 'shortcuts' && (
-            <ShortcutsSection locale={locale} shortcuts={cfg.shortcuts} onShortcuts={(patch) => set('shortcuts', patch)} errors={shortcutErrors} warnings={shortcutWarnings} />
+            <ShortcutsSection
+              locale={locale}
+              shortcuts={cfg.shortcuts}
+              onShortcuts={(patch) => set('shortcuts', patch)}
+              errors={shortcutErrors}
+              warnings={shortcutWarnings}
+            />
           )}
 
           {section === 'updates' && (

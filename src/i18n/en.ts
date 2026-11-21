@@ -73,16 +73,20 @@ export const en = {
     alerts: {
       email: {
         title: 'Email with Resend',
-        availability: 'Email alerts require Quorb open, the computer awake and an Internet connection. When Quorb is closed or the computer sleeps, usage is not polled and alerts are not detected or sent. Resend acceptance does not guarantee email delivery.',
-        privacy: 'Resend processes sender and recipient (personal data), provider, meter/window, percentage and event type. No prompts, code, accounts, secrets or session content.',
+        availability:
+          'Email alerts require Quorb open, the computer awake and an Internet connection. When Quorb is closed or the computer sleeps, usage is not polled and alerts are not detected or sent. Resend acceptance does not guarantee email delivery.',
+        privacy:
+          'Resend processes sender and recipient (personal data), provider, meter/window, percentage and event type. No prompts, code, accounts, secrets or session content.',
         consent: 'I consent to sending these data to Resend',
         enable: 'Enable automatic email alerts',
-        switches: 'Also requires global Alerts; independent of system notifications. Saving does not enable email. Disabling keeps the key; deleting it prevents new sends.',
+        switches:
+          'Also requires global Alerts; independent of system notifications. Saving does not enable email. Disabling keeps the key; deleting it prevents new sends.',
         attempts: 'No retries, queue or replay. A timeout may leave it uncertain whether Resend accepted the request.',
         sender: 'Sender',
         recipient: 'Recipient',
         key: 'Resend API key',
-        senderHint: 'Without your own domain, use onboarding@resend.dev for tests to your Resend account email. For other recipients, use a sender from your verified domain.',
+        senderHint:
+          'Without your own domain, use onboarding@resend.dev for tests to your Resend account email. For other recipients, use a sender from your verified domain.',
         linux: 'On some Linux systems, you will need to enter the key again after restarting.',
         test: 'Send test',
         testing: 'Sending test…',
@@ -306,7 +310,8 @@ export const en = {
         nameStepBody: 'Above, to tell it apart from the main one on the strip (for example, “Work”).',
         checkSave: 'Save the account to check that it works.',
         cursorTokenTitle: 'Paste this account token',
-        cursorTokenBody: 'The Cursor app stores a single session (the main one). Sign in at cursor.com with this account and copy the WorkosCursorSessionToken cookie.',
+        cursorTokenBody:
+          'The Cursor app stores a single session (the main one). Sign in at cursor.com with this account and copy the WorkosCursorSessionToken cookie.',
         cursorTokenLabel: 'Account token',
         copilotUserPlan: 'GitHub user and plan',
         githubUser: 'GitHub username',
@@ -386,7 +391,8 @@ export const en = {
         unsupportedBold: 'This system does not support assisted installation.',
         unsupportedRest: 'It is designed for Windows; you can install it manually and Quorb will detect it.',
         noNodeBold: 'Node.js and npm are not detected.',
-        noNodeRest: 'Quorb only checks that they exist; the version (Node.js 22 or higher) is validated by the installer on confirmation. Install them and check again.',
+        noNodeRest:
+          'Quorb only checks that they exist; the version (Node.js 22 or higher) is validated by the installer on confirmation. Install them and check again.',
         errorReadBold: 'The installer could not be queried.',
         errorReadRest: 'Check the state again.',
         errorInstallBold: 'Codex CLI could not be installed.',
@@ -402,7 +408,8 @@ export const en = {
         detailsFolderBefore: 'Target folder: ',
         detailsFolderAfter: ', inside the Quorb folder. The global npm and the environment variables are not touched.',
         detailsScripts: 'Package lifecycle scripts are ignored and the real version is validated before accepting it.',
-        detailsNode: 'Before installing, Quorb only checks that Node.js and npm exist (without running them); the minimum version is validated on confirming the installation. Node is not installed and no administrator permissions are requested.',
+        detailsNode:
+          'Before installing, Quorb only checks that Node.js and npm exist (without running them); the minimum version is validated on confirming the installation. Node is not installed and no administrator permissions are requested.',
       },
       panels: {
         stepsAria: 'How to connect the account',
@@ -435,7 +442,8 @@ export const en = {
           kicker: 'Subscription · app session',
           note: 'Plan usage in the current cycle (total, Auto and API models) and on-demand spend. Unofficial endpoint.',
           loginTitle: 'Sign in to the Cursor app',
-          loginBody: 'Quorb reads the session that the Cursor app stores on this computer (read-only). If you do not use the app here, paste a manual token: it takes priority over the app session.',
+          loginBody:
+            'Quorb reads the session that the Cursor app stores on this computer (read-only). If you do not use the app here, paste a manual token: it takes priority over the app session.',
           tokenLabel: 'Manual token (optional)',
           advanced: 'Advanced · Cursor database',
           dbLabel: 'Cursor database',
@@ -444,7 +452,8 @@ export const en = {
           kicker: 'Subscription · desktop IDE',
           note: 'Quota of each Antigravity agent model (5-hour and weekly windows). It is a separate pool from Gemini CLI. Unofficial local endpoint. Desktop IDE session. The macOS agy CLI does not expose the CSRF token this endpoint requires.',
           openTitle: 'Open Antigravity with your Google account',
-          openBody: 'Quorb queries the local server the desktop IDE starts on this computer. It is read only while that IDE is open; no token is stored. The macOS agy CLI does not expose the CSRF token, so that session cannot be read.',
+          openBody:
+            'Quorb queries the local server the desktop IDE starts on this computer. It is read only while that IDE is open; no token is stored. The macOS agy CLI does not expose the CSRF token, so that session cannot be read.',
         },
         copilot: {
           note: 'Premium requests of the month from the GitHub billing API. They reset on the 1st (UTC).',
@@ -463,7 +472,8 @@ export const en = {
           paygTitle: 'Pay-as-you-go API key (optional)',
           paygHint: 'Without it only the plan quota is shown; the balance is optional and a failure there does not degrade it.',
           advanced: 'Advanced · API URL',
-          baseUrlHint: 'Keys are per region: global at api.minimax.io, China at api.minimaxi.com. If the ring shows error 1004 or 2049, try the one for your region.',
+          baseUrlHint:
+            'Keys are per region: global at api.minimax.io, China at api.minimaxi.com. If the ring shows error 1004 or 2049, try the one for your region.',
         },
         zai: {
           kicker: 'Subscription · GLM Coding Plan',
@@ -478,16 +488,18 @@ export const en = {
         createApiKeyIn: 'Create it at',
         openrouter: {
           kicker: 'Pay-as-you-go · Official API',
-          note: 'This month\'s and today\'s spend, key limit (if any) and account balance.',
+          note: "This month's and today's spend, key limit (if any) and account balance.",
         },
         nan: {
           kicker: 'Subscription · account or API key',
-          noteBefore: 'With your account connected you see the same as your dashboard: tokens used against the quota of each model, when it resets and the daily series. Without an account, the API key uses',
+          noteBefore:
+            'With your account connected you see the same as your dashboard: tokens used against the quota of each model, when it resets and the daily series. Without an account, the API key uses',
           noteAfter: 'and the published quotas.',
           stepTitle: 'Connect your account or paste an API key',
           advancedSummary: 'Advanced · URL, billing and usage endpoint',
           billingDayLabel: 'Billing start day',
-          billingDayHint: 'The day of the month your billing period starts. Only used if the NaN dashboard does not answer: for the GLM 5.3 period and to cut the aggregate consumption.',
+          billingDayHint:
+            'The day of the month your billing period starts. Only used if the NaN dashboard does not answer: for the GLM 5.3 period and to cut the aggregate consumption.',
           usageEndpointLabel: 'Usage endpoint · URL',
           usageEndpointHint: 'It is called with your key as Bearer and must return JSON.',
           pointerUsedLabel: 'JSON Pointer · used',
@@ -500,7 +512,8 @@ export const en = {
         nineRouter: {
           kicker: 'Local gateway · aggregated usage',
           noteBefore: 'Quorb reads the usage and spend that',
-          noteAfter: 'already records on your machine: requests, tokens and cost per provider of the period. Besides the aggregated orb, every provider it has seen (Claude, Kiro, GLM…) appears as its own account.',
+          noteAfter:
+            'already records on your machine: requests, tokens and cost per provider of the period. Besides the aggregated orb, every provider it has seen (Claude, Kiro, GLM…) appears as its own account.',
           stepsAria: 'How to connect 9Router',
           connectTitle: 'Connect your local dashboard',
           periodTitle: 'Period and breakdown',
@@ -661,8 +674,7 @@ export const en = {
     staleReadAtTime: 'read at {time}',
     // The quota basis, when the meter was not measured against the account quota.
     quotaBasisPublished: 'published',
-    quotaBasisPublishedTitle:
-      "Your account's quota could not be read: this uses the plan's known allowance, which may have changed.",
+    quotaBasisPublishedTitle: "Your account's quota could not be read: this uses the plan's known allowance, which may have changed.",
     budget: 'Budget',
     copy: {
       summary: 'Copy summary',

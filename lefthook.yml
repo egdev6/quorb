@@ -1,0 +1,11 @@
+# Git hooks managed by Lefthook (https://lefthook.dev).
+# Install once per clone with `npm run hooks:install`. There is no `prepare` script on purpose:
+# the repository policy (.github/security/policy.json) allows no root npm lifecycle hooks.
+# CI runs the same checks, so skipping the hook with `--no-verify` only delays the failure.
+pre-push:
+  parallel: true
+  jobs:
+    - name: biome
+      run: npx biome ci
+    - name: cargo-fmt
+      run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check

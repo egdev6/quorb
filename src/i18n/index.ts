@@ -9,9 +9,7 @@ import { es, type Messages } from './es';
 export type { Messages } from './es';
 
 /** Claves válidas del catálogo en formato punteado, derivadas del árbol de `es`. */
-type KeyPaths<T> = T extends string
-  ? readonly []
-  : { [K in keyof T & string]: readonly [K, ...KeyPaths<T[K]>] }[keyof T & string];
+type KeyPaths<T> = T extends string ? readonly [] : { [K in keyof T & string]: readonly [K, ...KeyPaths<T[K]>] }[keyof T & string];
 type JoinPath<P extends readonly string[]> = P extends readonly [infer F extends string, ...infer R extends readonly string[]]
   ? R['length'] extends 0
     ? F
@@ -24,9 +22,7 @@ export type Params = Record<string, string | number>;
 
 /** Interpolación `{name}`; los marcadores sin valor se dejan tal cual. */
 export const formatMessage = (template: string, params?: Params): string =>
-  params
-    ? template.replace(/\{(\w+)\}/g, (match, name: string) => (Object.hasOwn(params, name) ? String(params[name]) : match))
-    : template;
+  params ? template.replace(/\{(\w+)\}/g, (match, name: string) => (Object.hasOwn(params, name) ? String(params[name]) : match)) : template;
 
 /** Valor de una clave punteada en un árbol; vacío o ausente cuenta como fallo. */
 const lookup = (tree: Messages, key: string): string | undefined => {

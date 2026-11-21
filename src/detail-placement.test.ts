@@ -7,13 +7,7 @@
 // (#221: mismas primitivas que la tira, nunca duplicadas).
 
 import { describe, expect, it, vi } from 'vitest';
-import {
-  confirmDetailPlacement,
-  decideDetailPlacement,
-  detailPlacementFailed,
-  retryDetailPlacement,
-  type DetailPlacementReport,
-} from './detail-placement';
+import { confirmDetailPlacement, decideDetailPlacement, detailPlacementFailed, retryDetailPlacement, type DetailPlacementReport } from './detail-placement';
 import { samePlacement } from './lib/widget-placement';
 import type { PhysicalBounds } from './lib/detail-panel';
 
@@ -29,7 +23,10 @@ const report = (over: Partial<DetailPlacementReport> = {}): DetailPlacementRepor
 
 /** X11 con la ventana aún oculta: blando, sin geometría, reintento tras `show()`. */
 const notViewable = (): DetailPlacementReport => ({
-  status: 'unverified', bounds: null, reason: 'not_viewable', read_back: false,
+  status: 'unverified',
+  bounds: null,
+  reason: 'not_viewable',
+  read_back: false,
 });
 
 /**
@@ -37,12 +34,17 @@ const notViewable = (): DetailPlacementReport => ({
  * aplicarse, así que no se cachea nada y la colocación se vuelve a pedir.
  */
 const readFailed = (): DetailPlacementReport => ({
-  status: 'unverified', bounds: null, reason: 'read_failed', read_back: false,
+  status: 'unverified',
+  bounds: null,
+  reason: 'read_failed',
+  read_back: false,
 });
 
 /** No Linux / Wayland nativo: la petición se aplicó y no hay read-back (S1). */
 const nonX11 = (): DetailPlacementReport => ({
-  status: 'unverified', bounds: null, read_back: false,
+  status: 'unverified',
+  bounds: null,
+  read_back: false,
 });
 
 describe('decideDetailPlacement', () => {
@@ -86,13 +88,19 @@ describe('decideDetailPlacement', () => {
 describe('confirmDetailPlacement', () => {
   it('caches the confirmed geometry and does not ask for a retry', () => {
     const cached: PhysicalBounds[] = [];
-    expect(confirmDetailPlacement(report(), (b) => { cached.push(b); })).toBe(false);
+    expect(
+      confirmDetailPlacement(report(), (b) => {
+        cached.push(b);
+      }),
+    ).toBe(false);
     expect(cached).toEqual([granted]);
   });
 
   it('the cache is the effective geometry, never the requested one', () => {
     const cached: PhysicalBounds[] = [];
-    confirmDetailPlacement(report({ bounds: { x: 7, y: 8, w: 314, h: 379 } }), (b) => { cached.push(b); });
+    confirmDetailPlacement(report({ bounds: { x: 7, y: 8, w: 314, h: 379 } }), (b) => {
+      cached.push(b);
+    });
     expect(cached).toEqual([{ x: 7, y: 8, w: 314, h: 379 }]);
     expect(cached[0]).not.toEqual(requested);
   });
@@ -100,25 +108,41 @@ describe('confirmDetailPlacement', () => {
   it('limited (`size_refused`) caches the granted geometry, read-back, without a retry', () => {
     const cached: PhysicalBounds[] = [];
     const limited: DetailPlacementReport = report({ status: 'limited', reason: 'size_refused', bounds: granted });
-    expect(confirmDetailPlacement(limited, (b) => { cached.push(b); })).toBe(false);
+    expect(
+      confirmDetailPlacement(limited, (b) => {
+        cached.push(b);
+      }),
+    ).toBe(false);
     expect(cached).toEqual([granted]);
   });
 
   it('a `not_viewable` report caches nothing and asks for a retry', () => {
     const cached: PhysicalBounds[] = [];
-    expect(confirmDetailPlacement(notViewable(), (b) => { cached.push(b); })).toBe(true);
+    expect(
+      confirmDetailPlacement(notViewable(), (b) => {
+        cached.push(b);
+      }),
+    ).toBe(true);
     expect(cached).toEqual([]);
   });
 
   it('the non-X11 report caches nothing without a retry: same flow as today', () => {
     const cached: PhysicalBounds[] = [];
-    expect(confirmDetailPlacement(nonX11(), (b) => { cached.push(b); })).toBe(false);
+    expect(
+      confirmDetailPlacement(nonX11(), (b) => {
+        cached.push(b);
+      }),
+    ).toBe(false);
     expect(cached).toEqual([]);
   });
 
   it('a superseded placement caches nothing and does not ask for a retry', () => {
     const cached: PhysicalBounds[] = [];
-    expect(confirmDetailPlacement({ status: 'superseded', bounds: null, reason: 'superseded', read_back: false }, (b) => { cached.push(b); })).toBe(false);
+    expect(
+      confirmDetailPlacement({ status: 'superseded', bounds: null, reason: 'superseded', read_back: false }, (b) => {
+        cached.push(b);
+      }),
+    ).toBe(false);
     expect(cached).toEqual([]);
   });
 
@@ -126,7 +150,11 @@ describe('confirmDetailPlacement', () => {
     // #250/S17: la geometría no se aplicó, así que no hay nada que cachear y
     // la colocación se vuelve a pedir dentro del presupuesto.
     const cached: PhysicalBounds[] = [];
-    expect(confirmDetailPlacement(readFailed(), (b) => { cached.push(b); })).toBe(true);
+    expect(
+      confirmDetailPlacement(readFailed(), (b) => {
+        cached.push(b);
+      }),
+    ).toBe(true);
     expect(cached).toEqual([]);
   });
 });
@@ -160,7 +188,7 @@ describe('retryDetailPlacement (#221 pattern)', () => {
   };
 
   const io = (place: (b: PhysicalBounds) => Promise<DetailPlacementReport>, over: Partial<Parameters<typeof retryDetailPlacement>[1]> = {}) =>
-    ({ place, isCurrent: () => true, sleep: async () => {}, ...over } as Parameters<typeof retryDetailPlacement>[1]);
+    ({ place, isCurrent: () => true, sleep: async () => {}, ...over }) as Parameters<typeof retryDetailPlacement>[1];
 
   it('re-asks exactly the requested placement while the window is not viewable', async () => {
     const { place, bounds } = placeFor([notViewable(), notViewable(), report()]);

@@ -78,5 +78,4 @@ describe('LocalePicker', () => {
     const html = renderToStaticMarkup(<LocalePicker />);
     expect(html).toContain('margin:0 auto');
   });
-
 });

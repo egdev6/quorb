@@ -7,15 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { CodexInstallController } from './lib/codex-install';
 import type { AppConfig, Locale } from './lib/types';
-import {
-  AntigravityPanel,
-  CopilotPanel,
-  CursorPanel,
-  MiniMaxPanel,
-  OpenCodeGoPanel,
-  SubscriptionPanel,
-  ZaiPanel,
-} from './Settings';
+import { AntigravityPanel, CopilotPanel, CursorPanel, MiniMaxPanel, OpenCodeGoPanel, SubscriptionPanel, ZaiPanel } from './Settings';
 
 const noop = () => {};
 
@@ -213,14 +205,7 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     // los de Windows hasta #92») ya no aplica en esta rama: es falsa aquí.
     const wslCfg = { ...cfg, sessionEnv: 'wsl' } as AppConfig;
     const html = renderToStaticMarkup(
-      <SubscriptionPanel
-        {...common('es')}
-        cfg={wslCfg}
-        p="claude"
-        cli={{}}
-        codexInstall={codexInstall}
-        onCodexRecheck={noop}
-      />,
+      <SubscriptionPanel {...common('es')} cfg={wslCfg} p="claude" cli={{}} codexInstall={codexInstall} onCodexRecheck={noop} />,
     );
     expect(html).not.toContain('usan el CLI de Windows');
   });
@@ -267,7 +252,19 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     );
     expectNone(
       html,
-      ['Suscripción', 'Mostrar en el widget', 'Uso del plan', 'Cómo conectar', 'Inicia sesión', 'Token manual', 'Avanzado', 'Base de datos', 'Vacío', 'no oficial', 'Comprobando'],
+      [
+        'Suscripción',
+        'Mostrar en el widget',
+        'Uso del plan',
+        'Cómo conectar',
+        'Inicia sesión',
+        'Token manual',
+        'Avanzado',
+        'Base de datos',
+        'Vacío',
+        'no oficial',
+        'Comprobando',
+      ],
       'en cursor',
     );
   });
@@ -307,7 +304,17 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     );
     expectNone(
       html,
-      ['Suscripción', 'Mostrar en el widget', 'Cuota de cada', 'Cómo conectar', 'Abre Antigravity', 'Quorb consulta', 'no oficial', 'solo verificado', 'Comprobando'],
+      [
+        'Suscripción',
+        'Mostrar en el widget',
+        'Cuota de cada',
+        'Cómo conectar',
+        'Abre Antigravity',
+        'Quorb consulta',
+        'no oficial',
+        'solo verificado',
+        'Comprobando',
+      ],
       'en antigravity',
     );
   });
@@ -361,7 +368,19 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     expect(copilot('en', 'custom')).toContain('Premium requests included per month');
     expectNone(
       [html, copilot('en', 'custom')].join('\n'),
-      ['Suscripción', 'Mostrar en el widget', 'Peticiones premium', 'Se reinician', 'Cómo conectar', 'Usuario', 'Otra cantidad', 'Token de', 'Créalo', 'permiso', 'Comprobando'],
+      [
+        'Suscripción',
+        'Mostrar en el widget',
+        'Peticiones premium',
+        'Se reinician',
+        'Cómo conectar',
+        'Usuario',
+        'Otra cantidad',
+        'Token de',
+        'Créalo',
+        'permiso',
+        'Comprobando',
+      ],
       'en copilot',
     );
   });
@@ -415,7 +434,21 @@ describe('Subscription provider panels (SSR, i18n)', () => {
     );
     expectNone(
       html,
-      ['Suscripción', 'Mostrar en el widget', 'Cuota del plan', 'dos credenciales', 'Cómo conectar', 'del plan', 'Del panel', 'región', 'pago por uso', 'Sin ella', 'Avanzado', 'Las claves', 'Comprobando'],
+      [
+        'Suscripción',
+        'Mostrar en el widget',
+        'Cuota del plan',
+        'dos credenciales',
+        'Cómo conectar',
+        'del plan',
+        'Del panel',
+        'región',
+        'pago por uso',
+        'Sin ella',
+        'Avanzado',
+        'Las claves',
+        'Comprobando',
+      ],
       'en minimax',
     );
   });

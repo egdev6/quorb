@@ -17,13 +17,11 @@ interface RecoveryDependencies {
 }
 
 function valid(bounds: PhysicalBounds): boolean {
-  return [bounds.x, bounds.y, bounds.w, bounds.h].every(Number.isFinite)
-    && bounds.w > 0 && bounds.h > 0;
+  return [bounds.x, bounds.y, bounds.w, bounds.h].every(Number.isFinite) && bounds.w > 0 && bounds.h > 0;
 }
 
 function overlaps(a: PhysicalBounds, b: PhysicalBounds): boolean {
-  return a.x < b.x + b.w && a.x + a.w > b.x
-    && a.y < b.y + b.h && a.y + a.h > b.y;
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 /**
@@ -51,12 +49,9 @@ export function createWidgetRecovery(deps: RecoveryDependencies): () => Promise<
     checking = true;
     try {
       const state = await deps.read();
-      if (!deps.allowed() || !state.visible || state.minimized || !valid(state.bounds)
-        || !state.monitors.length || !state.monitors.every(valid)) return;
-      if (state.expected && (!valid(state.expected)
-        || (deps.expected && !samePhysical(deps.expected(), state.expected)))) return;
-      const wrongSize = state.expected && (Math.abs(state.bounds.w - state.expected.w) > 1
-        || Math.abs(state.bounds.h - state.expected.h) > 1);
+      if (!deps.allowed() || !state.visible || state.minimized || !valid(state.bounds) || !state.monitors.length || !state.monitors.every(valid)) return;
+      if (state.expected && (!valid(state.expected) || (deps.expected && !samePhysical(deps.expected(), state.expected)))) return;
+      const wrongSize = state.expected && (Math.abs(state.bounds.w - state.expected.w) > 1 || Math.abs(state.bounds.h - state.expected.h) > 1);
       if (wrongSize || !state.monitors.some((monitor) => overlaps(state.bounds, monitor))) {
         await deps.recover(state);
       }

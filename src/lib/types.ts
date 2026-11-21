@@ -165,9 +165,20 @@ export interface EmailAlertsConfig {
   recipient: string;
 }
 
-export type EmailStatus = 'idle' | 'accepted' | 'disabled' | 'consentRequired'
-  | 'configurationMissing' | 'keyMissing' | 'keyringError' | 'authenticationError'
-  | 'senderRejected' | 'requestRejected' | 'rateLimited' | 'serviceError' | 'acceptanceUnknown';
+export type EmailStatus =
+  | 'idle'
+  | 'accepted'
+  | 'disabled'
+  | 'consentRequired'
+  | 'configurationMissing'
+  | 'keyMissing'
+  | 'keyringError'
+  | 'authenticationError'
+  | 'senderRejected'
+  | 'requestRejected'
+  | 'rateLimited'
+  | 'serviceError'
+  | 'acceptanceUnknown';
 
 export interface EmailEvent {
   provider: string;

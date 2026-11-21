@@ -46,11 +46,9 @@ const TONES: Record<EmailStatus, '' | 'eg-notice--success' | 'eg-notice--warning
 
 const noop = () => {};
 
-const statusText = (locale: 'es' | 'en', status: EmailStatus): string =>
-  (locale === 'es' ? es : en).settings.alerts.email.status[status];
+const statusText = (locale: 'es' | 'en', status: EmailStatus): string => (locale === 'es' ? es : en).settings.alerts.email.status[status];
 
-const line = (locale: 'es' | 'en', status: EmailStatus) =>
-  renderToStaticMarkup(<EmailStatusLine locale={locale} status={status} />);
+const line = (locale: 'es' | 'en', status: EmailStatus) => renderToStaticMarkup(<EmailStatusLine locale={locale} status={status} />);
 
 describe('EmailStatusLine (SSR, i18n)', () => {
   it('renders the visible status feedback for every EmailStatus in Spanish and English', () => {
@@ -114,9 +112,11 @@ describe('AlertsSection email feedback (SSR, S22)', () => {
       );
       expect(html).toContain('onboarding@resend.dev');
       expect(html).not.toContain('value="onboarding@resend.dev"');
-      expect(html).toContain(locale === 'es'
-        ? 'Sin dominio propio, usa onboarding@resend.dev para pruebas hacia el correo de tu cuenta de Resend. Para otros destinatarios, usa un remitente de tu dominio verificado.'
-        : 'Without your own domain, use onboarding@resend.dev for tests to your Resend account email. For other recipients, use a sender from your verified domain.');
+      expect(html).toContain(
+        locale === 'es'
+          ? 'Sin dominio propio, usa onboarding@resend.dev para pruebas hacia el correo de tu cuenta de Resend. Para otros destinatarios, usa un remitente de tu dominio verificado.'
+          : 'Without your own domain, use onboarding@resend.dev for tests to your Resend account email. For other recipients, use a sender from your verified domain.',
+      );
       expect(html).toContain('type="email" autoComplete="off" value=""');
     }
   });
@@ -125,12 +125,11 @@ describe('AlertsSection email feedback (SSR, S22)', () => {
     for (const userAgent of ['Mozilla/5.0 (X11; Linux x86_64)', 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'Mozilla/5.0 (Windows NT 10.0)']) {
       vi.stubGlobal('navigator', { userAgent });
       for (const locale of ['es', 'en'] as const) {
-        const html = renderToStaticMarkup(
-          <AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />,
-        );
-        const warning = locale === 'es'
-          ? 'En algunos sistemas Linux, tendrás que volver a introducir la clave después de reiniciar.'
-          : 'On some Linux systems, you will need to enter the key again after restarting.';
+        const html = renderToStaticMarkup(<AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />);
+        const warning =
+          locale === 'es'
+            ? 'En algunos sistemas Linux, tendrás que volver a introducir la clave después de reiniciar.'
+            : 'On some Linux systems, you will need to enter the key again after restarting.';
         if (userAgent.includes('Linux')) expect(html).toContain(warning);
         else expect(html).not.toContain(warning);
         expect(html).not.toMatch(/keyutils|backend|#106/);
@@ -141,12 +140,12 @@ describe('AlertsSection email feedback (SSR, S22)', () => {
 
   it('keeps the test save/send effects and consent/key requirements in concise help', () => {
     for (const locale of ['es', 'en'] as const) {
-      const html = renderToStaticMarkup(
-        <AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />,
+      const html = renderToStaticMarkup(<AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />);
+      expect(html).toContain(
+        locale === 'es'
+          ? 'Guarda los cambios y envía una prueba sin datos de consumo. Requiere consentimiento y clave guardada. No activa los avisos automáticos.'
+          : 'Saves changes and sends a test without usage data. Requires consent and a saved key. Does not enable automatic alerts.',
       );
-      expect(html).toContain(locale === 'es'
-        ? 'Guarda los cambios y envía una prueba sin datos de consumo. Requiere consentimiento y clave guardada. No activa los avisos automáticos.'
-        : 'Saves changes and sends a test without usage data. Requires consent and a saved key. Does not enable automatic alerts.');
       expect(html).toContain(locale === 'es' ? 'Sin reintentos' : 'No retries');
       expect(html).toContain(locale === 'es' ? 'Resend procesa' : 'Resend processes');
     }
@@ -154,9 +153,7 @@ describe('AlertsSection email feedback (SSR, S22)', () => {
 
   it('shows the idle status feedback inside Alertas before any test send', () => {
     for (const locale of ['es', 'en'] as const) {
-      const html = renderToStaticMarkup(
-        <AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />,
-      );
+      const html = renderToStaticMarkup(<AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />);
       expect(html, `estado inicial visible en ${locale}`).toContain(statusText(locale, 'idle'));
       expect(html, `rol de estado en ${locale}`).toContain('role="status"');
     }

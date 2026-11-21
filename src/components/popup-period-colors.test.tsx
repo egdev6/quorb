@@ -8,12 +8,10 @@ import { ProviderGauge } from './ProviderGauge';
 // SSR never runs the history effect. Seed only its null state, not disclosures.
 const history = vi.hoisted(() => ({ samples: null as Sample[] | null }));
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal() as typeof import('react');
+  const react = (await importOriginal()) as typeof import('react');
   return {
     ...react,
-    useState: ((initial: unknown) => react.useState(
-      initial === null && history.samples !== null ? history.samples : initial,
-    )) as typeof react.useState,
+    useState: ((initial: unknown) => react.useState(initial === null && history.samples !== null ? history.samples : initial)) as typeof react.useState,
   };
 });
 afterEach(() => {
@@ -28,12 +26,26 @@ const white = '#ffffff';
 const accent = 'var(--popup-primary, #ff0036)';
 const palette = (n: number) => `var(--ring-${n})`;
 const meter = (label: string, windowSeconds: number, percent: number | null = 25): Meter => ({
-  id: '', label, windowSeconds, percent, used: null, limit: null, unit: null,
+  id: '',
+  label,
+  windowSeconds,
+  percent,
+  used: null,
+  limit: null,
+  unit: null,
   resetsAt: '2099-01-01T00:00:00Z',
 });
 const report = (meters: Meter[], id = 'codex:work', kind: UsageReport['kind'] = 'subscription'): UsageReport => ({
-  id, kind, meters, name: id, status: 'ok', plan: null, spend: null,
-  message: null, action: null, fetchedAt: '2098-12-31T00:00:00Z',
+  id,
+  kind,
+  meters,
+  name: id,
+  status: 'ok',
+  plan: null,
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '2098-12-31T00:00:00Z',
 });
 
 // Accept direct meter colors or inherited popup ring declarations. Do not require
@@ -59,9 +71,7 @@ const surfaces = [
   {
     name: 'history series',
     render: (r: UsageReport) => {
-      history.samples = r.meters.filter(m => m.percent != null).flatMap(m =>
-        [1, 2].map(t => ({ t, p: r.id, l: m.label, v: m.percent! })),
-      );
+      history.samples = r.meters.filter((m) => m.percent != null).flatMap((m) => [1, 2].map((t) => ({ t, p: r.id, l: m.label, v: m.percent! })));
       return renderToStaticMarkup(<ProviderDetails report={r} />);
     },
     colors: /<polyline[^>]*stroke="([^"]+)"/g,
@@ -94,10 +104,10 @@ const layouts = [
 describe.each(surfaces)('popup period colors: $name', ({ render, colors }) => {
   const renderedColors = (r: UsageReport) => {
     const html = render(r);
-    return [...html.matchAll(colors)].map(m => popupColor(html, m[1]));
+    return [...html.matchAll(colors)].map((m) => popupColor(html, m[1]));
   };
 
-  describe.each(['claude', 'codex:work', 'nan'])('%s subscription', id => {
+  describe.each(['claude', 'codex:work', 'nan'])('%s subscription', (id) => {
     it.each(layouts)('uses white sessions and weekly accent for $name', ({ meters, expected }) => {
       expect(renderedColors(report(meters, id))).toEqual(expected);
     });
@@ -120,24 +130,19 @@ describe.each(surfaces)('popup period colors: $name', ({ render, colors }) => {
 
 describe('popup-only boundaries', () => {
   it.each(layouts)('leaves widget palette unchanged for $name', ({ meters }) => {
-    const html = renderToStaticMarkup(
-      <ProviderGauge report={report(meters)} small={false} size={48} active={false} onHover={() => {}} />,
+    const html = renderToStaticMarkup(<ProviderGauge report={report(meters)} small={false} size={48} active={false} onHover={() => {}} />);
+    expect([...html.matchAll(/class="eg-gauge__ring" style="[^"]*--c:([^;"]+)/g)].map((m) => m[1])).toEqual(
+      meters.slice(0, 3).map((m) => palette(m.windowSeconds! < day ? 2 : m.windowSeconds! >= 6 * day && m.windowSeconds! <= 8 * day ? 1 : 3)),
     );
-    expect([...html.matchAll(/class="eg-gauge__ring" style="[^"]*--c:([^;"]+)/g)].map(m => m[1]))
-      .toEqual(meters.slice(0, 3).map(m => palette(
-        m.windowSeconds! < day ? 2 : m.windowSeconds! >= 6 * day && m.windowSeconds! <= 8 * day ? 1 : 3,
-      )));
     expect(html).not.toContain('--popup-primary');
     expect(html).not.toContain('#ffffff');
   });
 
   it('keeps the compact widget peak on its selected palette', () => {
     const html = renderToStaticMarkup(
-      <ProviderGauge report={report([meter('Week', week, 10), meter('Session', hour, 95)])}
-        small size={32} active={false} onHover={() => {}} />,
+      <ProviderGauge report={report([meter('Week', week, 10), meter('Session', hour, 95)])} small size={32} active={false} onHover={() => {}} />,
     );
-    expect([...html.matchAll(/class="eg-gauge__ring" style="[^"]*--c:([^;"]+)/g)].map(m => m[1]))
-      .toEqual([palette(2)]);
+    expect([...html.matchAll(/class="eg-gauge__ring" style="[^"]*--c:([^;"]+)/g)].map((m) => m[1])).toEqual([palette(2)]);
   });
 
   it.each([
@@ -156,7 +161,7 @@ describe('popup-only boundaries', () => {
     const html = renderToStaticMarkup(<ProviderDetails report={r} />);
     const sections = html.match(/<details\b[^>]*>/g) ?? [];
     expect(sections).toHaveLength(2);
-    expect(sections.map(s => s.includes('open=""'))).toEqual([pace, historyOpen]);
+    expect(sections.map((s) => s.includes('open=""'))).toEqual([pace, historyOpen]);
     expect(getItem).toHaveBeenCalledWith(`popup:${r.id}:pace`);
     expect(getItem).toHaveBeenCalledWith(`popup:${r.id}:history`);
     expect(html).not.toMatch(/<details[^>]* name=/);

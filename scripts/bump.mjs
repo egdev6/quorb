@@ -103,12 +103,7 @@ export function bumpVersion(version, { cwd = process.cwd() } = {}) {
   };
   const texts = { pkg: read(FILES[0]), lock: read(FILES[1]), toml: read(FILES[2]), cargoLock: read(FILES[3]) };
 
-  const current = [
-    packageJsonVersion(texts.pkg),
-    ...packageLockVersions(texts.lock),
-    cargoTomlVersion(texts.toml),
-    cargoLockVersion(texts.cargoLock),
-  ];
+  const current = [packageJsonVersion(texts.pkg), ...packageLockVersions(texts.lock), cargoTomlVersion(texts.toml), cargoLockVersion(texts.cargoLock)];
   if (current.some((value) => !value)) throw new Error(`No pude leer la versión en todas las fuentes: ${current.join(', ')}`);
   if (new Set(current).size !== 1) throw new Error(`Versiones actuales incoherentes: ${current.join(', ')}`);
   if (compareVersions(version, current[0]) <= 0) throw new Error(`La versión ${version} no es mayor que la actual ${current[0]}`);
@@ -119,10 +114,7 @@ export function bumpVersion(version, { cwd = process.cwd() } = {}) {
   lock.version = version;
   if (lock.packages?.['']) lock.packages[''].version = version;
   const toml = setCargoTomlVersion(texts.toml, version);
-  const cargoLock = texts.cargoLock.replace(
-    /(\[\[package\]\]\r?\nname = "quorb"\r?\nversion = ")[^"]+(")/,
-    `$1${version}$2`,
-  );
+  const cargoLock = texts.cargoLock.replace(/(\[\[package\]\]\r?\nname = "quorb"\r?\nversion = ")[^"]+(")/, `$1${version}$2`);
 
   fs.writeFileSync(path.join(cwd, FILES[0]), JSON.stringify(pkg, null, 2) + '\n');
   fs.writeFileSync(path.join(cwd, FILES[1]), JSON.stringify(lock, null, 2) + '\n');

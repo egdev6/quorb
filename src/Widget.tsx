@@ -18,20 +18,30 @@ import { createSessionMonitor } from './lib/session-monitor';
 import { envKey, needsRefresh } from './lib/widget-refresh';
 import { useWidgetStartup } from './lib/use-widget-startup';
 import { createWidgetRecovery, shouldAuditNativePosition } from './lib/widget-recovery';
-import { placementOutcome, readPlacementWithRetries, reasonKey, samePlacement, type WidgetPlacementReason, type WidgetPlacementReport } from './lib/widget-placement';
 import {
-  clickPanel,
-  closePanel,
-  hoverPanel,
-  isReorderGesture,
-  NO_PANEL,
-  panelHoldsOpen,
-  type PanelState,
-} from './lib/anchor-panel';
+  placementOutcome,
+  readPlacementWithRetries,
+  reasonKey,
+  samePlacement,
+  type WidgetPlacementReason,
+  type WidgetPlacementReport,
+} from './lib/widget-placement';
+import { clickPanel, closePanel, hoverPanel, isReorderGesture, NO_PANEL, panelHoldsOpen, type PanelState } from './lib/anchor-panel';
 import { pointerInsideViewport } from './lib/pointer-viewport';
 import { holdOnDrop, onOrbEnter, onOrbLeave, orbIdAtPoint, NO_HOLD, type ReorderHold } from './lib/reorder-hold';
 import { createFocusTracker, FOCUS_EVENT, type OwnWindow } from './lib/anchor-focus';
-import { createLatestQueue, physicalPanelBounds, samePhysical, DETAIL_EVENTS, DETAIL_WINDOW, isCurrentDetailInteraction, panelWidthFor, type DetailInteraction, type DetailState, type PhysicalBounds } from './lib/detail-panel';
+import {
+  createLatestQueue,
+  physicalPanelBounds,
+  samePhysical,
+  DETAIL_EVENTS,
+  DETAIL_WINDOW,
+  isCurrentDetailInteraction,
+  panelWidthFor,
+  type DetailInteraction,
+  type DetailState,
+  type PhysicalBounds,
+} from './lib/detail-panel';
 import { createDetailPresence, presenceFromPoint, shouldSampleNativePresence } from './lib/detail-presence';
 import {
   forgetSurface,
@@ -97,10 +107,7 @@ function geoOf(m: Monitor): Geo {
 async function resolveGeo(name: string | null): Promise<Geo | null> {
   const all = await availableMonitors().catch(() => [] as Monitor[]);
   const m =
-    (name ? all.find((x) => x.name === name) : undefined) ??
-    (await currentMonitor().catch(() => null)) ??
-    (await primaryMonitor().catch(() => null)) ??
-    all[0];
+    (name ? all.find((x) => x.name === name) : undefined) ?? (await currentMonitor().catch(() => null)) ?? (await primaryMonitor().catch(() => null)) ?? all[0];
   return m ? geoOf(m) : null;
 }
 
@@ -141,9 +148,12 @@ async function notify(title: string, body: string) {
 const Icon = {
   grip: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" />
-      <circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" />
-      <circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" />
+      <circle cx="9" cy="6" r="1.4" />
+      <circle cx="15" cy="6" r="1.4" />
+      <circle cx="9" cy="12" r="1.4" />
+      <circle cx="15" cy="12" r="1.4" />
+      <circle cx="9" cy="18" r="1.4" />
+      <circle cx="15" cy="18" r="1.4" />
     </svg>
   ),
   refresh: (
@@ -203,7 +213,9 @@ export function Widget() {
     // seguridad. `shown`/`hiddenByUser` son refs estables: sin closure stale.
     if (!shown.current && !hiddenByUser.current) {
       shown.current = true;
-      getCurrentWindow().show().catch(() => {});
+      getCurrentWindow()
+        .show()
+        .catch(() => {});
     }
   }, []);
   const clearReportsOnEnvChange = useCallback((c: AppConfig) => {
@@ -535,7 +547,7 @@ export function Widget() {
       }),
     ];
     return () => {
-      unlisten.forEach((p) => p.then((f) => f()));
+      for (const p of unlisten) p.then((f) => f());
     };
   }, [refresh]);
 
@@ -708,6 +720,7 @@ export function Widget() {
 
   // Expand before entering; shrink only after the exit transition. Hovering between
   // providers never changes this window, and each native rectangle is applied atomically.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => {
     if (dragging) {
       // El arrastre manda: cancela la estabilización pendiente (#179).
@@ -797,13 +810,19 @@ export function Widget() {
       if (limited) setPlacementFailed(true);
       setPlacementReason(limited ? reason : null);
       if (phase === 'preparing' || phase === 'settling') markPrepared(phase);
-    }).catch((error) => {
-      if (disposed) return;
-      widgetBounds.current = null;
-      setPlacementFailed(true); // The still-visible handle offers an explicit user retry.
-      console.warn(error);
-    }).finally(() => { if (!disposed) placementInFlight.current = false; });
-    return () => { disposed = true; };
+    })
+      .catch((error) => {
+        if (disposed) return;
+        widgetBounds.current = null;
+        setPlacementFailed(true); // The still-visible handle offers an explicit user retry.
+        console.warn(error);
+      })
+      .finally(() => {
+        if (!disposed) placementInFlight.current = false;
+      });
+    return () => {
+      disposed = true;
+    };
   }, [geo, stripSize, edge, offset, dragging, phase, autoHide, placementRetry, widgetQueue, markPrepared, textScale]);
 
   // Windows can displace or resize a normal window without changing the
@@ -815,39 +834,48 @@ export function Widget() {
     // Windows DWM recovery (#147/#148): on Wayland/Linux, outerPosition() returns (0,0)
     // and GTK window sizing differs, causing infinite false-positive recovery loops.
     if (!shouldAuditNativePosition(osFromUA(navigator.userAgent))) return;
-    const allowed = () => !disposed && !drag.current && !placementInFlight.current
-      && (phase === 'open' || phase === 'hidden') && shown.current && widgetBounds.current !== null;
+    const allowed = () =>
+      !disposed && !drag.current && !placementInFlight.current && (phase === 'open' || phase === 'hidden') && shown.current && widgetBounds.current !== null;
     const check = createWidgetRecovery({
       allowed,
       expected: () => widgetBounds.current,
       read: async () => {
         const expected = widgetBounds.current;
         const [position, size, monitors, visible, minimized] = await Promise.all([
-          win.outerPosition(), win.outerSize(), availableMonitors(), win.isVisible(), win.isMinimized(),
+          win.outerPosition(),
+          win.outerSize(),
+          availableMonitors(),
+          win.isVisible(),
+          win.isMinimized(),
         ]);
         return {
           bounds: { x: position.x, y: position.y, w: size.width, h: size.height },
           monitors: monitors.map((m) => ({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height })),
-          visible, minimized, expected,
+          visible,
+          minimized,
+          expected,
         };
       },
       recover: async (snapshot) => {
         // Refresh the dock target too: its saved monitor may have disconnected.
-        const [fresh, visible, minimized] = await Promise.all([
-          resolveGeo(dockMonitor), win.isVisible(), win.isMinimized(),
-        ]);
-        if (!allowed() || !fresh || !visible || minimized || !snapshot.expected
-          || !samePhysical(widgetBounds.current, snapshot.expected)) return;
+        const [fresh, visible, minimized] = await Promise.all([resolveGeo(dockMonitor), win.isVisible(), win.isMinimized()]);
+        if (!allowed() || !fresh || !visible || minimized || !snapshot.expected || !samePhysical(widgetBounds.current, snapshot.expected)) return;
         widgetBounds.current = null;
         setGeo(fresh);
         setPlacementRetry((n) => n + 1);
       },
     });
     void check();
-    const id = window.setInterval(() => { void check(); }, 5_000);
-    return () => { disposed = true; window.clearInterval(id); };
+    const id = window.setInterval(() => {
+      void check();
+    }, 5_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(id);
+    };
   }, [dockMonitor, phase]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the extra dependencies are intentional re-run triggers.
   useEffect(() => watchPreparation(phase, () => setPlacementFailed(true)), [phase, placementRetry]);
 
   useLayoutEffect(() => {
@@ -868,10 +896,14 @@ export function Widget() {
       if (disposed || !current() || !stripRef.current) return;
       await clipSurfaceSafely(
         measureSurfaceClip(stripRef.current, { w: size.width, h: size.height }, liveRatio(geo.sf * textScale)),
-        (clip) => api.setSurfaceClip(clip, !autoHide), console.warn, stripRef.current,
+        (clip) => api.setSurfaceClip(clip, !autoHide),
+        console.warn,
+        stripRef.current,
       );
     }).catch(console.warn);
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+    };
   }, [dragging, geo, autoHide, widgetQueue, textScale]);
 
   // Safety net for the compositor drag (issue #180, maintainer review point
@@ -891,38 +923,60 @@ export function Widget() {
   }, [dragging]);
 
   // The detail window owns its dimensions; hovering never mutates widget geometry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
-    const strip = geo && stripSize
-      ? stripRect(geo.area, edge, offset, toMonitor(stripSize.w, textScale), toMonitor(stripSize.h, textScale))
-      : null;
-    const state: DetailState | null = active && geo && strip && !dragging && !collapsed && phase === 'open' ? {
-      // Keep the interaction session valid during background usage/config updates.
-      revision: detailStateRef.current?.report.id === active.id
-        ? detailStateRef.current.revision
-        : ++detailRevision.current,
-      report: active,
-      area: geo.area,
-      strip,
-      edge,
-      anchor: (vertical ? strip.y : strip.x) + toMonitor(anchorRel, textScale),
-      width: panelWidth,
-      maxHeight: panelHeightLimit(geo.area, edge, strip),
-      scaleFactor: geo.sf,
-      orbSize,
-      opacity: config?.opacity ?? 0.94,
-      colors: [ring1, ring2, ring3],
-        updatedAt: updatedAt?.getTime() ?? null,
-        refreshMinutes: config?.refreshMinutes ?? 5,
-        error,
-        // La URL de uso se resuelve aquí, que sí hay config: 9Router apunta a su
-        // Base URL configurada (no a localhost fijo). Al detalle solo cruza la URL.
-        usageUrl: officialUsageUrl(active.id, config?.nineRouter.baseUrl),
-      } : null;
+    const strip = geo && stripSize ? stripRect(geo.area, edge, offset, toMonitor(stripSize.w, textScale), toMonitor(stripSize.h, textScale)) : null;
+    const state: DetailState | null =
+      active && geo && strip && !dragging && !collapsed && phase === 'open'
+        ? {
+            // Keep the interaction session valid during background usage/config updates.
+            revision: detailStateRef.current?.report.id === active.id ? detailStateRef.current.revision : ++detailRevision.current,
+            report: active,
+            area: geo.area,
+            strip,
+            edge,
+            anchor: (vertical ? strip.y : strip.x) + toMonitor(anchorRel, textScale),
+            width: panelWidth,
+            maxHeight: panelHeightLimit(geo.area, edge, strip),
+            scaleFactor: geo.sf,
+            orbSize,
+            opacity: config?.opacity ?? 0.94,
+            colors: [ring1, ring2, ring3],
+            updatedAt: updatedAt?.getTime() ?? null,
+            refreshMinutes: config?.refreshMinutes ?? 5,
+            error,
+            // La URL de uso se resuelve aquí, que sí hay config: 9Router apunta a su
+            // Base URL configurada (no a localhost fijo). Al detalle solo cruza la URL.
+            usageUrl: officialUsageUrl(active.id, config?.nineRouter.baseUrl),
+          }
+        : null;
     detailStateRef.current = state;
     // The detail window is gone: its presence is void, the strip keeps its own.
     if (!state) setHoverPresence(forgetSurface(hoverPresence(), 'detail'));
     if (detailReadyRef.current) emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, state).catch(console.warn);
-  }, [active, geo, stripSize, textScale, edge, offset, vertical, anchorRel, dragging, collapsed, phase, panelWidth, orbSize, config?.opacity, config?.refreshMinutes, config?.nineRouter.baseUrl, ring1, ring2, ring3, updatedAt, error]);
+  }, [
+    active,
+    geo,
+    stripSize,
+    textScale,
+    edge,
+    offset,
+    vertical,
+    anchorRel,
+    dragging,
+    collapsed,
+    phase,
+    panelWidth,
+    orbSize,
+    config?.opacity,
+    config?.refreshMinutes,
+    config?.nineRouter.baseUrl,
+    ring1,
+    ring2,
+    ring3,
+    updatedAt,
+    error,
+  ]);
 
   // ───── panel al pasar el ratón ─────
   /**
@@ -959,92 +1013,106 @@ export function Widget() {
     setPanel(closePanel());
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     let disposed = false;
     const unlisteners: (() => void)[] = [];
     const add = async (promise: Promise<() => void>) => {
       const unlisten = await promise;
-      if (disposed) unlisten(); else unlisteners.push(unlisten);
+      if (disposed) unlisten();
+      else unlisteners.push(unlisten);
     };
     const register = async () => {
-      await add(listen(DETAIL_EVENTS.ready, () => {
-        if (disposed) return;
-        detailReadyRef.current = true;
-        emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, detailStateRef.current).catch(console.warn);
-      }));
-      await add(listen<DetailInteraction>(DETAIL_EVENTS.interaction, ({ payload }) => {
-        if (disposed) return;
-        const state = detailStateRef.current;
-        // Un aviso de una sesión vieja se ignora: sólo cuenta la sesión
-        // vigente, sea el que sea el tipo de aviso.
-        if (!isCurrentDetailInteraction(state, payload)) return;
-        if (payload.kind === 'placement-failed') {
-          // El detalle declara que no pudo colocarse (#250/S22): la tira
-          // decide y lo cierra como en un cierre normal.
-          closeFromDetail();
-          return;
-        }
-        if (payload.kind === 'enter') {
-          // The pointer cannot be in both windows at once: the detail's
-          // presence invalidates the strip's, even if the strip's
-          // `mouseleave` never arrives (Wayland native drops it).
-          // The native crossing of this surface wins when it exists (#264/S20).
-          if (!nativeCrossingsRef.current.detail) applyHover({ surface: 'detail', kind: 'enter' });
-        } else if (payload.kind === 'leave') {
-          // The detail's own `leave` arms the close: it does not depend on a
-          // flag that only the strip owns.
-          // The native crossing of this surface wins when it exists (#264/S20).
-          if (!nativeCrossingsRef.current.detail) applyHover({ surface: 'detail', kind: 'leave' });
-        } else if (payload.kind === 'hide') {
-          cancelTimers();
-          setPanel(closePanel());
-          const hidden = configRef.current?.hiddenProviders ?? [];
-          patchConfig({ hiddenProviders: [...new Set([...hidden, payload.provider])] }).catch((err) => setError(String(err)));
-        }
-      }));
+      await add(
+        listen(DETAIL_EVENTS.ready, () => {
+          if (disposed) return;
+          detailReadyRef.current = true;
+          emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, detailStateRef.current).catch(console.warn);
+        }),
+      );
+      await add(
+        listen<DetailInteraction>(DETAIL_EVENTS.interaction, ({ payload }) => {
+          if (disposed) return;
+          const state = detailStateRef.current;
+          // Un aviso de una sesión vieja se ignora: sólo cuenta la sesión
+          // vigente, sea el que sea el tipo de aviso.
+          if (!isCurrentDetailInteraction(state, payload)) return;
+          if (payload.kind === 'placement-failed') {
+            // El detalle declara que no pudo colocarse (#250/S22): la tira
+            // decide y lo cierra como en un cierre normal.
+            closeFromDetail();
+            return;
+          }
+          if (payload.kind === 'enter') {
+            // The pointer cannot be in both windows at once: the detail's
+            // presence invalidates the strip's, even if the strip's
+            // `mouseleave` never arrives (Wayland native drops it).
+            // The native crossing of this surface wins when it exists (#264/S20).
+            if (!nativeCrossingsRef.current.detail) applyHover({ surface: 'detail', kind: 'enter' });
+          } else if (payload.kind === 'leave') {
+            // The detail's own `leave` arms the close: it does not depend on a
+            // flag that only the strip owns.
+            // The native crossing of this surface wins when it exists (#264/S20).
+            if (!nativeCrossingsRef.current.detail) applyHover({ surface: 'detail', kind: 'leave' });
+          } else if (payload.kind === 'hide') {
+            cancelTimers();
+            setPanel(closePanel());
+            const hidden = configRef.current?.hiddenProviders ?? [];
+            patchConfig({ hiddenProviders: [...new Set([...hidden, payload.provider])] }).catch((err) => setError(String(err)));
+          }
+        }),
+      );
       // El relé nativo del backend (#264/S16): GTK entrega el `enter`/`leave`
       // de una ventana aunque WebKitGTK no lo traduzca al DOM (Wayland
       // nativo). Llega como otra fuente de presencia de esa superficie y
       // alimenta el mismo modelo, sin reglas nuevas.
-      await add(listen<PointerSurfacePayload>(POINTER_SURFACE_EVENT, ({ payload }) => {
-        if (disposed) return;
-        // The native crossing is the authority as soon as it exists for that
-        // surface (#264/S20): from here on the DOM stops deciding the
-        // presence of THAT surface. The relay is hooked per window, so a
-        // surface without a relay keeps deciding with its DOM events.
-        nativeCrossingsRef.current[payload.surface] = true;
-        applyHover({ surface: payload.surface, kind: payload.kind });
-      }));
-      await add(listen(DETAIL_EVENTS.widgetHidden, () => {
-        cancelTimers();
-        setHoverPresence({ target: 'outside', at: Date.now() });
-        // #264/S19: this is a total reset (the user hid the strip), not a
-        // presence transition. The transition rule only releases the hold when
-        // the presence was `widget`, and the hold can be set while the model
-        // says `outside` (the DOM `enter` of the strip can be lost, which is
-        // the very case this change fixes). A reset leaves no stale hold, and
-        // it cannot reopen the panel: it closes it.
-        reorderHold.current = NO_HOLD;
-        setPanel(closePanel());
-      }));
-      await add(listen(DETAIL_EVENTS.dismiss, () => {
-        closeFromDetail();
-      }));
+      await add(
+        listen<PointerSurfacePayload>(POINTER_SURFACE_EVENT, ({ payload }) => {
+          if (disposed) return;
+          // The native crossing is the authority as soon as it exists for that
+          // surface (#264/S20): from here on the DOM stops deciding the
+          // presence of THAT surface. The relay is hooked per window, so a
+          // surface without a relay keeps deciding with its DOM events.
+          nativeCrossingsRef.current[payload.surface] = true;
+          applyHover({ surface: payload.surface, kind: payload.kind });
+        }),
+      );
+      await add(
+        listen(DETAIL_EVENTS.widgetHidden, () => {
+          cancelTimers();
+          setHoverPresence({ target: 'outside', at: Date.now() });
+          // #264/S19: this is a total reset (the user hid the strip), not a
+          // presence transition. The transition rule only releases the hold when
+          // the presence was `widget`, and the hold can be set while the model
+          // says `outside` (the DOM `enter` of the strip can be lost, which is
+          // the very case this change fixes). A reset leaves no stale hold, and
+          // it cannot reopen the panel: it closes it.
+          reorderHold.current = NO_HOLD;
+          setPanel(closePanel());
+        }),
+      );
+      await add(
+        listen(DETAIL_EVENTS.dismiss, () => {
+          closeFromDetail();
+        }),
+      );
       // `Escape` desde el panel (#170): con el foco dentro del detalle, la
       // tecla la atiende esa ventana, no la tira. Cancela aperturas pendientes
       // para que no vuelva a abrirse de forma espuria al vencer el temporizador.
-      await add(listen(DETAIL_EVENTS.escape, () => {
-        if (disposed) return;
-        cancelTimers();
-        setPanel(closePanel());
-      }));
+      await add(
+        listen(DETAIL_EVENTS.escape, () => {
+          if (disposed) return;
+          cancelTimers();
+          setPanel(closePanel());
+        }),
+      );
       if (!disposed) await emitTo(DETAIL_WINDOW, DETAIL_EVENTS.requestReady);
     };
     register().catch(console.warn);
     return () => {
       disposed = true;
       detailReadyRef.current = false;
-      unlisteners.forEach((unlisten) => unlisten());
+      for (const unlisten of unlisteners) unlisten();
       emitTo(DETAIL_WINDOW, DETAIL_EVENTS.state, null).catch(console.warn);
     };
   }, [patchConfig]);
@@ -1112,6 +1180,7 @@ export function Widget() {
     return () => window.removeEventListener('keydown', onKey);
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(onEscapeKey, []);
 
   /** La posición del panel respecto de la tira, según el orbe. */
@@ -1181,6 +1250,7 @@ export function Widget() {
   // posición global del cursor frente a los bounds nativos de ambas ventanas
   // alimenta el tracker. Falla en silencio (Wayland puede no exponer la
   // posición): el muestreo degrada, nunca adivina.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
     // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
     // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
@@ -1223,7 +1293,9 @@ export function Widget() {
         // Sin posición de cursor (p. ej. Wayland): no hay conclusión.
       }
     };
-    const interval = window.setInterval(() => { void sample(); }, 400);
+    const interval = window.setInterval(() => {
+      void sample();
+    }, 400);
     void sample();
     return () => {
       disposed = true;
@@ -1274,6 +1346,7 @@ export function Widget() {
     };
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(dragMountLifecycle, []);
 
   // La red de seguridad (mostrar la ventana a los 2,5 s si sigue pendiente)
@@ -1304,10 +1377,12 @@ export function Widget() {
       setDragging(true);
       cancelTimers();
       setPanel(closePanel());
-      getCurrentWindow().startDragging().catch((err) => {
-        setError(String(err));
-        setDragging(false);
-      });
+      getCurrentWindow()
+        .startDragging()
+        .catch((err) => {
+          setError(String(err));
+          setDragging(false);
+        });
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1320,9 +1395,7 @@ export function Widget() {
     // colocó la ventana, no una lectura de `outerPosition()`. Por eso sirve
     // como origen síncrono del arrastre en xdg-shell, donde `outerPosition()`
     // devuelve (0, 0) por diseño y no puede arrancar la aritmética por delta.
-    const initialStart = widgetBounds.current
-      ? new PhysicalPosition(widgetBounds.current.x, widgetBounds.current.y)
-      : null;
+    const initialStart = widgetBounds.current ? new PhysicalPosition(widgetBounds.current.x, widgetBounds.current.y) : null;
     // `screenX`/`screenY` are CSS px of the docked window (#228): its monitor scale
     // times the text scale turns their delta into physical px.
     const d = { sx: e.screenX, sy: e.screenY, start: initialStart, scale: geo.sf * textScale, raf: 0, pointerId: e.pointerId, ending: false };
@@ -1359,7 +1432,9 @@ export function Widget() {
       enqueueDrag(async () => {
         if (!current()) return;
         await getCurrentWindow().setPosition(new PhysicalPosition(x, y));
-      }).catch((err) => { if (current()) setError(String(err)); });
+      }).catch((err) => {
+        if (current()) setError(String(err));
+      });
     });
   };
 
@@ -1399,19 +1474,13 @@ export function Widget() {
         // `start` sale del mismo caché que escribió `setWidgetBounds`, la
         // desviación solo puede ser redondeo del compositor; si algún día se
         // reporta el orbe imantado en esa esquina, revisar primero el redondeo.
-        const posX = (wpos.x !== 0 || wpos.y !== 0)
-          ? wpos.x
-          : (d.start?.x ?? 0) + (e.screenX - d.sx) * d.scale;
-        const posY = (wpos.x !== 0 || wpos.y !== 0)
-          ? wpos.y
-          : (d.start?.y ?? 0) + (e.screenY - d.sy) * d.scale;
+        const posX = wpos.x !== 0 || wpos.y !== 0 ? wpos.x : (d.start?.x ?? 0) + (e.screenX - d.sx) * d.scale;
+        const posY = wpos.x !== 0 || wpos.y !== 0 ? wpos.y : (d.start?.y ?? 0) + (e.screenY - d.sy) * d.scale;
         // The grip offset is CSS px of the window where it was dropped (#228).
         const ratio = liveRatio(d.scale);
         const cx = posX + (grip ? grip.left + grip.width / 2 : 0) * ratio;
         const cy = posY + (grip ? grip.top + grip.height / 2 : 0) * ratio;
-        const mon =
-          mons.find((m) => contains({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height }, cx, cy)) ??
-          (await currentMonitor());
+        const mon = mons.find((m) => contains({ x: m.position.x, y: m.position.y, w: m.size.width, h: m.size.height }, cx, cy)) ?? (await currentMonitor());
         if (!current() || !mon) return;
         const g = geoOf(mon);
         const snap = nearestEdge(g.area, cx / g.sf, cy / g.sf);
@@ -1562,8 +1631,13 @@ export function Widget() {
       data-reveal={phase}
       data-placement-failed={placementFailed || undefined}
       data-placement-reason={placementReason ?? undefined}
-      onFocusCapture={() => { setFocused(true); setCollapsed(false); }}
-      onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
+      onFocusCapture={() => {
+        setFocused(true);
+        setCollapsed(false);
+      }}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
       style={{ '--panel-alpha': String(opacity), '--ring-1': ring1, '--ring-2': ring2, '--ring-3': ring3 } as CSSProperties}
       onMouseEnter={() => {
         // The native crossing of this surface wins when it exists (#264/S20).
@@ -1582,32 +1656,39 @@ export function Widget() {
         applyHover({ surface: 'widget', kind: 'leave' });
       }}
     >
-      {showHandle && configKnown && <button
-        ref={peekRef}
-        type="button"
-        className="peek"
-        aria-label={placementFailed ? `${t(locale, 'widget.retryShow')}${placementReasonText ? `: ${placementReasonText}` : ''}` : t(locale, 'widget.show')}
-        title={placementFailed ? placementReasonText ?? undefined : undefined}
-        aria-controls="quorb-strip"
-        aria-hidden={phase === 'open' && !peekFocused || undefined}
-        tabIndex={phase === 'hidden' || placementFailed && (usesPeekWindow(phase) || phase === 'preparing') ? 0 : -1}
-        onTransitionEnd={(e) => {
-          if (phase === 'leaving-handle' && e.target === e.currentTarget && e.propertyName === 'opacity') finishTransition();
-        }}
-        onFocus={() => setPeekFocused(true)}
-        onBlur={() => setPeekFocused(false)}
-        onClick={() => { setCollapsed(false); setPlacementRetry((n) => n + 1); }}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg>
-      </button>}
+      {showHandle && configKnown && (
+        <button
+          ref={peekRef}
+          type="button"
+          className="peek"
+          aria-label={placementFailed ? `${t(locale, 'widget.retryShow')}${placementReasonText ? `: ${placementReasonText}` : ''}` : t(locale, 'widget.show')}
+          title={placementFailed ? (placementReasonText ?? undefined) : undefined}
+          aria-controls="quorb-strip"
+          aria-hidden={(phase === 'open' && !peekFocused) || undefined}
+          tabIndex={phase === 'hidden' || (placementFailed && (usesPeekWindow(phase) || phase === 'preparing')) ? 0 : -1}
+          onTransitionEnd={(e) => {
+            if (phase === 'leaving-handle' && e.target === e.currentTarget && e.propertyName === 'opacity') finishTransition();
+          }}
+          onFocus={() => setPeekFocused(true)}
+          onBlur={() => setPeekFocused(false)}
+          onClick={() => {
+            setCollapsed(false);
+            setPlacementRetry((n) => n + 1);
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 14 6-6 6 6" />
+          </svg>
+        </button>
+      )}
 
       <div
         ref={stripRef}
         id="quorb-strip"
         className="strip"
         onTransitionEnd={(e) => {
-          if (e.target === e.currentTarget && e.propertyName === 'transform'
-            && !e.currentTarget.getAnimations().some((a) => a.playState === 'running')) finishTransition();
+          if (e.target === e.currentTarget && e.propertyName === 'transform' && !e.currentTarget.getAnimations().some((a) => a.playState === 'running'))
+            finishTransition();
         }}
         data-small={small || undefined}
         data-vertical={vertical || undefined}
@@ -1687,7 +1768,6 @@ export function Widget() {
           />
         )}
       </div>
-
     </div>
   );
 }

@@ -12,7 +12,16 @@ import type { UpdaterMode } from '../lib/updater-policy';
 import type { UpdatePhase } from '../lib/updater';
 import type { ReactNode } from 'react';
 
-export function StripTools({ locale, loading, updaterMode, update, onRefresh, onOpenSettings, onStartUpdate, icons }: {
+export function StripTools({
+  locale,
+  loading,
+  updaterMode,
+  update,
+  onRefresh,
+  onOpenSettings,
+  onStartUpdate,
+  icons,
+}: {
   locale: Locale;
   loading: boolean;
   updaterMode: UpdaterMode;
@@ -27,6 +36,7 @@ export function StripTools({ locale, loading, updaterMode, update, onRefresh, on
     <div className="strip__tools">
       {updaterMode === 'native' && (update.phase === 'available' || update.phase === 'installing') && (
         <button
+          type="button"
           className="icon-btn icon-btn--update"
           data-spin={update.phase === 'installing' || undefined}
           onClick={onStartUpdate}
@@ -40,10 +50,10 @@ export function StripTools({ locale, loading, updaterMode, update, onRefresh, on
           {icons.update}
         </button>
       )}
-      <button className="icon-btn" data-spin={loading || undefined} onClick={onRefresh} title={t(locale, 'widget.refreshNow')}>
+      <button type="button" className="icon-btn" data-spin={loading || undefined} onClick={onRefresh} title={t(locale, 'widget.refreshNow')}>
         {icons.refresh}
       </button>
-      <button className="icon-btn" onClick={onOpenSettings} title={t(locale, 'widget.settings')}>
+      <button type="button" className="icon-btn" onClick={onOpenSettings} title={t(locale, 'widget.settings')}>
         {icons.gear}
       </button>
     </div>

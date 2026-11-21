@@ -16,7 +16,24 @@ test('checks inventory parse before scan and hashes again before emitting JSON',
 
 test('entrypoint keeps findings advisory and installs the locked runtime offline', () => {
   const source = readFileSync(new URL('./semgrep-entry.py', import.meta.url), 'utf8');
-  for (const flag of ['--oss-only', '--metrics', '--disable-version-check', '--disable-nosem', '--strict', '--no-git-ignore', '--json', '--config', '/control/rules.yml', '--isolated', '--no-index', '--find-links=/wheels', '--only-binary=:all:', '--require-hashes', '--no-deps', '/control/requirements.lock']) {
+  for (const flag of [
+    '--oss-only',
+    '--metrics',
+    '--disable-version-check',
+    '--disable-nosem',
+    '--strict',
+    '--no-git-ignore',
+    '--json',
+    '--config',
+    '/control/rules.yml',
+    '--isolated',
+    '--no-index',
+    '--find-links=/wheels',
+    '--only-binary=:all:',
+    '--require-hashes',
+    '--no-deps',
+    '/control/requirements.lock',
+  ]) {
     assert.ok(source.includes(flag), flag);
   }
   assert.ok(!source.includes('--scan-unknown-extensions'), 'do not bypass language detection');

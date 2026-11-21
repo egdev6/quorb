@@ -6,20 +6,32 @@ import { ProviderGauge } from './ProviderGauge';
 import type { UsageReport } from '../lib/types';
 
 const report: UsageReport = {
-  id: 'codex:work', name: 'Codex · Trabajo', kind: 'subscription', status: 'ok', plan: 'Plus',
-  meters: [], spend: null, message: null, action: null, fetchedAt: '2030-01-01T00:00:00Z',
+  id: 'codex:work',
+  name: 'Codex · Trabajo',
+  kind: 'subscription',
+  status: 'ok',
+  plan: 'Plus',
+  meters: [],
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '2030-01-01T00:00:00Z',
 };
 const withDate = (kind: 'period' | 'key'): UsageReport => ({
-  ...report, validity: { kind, at: '2030-02-01T00:00:00Z' },
+  ...report,
+  validity: { kind, at: '2030-02-01T00:00:00Z' },
 });
 
 const withBalance = (count: unknown): UsageReport & { availableResets: number } => ({
-  ...report, availableResets: count as number,
+  ...report,
+  availableResets: count as number,
 });
 
 describe('banked reset badges', () => {
   it.each([0, 2])('can hide compact resets (%s) without hiding the account identity', (count) => {
-    const html = renderToStaticMarkup(<ProviderGauge report={withBalance(count)} account="2" small={false} size={56} active={false} onHover={() => {}} {...{ showResets: false }} />);
+    const html = renderToStaticMarkup(
+      <ProviderGauge report={withBalance(count)} account="2" small={false} size={56} active={false} onHover={() => {}} {...{ showResets: false }} />,
+    );
     expect(html).not.toContain('data-kind="resets"');
     expect(html).not.toContain('reset disponible');
     expect(html).not.toContain('resets disponibles');
@@ -35,16 +47,18 @@ describe('banked reset badges', () => {
     const popup = renderToStaticMarkup(<ValidityBadge report={r} {...{ showResets: false }} />);
     expect(popup).toContain('2 resets disponibles');
   });
-  it.each([[0, '0 resets disponibles'], [1, '1 reset disponible'], [2, '2 resets disponibles']])(
-    'shows banked %s without validity or quota metadata', (count, label) => {
-      const html = renderToStaticMarkup(<ValidityBadge report={withBalance(count)} />);
-      expect(html).toContain('data-kind="resets"');
-      expect(html).toContain(`<span>${label}</span>`);
-      expect(html).toContain('<svg');
-      expect(html).toContain('<path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5"');
-      expect(html).not.toMatch(/<time|caduca|Periodo hasta/);
-    },
-  );
+  it.each([
+    [0, '0 resets disponibles'],
+    [1, '1 reset disponible'],
+    [2, '2 resets disponibles'],
+  ])('shows banked %s without validity or quota metadata', (count, label) => {
+    const html = renderToStaticMarkup(<ValidityBadge report={withBalance(count)} />);
+    expect(html).toContain('data-kind="resets"');
+    expect(html).toContain(`<span>${label}</span>`);
+    expect(html).toContain('<svg');
+    expect(html).toContain('<path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5"');
+    expect(html).not.toMatch(/<time|caduca|Periodo hasta/);
+  });
 
   it.each([0, 2, 4294967295])('shares the popup restart SVG with the compact banked %s badge', (count) => {
     const html = renderToStaticMarkup(<ValidityBadge report={withBalance(count)} compact />);
@@ -56,9 +70,13 @@ describe('banked reset badges', () => {
   });
 
   it('hides unknown, invalid, stale, failed and non-Codex balances', () => {
-    const hidden = [report, ...[null, undefined, -1, 0.5, true, '2', Infinity, 4294967296].map(withBalance),
-      { ...withBalance(2), stale: true }, { ...withBalance(2), id: 'claude:work' },
-      ...(['error', 'needsLogin', 'unconfigured'] as const).map((status) => ({ ...withBalance(2), status }))];
+    const hidden = [
+      report,
+      ...[null, undefined, -1, 0.5, true, '2', Infinity, 4294967296].map(withBalance),
+      { ...withBalance(2), stale: true },
+      { ...withBalance(2), id: 'claude:work' },
+      ...(['error', 'needsLogin', 'unconfigured'] as const).map((status) => ({ ...withBalance(2), status })),
+    ];
     for (const r of hidden) expect(renderToStaticMarkup(<ValidityBadge report={r} />)).toBe('');
   });
 
@@ -103,9 +121,11 @@ describe('banked reset badges', () => {
   });
 
   it('places the expanded balance after both meters and spend stats', () => {
-    const r = { ...withBalance(2), meters: [{ id: '', label: 'Semana', percent: 40, used: 2, limit: 5,
-      unit: null, resetsAt: null, windowSeconds: 604800 }],
-      spend: { amount: 5, currency: 'USD', periodLabel: 'Este mes', budget: 10 } };
+    const r = {
+      ...withBalance(2),
+      meters: [{ id: '', label: 'Semana', percent: 40, used: 2, limit: 5, unit: null, resetsAt: null, windowSeconds: 604800 }],
+      spend: { amount: 5, currency: 'USD', periodLabel: 'Este mes', budget: 10 },
+    };
     const html = renderToStaticMarkup(<ProviderCard report={r} />);
     expect(html.indexOf('2 resets disponibles')).toBeGreaterThan(html.indexOf('q-card__stats'));
     expect(html.indexOf('2 resets disponibles')).toBeGreaterThan(html.indexOf('q-card__meters'));
@@ -127,9 +147,13 @@ describe('localized validity and reset badges (T2c-S1)', () => {
 
 describe('available validity badges', () => {
   it('shows nothing without a valid date, with stale data or a failed account', () => {
-    const invalid = [report, { ...report, validity: null }, { ...withDate('period'), stale: true },
+    const invalid = [
+      report,
+      { ...report, validity: null },
+      { ...withDate('period'), stale: true },
       ...['invalid', '', '2030-02-30T00:00:00Z'].map((at) => ({ ...withDate('key'), validity: { kind: 'key' as const, at } })),
-      ...(['needsLogin', 'error', 'unconfigured'] as const).map((status) => ({ ...withDate('period'), status }))];
+      ...(['needsLogin', 'error', 'unconfigured'] as const).map((status) => ({ ...withDate('period'), status })),
+    ];
     for (const r of invalid) expect(renderToStaticMarkup(<ValidityBadge report={r} />)).toBe('');
   });
 

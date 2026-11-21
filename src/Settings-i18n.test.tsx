@@ -12,8 +12,7 @@ import { AlertsSection, LookSection, ProjectSection, SecretInput, ShortcutsSecti
 const { updaterMock } = vi.hoisted(() => ({ updaterMock: vi.fn() }));
 vi.mock('./lib/useUpdater', () => ({ useUpdater: (auto: boolean) => updaterMock(auto) }));
 
-const updater = (mode: string, state: Record<string, unknown>) =>
-  updaterMock.mockReturnValue({ mode, state, check: () => {}, install: () => {} });
+const updater = (mode: string, state: Record<string, unknown>) => updaterMock.mockReturnValue({ mode, state, check: () => {}, install: () => {} });
 
 const lookCfg = {
   opacity: 0.9,
@@ -45,9 +44,7 @@ const shortcutsCfg: ShortcutsConfig = { enabled: true, toggle: 'Ctrl+Alt+H', ope
 const noop = () => {};
 
 const look = (locale: 'es' | 'en', liveError: string | null = 'fallo de prueba') =>
-  renderToStaticMarkup(
-    <LookSection locale={locale} cfg={lookCfg} liveError={liveError} onOrbSize={noop} onAccent={noop} onLiveChange={noop} onRetry={noop} />,
-  );
+  renderToStaticMarkup(<LookSection locale={locale} cfg={lookCfg} liveError={liveError} onOrbSize={noop} onAccent={noop} onLiveChange={noop} onRetry={noop} />);
 
 const alerts = (locale: 'es' | 'en') =>
   renderToStaticMarkup(<AlertsSection locale={locale} alerts={alertsCfg} onAlerts={noop} onPersist={async () => {}} onError={noop} />);
@@ -124,7 +121,19 @@ describe('LookSection (SSR, i18n)', () => {
     ]) {
       expect(html, `falta «${text}» en en`).toContain(text);
     }
-    for (const text of ['Anillos', 'Tira', 'Tamaño del anillo', 'Color de acento', 'Círculos pequeños', 'Borde', 'Izquierda', 'Ocultar sola', 'Siempre encima', 'Personalización no aplicada', 'Reintentar']) {
+    for (const text of [
+      'Anillos',
+      'Tira',
+      'Tamaño del anillo',
+      'Color de acento',
+      'Círculos pequeños',
+      'Borde',
+      'Izquierda',
+      'Ocultar sola',
+      'Siempre encima',
+      'Personalización no aplicada',
+      'Reintentar',
+    ]) {
       expect(html, `sobra «${text}» en en`).not.toContain(text);
     }
   });
@@ -197,7 +206,24 @@ describe('AlertsSection (SSR, i18n)', () => {
     ]) {
       expect(html, `falta «${text}» en en`).toContain(text);
     }
-    for (const text of ['Cuándo avisar', 'Activar avisos', 'Notificación del sistema', 'Al superar el límite', 'Avisar al llegar a', 'Al reiniciarse', 'Efecto propio', 'Pequeño', 'Mediano', 'Pantalla completa', 'Con sonido', 'Probar', 'Archivo', 'Ningún archivo', 'Elegir…', 'Quitar']) {
+    for (const text of [
+      'Cuándo avisar',
+      'Activar avisos',
+      'Notificación del sistema',
+      'Al superar el límite',
+      'Avisar al llegar a',
+      'Al reiniciarse',
+      'Efecto propio',
+      'Pequeño',
+      'Mediano',
+      'Pantalla completa',
+      'Con sonido',
+      'Probar',
+      'Archivo',
+      'Ningún archivo',
+      'Elegir…',
+      'Quitar',
+    ]) {
       expect(html, `sobra «${text}» en en`).not.toContain(text);
     }
   });
@@ -250,7 +276,19 @@ describe('ShortcutsSection (SSR, i18n)', () => {
     ]) {
       expect(html, `falta «${text}» en en`).toContain(text);
     }
-    for (const text of ['Atajos globales', 'Activar atajos', 'Atajos de teclado', 'Acción', 'Mostrar u ocultar la tira', 'Abrir el más cargado', 'Actualizar ahora', 'Sin atajo', 'Cambiar', 'Quitar', 'Pulsa un atajo o «Cambiar» y teclea la combinación. Se aplican al guardar.']) {
+    for (const text of [
+      'Atajos globales',
+      'Activar atajos',
+      'Atajos de teclado',
+      'Acción',
+      'Mostrar u ocultar la tira',
+      'Abrir el más cargado',
+      'Actualizar ahora',
+      'Sin atajo',
+      'Cambiar',
+      'Quitar',
+      'Pulsa un atajo o «Cambiar» y teclea la combinación. Se aplican al guardar.',
+    ]) {
       expect(html, `sobra «${text}» en en`).not.toContain(text);
     }
   });
@@ -322,7 +360,16 @@ describe('UpdatesSection (SSR, i18n)', () => {
     const installing = renderToStaticMarkup(<UpdatesSection locale="en" auto onAuto={noop} />);
     expect(installing).toContain('Installing…');
 
-    for (const text of ['Versión instalada', 'estás en la última versión', 'Buscar ahora', 'Buscar actualizaciones solo', 'Hay una versión nueva', 'Instalar y reiniciar', 'Instalando', 'Llegan firmadas desde']) {
+    for (const text of [
+      'Versión instalada',
+      'estás en la última versión',
+      'Buscar ahora',
+      'Buscar actualizaciones solo',
+      'Hay una versión nueva',
+      'Instalar y reiniciar',
+      'Instalando',
+      'Llegan firmadas desde',
+    ]) {
       expect(none + available + installing, `sobra «${text}» en en`).not.toContain(text);
     }
   });
@@ -352,9 +399,28 @@ describe('ProjectSection (SSR, i18n)', () => {
 
 describe('Email alerts in existing Settings alerts (SSR)', () => {
   it('shows consent/privacy before opt-in and explicit test in both languages', () => {
-    const es = alerts('es'); const en = alerts('en');
-    for (const text of ['Email con Resend', 'Resend procesa remitente y destinatario', 'Quorb abierto', 'Sin reintentos', 'dominio verificado', 'onboarding@resend.dev', 'Enviar prueba']) expect(es).toContain(text);
-    for (const text of ['Email with Resend', 'Resend processes sender and recipient', 'Quorb open', 'No retries', 'verified domain', 'onboarding@resend.dev', 'Send test']) expect(en).toContain(text);
+    const es = alerts('es');
+    const en = alerts('en');
+    for (const text of [
+      'Email con Resend',
+      'Resend procesa remitente y destinatario',
+      'Quorb abierto',
+      'Sin reintentos',
+      'dominio verificado',
+      'onboarding@resend.dev',
+      'Enviar prueba',
+    ])
+      expect(es).toContain(text);
+    for (const text of [
+      'Email with Resend',
+      'Resend processes sender and recipient',
+      'Quorb open',
+      'No retries',
+      'verified domain',
+      'onboarding@resend.dev',
+      'Send test',
+    ])
+      expect(en).toContain(text);
     expect(es).toContain('type="password"');
     expect(es).toContain('disabled=""');
     expect(es).not.toContain('Integraciones');

@@ -49,10 +49,7 @@ export interface MixedSaveResult {
  * scoped no aparece y el proveedor queda «Falta conectar». Sin un guardado
  * confirmado no hay nada nuevo que leer.
  */
-export async function reloadSecretsAfterSave<S>(
-  configPart: MixedSaveResult['config'],
-  reload: () => Promise<S>,
-): Promise<S | null> {
+export async function reloadSecretsAfterSave<S>(configPart: MixedSaveResult['config'], reload: () => Promise<S>): Promise<S | null> {
   if (configPart.status !== 'saved') return null;
   return reload();
 }

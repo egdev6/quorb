@@ -10,7 +10,9 @@ const UNSAFE = /[\p{Cc}\p{Cf}]/u;
 const ESC = /[\p{Cc}\p{Cf}]/gu;
 
 const esc = (s) => s.replace(ESC, (c) => '\\u{' + c.codePointAt(0).toString(16).padStart(4, '0') + '}');
-const reject = () => { throw new Error('invalid-semgrep-report'); };
+const reject = () => {
+  throw new Error('invalid-semgrep-report');
+};
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function safePath(value, root) {

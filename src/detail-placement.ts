@@ -66,17 +66,13 @@ export const decideDetailPlacement = (report: DetailPlacementReport): DetailPlac
  * (#250/S17): la colocación se vuelve a pedir dentro del presupuesto y, si se
  * agota, el panel sigue oculto.
  */
-export const detailPlacementFailed = (report: DetailPlacementReport): boolean =>
-  report.reason === 'read_failed';
+export const detailPlacementFailed = (report: DetailPlacementReport): boolean => report.reason === 'read_failed';
 
 /**
  * Aplica la decisión de un informe a la caché del panel: la geometría confirmada
  * (read-back) es lo único que entra; devuelve el mismo veredicto de reintento.
  */
-export const confirmDetailPlacement = (
-  report: DetailPlacementReport,
-  cache: (bounds: PhysicalBounds) => void,
-): boolean => {
+export const confirmDetailPlacement = (report: DetailPlacementReport, cache: (bounds: PhysicalBounds) => void): boolean => {
   const decision = decideDetailPlacement(report);
   if (decision.bounds) cache(decision.bounds);
   return decision.retry;
@@ -105,10 +101,7 @@ export interface DetailRetryIo {
  * cambió mientras tanto (isCurrent)— y se devuelve el último informe: si salió
  * agotado, el llamante cachea nada y la apertura nunca se bloqueó (S3).
  */
-export const retryDetailPlacement = (
-  requested: PhysicalBounds,
-  io: DetailRetryIo,
-): Promise<DetailPlacementReport | null> =>
+export const retryDetailPlacement = (requested: PhysicalBounds, io: DetailRetryIo): Promise<DetailPlacementReport | null> =>
   readPlacementWithRetries(
     async () => {
       if (!io.isCurrent()) return null;

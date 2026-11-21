@@ -109,11 +109,7 @@ interface HitTestDocument {
  * is not on an orb (the gaps of the strip) or when there is no layout to
  * hit-test.
  */
-export function orbIdAtPoint(
-  x: number,
-  y: number,
-  doc?: HitTestDocument | null,
-): string | null {
+export function orbIdAtPoint(x: number, y: number, doc?: HitTestDocument | null): string | null {
   const target = doc ?? (typeof document === 'undefined' ? null : document);
   let el: unknown = null;
   try {

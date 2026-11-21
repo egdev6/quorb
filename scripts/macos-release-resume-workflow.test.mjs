@@ -32,7 +32,10 @@ test('resume contract supports matching CRLF and rejects every line mutation and
   const lines = text.split('\n');
   for (const [index, line] of lines.entries()) {
     if (!line.trim()) continue;
-    for (const candidate of [lines.filter((_, i) => i !== index).join('\n'), lines.map((value, i) => i === index ? `${value} # mutation` : value).join('\n')]) {
+    for (const candidate of [
+      lines.filter((_, i) => i !== index).join('\n'),
+      lines.map((value, i) => (i === index ? `${value} # mutation` : value)).join('\n'),
+    ]) {
       assert.throws(() => contract(Buffer.from(candidate), Buffer.from(candidate)), undefined, line);
     }
   }

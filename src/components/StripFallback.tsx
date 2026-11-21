@@ -19,7 +19,14 @@ import type { Locale } from '../lib/types';
 
 export type StripFallbackState = 'pending' | 'ready' | 'failed';
 
-export function StripFallback({ state, error, busy, locale, onRetry, onConfigure }: {
+export function StripFallback({
+  state,
+  error,
+  busy,
+  locale,
+  onRetry,
+  onConfigure,
+}: {
   /** Estado del arranque de la configuración (#271). */
   state: StripFallbackState;
   /** Último error visible: el de config en `failed`, o un error de uso
@@ -42,14 +49,14 @@ export function StripFallback({ state, error, busy, locale, onRetry, onConfigure
   // `pending` arriba, así que aquí `state` solo puede ser `ready` o `failed`.)
   if (error) {
     return (
-      <button className="btn btn--accent btn--sm" onClick={onRetry} title={error ?? undefined}>
+      <button type="button" className="btn btn--accent btn--sm" onClick={onRetry} title={error ?? undefined}>
         {t(locale, 'widget.retry')}
       </button>
     );
   }
   if (state === 'failed') {
     return (
-      <button className="btn btn--accent btn--sm" onClick={onRetry}>
+      <button type="button" className="btn btn--accent btn--sm" onClick={onRetry}>
         {t(locale, 'widget.retry')}
       </button>
     );
@@ -58,7 +65,7 @@ export function StripFallback({ state, error, busy, locale, onRetry, onConfigure
     return <span style={{ color: 'var(--text-2)', fontSize: 11, padding: '0 6px' }}>{t(locale, 'widget.loading')}</span>;
   }
   return (
-    <button className="btn btn--accent btn--sm" onClick={onConfigure}>
+    <button type="button" className="btn btn--accent btn--sm" onClick={onConfigure}>
       {t(locale, 'widget.configure')}
     </button>
   );

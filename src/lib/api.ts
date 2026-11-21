@@ -123,11 +123,8 @@ export const api = {
   /** 9Router: desconecta borrando contraseña y cookie de sesión guardadas. */
   nineRouterLogout: () => invoke<void>('nine_router_logout'),
   /** Rectángulo del monitor en píxeles físicos */
-  playEffect: (
-    kind: Exclude<Effect, 'none'>,
-    moment: AlertMoment,
-    rect: { x: number; y: number; width: number; height: number },
-  ) => invoke<void>('play_effect', { req: { kind, moment, ...rect } }),
+  playEffect: (kind: Exclude<Effect, 'none'>, moment: AlertMoment, rect: { x: number; y: number; width: number; height: number }) =>
+    invoke<void>('play_effect', { req: { kind, moment, ...rect } }),
   overlayDone: () => invoke<void>('overlay_done'),
   shortcutErrors: () => invoke<string[]>('shortcut_errors'),
   shortcutWarnings: () => invoke<string[]>('shortcut_warnings'),

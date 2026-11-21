@@ -22,7 +22,9 @@ const COMMIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const UNSAFE = /[\p{Cc}\p{Cf}]/u;
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 
-const fail = () => { throw new Error(FAIL); };
+const fail = () => {
+  throw new Error(FAIL);
+};
 const defaultReadManifest = () => JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
 
 function safePath(value) {
@@ -36,9 +38,17 @@ async function runProvision(argv, deps) {
   const provisionTools = deps.provisionTools ?? defaultProvisionTools;
   const readManifest = deps.readManifest ?? defaultReadManifest;
   let manifest;
-  try { manifest = await readManifest(); } catch { return fail(); }
+  try {
+    manifest = await readManifest();
+  } catch {
+    return fail();
+  }
   let result;
-  try { result = await provisionTools({ manifest, destination }); } catch { return fail(); }
+  try {
+    result = await provisionTools({ manifest, destination });
+  } catch {
+    return fail();
+  }
   if (result === null || typeof result !== 'object') fail();
   return { directory: result.directory, artifacts: result.artifacts };
 }
@@ -55,9 +65,17 @@ async function runScan(argv, deps) {
   const input = { repo, commit, wheelhouse, parent };
   // A semgrep failure aborts the remaining scanner: no partial, no green result.
   let semgrep;
-  try { semgrep = await runSemgrep(input); } catch { return fail(); }
+  try {
+    semgrep = await runSemgrep(input);
+  } catch {
+    return fail();
+  }
   let zizmor;
-  try { zizmor = await runZizmor(input); } catch { return fail(); }
+  try {
+    zizmor = await runZizmor(input);
+  } catch {
+    return fail();
+  }
   return { semgrep, zizmor };
 }
 
@@ -72,7 +90,11 @@ export async function main(argv, deps = {}) {
 
 function serialize(report) {
   let json;
-  try { json = JSON.stringify(report); } catch { fail(); }
+  try {
+    json = JSON.stringify(report);
+  } catch {
+    fail();
+  }
   if (Buffer.byteLength(json) > MAX_REPORT_BYTES) fail();
   return `${json}\n`;
 }
@@ -88,5 +110,7 @@ async function cli(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  cli(process.argv.slice(2)).then((code) => { process.exitCode = code; });
+  cli(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }

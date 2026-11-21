@@ -17,7 +17,9 @@ const UNSAFE = /[\p{Cc}\p{Cf}\\:]/u;
 // any control/format bytes anywhere, including a hostile inventory root.
 const CONTROL_BYTES = /[\p{Cc}\p{Cf}]/u;
 
-const fail = () => { throw new Error('invalid-zizmor-report'); };
+const fail = () => {
+  throw new Error('invalid-zizmor-report');
+};
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -32,8 +34,7 @@ function segments(value) {
 function workflowOriginal(value) {
   segments(value);
   const parts = value.split('/');
-  if (parts.length !== 3 || parts[0] !== '.github' || parts[1] !== 'workflows' ||
-      !/\.(?:yml|yaml)$/.test(parts[2])) fail();
+  if (parts.length !== 3 || parts[0] !== '.github' || parts[1] !== 'workflows' || !/\.(?:yml|yaml)$/.test(parts[2])) fail();
   return value;
 }
 
@@ -91,8 +92,7 @@ function reportEntries(report, byMounted) {
 function locationOf(loc, mounted) {
   if (!isObject(loc) || !isObject(loc.symbolic) || !isObject(loc.concrete)) fail();
   const key = loc.symbolic.key;
-  if (!isObject(key) || Object.keys(key).length !== 1 || !isObject(key.Local) ||
-      key.Local.verbatim_path !== mounted) fail();
+  if (!isObject(key) || Object.keys(key).length !== 1 || !isObject(key.Local) || key.Local.verbatim_path !== mounted) fail();
   const kind = loc.symbolic.kind;
   if (typeof kind !== 'string' || kind.length === 0) fail();
   const concrete = loc.concrete.location;
@@ -105,8 +105,7 @@ function locationOf(loc, mounted) {
 function findingOf(finding, mounted, original) {
   if (!isObject(finding) || typeof finding.ident !== 'string' || !RULE.test(finding.ident)) fail();
   if ('ignored' in finding && typeof finding.ignored !== 'boolean') fail();
-  if (!Array.isArray(finding.locations) || finding.locations.length === 0 ||
-      finding.locations.length > MAX_FINDINGS) fail();
+  if (!Array.isArray(finding.locations) || finding.locations.length === 0 || finding.locations.length > MAX_FINDINGS) fail();
   let line;
   for (const loc of finding.locations) {
     const parsed = locationOf(loc, mounted);
@@ -126,8 +125,7 @@ export function normalizeZizmor(report, inventory) {
       for (const finding of entry.findings) findings.push(findingOf(finding, entry.path, original));
     }
     findings.sort((a, b) => compare(a.path, b.path) || a.line - b.line || compare(a.rule, b.rule));
-    const unique = findings.filter((f, i) => i === 0 || f.path !== findings[i - 1].path ||
-      f.line !== findings[i - 1].line || f.rule !== findings[i - 1].rule);
+    const unique = findings.filter((f, i) => i === 0 || f.path !== findings[i - 1].path || f.line !== findings[i - 1].line || f.rule !== findings[i - 1].rule);
     return {
       commit: trusted.commit,
       status: 'ok',
@@ -135,5 +133,7 @@ export function normalizeZizmor(report, inventory) {
       excluded: trusted.excluded,
       findings: unique,
     };
-  } catch { fail(); }
+  } catch {
+    fail();
+  }
 }

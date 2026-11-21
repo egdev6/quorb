@@ -17,7 +17,15 @@ const alerts = (over: Partial<AppConfig['alerts']> = {}): AppConfig['alerts'] =>
 });
 
 const config = (over: Record<string, unknown> = {}): AppConfig =>
-  ({ refreshMinutes: 5, orbSize: 48, accentColor: '#ff0036', providerOrder: ['claude', 'codex'], hiddenProviders: [], alerts: alerts(), ...over }) as unknown as AppConfig;
+  ({
+    refreshMinutes: 5,
+    orbSize: 48,
+    accentColor: '#ff0036',
+    providerOrder: ['claude', 'codex'],
+    hiddenProviders: [],
+    alerts: alerts(),
+    ...over,
+  }) as unknown as AppConfig;
 
 describe('isDirty', () => {
   it('is false without a canonical baseline, true after an edit and false again on revert', () => {
@@ -135,7 +143,7 @@ describe('reconcileLive', () => {
   });
 });
 
- describe('isSettingsDirty', () => {
+describe('isSettingsDirty', () => {
   const base = config();
 
   it('combines the manual config dirty flag with the autostart draft', () => {

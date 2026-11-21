@@ -10,9 +10,7 @@ import { ShortcutNotices } from '../Settings';
 
 describe('ShortcutNotices (SSR)', () => {
   it('renders registration errors as danger alerts, verbatim', () => {
-    const html = renderToStaticMarkup(
-      <ShortcutNotices errors={['Mostrar / ocultar (Ctrl+Alt+U): no se pudo registrar, ¿lo usa otra app?']} warnings={[]} />,
-    );
+    const html = renderToStaticMarkup(<ShortcutNotices errors={['Mostrar / ocultar (Ctrl+Alt+U): no se pudo registrar, ¿lo usa otra app?']} warnings={[]} />);
     expect(html).toContain('eg-notice--danger');
     expect(html).toContain('role="alert"');
     expect(html).toContain('no se pudo registrar');
@@ -23,7 +21,9 @@ describe('ShortcutNotices (SSR)', () => {
     const html = renderToStaticMarkup(
       <ShortcutNotices
         errors={[]}
-        warnings={['Mostrar / ocultar (Ctrl+Alt+U): en Wayland el registro se hace vía X11/XWayland y puede no tener efecto global; el atajo puede no responder.']}
+        warnings={[
+          'Mostrar / ocultar (Ctrl+Alt+U): en Wayland el registro se hace vía X11/XWayland y puede no tener efecto global; el atajo puede no responder.',
+        ]}
       />,
     );
     expect(html).toContain('eg-notice--warning');
@@ -36,9 +36,7 @@ describe('ShortcutNotices (SSR)', () => {
   });
 
   it('renders each warning separately and renders nothing when both lists are empty', () => {
-    const html = renderToStaticMarkup(
-      <ShortcutNotices errors={[]} warnings={['uno', 'dos']} />,
-    );
+    const html = renderToStaticMarkup(<ShortcutNotices errors={[]} warnings={['uno', 'dos']} />);
     expect(html.match(/eg-notice--warning/g)).toHaveLength(2);
     expect(html).toContain('uno');
     expect(html).toContain('dos');
@@ -47,9 +45,7 @@ describe('ShortcutNotices (SSR)', () => {
   });
 
   it('keeps errors and warnings distinguishable side by side', () => {
-    const html = renderToStaticMarkup(
-      <ShortcutNotices errors={['error']} warnings={['aviso']} />,
-    );
+    const html = renderToStaticMarkup(<ShortcutNotices errors={['error']} warnings={['aviso']} />);
     const danger = html.indexOf('eg-notice--danger');
     const warning = html.indexOf('eg-notice--warning');
     expect(danger).toBeGreaterThanOrEqual(0);

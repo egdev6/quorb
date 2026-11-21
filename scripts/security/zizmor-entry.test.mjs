@@ -12,7 +12,10 @@ test('zizmor entrypoint Python behavior suite (Python 3 required)', () => {
   const python = process.platform === 'win32' ? 'python' : 'python3';
   const script = fileURLToPath(new URL('./zizmor-entry.test.py', import.meta.url));
   const result = spawnSync(python, ['-B', script], {
-    encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, shell: false,
+    encoding: 'utf8',
+    timeout: 20000,
+    maxBuffer: 1024 * 1024,
+    shell: false,
   });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stdout + result.stderr);

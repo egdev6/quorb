@@ -38,6 +38,7 @@ export function RingGauge({
           const radius = c - stroke / 2 - i * (stroke + gap);
           const pct = r.percent == null ? 0 : Math.max(0, Math.min(100, r.percent));
           return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional list with a fixed order that is never reordered or filtered; the index is its identity.
             <g key={i} transform={`rotate(-90 ${c} ${c})`}>
               <circle className="ring__track" cx={c} cy={c} r={radius} strokeWidth={stroke} />
               {pct > 0 && (

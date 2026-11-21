@@ -258,8 +258,15 @@ function defaultGitToplevel() {
  */
 export async function runSetup(deps) {
   const {
-    argv, cwd, home, fsImpl = fs, run, confirm, promptHidden,
-    log = console.log, setUmask = (value) => process.umask(value),
+    argv,
+    cwd,
+    home,
+    fsImpl = fs,
+    run,
+    confirm,
+    promptHidden,
+    log = console.log,
+    setUmask = (value) => process.umask(value),
     tty = { stdin: process.stdin, stdout: process.stdout },
     env = process.env,
     gitToplevel = defaultGitToplevel(),
@@ -370,7 +377,9 @@ export async function runSetup(deps) {
   for (const { name, value } of uploads) {
     const result = run('gh', secretSetCommand(repo, name), { input: value });
     if (result.status !== 0) {
-      throw new Error(`Falló la subida de ${name} a ${repo}. Subidos: ${uploaded.length ? uploaded.join(', ') : 'ninguno'}. No se reintenta ni se revierte; revísalo a mano.`);
+      throw new Error(
+        `Falló la subida de ${name} a ${repo}. Subidos: ${uploaded.length ? uploaded.join(', ') : 'ninguno'}. No se reintenta ni se revierte; revísalo a mano.`,
+      );
     }
     uploaded.push(name);
   }

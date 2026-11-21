@@ -194,11 +194,11 @@ describe('codex install controller', () => {
     expect(controller.getState().status?.busy).toBe(true);
     expect(setInterval).toHaveBeenCalled();
     const before = getStatus.mock.calls.length;
-    timers.forEach((fn) => fn());
+    for (const fn of timers) fn();
     await flush();
     expect(getStatus.mock.calls.length).toBeGreaterThan(before);
     busy = false;
-    timers.forEach((fn) => fn());
+    for (const fn of timers) fn();
     await flush();
     expect(clearInterval).toHaveBeenCalled();
     expect(install).not.toHaveBeenCalled();
@@ -206,7 +206,9 @@ describe('codex install controller', () => {
 
   it('keeps the pinned package visible instead of claiming latest', () => {
     expect(CODEX_PACKAGE).toBe('@openai/codex@0.162.1');
-    expect(codexInstallView({ status: null, reading: true, installing: false, outcome: null, message: null, error: null, errorFrom: null })).toEqual({ kind: 'loading' });
+    expect(codexInstallView({ status: null, reading: true, installing: false, outcome: null, message: null, error: null, errorFrom: null })).toEqual({
+      kind: 'loading',
+    });
   });
 
   it('does not turn a successful install into a failure when the recheck or the follow-up read fails', async () => {

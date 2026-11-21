@@ -48,8 +48,7 @@ export const OFFICIAL_USAGE_URL: Record<string, string> = {
 };
 
 /** URL del dashboard de 9Router a partir de su Base URL configurada (sin barra final). */
-export const nineRouterDashboardUrl = (baseUrl: string): string =>
-  `${baseUrl.trim().replace(/\/+$/, '')}/dashboard`;
+export const nineRouterDashboardUrl = (baseUrl: string): string => `${baseUrl.trim().replace(/\/+$/, '')}/dashboard`;
 
 /**
  * URL de uso oficial de un informe; normaliza el id para las cuentas adicionales

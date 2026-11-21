@@ -37,8 +37,7 @@ function loc(mounted, kind, row) {
   };
 }
 
-function finding({ mounted = '/inputs/000000.yml', ident = 'template-injection', row = 7,
-  kind = 'Primary', ignored = true, locations } = {}) {
+function finding({ mounted = '/inputs/000000.yml', ident = 'template-injection', row = 7, kind = 'Primary', ignored = true, locations } = {}) {
   return {
     ident,
     desc: `desc ${SECRET}`,
@@ -58,8 +57,7 @@ const report = () => ({
   ],
 });
 
-const throws = (raw, inv = inventory()) =>
-  assert.throws(() => normalizeZizmor(raw, inv), { message: 'invalid-zizmor-report' });
+const throws = (raw, inv = inventory()) => assert.throws(() => normalizeZizmor(raw, inv), { message: 'invalid-zizmor-report' });
 
 test('binds the real json-v1 schema to originals and never leaks finding text', () => {
   const inv = inventory();
@@ -91,11 +89,7 @@ test('ignored:true is advisory evidence and does not suppress the finding', () =
 
 test('accepts empty findings and deduplicates/sorts deterministically', () => {
   const raw = report();
-  raw.reports[0].findings = [
-    finding({ row: 3, ident: 'artipacked' }),
-    finding({ row: 7 }),
-    finding({ row: 3, ident: 'artipacked' }),
-  ];
+  raw.reports[0].findings = [finding({ row: 3, ident: 'artipacked' }), finding({ row: 7 }), finding({ row: 3, ident: 'artipacked' })];
   const out = normalizeZizmor(raw, inventory());
   assert.equal(out.scannedFiles, 2);
   assert.deepEqual(out.findings, [
@@ -105,19 +99,31 @@ test('accepts empty findings and deduplicates/sorts deterministically', () => {
 });
 
 test('requires the exact independently expected report set', () => {
-  const missing = report(); missing.reports.pop();
+  const missing = report();
+  missing.reports.pop();
   const empty = { version: '1.30.1', reports: [] };
-  const extra = report(); extra.reports.push({ path: '/inputs/000002.yml', findings: [] });
-  const dup = report(); dup.reports.push({ path: '/inputs/000000.yml', findings: [] });
-  const alias = report(); alias.reports[0].path = '/inputs/000000.YML';
-  const remoteAlias = report(); remoteAlias.reports[0].path = '/other/000000.yml';
+  const extra = report();
+  extra.reports.push({ path: '/inputs/000002.yml', findings: [] });
+  const dup = report();
+  dup.reports.push({ path: '/inputs/000000.yml', findings: [] });
+  const alias = report();
+  alias.reports[0].path = '/inputs/000000.YML';
+  const remoteAlias = report();
+  remoteAlias.reports[0].path = '/other/000000.yml';
   for (const raw of [missing, empty, extra, dup, alias, remoteAlias]) throws(raw);
 });
 
 test('rejects malformed report envelopes instead of returning empty findings', () => {
-  for (const raw of [null, {}, { version: '1.30.1' }, { version: '1.30.1', reports: null },
-    { version: '1.30.1', reports: [null] }, { version: '1.30.1', reports: [{ path: 1, findings: [] }] },
-    { version: '1.30.1', reports: [{ path: '/inputs/000000.yml', findings: null }] }]) throws(raw);
+  for (const raw of [
+    null,
+    {},
+    { version: '1.30.1' },
+    { version: '1.30.1', reports: null },
+    { version: '1.30.1', reports: [null] },
+    { version: '1.30.1', reports: [{ path: 1, findings: [] }] },
+    { version: '1.30.1', reports: [{ path: '/inputs/000000.yml', findings: null }] },
+  ])
+    throws(raw);
 });
 
 test('rejects a wrong tool version', () => {
@@ -129,15 +135,27 @@ test('every location must reference the current report target as Local', () => {
   const otherFile = report();
   otherFile.reports[0].findings = [finding({ mounted: '/inputs/000001.yaml' })];
   const remote = report();
-  remote.reports[0].findings = [finding({ locations: [{
-    symbolic: { key: { Remote: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' },
-    concrete: loc('/inputs/000000.yml', 'Primary', 7).concrete,
-  }] })];
+  remote.reports[0].findings = [
+    finding({
+      locations: [
+        {
+          symbolic: { key: { Remote: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' },
+          concrete: loc('/inputs/000000.yml', 'Primary', 7).concrete,
+        },
+      ],
+    }),
+  ];
   const mixed = report();
-  mixed.reports[0].findings = [finding({ locations: [{
-    symbolic: { key: { Local: { verbatim_path: '/inputs/000000.yml' }, Remote: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' },
-    concrete: loc('/inputs/000000.yml', 'Primary', 7).concrete,
-  }] })];
+  mixed.reports[0].findings = [
+    finding({
+      locations: [
+        {
+          symbolic: { key: { Local: { verbatim_path: '/inputs/000000.yml' }, Remote: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' },
+          concrete: loc('/inputs/000000.yml', 'Primary', 7).concrete,
+        },
+      ],
+    }),
+  ];
   for (const raw of [otherFile, remote, mixed]) throws(raw);
 });
 
@@ -157,10 +175,12 @@ test('requires a valid integer row and at least one Primary location', () => {
 
 test('rejects malformed location shapes', () => {
   const shapes = [
-    null, {}, { symbolic: null, concrete: {} }, { symbolic: {}, concrete: {} },
+    null,
+    {},
+    { symbolic: null, concrete: {} },
+    { symbolic: {}, concrete: {} },
     { symbolic: { key: { Local: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' }, concrete: {} },
-    { symbolic: { key: { Local: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' },
-      concrete: { location: {} } },
+    { symbolic: { key: { Local: { verbatim_path: '/inputs/000000.yml' } }, kind: 'Primary' }, concrete: { location: {} } },
   ];
   for (const shape of shapes) {
     const raw = report();
@@ -178,13 +198,23 @@ test('rejects unsafe idents', () => {
 });
 
 test('rejects malformed or unsafe inventory mappings', () => {
-  const cases = [null, {}, { ...inventory(), root: '.' }, { ...inventory(), commit: 'HEAD' },
-    { ...inventory(), commit: 'a'.repeat(41) }, { ...inventory(), targets: [] }];
+  const cases = [
+    null,
+    {},
+    { ...inventory(), root: '.' },
+    { ...inventory(), commit: 'HEAD' },
+    { ...inventory(), commit: 'a'.repeat(41) },
+    { ...inventory(), targets: [] },
+  ];
   for (const patch of [
-    { path: join(root, 'nested', '000000.yml') }, { path: join(root, '000000.txt') },
-    { path: 'relative/000000.yml' }, { originalPath: 'src/ci.yml' },
-    { originalPath: '.github/workflows/sub/ci.yml' }, { originalPath: '.github/workflows/ci.txt' },
-    { originalPath: '.github/workflows/../ci.yml' }, { originalPath: '.github/other/ci.yml' },
+    { path: join(root, 'nested', '000000.yml') },
+    { path: join(root, '000000.txt') },
+    { path: 'relative/000000.yml' },
+    { originalPath: 'src/ci.yml' },
+    { originalPath: '.github/workflows/sub/ci.yml' },
+    { originalPath: '.github/workflows/ci.txt' },
+    { originalPath: '.github/workflows/../ci.yml' },
+    { originalPath: '.github/other/ci.yml' },
     { sha256: 'bad' },
   ]) {
     const inv = inventory();
@@ -212,7 +242,7 @@ test('rejects malformed or unsafe inventory mappings', () => {
 test('rejects control and format characters in the host root of remapped targets', () => {
   for (const evil of ['\u0000', '\u202e']) {
     const inv = inventory();
-    const mounts = inv.targets.map(target => target.path.split(sep).at(-1));
+    const mounts = inv.targets.map((target) => target.path.split(sep).at(-1));
     inv.root = `${root}${evil}`;
     inv.targets = inv.targets.map((target, index) => ({ ...target, path: join(inv.root, mounts[index]) }));
     const before = JSON.stringify(inv);

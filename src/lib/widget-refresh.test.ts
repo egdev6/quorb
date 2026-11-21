@@ -49,13 +49,9 @@ describe('widget refresh discriminator', () => {
     // lectura del entorno anterior.
     const base = cfg();
     expect(needsRefresh(base, cfg({ sessionEnv: 'wsl' } as Partial<AppConfig>))).toBe(true);
-    expect(
-      needsRefresh(base, cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>)),
-    ).toBe(true);
+    expect(needsRefresh(base, cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>))).toBe(true);
     const wsl = cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' } as Partial<AppConfig>);
-    expect(
-      needsRefresh(wsl, cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-24.04' } as Partial<AppConfig>)),
-    ).toBe(true);
+    expect(needsRefresh(wsl, cfg({ sessionEnv: 'wsl', wslDistro: 'Ubuntu-24.04' } as Partial<AppConfig>))).toBe(true);
   });
 
   it('envKey identifies the session environment and changes with it', () => {

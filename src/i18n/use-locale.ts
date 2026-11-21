@@ -52,7 +52,10 @@ export function useLocale(): Locale {
     api.getConfig().then(apply).catch(console.error);
     // El payload del evento no siempre es la config (a veces es `()`): se relee.
     const off = listen('config-changed', () => {
-      api.getConfig().then(apply).catch(() => {});
+      api
+        .getConfig()
+        .then(apply)
+        .catch(() => {});
     });
     return () => {
       disposed = true;

@@ -18,12 +18,17 @@ const report = (scanned = ['/inputs/000000.ts'], results = []) => ({ version: '1
 function fixture(t) {
   const base = mkdtempSync(join(tmpdir(), 'run-semgrep-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
-  const root = join(base, 'snapshot'); mkdirSync(root);
-  const source = join(root, '000000.ts'); writeFileSync(source, 'void 0;');
-  const wheelhouse = join(base, 'wheels'); mkdirSync(wheelhouse);
-  const parent = join(base, 'out'); mkdirSync(parent);
+  const root = join(base, 'snapshot');
+  mkdirSync(root);
+  const source = join(root, '000000.ts');
+  writeFileSync(source, 'void 0;');
+  const wheelhouse = join(base, 'wheels');
+  mkdirSync(wheelhouse);
+  const parent = join(base, 'out');
+  mkdirSync(parent);
   const inventory = {
-    commit: COMMIT, root,
+    commit: COMMIT,
+    root,
     targets: [{ path: source, originalPath: 'src/a.ts', sha256: sha('void 0;') }],
     excluded: [{ path: 'README.md', reason: 'outside-js-ts-scope' }],
   };
@@ -35,10 +40,14 @@ const deps = (f, execute, extra = {}) => ({ platform: 'linux', uid: 1000, gid: 1
 
 function capture(handler) {
   const calls = [];
-  return { calls, execute: (command, daemonArgs, options) => {
-    const args = daemonArgs[0] === '--host' ? daemonArgs.slice(2) : daemonArgs;
-    calls.push({ command, args, daemonArgs, options }); return handler(args);
-  } };
+  return {
+    calls,
+    execute: (command, daemonArgs, options) => {
+      const args = daemonArgs[0] === '--host' ? daemonArgs.slice(2) : daemonArgs;
+      calls.push({ command, args, daemonArgs, options });
+      return handler(args);
+    },
+  };
 }
 
 const startedReport = (stdout) => {
@@ -57,11 +66,35 @@ const startedReport = (stdout) => {
 
 test('hardened create argv with read-only mounts and normalized advisory findings', (t) => {
   const f = fixture(t);
-  const stdout = JSON.stringify(report(['/inputs/000000.ts'], [{ check_id: 'inputs.decoded-text-execution', path: '/inputs/000000.ts', start: { line: 4 }, extra: { severity: 'WARNING' } }]));
+  const stdout = JSON.stringify(
+    report(
+      ['/inputs/000000.ts'],
+      [{ check_id: 'inputs.decoded-text-execution', path: '/inputs/000000.ts', start: { line: 4 }, extra: { severity: 'WARNING' } }],
+    ),
+  );
   const { calls, execute } = startedReport(stdout);
   const out = runSemgrep(input(f), deps(f, execute));
   const create = calls.find((c) => c.args[0] === 'create').args;
-  for (const control of ['--pull=never', '--platform', 'linux/amd64', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '256', '--memory', '2g', '--cpus', '2', '--log-driver=none', '--workdir', '/tmp', IMAGE]) {
+  for (const control of [
+    '--pull=never',
+    '--platform',
+    'linux/amd64',
+    '--network=none',
+    '--read-only',
+    '--cap-drop=ALL',
+    '--security-opt',
+    'no-new-privileges',
+    '--pids-limit',
+    '256',
+    '--memory',
+    '2g',
+    '--cpus',
+    '2',
+    '--log-driver=none',
+    '--workdir',
+    '/tmp',
+    IMAGE,
+  ]) {
     assert.ok(create.includes(control), control);
   }
   assert.ok(create.includes('--user') && create.includes('1000:1000'));
@@ -70,16 +103,26 @@ test('hardened create argv with read-only mounts and normalized advisory finding
   const mounts = create.filter((_value, i) => create[i - 1] === '--mount');
   assert.equal(mounts.length, 3);
   assert.ok(mounts.every((m) => m.endsWith(',readonly')));
-  for (const dst of ['/wheels', '/inputs', '/control']) assert.ok(mounts.some((m) => m.includes(`dst=${dst},readonly`)), dst);
+  for (const dst of ['/wheels', '/inputs', '/control'])
+    assert.ok(
+      mounts.some((m) => m.includes(`dst=${dst},readonly`)),
+      dst,
+    );
   assert.ok(!create.includes('--rm'));
-  assert.deepEqual(calls.map((c) => c.args[0]), ['create', 'start', 'rm']);
+  assert.deepEqual(
+    calls.map((c) => c.args[0]),
+    ['create', 'start', 'rm'],
+  );
   assert.deepEqual(out, {
-    commit: COMMIT, status: 'completed', scannedFiles: 1, excluded: f.inventory.excluded,
+    commit: COMMIT,
+    status: 'completed',
+    scannedFiles: 1,
+    excluded: f.inventory.excluded,
     findings: [{ rule: 'decoded-text-execution', path: 'src/a.ts', line: 4, severity: 'advisory' }],
   });
 });
 
-test('pins all daemon calls to the local socket', t => {
+test('pins all daemon calls to the local socket', (t) => {
   const f = fixture(t);
   const { calls, execute } = startedReport(JSON.stringify(report()));
   runSemgrep(input(f), deps(f, execute));
@@ -100,7 +143,8 @@ test('fails closed off Linux, for root uid and for unsafe mount paths before any
 test('rejects untrusted lock bytes and missing trusted files', (t) => {
   const f = fixture(t);
   const { calls, execute } = startedReport(JSON.stringify(report()));
-  const badLock = join(f.base, 'bad.lock'); writeFileSync(badLock, 'semgrep==1.180.0\n');
+  const badLock = join(f.base, 'bad.lock');
+  writeFileSync(badLock, 'semgrep==1.180.0\n');
   assert.throws(() => runSemgrep(input(f), deps(f, execute, { lockPath: badLock })), /semgrep-run-failed:trusted-lock/);
   assert.throws(() => runSemgrep(input(f), deps(f, execute, { entrypointPath: join(f.base, 'missing.py') })), /semgrep-run-failed:trusted-files/);
   assert.equal(calls.length, 0);
@@ -108,14 +152,25 @@ test('rejects untrusted lock bytes and missing trusted files', (t) => {
 
 test('docker create and scanner failures are operational with host cleanup', (t) => {
   const f1 = fixture(t);
-  const { calls: createCalls, execute: createFail } = capture((a) => (a[0] === 'rm' ? { status: 0, stdout: '', stderr: '' } : { status: 1, stdout: '', stderr: 'boom' }));
+  const { calls: createCalls, execute: createFail } = capture((a) =>
+    a[0] === 'rm' ? { status: 0, stdout: '', stderr: '' } : { status: 1, stdout: '', stderr: 'boom' },
+  );
   assert.throws(() => runSemgrep(input(f1), deps(f1, createFail)), /semgrep-run-failed:docker-create/);
-  assert.deepEqual(createCalls.map(c => c.args[0]), ['create', 'rm']);
+  assert.deepEqual(
+    createCalls.map((c) => c.args[0]),
+    ['create', 'rm'],
+  );
   assert.equal(createCalls[0].args[2], createCalls[1].args[2]);
   assert.deepEqual(readdirSync(f1.parent), []);
   assert.ok(!existsSync(f1.root));
   const f2 = fixture(t);
-  const { execute: scanFail } = capture((a) => (a[0] === 'create' ? { status: 0, stdout: '', stderr: '' } : a[0] === 'start' ? { status: 2, stdout: '', stderr: 'boom' } : { status: 0, stdout: '', stderr: '' }));
+  const { execute: scanFail } = capture((a) =>
+    a[0] === 'create'
+      ? { status: 0, stdout: '', stderr: '' }
+      : a[0] === 'start'
+        ? { status: 2, stdout: '', stderr: 'boom' }
+        : { status: 0, stdout: '', stderr: '' },
+  );
   assert.throws(() => runSemgrep(input(f2), deps(f2, scanFail)), /semgrep-run-failed:scanner/);
 });
 
@@ -133,24 +188,32 @@ test('removes container and host temp dirs on success and on start timeout', (t)
     const f = fixture(t);
     const { calls, execute } = capture((args) => {
       if (args[0] === 'create') return { status: 0, stdout: '', stderr: '' };
-      if (args[0] === 'start') return timedOut ? { error: new Error('timeout'), status: null, stdout: '', stderr: '' } : { status: 0, stdout: JSON.stringify(report()), stderr: '' };
+      if (args[0] === 'start')
+        return timedOut ? { error: new Error('timeout'), status: null, stdout: '', stderr: '' } : { status: 0, stdout: JSON.stringify(report()), stderr: '' };
       return { status: 0, stdout: '', stderr: '' };
     });
     const invoke = () => runSemgrep(input(f), deps(f, execute));
-    if (timedOut) assert.throws(invoke, /semgrep-run-failed:scanner/); else invoke();
-    assert.deepEqual(calls.map((c) => c.args[0]), ['create', 'start', 'rm']);
+    if (timedOut) assert.throws(invoke, /semgrep-run-failed:scanner/);
+    else invoke();
+    assert.deepEqual(
+      calls.map((c) => c.args[0]),
+      ['create', 'start', 'rm'],
+    );
     assert.deepEqual(readdirSync(f.parent), []);
     assert.ok(!existsSync(f.root));
   }
 });
 
-test('uncertain create still attempts named cleanup and never returns success', t => {
+test('uncertain create still attempts named cleanup and never returns success', (t) => {
   const f = fixture(t);
-  const { calls, execute } = capture(args => args[0] === 'create'
-    ? { error: new Error('timeout'), status: null }
-    : { status: 1, stderr: 'No such container' });
+  const { calls, execute } = capture((args) =>
+    args[0] === 'create' ? { error: new Error('timeout'), status: null } : { status: 1, stderr: 'No such container' },
+  );
   assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:docker-create/);
-  assert.deepEqual(calls.map(c => c.args[0]), ['create', 'rm']);
+  assert.deepEqual(
+    calls.map((c) => c.args[0]),
+    ['create', 'rm'],
+  );
   assert.equal(calls[0].args[2], calls[1].args[2]);
   assert.deepEqual(readdirSync(f.parent), []);
   assert.ok(!existsSync(f.root));
@@ -158,22 +221,33 @@ test('uncertain create still attempts named cleanup and never returns success', 
 
 test('cleanup failure is operational, never green', (t) => {
   const f = fixture(t);
-  const { execute } = capture((args) => (args[0] === 'create' ? { status: 0, stdout: '', stderr: '' }
-    : args[0] === 'start' ? { status: 0, stdout: JSON.stringify(report()), stderr: '' }
-      : { status: 1, stdout: '', stderr: 'permission denied' }));
+  const { execute } = capture((args) =>
+    args[0] === 'create'
+      ? { status: 0, stdout: '', stderr: '' }
+      : args[0] === 'start'
+        ? { status: 0, stdout: JSON.stringify(report()), stderr: '' }
+        : { status: 1, stdout: '', stderr: 'permission denied' },
+  );
   assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:cleanup/);
 });
 
 test('never echoes raw scanner output or secrets in errors', (t) => {
   const f = fixture(t);
   const secret = 'SECRET-TOKEN-VALUE';
-  const { execute } = capture((args) => (args[0] === 'create' ? { status: 0, stdout: '', stderr: '' }
-    : args[0] === 'start' ? { status: 1, stdout: `{"leak":"${secret}"`, stderr: `boom ${secret}` }
-      : { status: 0, stdout: '', stderr: '' }));
-  assert.throws(() => runSemgrep(input(f), deps(f, execute)), (error) => {
-    assert.ok(!error.message.includes(secret));
-    return /semgrep-run-failed:scanner/.test(error.message);
-  });
+  const { execute } = capture((args) =>
+    args[0] === 'create'
+      ? { status: 0, stdout: '', stderr: '' }
+      : args[0] === 'start'
+        ? { status: 1, stdout: `{"leak":"${secret}"`, stderr: `boom ${secret}` }
+        : { status: 0, stdout: '', stderr: '' },
+  );
+  assert.throws(
+    () => runSemgrep(input(f), deps(f, execute)),
+    (error) => {
+      assert.ok(!error.message.includes(secret));
+      return /semgrep-run-failed:scanner/.test(error.message);
+    },
+  );
 });
 
 test('detects snapshot and control mutation around the scanner', (t) => {
@@ -181,10 +255,17 @@ test('detects snapshot and control mutation around the scanner', (t) => {
     const f = fixture(t);
     let control;
     const { execute } = capture((args) => {
-      if (args[0] === 'create') { control = args.find((a) => a.includes('dst=/control')).split('src=')[1].split(',dst=')[0]; return { status: 0, stdout: '', stderr: '' }; }
+      if (args[0] === 'create') {
+        control = args
+          .find((a) => a.includes('dst=/control'))
+          .split('src=')[1]
+          .split(',dst=')[0];
+        return { status: 0, stdout: '', stderr: '' };
+      }
       if (args[0] === 'start') {
         const file = which === 'snapshot' ? f.source : join(control, which);
-        chmodSync(file, 0o600); writeFileSync(file, 'tampered');
+        chmodSync(file, 0o600);
+        writeFileSync(file, 'tampered');
         return { status: 0, stdout: JSON.stringify(report()), stderr: '' };
       }
       return { status: 0, stdout: '', stderr: '' };

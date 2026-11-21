@@ -25,12 +25,7 @@ export interface WidgetPlacementRequest extends PhysicalBounds {
  * Códigos de motivo del backend (ASCII): son machine-readable y el widget los
  * traduce con el catálogo (`reasonKey`).
  */
-export type WidgetPlacementReason =
-  | 'size_refused'
-  | 'position_refused'
-  | 'not_viewable'
-  | 'read_failed'
-  | 'superseded';
+export type WidgetPlacementReason = 'size_refused' | 'position_refused' | 'not_viewable' | 'read_failed' | 'superseded';
 
 /**
  * Informe de colocación nativa.
@@ -70,8 +65,7 @@ const REASON_KEYS: Record<WidgetPlacementReason, MessageKey> = {
 };
 
 /** La clave de catálogo del motivo; `null` si no hay motivo. */
-export const reasonKey = (reason?: WidgetPlacementReason | null): MessageKey | null =>
-  reason ? REASON_KEYS[reason] ?? null : null;
+export const reasonKey = (reason?: WidgetPlacementReason | null): MessageKey | null => (reason ? (REASON_KEYS[reason] ?? null) : null);
 
 /**
  * Margen físico con el que se comparan dos geometrías: el mismo que usa el
@@ -81,16 +75,8 @@ export const reasonKey = (reason?: WidgetPlacementReason | null): MessageKey | n
 export const PLACEMENT_TOLERANCE = 1;
 
 /** True cuando dos geometrías son la misma dentro de la tolerancia. */
-export const samePhysicalWithin = (
-  a: PhysicalBounds | null,
-  b: PhysicalBounds,
-  tolerance = PLACEMENT_TOLERANCE,
-): boolean =>
-  !!a &&
-  Math.abs(a.x - b.x) <= tolerance &&
-  Math.abs(a.y - b.y) <= tolerance &&
-  Math.abs(a.w - b.w) <= tolerance &&
-  Math.abs(a.h - b.h) <= tolerance;
+export const samePhysicalWithin = (a: PhysicalBounds | null, b: PhysicalBounds, tolerance = PLACEMENT_TOLERANCE): boolean =>
+  !!a && Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance && Math.abs(a.w - b.w) <= tolerance && Math.abs(a.h - b.h) <= tolerance;
 
 /**
  * Compara la geometría cacheada con la pedida.
@@ -101,16 +87,8 @@ export const samePhysicalWithin = (
  * cualquier ruta sin read-back) la comparación es exacta: un cambio de 1 px
  * sí es un cambio y se aplica.
  */
-export const samePlacement = (
-  cached: PhysicalBounds | null,
-  requested: PhysicalBounds,
-  readBack: boolean,
-): boolean =>
-  cached === null
-    ? false
-    : readBack
-      ? samePhysicalWithin(cached, requested)
-      : samePhysical(cached, requested);
+export const samePlacement = (cached: PhysicalBounds | null, requested: PhysicalBounds, readBack: boolean): boolean =>
+  cached === null ? false : readBack ? samePhysicalWithin(cached, requested) : samePhysical(cached, requested);
 
 /** Sólo la geometría física: la petición también lleva el ancla y el factor. */
 const physicalOnly = (bounds: PhysicalBounds): PhysicalBounds => ({
@@ -141,10 +119,7 @@ export interface PlacementOutcome {
  * fallida o una ventana que no llegó a ser visible no cachean nada: no hay
  * geometría fiable.
  */
-export const placementOutcome = (
-  report: WidgetPlacementReport | null | undefined,
-  requested: PhysicalBounds,
-): PlacementOutcome => {
+export const placementOutcome = (report: WidgetPlacementReport | null | undefined, requested: PhysicalBounds): PlacementOutcome => {
   if (!report) return { bounds: physicalOnly(requested), failed: false, reason: null, readBack: false };
   if (report.status === 'superseded') return { bounds: null, failed: false, reason: null, readBack: false };
   const reason = report.reason ?? null;
@@ -213,8 +188,7 @@ export const readPlacementWithRetries = async (
 ): Promise<WidgetPlacementReport | null> => {
   const attempts = Math.max(1, opts.attempts ?? PLACEMENT_READ_ATTEMPTS);
   const delayMs = opts.delayMs ?? PLACEMENT_READ_DELAY_MS;
-  const sleep =
-    opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms)));
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms)));
   const shouldAbort = opts.shouldAbort ?? (() => false);
   const retryReasons = opts.retryReasons ?? DEFAULT_RETRY_REASONS;
   if (shouldAbort()) return null;

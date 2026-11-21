@@ -66,10 +66,7 @@ export interface DetailInteraction {
   kind: 'enter' | 'leave' | 'hide' | 'placement-failed';
 }
 
-export function isCurrentDetailInteraction(
-  state: { revision: number; report: Pick<UsageReport, 'id'> } | null,
-  event: DetailInteraction,
-): boolean {
+export function isCurrentDetailInteraction(state: { revision: number; report: Pick<UsageReport, 'id'> } | null, event: DetailInteraction): boolean {
   return !!state && state.revision === event.revision && state.report.id === event.provider;
 }
 

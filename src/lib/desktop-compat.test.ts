@@ -68,15 +68,13 @@ describe('desktop-compat', () => {
         clickThrough: { state: 'ok', note: '' },
         globalShortcuts: { state: 'ok', note: '' },
         windowPositioning: { state: 'ok', note: '' },
-      })
-    ).toBe(
-      false
-    );
+      }),
+    ).toBe(false);
   });
 
   it('el bloque solo se muestra donde el comportamiento depende del compositor', () => {
     // UA del webview de Quorb en Linux.
-    expect(showDesktopCompat('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15')) .toBe(true);
+    expect(showDesktopCompat('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15')).toBe(true);
     // Windows y macOS no la muestran: meta sin acciones allí.
     expect(showDesktopCompat('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15')).toBe(false);
     expect(showDesktopCompat('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15')).toBe(false);

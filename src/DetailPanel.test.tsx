@@ -40,9 +40,11 @@ describe('DetailPanel (SSR)', () => {
 const wireUp = () => {
   const cache = { bounds: null as PhysicalBounds | null, readBack: false };
   const positioned = { current: false };
-  const cacheConfirmed = (bounds: PhysicalBounds) => { cache.bounds = bounds; cache.readBack = true; };
-  const apply = (report: DetailPlacementReport): boolean =>
-    confirmDetailPlacement(report, cacheConfirmed);
+  const cacheConfirmed = (bounds: PhysicalBounds) => {
+    cache.bounds = bounds;
+    cache.readBack = true;
+  };
+  const apply = (report: DetailPlacementReport): boolean => confirmDetailPlacement(report, cacheConfirmed);
   const resetForClose = () => {
     // Reset del listener de estado cuando el widget cierra el panel (o al
     // cerrarse de nuevo): `lastAppliedRef` vacío + `positioned` false.
@@ -50,8 +52,7 @@ const wireUp = () => {
     cache.bounds = null;
     cache.readBack = false;
   };
-  const wouldDedupe = (requested: PhysicalBounds): boolean =>
-    positioned.current && samePlacement(cache.bounds, requested, cache.readBack);
+  const wouldDedupe = (requested: PhysicalBounds): boolean => positioned.current && samePlacement(cache.bounds, requested, cache.readBack);
   const report = (over: Partial<DetailPlacementReport> = {}): DetailPlacementReport => ({
     status: 'applied',
     bounds: null,

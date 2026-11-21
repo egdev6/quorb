@@ -15,7 +15,8 @@ import { useWidgetStartup, STARTUP_SHOW_DELAY_MS } from './use-widget-startup';
 import { SKIP, STARTUP_SLOT, STARTUP_STATES, STARTUP_STATE_COUNT } from './test-slots';
 
 const state = vi.hoisted(() => ({
-  states: [] as unknown[], stateIndex: 0,
+  states: [] as unknown[],
+  stateIndex: 0,
   // Iniciales que el hook pasa a cada useState, en orden de render (#286).
   stateInitials: [] as unknown[],
   expectedStateCount: null as number | null,
@@ -25,7 +26,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal() as typeof import('react');
+  const react = (await importOriginal()) as typeof import('react');
   return {
     ...react,
     useState: ((initial?: unknown) => {
@@ -37,17 +38,21 @@ vi.mock('react', async (importOriginal) => {
       if (expected != null && index >= expected) {
         throw new Error(`useWidgetStartup crea más useState (${index + 1}) de los que declara STARTUP_STATES (#286). Actualiza src/lib/test-slots.ts.`);
       }
-      const value = index in state.states ? state.states[index]
-        : typeof initial === 'function' ? initial() : initial;
+      const value = index in state.states ? state.states[index] : typeof initial === 'function' ? initial() : initial;
       // El valor inicial vive en el slot: el test lo lee con `state.states[i]`
       // y los setters lo actualizan (el SSR no re-renderiza).
       state.states[index] = value;
-      return [value, vi.fn((next: unknown) => {
-        const previous = index in state.states ? state.states[index] : value;
-        state.states[index] = typeof next === 'function' ? next(previous) : next;
-      })];
+      return [
+        value,
+        vi.fn((next: unknown) => {
+          const previous = index in state.states ? state.states[index] : value;
+          state.states[index] = typeof next === 'function' ? next(previous) : next;
+        }),
+      ];
     }) as typeof react.useState,
-    useEffect: ((run, deps) => { state.effects.push({ run, deps }); }) as typeof react.useEffect,
+    useEffect: ((run, deps) => {
+      state.effects.push({ run, deps });
+    }) as typeof react.useEffect,
   };
 });
 vi.mock('./api', () => ({ api: { getConfig: state.getConfig } }));
@@ -68,7 +73,10 @@ state.expectedStateCount = STARTUP_STATE_COUNT;
 function deferred() {
   let resolve!: (c: unknown) => void;
   let reject!: (e: unknown) => void;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
   return { promise, resolve, reject };
 }
 
@@ -77,6 +85,7 @@ function probe(options: Parameters<typeof useWidgetStartup>[0] = {}) {
   state.stateIndex = 0;
   state.effects = [];
   let capturedApply: ((c: unknown) => void) | undefined;
+  // biome-ignore lint/correctness/noComponentHookFactories: test harness component that captures the tree of a single render; it is never mounted by React.
   function Probe() {
     const s = useWidgetStartup(options);
     capturedApply = s.applyConfig as (c: unknown) => void;
@@ -94,7 +103,9 @@ function probe(options: Parameters<typeof useWidgetStartup>[0] = {}) {
   return { read, load, timer, applyConfig: (c: unknown) => capturedApply?.(c) };
 }
 
-const flush = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
+const flush = async () => {
+  for (let i = 0; i < 24; i++) await Promise.resolve();
+};
 
 /** `window` en el entorno node: el hook usa `window.setTimeout` (red de
  *  seguridad); con fake timers, `globalThis.setTimeout` ya es el fake. */
@@ -200,8 +211,8 @@ describe('useWidgetStartup wiring (#271)', () => {
     // una config más nueva.
     const startup = deferred();
     state.getConfig
-      .mockReturnValueOnce(startup.promise)      // arranque (lento)
-      .mockResolvedValueOnce({ locale: 'en' });  // config-changed (llega antes)
+      .mockReturnValueOnce(startup.promise) // arranque (lento)
+      .mockResolvedValueOnce({ locale: 'en' }); // config-changed (llega antes)
     const p = probe();
     p.load.run();
 
