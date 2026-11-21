@@ -13,10 +13,10 @@ Risk: item 5 (dev dependencies, git hooks and CI gates); item 6 for lint fixes t
 - T1 | S1-S2 | parent inline | done | `biome.json`, `lefthook.yml` (pre-push: `biome ci` + `cargo fmt --check`), npm scripts (`lint`, `format`, `check`, `prepare`), CI step in `ci.yml` and `linux-pr-ci.yml`, CONTRIBUTING EN/ES. Commit: `7006d90`
 - T2 | S2-S3 | parent inline | done | Format-only commit with `biome format --write`, plus `.git-blame-ignore-revs`. CSS formatter disabled (12 tests assert literal theme/styles CSS). Tests 1241/1241, tsc OK. Commits: `81e387f` (config + 2 whitespace-tolerant test regexes), `ef1b86c` (format only), blame-ignore commit. PR must NOT be squash-merged or the ignored SHA is lost.
 - T3 | S2-S3 | parent inline | done | Exclude raw-imported `src/assets/logos/*.svg` (vendored brand marks, validated by security tests) from Biome. Commit: `81e387f`
-- T3a | S2-S3 | worker | pending | Fix every Biome lint error in test files and scripts: `scripts/**`, `src/**/*.test.ts`, `src/**/*.test.tsx`. Commit: -
-- T3b | S2-S3 | worker | pending | Fix every Biome lint error in app source: `src/*.tsx`, `src/components/**` (non-test). Commit: -
-- T4 | S1-S2 | parent inline | pending | Verify: `npm test`, `npm run build`, `npx biome ci`, `cargo fmt --check`, lefthook pre-push dry run. Commit: -
-- T5 | S2 | parent | pending | Discord announcement draft (sync instructions: `npm install`, hooks, rebase over the format commit); publish after merge to `main`. Commit: n/a
+- T3a | S2-S3 | parent inline (writer launch refused: overlapping surfaces) | done | Fix every Biome lint error in test files and scripts: `scripts/**`, `src/**/*.test.ts`, `src/**/*.test.tsx`. Commit: `5b0075e`
+- T3b | S2-S3 | parent inline | done | Fix every Biome lint error in app source: `src/*.tsx`, `src/components/**` (non-test). 21 type=button, 3 for...of, 2 role=img; 17 hook dep lists kept with biome-ignore; 5 justified ignores (index keys, label, radio, innerHTML, static interactions). Commit: `71119c1`
+- T4 | S1-S2 | parent inline | done | Verify: `npm test`, `npm run build`, `npx biome ci`, `cargo fmt --check`, lefthook pre-push dry run. Evidence: vitest 1241/1241, node --test 329/0, build OK, `biome ci` 0 errors (224 warnings), cargo fmt OK, inventory --check OK after refresh `fd14fe9`; pre-push exits 1 with a probe lint error and 0 when clean; `prepare` tolerates non-git checkouts (`lefthook install || exit 0`). Commit: final docs commit
+- T5 | S2 | parent | blocked (waits for merge to main) | Discord announcement draft (sync instructions: `npm install`, hooks, rebase over the format commit); publish after merge to `main` in #coordinación (1559199240020959303). Draft: /tmp/quorb-discord-biome.md. Commit: n/a
 
 ## Log
 
