@@ -36,13 +36,14 @@ These are the scripts declared in `package.json`:
 | `cd src-tauri; cargo test` | Rust tests |
 | `npm run check` | Biome lint + format check (CI runs `npx biome ci`) |
 | `npm run check:fix` | Apply Biome safe fixes and formatting |
+| `npm run lint` / `npm run format` | Biome lint only / write formatting only |
 | `node scripts/i18n-inventory.mjs` | Regenerate `docs/i18n-inventory.md` (CI runs it with `--check`); `--sites` prints `path:line \| text` rows |
 | `npm run app:dev` | Run the desktop app with hot reload |
 | `npm run app:build` | Build a local (unsigned) installer |
 
 ### Lint and formatting (Biome + Lefthook)
 
-TypeScript, JavaScript and CSS under `src/`, `scripts/` and `vite.config.ts` are linted and formatted by [Biome](https://biomejs.dev) (`biome.json`). The vendored design-system bundle `src/ds/egdev/` is excluded because it is a copy that must not be edited by hand. CI runs `npx biome ci` in `ci.yml` and `linux-pr-ci.yml`; any lint error or unformatted file fails the check, warnings do not.
+TypeScript and JavaScript under `src/`, `scripts/` and `vite.config.ts` are linted and formatted by [Biome](https://biomejs.dev) (`biome.json`); CSS is linted but not formatted, because tests assert literal CSS text. Excluded: the vendored design-system bundle `src/ds/egdev/` (a copy that must not be edited by hand) and the provider logos in `src/assets/logos/` (raw SVGs checked by security tests). CI runs `npx biome ci` in `ci.yml` and `linux-pr-ci.yml`; any lint error or unformatted file fails the check, warnings do not.
 
 `npm install` installs a [Lefthook](https://lefthook.dev) `pre-push` hook (`lefthook.yml`) that runs `npx biome ci` and the Rust format check before every push. If it fails, run `npm run check:fix` (and `cargo fmt` for Rust), commit, and push again. Skipping it with `--no-verify` only moves the failure to CI.
 
@@ -196,12 +197,13 @@ Estos son los scripts declarados en `package.json`:
 | `cd src-tauri; cargo test` | Tests de Rust |
 | `npm run check` | Lint y comprobación de formato con Biome (CI ejecuta `npx biome ci`) |
 | `npm run check:fix` | Aplicar los arreglos seguros y el formato de Biome |
+| `npm run lint` / `npm run format` | Solo lint de Biome / solo escribir el formato |
 | `npm run app:dev` | Ejecutar la app de escritorio con hot reload |
 | `npm run app:build` | Compilar un instalador local (sin firma) |
 
 ### Lint y formato (Biome + Lefthook)
 
-El TypeScript, JavaScript y CSS de `src/`, `scripts/` y `vite.config.ts` se analizan y formatean con [Biome](https://biomejs.dev) (`biome.json`). Se excluye el bundle del design system `src/ds/egdev/`, porque es una copia que no se edita a mano. CI ejecuta `npx biome ci` en `ci.yml` y `linux-pr-ci.yml`: cualquier error de lint o archivo sin formatear hace fallar el check; los warnings no.
+El TypeScript y JavaScript de `src/`, `scripts/` y `vite.config.ts` se analizan y formatean con [Biome](https://biomejs.dev) (`biome.json`); el CSS se analiza pero no se formatea, porque hay tests que comprueban su texto literal. Se excluyen el bundle del design system `src/ds/egdev/` (una copia que no se edita a mano) y los logos de `src/assets/logos/` (SVG crudos validados por tests de seguridad). CI ejecuta `npx biome ci` en `ci.yml` y `linux-pr-ci.yml`: cualquier error de lint o archivo sin formatear hace fallar el check; los warnings no.
 
 `npm install` instala un hook `pre-push` de [Lefthook](https://lefthook.dev) (`lefthook.yml`) que ejecuta `npx biome ci` y la comprobación de formato de Rust antes de cada push. Si falla, ejecutá `npm run check:fix` (y `cargo fmt` para Rust), commiteá y volvé a hacer push. Saltarlo con `--no-verify` solo traslada el fallo a CI.
 
