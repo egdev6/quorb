@@ -41,7 +41,8 @@ vi.mock('react', async (importOriginal) => {
     }) as unknown as typeof react.useState,
     useRef: ((initial: unknown) => {
       const index = harness.refIndex++;
-      return (harness.refs[index] ??= { current: initial });
+      harness.refs[index] ??= { current: initial };
+      return harness.refs[index];
     }) as unknown as typeof react.useRef,
     useEffect: ((run: () => void | (() => void)) => {
       harness.effects.push({ run });

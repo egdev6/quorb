@@ -194,11 +194,11 @@ describe('codex install controller', () => {
     expect(controller.getState().status?.busy).toBe(true);
     expect(setInterval).toHaveBeenCalled();
     const before = getStatus.mock.calls.length;
-    timers.forEach((fn) => fn());
+    for (const fn of timers) fn();
     await flush();
     expect(getStatus.mock.calls.length).toBeGreaterThan(before);
     busy = false;
-    timers.forEach((fn) => fn());
+    for (const fn of timers) fn();
     await flush();
     expect(clearInterval).toHaveBeenCalled();
     expect(install).not.toHaveBeenCalled();

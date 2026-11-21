@@ -6,7 +6,7 @@ import { fileFixture } from './macos-notary-artifact-fixtures.mjs';
 import { validateManifest, validateDmg, validateReceipt, signingEnvironment, createCheckpoint, buildSigned } from './macos-notary-checkpoint.mjs';
 import { submitCheckpoint } from './macos-notary-submit.mjs';
 
-export const trusted = {
+const trusted = {
   repository: 'egdev6/quorb',
   workflowPath: '.github/workflows/macos-release.yml',
   workflowSha: 'a'.repeat(40),
@@ -16,15 +16,15 @@ export const trusted = {
   runId: '123',
   runAttempt: '2',
 };
-export const bytes = Buffer.from('synthetic signed DMG');
-export const manifest = {
+const bytes = Buffer.from('synthetic signed DMG');
+const manifest = {
   schema: 1,
   ...trusted,
   dmgName: 'Quorb_0.8.0_aarch64.dmg',
   size: bytes.length,
   sha256: createHash('sha256').update(bytes).digest('hex'),
 };
-export const receipt = {
+const receipt = {
   schema: 1,
   ...trusted,
   checkpointArtifactId: '456',

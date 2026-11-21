@@ -41,7 +41,7 @@ export function isUiText(s) {
   const tokens = core.split(/\s+/).filter(Boolean);
   if (tokens.length === 1) {
     const [word] = tokens;
-    if (/[^\x00-\x7F]/.test(word) && !/[_\/\\@#%=]/.test(word)) return true;
+    if (/[\u0080-\uFFFF]/.test(word) && !/[_\/\\@#%=]/.test(word)) return true;
     if (/^\p{Lu}\p{Ll}{2,}[.…:!?]?$/u.test(word)) return true;
     return hadPlaceholder && /^\p{L}{3,}[.…:!?]?$/u.test(word);
   }

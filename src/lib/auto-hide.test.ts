@@ -195,7 +195,8 @@ vi.mock('react', async (importOriginal) => {
       if (expected != null && index >= expected) {
         throw new Error(`El Widget crea más useRef (${index + 1}) de los que declara la tabla de slots (#286). Actualiza src/lib/test-slots.ts.`);
       }
-      return (widgetEffects.refs[index] ??= { current: initial });
+      widgetEffects.refs[index] ??= { current: initial };
+      return widgetEffects.refs[index];
     }) as typeof react.useRef,
     useEffect: ((run, deps) => {
       // El nombre del efecto: el arnés lo busca por nombre y no por el texto
@@ -490,6 +491,7 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.refIndex = 0;
     widgetEffects.effects = [];
     let grip: GripHandlers | undefined;
+    // biome-ignore lint/correctness/noComponentHookFactories: test harness component that captures the tree of a single render; it is never mounted by React.
     function CaptureWidget() {
       const tree = Widget();
       grip = findGrip(tree); // Real handlers from the returned JSX, not copied drag logic.
@@ -1242,6 +1244,7 @@ describe('Widget effect mutation ordering', () => {
     widgetEffects.states[SLOT.stripSize] = { w: 400, h: 80 };
     widgetEffects.states[SLOT.dragging] = false;
     let tree: ReactNode = null;
+    // biome-ignore lint/correctness/noComponentHookFactories: test harness component that captures the tree of a single render; it is never mounted by React.
     function CaptureStrip() {
       tree = Widget();
       return tree;
@@ -1489,7 +1492,7 @@ describe('Widget startup wiring (#271, revisión)', () => {
     return renderToStaticMarkup(createElement(Widget));
   };
   /** `window` de Node para el temporizador de la red de seguridad. */
-  const useFakeWindowTimers = () => {
+  const installFakeWindowTimers = () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', {
       setTimeout: globalThis.setTimeout,
@@ -1542,7 +1545,7 @@ describe('Widget startup wiring (#271, revisión)', () => {
   });
 
   it('pending + safety net: show() fires and the first render has no Cargando/Ajustes; resolving to en shows English names', async () => {
-    useFakeWindowTimers();
+    installFakeWindowTimers();
     widgetEffects.show.mockResolvedValue(undefined);
     let resolveConfig!: (c: unknown) => void;
     widgetEffects.getConfig.mockReturnValue(
@@ -1577,7 +1580,7 @@ describe('Widget startup wiring (#271, revisión)', () => {
   });
 
   it('definitive config failure shows Reintentar with the tools named in es', async () => {
-    useFakeWindowTimers();
+    installFakeWindowTimers();
     widgetEffects.getConfig.mockRejectedValue(new Error('sin backend'));
     pendingStates();
     renderHtml();
@@ -1606,7 +1609,7 @@ describe('Widget startup wiring (#271, revisión)', () => {
 
   it('normal placement showing before the timer keeps the neutral state and does not show twice', async () => {
     configureNative();
-    useFakeWindowTimers();
+    installFakeWindowTimers();
     widgetEffects.getConfig.mockReturnValue(new Promise(() => {})); // pendiente
     pendingStates();
     widgetEffects.states[SLOT.dragging] = false; // dragging
@@ -1728,6 +1731,7 @@ describe('hover presence wiring', () => {
     let leave: (() => void) | undefined;
     let enterB: ((el: HTMLElement) => void) | undefined;
     let orbs: OrbPointer[] = [];
+    // biome-ignore lint/correctness/noComponentHookFactories: test harness component that captures the tree of a single render; it is never mounted by React.
     function CaptureWidget() {
       const tree = Widget();
       dock = findDock(tree); // Real handlers from the returned JSX, not copied logic.
@@ -1769,9 +1773,13 @@ describe('hover presence wiring', () => {
       orbs,
       /** The effect that publishes the detail state (and its presence write). */
       detailState: () => detailState.run(),
-      detail: (kind: 'enter' | 'leave') => handlers.forEach((h) => h({ payload: { revision: published.revision, provider: 'a', kind } })),
+      detail: (kind: 'enter' | 'leave') => {
+        for (const h of handlers) h({ payload: { revision: published.revision, provider: 'a', kind } });
+      },
       /** The native relay of the backend: GTK's enter/leave (#264/S16). */
-      native: (surface: 'widget' | 'detail', kind: 'enter' | 'leave') => nativeHandlers.forEach((h) => h({ payload: { surface, kind } })),
+      native: (surface: 'widget' | 'detail', kind: 'enter' | 'leave') => {
+        for (const h of nativeHandlers) h({ payload: { surface, kind } });
+      },
     };
   };
 
@@ -2307,6 +2315,7 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
     widgetEffects.states[SLOT.dragging] = false;
     if (reorder !== undefined) widgetEffects.states[SLOT.reorder] = reorder;
     let tree: ReactNode = null;
+    // biome-ignore lint/correctness/noComponentHookFactories: test harness component that captures the tree of a single render; it is never mounted by React.
     function CaptureWidget() {
       tree = Widget();
       return tree;
@@ -2482,9 +2491,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
 
     /** Escape, como lo atiende la tira. */
     const escapeKey = () => {
-      const escape = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
-      escape!.run();
-      keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
+      const escapeEffect = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
+      escapeEffect!.run();
+      for (const h of keydown) h({ key: 'Escape' } as KeyboardEvent);
     };
 
     /** El orbe, para el anclaje por clic (#170/#223). */
@@ -2599,9 +2608,9 @@ describe('the reorder preview keeps the DOM still (#264/L18)', () => {
       // El efecto se busca por nombre (#279/S19): el texto de su fuente se
       // rompe con cualquier refactor. Y el handler es el que registró la
       // tira, que el arnés intercepta (#279).
-      const escape = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
-      escape!.run();
-      keydown.forEach((h) => h({ key: 'Escape' } as KeyboardEvent));
+      const escapeEffect = widgetEffects.effects.find((e) => e.name === 'onEscapeKey');
+      escapeEffect!.run();
+      for (const h of keydown) h({ key: 'Escape' } as KeyboardEvent);
       expect(widgetEffects.patch).not.toHaveBeenCalled();
       expect(widgetEffects.states[SLOT.reorder]).toBeNull();
     });

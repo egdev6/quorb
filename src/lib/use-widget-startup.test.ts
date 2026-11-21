@@ -85,6 +85,7 @@ function probe(options: Parameters<typeof useWidgetStartup>[0] = {}) {
   state.stateIndex = 0;
   state.effects = [];
   let capturedApply: ((c: unknown) => void) | undefined;
+  // biome-ignore lint/correctness/noComponentHookFactories: test harness component that captures the tree of a single render; it is never mounted by React.
   function Probe() {
     const s = useWidgetStartup(options);
     capturedApply = s.applyConfig as (c: unknown) => void;

@@ -36,6 +36,7 @@ export function withNotaryKey(callback, { env = process.env, io = fs } = {}) {
       try {
         io.unlinkSync(keyPath);
       } catch {
+        // biome-ignore lint/correctness/noUnsafeFinally: a failed key cleanup must override the result so the private key is never left behind silently.
         throw new Error('Notarization private key cleanup failed');
       }
     }
