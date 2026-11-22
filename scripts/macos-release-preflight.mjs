@@ -18,7 +18,9 @@ export function validateReleaseInputs({ ref, version, sourceSha }) {
 async function readJson(response, signal) {
   if (!response?.ok || response.status !== 200 || typeof response.body?.getReader !== 'function') throw new Error();
   const reader = response.body.getReader();
-  const cancel = () => { void reader.cancel().catch(() => {}); };
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
   signal.addEventListener('abort', cancel, { once: true });
   let complete = false;
   try {
@@ -44,17 +46,20 @@ async function readJson(response, signal) {
 }
 
 // No import-time I/O. All external observations are injectable for offline tests.
-export async function preflightRelease({ root = projectRoot, env = process.env,
-  execFileSync = execute, fetch = globalThis.fetch } = {}) {
-  const { GITHUB_REF: ref, RELEASE_VERSION: version, RELEASE_SOURCE_SHA: sourceSha,
-    GITHUB_REPOSITORY: repository, GH_TOKEN: token } = env;
+export async function preflightRelease({ root = projectRoot, env = process.env, execFileSync = execute, fetch = globalThis.fetch } = {}) {
+  const { GITHUB_REF: ref, RELEASE_VERSION: version, RELEASE_SOURCE_SHA: sourceSha, GITHUB_REPOSITORY: repository, GH_TOKEN: token } = env;
   validateReleaseInputs({ ref, version, sourceSha });
   if (repository !== 'egdev6/quorb' || typeof token !== 'string' || !token.trim() || /[\r\n]/.test(token)) {
     throw new Error('Invalid release environment');
   }
-  const git = (args) => execFileSync('git', args, {
-    cwd: root, encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const git = (args) =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
   let failure = 'Release source_sha must be an ancestor of origin/main';
   try {
     git(['merge-base', '--is-ancestor', sourceSha, 'origin/main']);
@@ -65,9 +70,10 @@ export async function preflightRelease({ root = projectRoot, env = process.env,
     const signal = AbortSignal.timeout(30_000);
     const request = async (route, allowMissing = false) => {
       const response = await fetch(`https://api.github.com/repos/egdev6/quorb${route}`, {
-        method: 'GET', redirect: 'error', signal,
-        headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
-          'X-GitHub-Api-Version': '2022-11-28' },
+        method: 'GET',
+        redirect: 'error',
+        signal,
+        headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
       });
       if (allowMissing && response?.status === 404) {
         await response.body?.cancel();
@@ -93,8 +99,14 @@ export async function preflightRelease({ root = projectRoot, env = process.env,
     if (found.length === 0) throw new Error(`Release v${version} must already exist`);
     if (found.length !== 1) throw new Error();
     const release = found[0];
-    if (!Number.isSafeInteger(release.id) || release.id <= 0 || typeof release.draft !== 'boolean' ||
-        release.prerelease !== false || typeof release.target_commitish !== 'string') throw new Error();
+    if (
+      !Number.isSafeInteger(release.id) ||
+      release.id <= 0 ||
+      typeof release.draft !== 'boolean' ||
+      release.prerelease !== false ||
+      typeof release.target_commitish !== 'string'
+    )
+      throw new Error();
 
     failure = 'Release tag must point at source_sha';
     const tag = await request(`/git/ref/tags/v${version}`, true);
@@ -130,9 +142,10 @@ export async function preflightRelease({ root = projectRoot, env = process.env,
     if (failure === 'Unable to verify release metadata' && error.message === `Release v${version} must already exist`) {
       throw new Error(error.message);
     }
-    if (failure === 'Unable to verify release assets' &&
-        [ `Release already contains Quorb_${version}_aarch64.dmg`,
-          `Release already contains Quorb_${version}_aarch64.dmg.sha256` ].includes(error.message)) {
+    if (
+      failure === 'Unable to verify release assets' &&
+      [`Release already contains Quorb_${version}_aarch64.dmg`, `Release already contains Quorb_${version}_aarch64.dmg.sha256`].includes(error.message)
+    ) {
       throw new Error(error.message);
     }
     throw new Error(failure);

@@ -2,14 +2,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from './types';
 import { createLiveCloseHandler, createLiveSaver, type LiveSave, type LiveSaveOutcome } from './settings-live';
 
-const cfg = (over: Partial<AppConfig> = {}): AppConfig => ({ opacity: 0.94, compact: false, orbSize: 48, accentColor: '#ff0036', dockEdge: 'top', dockOffset: 0.5, autoHide: false, alwaysOnTop: true, ...over }) as unknown as AppConfig;
+const cfg = (over: Partial<AppConfig> = {}): AppConfig =>
+  ({
+    opacity: 0.94,
+    compact: false,
+    orbSize: 48,
+    accentColor: '#ff0036',
+    dockEdge: 'top',
+    dockOffset: 0.5,
+    autoHide: false,
+    alwaysOnTop: true,
+    ...over,
+  }) as unknown as AppConfig;
 
 const ok = (config: AppConfig, nativeError: string | null = null): LiveSaveOutcome => ({ config, nativeError });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }
 
@@ -156,7 +170,10 @@ describe('createLiveSaver — fallos del revisor (B1–B4)', () => {
     const calls: Partial<AppConfig>[] = [];
     const save: LiveSave = (patch) => {
       calls.push(patch);
-      if (calls.length === 1) return new Promise((resolve) => { releaseA = () => resolve(ok(cfg(patch as AppConfig))); });
+      if (calls.length === 1)
+        return new Promise((resolve) => {
+          releaseA = () => resolve(ok(cfg(patch as AppConfig)));
+        });
       return Promise.resolve(ok(cfg(patch as AppConfig)));
     };
     const live = createLiveSaver({ delay: 0, save });
@@ -164,7 +181,7 @@ describe('createLiveSaver — fallos del revisor (B1–B4)', () => {
     await new Promise((r) => setTimeout(r, 5)); // A ya dispatchado, en vuelo
     expect(calls).toEqual([{ opacity: 0.5 }]);
     expect(live.hasPending()).toBe(true); // antes era false mientras A estaba en vuelo
-    live.push({ compact: true });          // B queda encolado durante A
+    live.push({ compact: true }); // B queda encolado durante A
     expect(live.hasPending()).toBe(true);
     const flushed = live.flush();
     releaseA();
@@ -174,9 +191,7 @@ describe('createLiveSaver — fallos del revisor (B1–B4)', () => {
   });
 
   it('B2: un fallo nativo de un campo sobrevive al éxito de otro campo', async () => {
-    const save = vi.fn<LiveSave>(async (patch) =>
-      'alwaysOnTop' in patch ? ok(cfg(patch as AppConfig), 'top no aplicado') : ok(cfg(patch as AppConfig)),
-    );
+    const save = vi.fn<LiveSave>(async (patch) => ('alwaysOnTop' in patch ? ok(cfg(patch as AppConfig), 'top no aplicado') : ok(cfg(patch as AppConfig))));
     const live = createLiveSaver({ delay: 0, save });
     live.push({ alwaysOnTop: true });
     await expect(live.flush()).rejects.toThrow('top no aplicado');
@@ -239,11 +254,19 @@ describe('createLiveSaver — fallos del revisor (B1–B4)', () => {
   });
 
   it('retry waits for the newer in-flight value instead of appending the older failure', async () => {
-    const a = deferred<LiveSaveOutcome>(), b = deferred<LiveSaveOutcome>();
-    const startedA = deferred<void>(), startedB = deferred<void>();
+    const a = deferred<LiveSaveOutcome>(),
+      b = deferred<LiveSaveOutcome>();
+    const startedA = deferred<void>(),
+      startedB = deferred<void>();
     const save = vi.fn<LiveSave>((patch) => {
-      if (save.mock.calls.length === 1) { startedA.resolve(undefined); return a.promise; }
-      if (save.mock.calls.length === 2) { startedB.resolve(undefined); return b.promise; }
+      if (save.mock.calls.length === 1) {
+        startedA.resolve(undefined);
+        return a.promise;
+      }
+      if (save.mock.calls.length === 2) {
+        startedB.resolve(undefined);
+        return b.promise;
+      }
       return Promise.resolve(ok(cfg(patch)));
     });
     const live = createLiveSaver({ delay: 120, save });
@@ -263,16 +286,19 @@ describe('createLiveSaver — fallos del revisor (B1–B4)', () => {
   });
 });
 
- describe('createLiveCloseHandler', () => {
+describe('createLiveCloseHandler', () => {
   it('coalesces two close requests while flushing and permits the recursive native close', async () => {
     const work = deferred<void>();
     let pending = true;
     const saver = { hasPending: () => pending, hasUnresolved: () => false, flush: vi.fn(() => work.promise) };
     const recursive = { preventDefault: vi.fn() };
     let handler: ReturnType<typeof createLiveCloseHandler>;
-    const close = vi.fn(async () => { await handler(recursive); });
+    const close = vi.fn(async () => {
+      await handler(recursive);
+    });
     handler = createLiveCloseHandler(() => saver, close);
-    const first = { preventDefault: vi.fn() }, second = { preventDefault: vi.fn() };
+    const first = { preventDefault: vi.fn() },
+      second = { preventDefault: vi.fn() };
     const closing = handler(first);
     const secondClosing = handler(second);
     expect(close).not.toHaveBeenCalled();
@@ -289,7 +315,13 @@ describe('createLiveSaver — fallos del revisor (B1–B4)', () => {
   it('keeps the window open on an unresolved native failure; a later clean close is allowed', async () => {
     let failed = true;
     const close = vi.fn(async () => {});
-    const saver = { hasPending: () => false, hasUnresolved: () => failed, flush: vi.fn(async () => { throw new Error('native'); }) };
+    const saver = {
+      hasPending: () => false,
+      hasUnresolved: () => failed,
+      flush: vi.fn(async () => {
+        throw new Error('native');
+      }),
+    };
     const handler = createLiveCloseHandler(() => saver, close);
     const event = { preventDefault: vi.fn() };
     await handler(event);

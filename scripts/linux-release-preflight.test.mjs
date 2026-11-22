@@ -6,13 +6,11 @@ const sha = 'a'.repeat(40);
 const other = 'b'.repeat(40);
 const secret = 'SYNTHETIC_TOKEN_MARKER';
 const version = '0.9.0';
-const names = [`Quorb_${version}_amd64.deb`, `Quorb_${version}_amd64.deb.sha256`,
-  `Quorb_${version}_amd64.AppImage`, `Quorb_${version}_amd64.AppImage.sha256`];
+const names = [`Quorb_${version}_amd64.deb`, `Quorb_${version}_amd64.deb.sha256`, `Quorb_${version}_amd64.AppImage`, `Quorb_${version}_amd64.AppImage.sha256`];
 
 function fixture() {
   const calls = [];
-  const env = { GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: 'egdev6/quorb',
-    RELEASE_VERSION: version, RELEASE_SOURCE_SHA: sha, GH_TOKEN: secret };
+  const env = { GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: 'egdev6/quorb', RELEASE_VERSION: version, RELEASE_SOURCE_SHA: sha, GH_TOKEN: secret };
   const files = {
     'package.json': JSON.stringify({ version }),
     'package-lock.json': JSON.stringify({ version, packages: { '': { version } } }),
@@ -26,7 +24,9 @@ function fixture() {
     [`/git/ref/tags/v${version}`]: { object: { type: 'commit', sha } },
     '/releases/42/assets?per_page=100&page=1': [],
   };
-  const options = { env, root: '/fake-root',
+  const options = {
+    env,
+    root: '/fake-root',
     execFileSync(command, args, settings) {
       calls.push(['git', command, args, settings]);
       if (args[0] === 'merge-base') return '';
@@ -59,7 +59,10 @@ test('accepts exact ancestor, all release manifests, config and existing tag wit
   assert.deepEqual(await f.run(), { sourceSha: sha, version, releaseId: 42 });
   const git = f.calls.filter(([kind]) => kind === 'git');
   assert.deepEqual(git[0][2], ['merge-base', '--is-ancestor', sha, 'origin/main']);
-  assert.deepEqual(git.slice(1).map(([, , args]) => args[1]), Object.keys(f.files).map((file) => `${sha}:${file}`));
+  assert.deepEqual(
+    git.slice(1).map(([, , args]) => args[1]),
+    Object.keys(f.files).map((file) => `${sha}:${file}`),
+  );
   for (const [, , , settings] of git) assert.equal(settings.cwd, '/fake-root');
   for (const [, url, settings] of f.calls.filter(([kind]) => kind === 'fetch')) {
     assert.ok(url.startsWith('https://api.github.com/repos/egdev6/quorb/'));
@@ -72,20 +75,35 @@ test('accepts exact ancestor, all release manifests, config and existing tag wit
 test('rejects invalid ref, version, SHA, repository and token before any I/O', async () => {
   const cases = [
     ['GITHUB_REF', 'refs/heads/feature', 'Release ref must be refs/heads/main'],
-    ...[undefined, '', 'v0.9.0', '00.9.0', '0.9.0-rc.1', '0.9.0+build', '0.9.0\n', '../0.9.0'].map((v) => ['RELEASE_VERSION', v, 'Release version must be stable SemVer']),
-    ...[undefined, '', 'A'.repeat(40), 'g'.repeat(40), `${sha}\n`, sha.slice(1)].map((v) => ['RELEASE_SOURCE_SHA', v, 'Release source_sha must be 40 lowercase hex characters']),
+    ...[undefined, '', 'v0.9.0', '00.9.0', '0.9.0-rc.1', '0.9.0+build', '0.9.0\n', '../0.9.0'].map((v) => [
+      'RELEASE_VERSION',
+      v,
+      'Release version must be stable SemVer',
+    ]),
+    ...[undefined, '', 'A'.repeat(40), 'g'.repeat(40), `${sha}\n`, sha.slice(1)].map((v) => [
+      'RELEASE_SOURCE_SHA',
+      v,
+      'Release source_sha must be 40 lowercase hex characters',
+    ]),
     ['GITHUB_REPOSITORY', 'other/quorb', 'Invalid release environment'],
-    ['GH_TOKEN', '', 'Invalid release environment'], ['GH_TOKEN', `${secret}\n`, 'Invalid release environment'],
+    ['GH_TOKEN', '', 'Invalid release environment'],
+    ['GH_TOKEN', `${secret}\n`, 'Invalid release environment'],
   ];
   for (const [key, value, message] of cases) {
-    const f = fixture(); f.env[key] = value;
-    await rejects(f, message); assert.deepEqual(f.calls, []);
+    const f = fixture();
+    f.env[key] = value;
+    await rejects(f, message);
+    assert.deepEqual(f.calls, []);
   }
 });
 
 test('rejects non-ancestor and every mismatching or missing version source before HTTP', async () => {
   const f = fixture();
-  await rejects(f, 'Release source_sha must be an ancestor of origin/main', { execFileSync: () => { throw new Error(secret); } });
+  await rejects(f, 'Release source_sha must be an ancestor of origin/main', {
+    execFileSync: () => {
+      throw new Error(secret);
+    },
+  });
   for (const [file, text] of [
     ['package.json', '{"version":"0.8.0"}'],
     ['package-lock.json', '{"version":"0.9.0","packages":{"":{"version":"0.8.0"}}}'],
@@ -95,25 +113,31 @@ test('rejects non-ancestor and every mismatching or missing version source befor
     ['src-tauri/tauri.conf.json', '{"productName":"Quorb","version":"0.8.0"}'],
     ['package.json', '{'],
   ]) {
-    const g = fixture(); g.files[file] = text;
+    const g = fixture();
+    g.files[file] = text;
     await rejects(g, 'Release manifest versions or Tauri configuration do not match source_sha');
     assert.ok(!g.calls.some(([kind]) => kind === 'fetch'));
   }
 });
 
 test('requires one existing release and its actual matching tag, including drafts', async () => {
-  const missing = fixture(); missing.routes['/releases?per_page=100&page=1'] = [];
+  const missing = fixture();
+  missing.routes['/releases?per_page=100&page=1'] = [];
   await rejects(missing, `Release v${version} must already exist`);
-  const duplicate = fixture(); duplicate.routes['/releases?per_page=100&page=1'] = [duplicate.release, duplicate.release];
+  const duplicate = fixture();
+  duplicate.routes['/releases?per_page=100&page=1'] = [duplicate.release, duplicate.release];
   await rejects(duplicate, 'Unable to verify release metadata');
   for (const draft of [true, false]) {
-    const f = fixture(); f.release.draft = draft;
+    const f = fixture();
+    f.release.draft = draft;
     f.routes[`/git/ref/tags/v${version}`] = new Response('', { status: 404 });
     await rejects(f, 'Release tag must point at source_sha');
   }
-  const mismatch = fixture(); mismatch.routes[`/git/ref/tags/v${version}`].object.sha = other;
+  const mismatch = fixture();
+  mismatch.routes[`/git/ref/tags/v${version}`].object.sha = other;
   await rejects(mismatch, 'Release tag must point at source_sha');
-  const draft = fixture(); draft.release.draft = true;
+  const draft = fixture();
+  draft.release.draft = true;
   assert.equal((await draft.run()).releaseId, 42);
 });
 
@@ -123,7 +147,8 @@ test('resolves annotated tags and rejects cycles and malformed objects', async (
   f.routes[`/git/tags/${other}`] = { object: { type: 'commit', sha } };
   assert.equal((await f.run()).releaseId, 42);
   for (const object of [null, {}, { type: 'tree', sha }, { type: 'tag', sha: other }]) {
-    const g = fixture(); g.routes[`/git/ref/tags/v${version}`] = { object };
+    const g = fixture();
+    g.routes[`/git/ref/tags/v${version}`] = { object };
     g.routes[`/git/tags/${other}`] = { object: { type: 'tag', sha: other } };
     await rejects(g, 'Release tag must point at source_sha');
   }
@@ -145,10 +170,16 @@ test('checks all four asset names across pages and leaves unrelated release asse
 
 test('fails closed on malformed HTTP, pagination and secret-bearing errors', async () => {
   for (const value of [new Response('no', { status: 403 }), new Response('{'), new Response(' '.repeat(1024 * 1024 + 1)), {}]) {
-    const f = fixture(); f.routes['/releases?per_page=100&page=1'] = value;
+    const f = fixture();
+    f.routes['/releases?per_page=100&page=1'] = value;
     await rejects(f, 'Unable to verify release metadata');
   }
-  await rejects(fixture(), 'Unable to verify release metadata', { fetch: async () => { throw new Error(secret); } });
-  const f = fixture(); f.routes['/releases/42/assets?per_page=100&page=1'] = [null];
+  await rejects(fixture(), 'Unable to verify release metadata', {
+    fetch: async () => {
+      throw new Error(secret);
+    },
+  });
+  const f = fixture();
+  f.routes['/releases/42/assets?per_page=100&page=1'] = [null];
   await rejects(f, 'Unable to verify release assets');
 });

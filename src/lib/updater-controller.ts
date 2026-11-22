@@ -90,23 +90,25 @@ export function createUpdaterController(deps: UpdaterControllerDeps): UpdaterCon
     active = true;
     const ticket = {};
     listenerTicket = ticket;
-    deps.listen((info) => {
-      if (active && listenerTicket === ticket) offer(info);
-    }).then(
-      (off) => {
-        if (active && listenerTicket === ticket) unlisten = off;
-        else {
-          try {
-            off();
-          } catch {
-            /* nada que dar de baja */
+    deps
+      .listen((info) => {
+        if (active && listenerTicket === ticket) offer(info);
+      })
+      .then(
+        (off) => {
+          if (active && listenerTicket === ticket) unlisten = off;
+          else {
+            try {
+              off();
+            } catch {
+              /* nada que dar de baja */
+            }
           }
-        }
-      },
-      () => {
-        /* Un fallo al registrar el oyente no debe romper la comprobación manual. */
-      },
-    );
+        },
+        () => {
+          /* Un fallo al registrar el oyente no debe romper la comprobación manual. */
+        },
+      );
   };
 
   const check = async (silent = false) => {

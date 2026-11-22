@@ -10,15 +10,26 @@ const { readFileSync } = await vi.importActual<{ readFileSync(path: URL, encodin
 const theme = readFileSync(new URL('../theme.css', import.meta.url), 'utf8');
 
 const report: UsageReport = {
-  id: 'claude:extra', name: 'Claude · Trabajo', kind: 'subscription', status: 'ok', plan: null,
-  meters: [], spend: null, message: null, action: null, fetchedAt: '2026-10-17T00:00:00Z',
-  daily: [{ date: '2026-10-15', value: 10 }, { date: '2026-10-16', value: 20 }],
+  id: 'claude:extra',
+  name: 'Claude · Trabajo',
+  kind: 'subscription',
+  status: 'ok',
+  plan: null,
+  meters: [],
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '2026-10-17T00:00:00Z',
+  daily: [
+    { date: '2026-10-15', value: 10 },
+    { date: '2026-10-16', value: 20 },
+  ],
 };
 
 // SSR does not run effects: seed the history state without a DOM or Tauri calls.
 const history = vi.hoisted(() => ({ samples: null as Sample[] | null }));
 vi.mock('react', async (importOriginal) => {
-  const react = await importOriginal() as typeof import('react');
+  const react = (await importOriginal()) as typeof import('react');
   return {
     ...react,
     useState: ((initial: unknown) => {
@@ -42,16 +53,26 @@ describe('provider detail sections', () => {
       [18000, 604800, 604800],
       [604800, 18000],
     ])('uses popup colors without mutating ring tokens for window order %j', (...windows) => {
-      const html = renderToStaticMarkup(<Component report={{
-        ...report,
-        meters: windows.map((windowSeconds, i) => ({
-          id: '', label: `Limit ${i + 1}`, percent: 20, used: null, limit: null, unit: null,
-          windowSeconds, resetsAt: new Date(Date.now() + windowSeconds * 500).toISOString(),
-        })),
-      }} />);
+      const html = renderToStaticMarkup(
+        <Component
+          report={{
+            ...report,
+            meters: windows.map((windowSeconds, i) => ({
+              id: '',
+              label: `Limit ${i + 1}`,
+              percent: 20,
+              used: null,
+              limit: null,
+              unit: null,
+              windowSeconds,
+              resetsAt: new Date(Date.now() + windowSeconds * 500).toISOString(),
+            })),
+          }}
+        />,
+      );
       expect(html).not.toMatch(/style="[^"]*--ring-[123]:/);
-      const colors = [...html.matchAll(/(?:--meter-color:|background:)([^;\"]+)/g)].map(m => m[1]);
-      expect(colors).toEqual(windows.map(seconds => seconds < 86400 ? '#ffffff' : 'var(--popup-primary, #ff0036)'));
+      const colors = [...html.matchAll(/(?:--meter-color:|background:)([^;\"]+)/g)].map((m) => m[1]);
+      expect(colors).toEqual(windows.map((seconds) => (seconds < 86400 ? '#ffffff' : 'var(--popup-primary, #ff0036)')));
     });
   });
 
@@ -60,10 +81,13 @@ describe('provider detail sections', () => {
     { pace: true, history: true },
     { pace: false, history: false },
   ])('restores independent disclosures for the report account: %j', ({ pace, history }) => {
-    const getItem = vi.fn((key: string) => ({
-      [`popup:${report.id}:pace`]: String(pace),
-      [`popup:${report.id}:history`]: String(history),
-    })[key] ?? null);
+    const getItem = vi.fn(
+      (key: string) =>
+        ({
+          [`popup:${report.id}:pace`]: String(pace),
+          [`popup:${report.id}:history`]: String(history),
+        })[key] ?? null,
+    );
     vi.stubGlobal('localStorage', { getItem });
 
     const html = renderToStaticMarkup(<ProviderDetails report={report} />);
@@ -92,10 +116,25 @@ describe('provider detail sections', () => {
   });
 
   it('keeps the risk notice outside both disclosures', () => {
-    const html = renderToStaticMarkup(<ProviderDetails report={{ ...report, meters: [{
-      id: '', label: 'Semana', percent: 99, used: null, limit: null, unit: null,
-      windowSeconds: 604800, resetsAt: new Date(Date.now() + 302400000).toISOString(),
-    }] }} />);
+    const html = renderToStaticMarkup(
+      <ProviderDetails
+        report={{
+          ...report,
+          meters: [
+            {
+              id: '',
+              label: 'Semana',
+              percent: 99,
+              used: null,
+              limit: null,
+              unit: null,
+              windowSeconds: 604800,
+              resetsAt: new Date(Date.now() + 302400000).toISOString(),
+            },
+          ],
+        }}
+      />,
+    );
     expect(html).toContain('A este ritmo');
     expect(html.indexOf('role="status"')).toBeLessThan(html.indexOf('<details'));
   });
@@ -131,8 +170,15 @@ describe('ProviderDetails: el ritmo con gasto viejo (W1)', () => {
 
 describe('stale meters (per-meter mark)', () => {
   const meter = (stale?: boolean) => ({
-    id: 'weekly', label: 'Semana · todos', percent: 95, used: null, limit: null, unit: null,
-    resetsAt: null, windowSeconds: null, stale,
+    id: 'weekly',
+    label: 'Semana · todos',
+    percent: 95,
+    used: null,
+    limit: null,
+    unit: null,
+    resetsAt: null,
+    windowSeconds: null,
+    stale,
   });
 
   it('shows the cached chip on the stale meter only', () => {
@@ -159,19 +205,32 @@ describe('stale meters (per-meter mark)', () => {
 // participa del estado actual, pero se sigue viendo, atenuado y con su fecha.
 describe('stale data presentation (T31)', () => {
   const staleMeter = (over: Partial<Meter> = {}): Meter => ({
-    id: 'weekly', label: 'Semana · todos', percent: 100, used: null, limit: null, unit: null,
-    resetsAt: null, windowSeconds: null, stale: true, ...over,
+    id: 'weekly',
+    label: 'Semana · todos',
+    percent: 100,
+    used: null,
+    limit: null,
+    unit: null,
+    resetsAt: null,
+    windowSeconds: null,
+    stale: true,
+    ...over,
   });
   const freshMeter = (over: Partial<Meter> = {}): Meter => ({
-    id: 'budget', label: 'Presupuesto mensual', percent: 20, used: null, limit: null, unit: null,
-    resetsAt: null, windowSeconds: null, ...over,
+    id: 'budget',
+    label: 'Presupuesto mensual',
+    percent: 20,
+    used: null,
+    limit: null,
+    unit: null,
+    resetsAt: null,
+    windowSeconds: null,
+    ...over,
   });
 
   it('shows the orb as muted with its reason when there is no current reading (C1)', () => {
     const onlyOld: UsageReport = { ...report, status: 'warning', meters: [staleMeter()] };
-    const html = renderToStaticMarkup(
-      <ProviderGauge report={onlyOld} small={false} size={60} active={false} onHover={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<ProviderGauge report={onlyOld} small={false} size={60} active={false} onHover={() => {}} />);
     // Sin lectura vigente el orbe no se pinta como el estado de ahora…
     expect(html).toContain('is-muted');
     expect(html).not.toContain('is-over');
@@ -183,9 +242,7 @@ describe('stale data presentation (T31)', () => {
   it('shows the orb as muted when the whole report is stale (C1)', () => {
     // Informe entero conservado: sus medidores no van marcados, pero el informe sí.
     const whole: UsageReport = { ...report, status: 'warning', stale: true, meters: [staleMeter({ stale: undefined })] };
-    const html = renderToStaticMarkup(
-      <ProviderGauge report={whole} small={false} size={60} active={false} onHover={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<ProviderGauge report={whole} small={false} size={60} active={false} onHover={() => {}} />);
     expect(html).toContain('is-muted');
     expect(html).not.toContain('is-over');
     expect(html).not.toContain('is-warning');
@@ -276,12 +333,24 @@ describe('la tarjeta de una cuenta con créditos (#268)', () => {
     plan: 'plan.inference',
     meters: [
       {
-        id: 'allocation', label: 'Asignación del periodo', percent: 0.347, used: 24.3, limit: 7000,
-        unit: 'credits', resetsAt: null, windowSeconds: 30 * 86400,
+        id: 'allocation',
+        label: 'Asignación del periodo',
+        percent: 0.347,
+        used: 24.3,
+        limit: 7000,
+        unit: 'credits',
+        resetsAt: null,
+        windowSeconds: 30 * 86400,
       },
       {
-        id: 'balance', label: 'Saldo de packs', percent: null, used: 240, limit: null,
-        unit: 'credits', resetsAt: '2027-05-12T00:00:00Z', windowSeconds: null,
+        id: 'balance',
+        label: 'Saldo de packs',
+        percent: null,
+        used: 240,
+        limit: null,
+        unit: 'credits',
+        resetsAt: '2027-05-12T00:00:00Z',
+        windowSeconds: null,
       },
     ],
     breakdown: [
@@ -345,12 +414,24 @@ describe('el exceso del fondo (S13)', () => {
     plan: 'plan.inference',
     meters: [
       {
-        id: 'allocation', label: 'Asignación del periodo', percent: 120, used: 8400, limit: 7000,
-        unit: 'credits', resetsAt: null, windowSeconds: 30 * 86400,
+        id: 'allocation',
+        label: 'Asignación del periodo',
+        percent: 120,
+        used: 8400,
+        limit: 7000,
+        unit: 'credits',
+        resetsAt: null,
+        windowSeconds: 30 * 86400,
       },
       {
-        id: 'balance', label: 'Saldo de packs', percent: null, used: 240, limit: null,
-        unit: 'credits', resetsAt: '2027-05-12T00:00:00Z', windowSeconds: null,
+        id: 'balance',
+        label: 'Saldo de packs',
+        percent: null,
+        used: 240,
+        limit: null,
+        unit: 'credits',
+        resetsAt: '2027-05-12T00:00:00Z',
+        windowSeconds: null,
       },
     ],
   };
@@ -367,5 +448,3 @@ describe('el exceso del fondo (S13)', () => {
     expect(html).toContain('240 créditos');
   });
 });
-
-

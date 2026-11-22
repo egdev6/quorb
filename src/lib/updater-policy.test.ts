@@ -27,7 +27,10 @@ describe('backend updater policy', () => {
 
   it.each(['async', 'sync'])('fails closed on a %s policy error without plugin fallback', async (kind) => {
     if (kind === 'async') mocks.invoke.mockRejectedValue(new Error('IPC unavailable'));
-    else mocks.invoke.mockImplementation(() => { throw new Error('IPC unavailable'); });
+    else
+      mocks.invoke.mockImplementation(() => {
+        throw new Error('IPC unavailable');
+      });
     const { getUpdaterMode } = await import('./updater-policy');
     await expect(getUpdaterMode()).resolves.toBe('error');
     const { checkForUpdate, installUpdate } = await import('./updater');
@@ -40,7 +43,11 @@ describe('backend updater policy', () => {
 
   it('waits for policy resolution and shares one backend request', async () => {
     let resolve!: (mode: string) => void;
-    mocks.invoke.mockReturnValue(new Promise<string>((done) => { resolve = done; }));
+    mocks.invoke.mockReturnValue(
+      new Promise<string>((done) => {
+        resolve = done;
+      }),
+    );
     const { checkForUpdate, installUpdate } = await import('./updater');
     const check = checkForUpdate();
     const install = installUpdate(vi.fn());
@@ -91,9 +98,14 @@ describe('effective updater capabilities', () => {
       expect(json(`../../src-tauri/${config}`).app?.security?.capabilities).toBeUndefined();
     }
     const dir = new URL('../../src-tauri/capabilities/', import.meta.url);
-    const caps = fs.readdirSync(dir).filter((file) => file.endsWith('.json')).map((file) => json(`../../src-tauri/capabilities/${file}`));
-    const grants = (platform: string) => caps.filter((cap) => !cap.platforms || cap.platforms.includes(platform))
-      .filter((cap) => cap.permissions.some((permission: string) => permission.startsWith('updater:')));
+    const caps = fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith('.json'))
+      .map((file) => json(`../../src-tauri/capabilities/${file}`));
+    const grants = (platform: string) =>
+      caps
+        .filter((cap) => !cap.platforms || cap.platforms.includes(platform))
+        .filter((cap) => cap.permissions.some((permission: string) => permission.startsWith('updater:')));
     expect(grants('macOS')).toEqual([]);
     for (const platform of ['windows', 'linux']) {
       expect(grants(platform)).toMatchObject([{ windows: ['widget', 'settings', 'overlay'], permissions: ['updater:default'] }]);

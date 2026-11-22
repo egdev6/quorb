@@ -4,7 +4,9 @@ import { surfaceClipFor, clipSurfaceSafely } from './surface-clip';
 describe('native surface clipping', () => {
   it('converts each real CSS radius through panel fit and monitor DPI', () => {
     expect(surfaceClipFor({ w: 600, h: 900 }, [16, 16, 16, 16], 0.75 * 2)).toEqual({
-      width: 600, height: 900, radii: [24, 24, 24, 24],
+      width: 600,
+      height: 900,
+      radii: [24, 24, 24, 24],
     });
   });
   it('preserves the square docked edge rather than assuming four round corners', () => {
@@ -23,7 +25,13 @@ describe('native surface clipping', () => {
     const clip = surfaceClipFor({ w: 400, h: 80 }, [14, 14, 14, 14], 1);
     const errors: unknown[] = [];
     const events: string[] = [];
-    await clipSurfaceSafely(clip, async () => { throw new Error('GDI failed'); }, (error) => errors.push(error));
+    await clipSurfaceSafely(
+      clip,
+      async () => {
+        throw new Error('GDI failed');
+      },
+      (error) => errors.push(error),
+    );
     events.push('show');
     expect(events).toEqual(['show']);
     expect(errors).toHaveLength(1);
@@ -32,10 +40,22 @@ describe('native surface clipping', () => {
   it('keeps CSS corner ownership when the native layer is clipped independently', async () => {
     const clip = surfaceClipFor({ w: 400, h: 80 }, [14, 14, 14, 14], 1);
     const surface = { dataset: { nativeRounded: 'true' } } as unknown as HTMLElement;
-    await clipSurfaceSafely(clip, async () => true, () => {}, surface);
+    await clipSurfaceSafely(
+      clip,
+      async () => true,
+      () => {},
+      surface,
+    );
     expect(surface.dataset.nativeRounded).toBeUndefined();
     surface.dataset.nativeRounded = 'true';
-    await clipSurfaceSafely(clip, async () => { throw new Error('Composition unavailable'); }, () => {}, surface);
+    await clipSurfaceSafely(
+      clip,
+      async () => {
+        throw new Error('Composition unavailable');
+      },
+      () => {},
+      surface,
+    );
     expect(surface.dataset.nativeRounded).toBeUndefined();
   });
   it('rejects invalid native dimensions and scaling', () => {

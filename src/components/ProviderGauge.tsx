@@ -114,10 +114,12 @@ export function ProviderGauge({
   const rings = small ? (peak ? [peak] : []) : all.slice(0, size < 40 ? 2 : 3);
   // Claude/Codex share period colors with the card, pace and history.
   // Model-based providers such as NaN retain ring-order colors, including their compact ring.
-  const list = rings.length ? rings.map((meter, index) => ({
-    percent: meter.percent ?? 0,
-    color: meterColor(report, meter, index),
-  })) : [{ percent: 0, color: 'var(--ring-1)' }];
+  const list = rings.length
+    ? rings.map((meter, index) => ({
+        percent: meter.percent ?? 0,
+        color: meterColor(report, meter, index),
+      }))
+    : [{ percent: 0, color: 'var(--ring-1)' }];
   // Grosor y separación de los anillos escalan con el círculo (56 px = 4 px + 2 px, como el DS).
   const w = Math.max(2.5, Math.round(size * (small ? 0.09 : 0.072) * 2) / 2);
   const gap = Math.max(1.5, Math.round(size * 0.036 * 2) / 2);
@@ -151,6 +153,7 @@ export function ProviderGauge({
       onPointerCancel={pointer?.onPointerCancel}
     >
       {list.map(({ percent, color }, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: positional list with a fixed order that is never reordered or filtered; the index is its identity.
         <span key={i} className="eg-gauge__ring" style={{ '--p': Math.max(0, Math.min(100, percent)) / 100, '--c': color } as CSSProperties} />
       ))}
       <span className="eg-gauge__logo logo">
@@ -159,9 +162,7 @@ export function ProviderGauge({
       <ValidityBadge report={report} compact showResets={showResets} locale={locale} />
       {/* Badge ámbar (#214): solo los estados con acción; decorativo, el motivo legible va en el título. */}
       {/* Sin badge para `error`: la señal queda solo en el texto accesible. */}
-      {report.status === 'needsLogin' || report.status === 'unconfigured' ? (
-        <span className="orb__badge" data-kind="action" aria-hidden="true" />
-      ) : null}
+      {report.status === 'needsLogin' || report.status === 'unconfigured' ? <span className="orb__badge" data-kind="action" aria-hidden="true" /> : null}
       {account && (
         <span className="orb__acct" aria-hidden="true">
           {account}

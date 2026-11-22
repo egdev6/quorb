@@ -16,7 +16,16 @@ export function parseHex(hex: string): Rgb | null {
 }
 
 export function toHex([r, g, b]: Rgb): string {
-  return '#' + [r, g, b].map((v) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, '0')).join('');
+  return (
+    '#' +
+    [r, g, b]
+      .map((v) =>
+        Math.round(Math.min(255, Math.max(0, v)))
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
 }
 
 function rgbToHsl([r, g, b]: Rgb): [number, number, number] {

@@ -125,9 +125,7 @@ test('stable Tauri config and its updater feed are untouched', () => {
   const base = readJson('src-tauri/tauri.conf.json');
   assert.equal(base.identifier, 'es.egdev.quorb');
   assert.equal(base.productName, 'Quorb');
-  assert.deepEqual(base.plugins.updater.endpoints, [
-    'https://github.com/egdev6/quorb/releases/latest/download/latest.json',
-  ]);
+  assert.deepEqual(base.plugins.updater.endpoints, ['https://github.com/egdev6/quorb/releases/latest/download/latest.json']);
   assert.ok(base.plugins.updater.pubkey, 'stable updater public key must remain');
 
   const release = readJson('src-tauri/tauri.release.conf.json');

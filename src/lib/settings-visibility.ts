@@ -1,13 +1,35 @@
 import type { AppConfig } from './types';
 import { isNineRouterId } from './visibility';
 
-type MainKey = 'claude' | 'codex' | 'gemini' | 'cursor' | 'grok' | 'copilot' | 'nan' | 'openrouter' | 'minimax' | 'anthropicApi' | 'openaiApi' | 'zai' | 'opencodeGo' | 'antigravity';
+type MainKey =
+  | 'claude'
+  | 'codex'
+  | 'gemini'
+  | 'cursor'
+  | 'grok'
+  | 'copilot'
+  | 'nan'
+  | 'openrouter'
+  | 'minimax'
+  | 'anthropicApi'
+  | 'openaiApi'
+  | 'zai'
+  | 'opencodeGo'
+  | 'antigravity';
 
 /** Clave de configuración de cada cuenta principal; el id del informe puede ser distinto. */
 export const CONFIG_KEY: Readonly<Record<string, MainKey>> = {
-  claude: 'claude', codex: 'codex', gemini: 'gemini', cursor: 'cursor', grok: 'grok',
-  copilot: 'copilot', nan: 'nan', openrouter: 'openrouter', minimax: 'minimax',
-  anthropic_api: 'anthropicApi', openai_api: 'openaiApi',
+  claude: 'claude',
+  codex: 'codex',
+  gemini: 'gemini',
+  cursor: 'cursor',
+  grok: 'grok',
+  copilot: 'copilot',
+  nan: 'nan',
+  openrouter: 'openrouter',
+  minimax: 'minimax',
+  anthropic_api: 'anthropicApi',
+  openai_api: 'openaiApi',
   zai: 'zai',
   opencode_go: 'opencodeGo',
   antigravity: 'antigravity',
@@ -26,8 +48,7 @@ export function configKeyFor(id: string): MainKey | 'nineRouter' | undefined {
   return CONFIG_KEY[id];
 }
 
-export const isAccountVisible = (cfg: Pick<AppConfig, 'hiddenProviders'>, id: string, enabled: boolean) =>
-  enabled && !cfg.hiddenProviders.includes(id);
+export const isAccountVisible = (cfg: Pick<AppConfig, 'hiddenProviders'>, id: string, enabled: boolean) => enabled && !cfg.hiddenProviders.includes(id);
 
 /** Borrador manual: activar recupera solo este círculo, sin alterar otras ocultaciones. */
 export function setAccountVisibility(cfg: AppConfig, id: string, enabled: boolean): AppConfig {
@@ -43,7 +64,7 @@ export function setAccountVisibility(cfg: AppConfig, id: string, enabled: boolea
   }
   let next: AppConfig;
   if (cfg.accounts.some((a) => a.id === id)) {
-    next = { ...cfg, accounts: cfg.accounts.map((a) => a.id === id ? { ...a, enabled } : a) };
+    next = { ...cfg, accounts: cfg.accounts.map((a) => (a.id === id ? { ...a, enabled } : a)) };
   } else {
     if (!Object.prototype.hasOwnProperty.call(CONFIG_KEY, id)) return cfg;
     const key = CONFIG_KEY[id];

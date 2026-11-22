@@ -8,13 +8,7 @@
 // así que un borrador de release remoto sin tag local no se detecta aquí.
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import {
-  isValidVersion,
-  packageJsonVersion,
-  packageLockVersions,
-  cargoTomlVersion,
-  cargoLockVersion,
-} from './bump.mjs';
+import { isValidVersion, packageJsonVersion, packageLockVersions, cargoTomlVersion, cargoLockVersion } from './bump.mjs';
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const PLACEHOLDER_RE = /pega[_\s-]*aqui[_\s-]*tu[_\s-]*clave[_\s-]*publica/i;

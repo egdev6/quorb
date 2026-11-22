@@ -11,12 +11,37 @@ const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'i18n-inv
 const texts = (entries) => entries.map((e) => [e.line, e.text]);
 
 test('isUiText keeps human text and drops identifiers, urls and css', () => {
-  for (const s of ['Guardar', 'Guardar cambios', 'sesión', 'Cuenta ${…}', ' · saldo comunicado', 'Quitar',
-    'Dónde escucha 9Router (por defecto http://localhost:20128).', 'p. ej. /usage/used_tokens']) {
+  for (const s of [
+    'Guardar',
+    'Guardar cambios',
+    'sesión',
+    'Cuenta ${…}',
+    ' · saldo comunicado',
+    'Quitar',
+    'Dónde escucha 9Router (por defecto http://localhost:20128).',
+    'p. ej. /usage/used_tokens',
+  ]) {
     assert.equal(isUiText(s), true, s);
   }
-  for (const s of ['', '   ', '{}', 'save_config', 'eg-gauge__key', 'top', 'camelCase', 'https://github.com/egdev6/quorb',
-    'GET', 'USD', 'Content-Type', './lib/types', 'src/lib/format.ts', '#ff0036', '%APPDATA%', '12px', '--eg-accent']) {
+  for (const s of [
+    '',
+    '   ',
+    '{}',
+    'save_config',
+    'eg-gauge__key',
+    'top',
+    'camelCase',
+    'https://github.com/egdev6/quorb',
+    'GET',
+    'USD',
+    'Content-Type',
+    './lib/types',
+    'src/lib/format.ts',
+    '#ff0036',
+    '%APPDATA%',
+    '12px',
+    '--eg-accent',
+  ]) {
     assert.equal(isUiText(s), false, s);
   }
 });
@@ -93,7 +118,7 @@ function makeRepo() {
   git(dir, 'config', 'core.autocrlf', 'false');
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src-tauri', 'src'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'src', 'App.tsx'), "export const A = () => <p title=\"Abrir ajustes\">Hola mundo</p>;\n");
+  fs.writeFileSync(path.join(dir, 'src', 'App.tsx'), 'export const A = () => <p title="Abrir ajustes">Hola mundo</p>;\n');
   fs.writeFileSync(path.join(dir, 'src', 'App.test.tsx'), "it('Texto de test', () => {});\n");
   fs.writeFileSync(path.join(dir, 'src-tauri', 'src', 'lib.rs'), 'const M: &str = "Salir de Quorb";\n');
   git(dir, 'add', '.');
@@ -111,16 +136,19 @@ function makeMultiRepo() {
   git(dir, 'config', 'core.autocrlf', 'false');
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'src-tauri', 'src'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'src', 'App.tsx'), [
-    'export const A = () => (', // 1
-    '  <>', // 2
-    '    <p>Zebra</p>', // 3
-    '    <p>Alfa</p>', // 4
-    '    <p>Zebra</p>', // 5
-    '  </>', // 6
-    ');', // 7
-    '',
-  ].join('\n'));
+  fs.writeFileSync(
+    path.join(dir, 'src', 'App.tsx'),
+    [
+      'export const A = () => (', // 1
+      '  <>', // 2
+      '    <p>Zebra</p>', // 3
+      '    <p>Alfa</p>', // 4
+      '    <p>Zebra</p>', // 5
+      '  </>', // 6
+      ');', // 7
+      '',
+    ].join('\n'),
+  );
   fs.writeFileSync(path.join(dir, 'src-tauri', 'src', 'lib.rs'), 'const M: &str = "Uno";\nconst N: &str = "Dos";\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'base');
@@ -206,14 +234,10 @@ test('sections deduplicate and sort texts; --sites prints path:line rows; --chec
     // --sites keeps every occurrence with its line, in path order then line order.
     const sites = run(dir, '--sites');
     assert.equal(sites.status, 0, sites.stderr);
-    assert.equal(sites.stdout, [
-      'src-tauri/src/lib.rs:1 | Uno',
-      'src-tauri/src/lib.rs:2 | Dos',
-      'src/App.tsx:3 | Zebra',
-      'src/App.tsx:4 | Alfa',
-      'src/App.tsx:5 | Zebra',
-      '',
-    ].join('\n'));
+    assert.equal(
+      sites.stdout,
+      ['src-tauri/src/lib.rs:1 | Uno', 'src-tauri/src/lib.rs:2 | Dos', 'src/App.tsx:3 | Zebra', 'src/App.tsx:4 | Alfa', 'src/App.tsx:5 | Zebra', ''].join('\n'),
+    );
     // --sites works against any ref.
     const refSites = run(dir, '--sites', '--ref', git(dir, 'rev-parse', 'HEAD'));
     assert.equal(refSites.status, 0, refSites.stderr);
@@ -402,8 +426,31 @@ const yamlScalar = (value) => {
 const unwrapQuotes = (word) => word.replace(/^(['"])(.*)\1$/, '$2');
 
 const CONTROL_WORDS = new Set([
-  'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select',
-  'function', '{', '}', '!', 'exit', 'return', 'exec', 'eval', 'source', '.', 'trap', 'alias',
+  'if',
+  'then',
+  'else',
+  'elif',
+  'fi',
+  'for',
+  'while',
+  'until',
+  'do',
+  'done',
+  'case',
+  'esac',
+  'select',
+  'function',
+  '{',
+  '}',
+  '!',
+  'exit',
+  'return',
+  'exec',
+  'eval',
+  'source',
+  '.',
+  'trap',
+  'alias',
 ]);
 
 /**
@@ -466,10 +513,7 @@ const splitShellCommands = (cmd) => {
 
 const commandWords = (text) => text.trim().split(/\s+/).map(unwrapQuotes);
 
-const leavesSubset = ([first, ...args]) =>
-  CONTROL_WORDS.has(first) ||
-  /^[({]|\)$/.test(first) ||
-  (first === 'set' && args.some((a) => a.startsWith('+')));
+const leavesSubset = ([first, ...args]) => CONTROL_WORDS.has(first) || /^[({]|\)$/.test(first) || (first === 'set' && args.some((a) => a.startsWith('+')));
 
 /** Separators that make a command a statement of its own: unconditional execution, failure not masked. */
 const STATEMENT_SEPARATORS = new Set(['', ';', '\n']);
@@ -504,9 +548,7 @@ const isShellStep = (shell) => shell === null || ['bash', 'sh'].includes(shell.s
 const runsCheckAfterInstall = (jobs) =>
   Object.values(jobs).some((job) => {
     if (job.if || !failsTheJob(job.continueOnError)) return false;
-    const events = job.steps
-      .filter((s) => s.run !== null && !s.if && failsTheJob(s.continueOnError) && isShellStep(s.shell))
-      .flatMap((s) => runEvents(s.run));
+    const events = job.steps.filter((s) => s.run !== null && !s.if && failsTheJob(s.continueOnError) && isShellStep(s.shell)).flatMap((s) => runEvents(s.run));
     const install = events.indexOf('install');
     return install >= 0 && events.indexOf('check', install + 1) > install;
   });
@@ -595,10 +637,7 @@ test('echoing the check command is not executing it (#160)', () => {
   ].join('\n');
   assert.equal(runsCheckAfterInstall(parseWorkflowRuns(echoOnly)), false, 'printing the check cannot accredit its execution');
   // The substring contract accepted exactly this workflow: pin why it had to go.
-  assert.ok(
-    /\bnode scripts\/i18n-inventory\.mjs --check\b/.test(echoOnly),
-    'documentation: the replaced substring regex matched the echo mention',
-  );
+  assert.ok(/\bnode scripts\/i18n-inventory\.mjs --check\b/.test(echoOnly), 'documentation: the replaced substring regex matched the echo mention');
 
   const compound = [
     'jobs:',
@@ -608,34 +647,14 @@ test('echoing the check command is not executing it (#160)', () => {
     '      - run: echo "inventory gate" && node scripts/i18n-inventory.mjs --check',
     '  ',
   ].join('\n');
-  assert.equal(
-    runsCheckAfterInstall(parseWorkflowRuns(compound)),
-    false,
-    'a check after && runs only if echo succeeds: not a gate (#186 review)',
-  );
+  assert.equal(runsCheckAfterInstall(parseWorkflowRuns(compound)), false, 'a check after && runs only if echo succeeds: not a gate (#186 review)');
 });
 
 test('separators inside quotes or comments do not fabricate a check segment (#160)', () => {
-  assert.equal(
-    runsCheck('echo "texto; node scripts/i18n-inventory.mjs --check ;fin"'),
-    false,
-    'a ; inside a quoted echo argument is data, not a separator',
-  );
-  assert.equal(
-    runsCheck("echo 'texto; node scripts/i18n-inventory.mjs --check'"),
-    false,
-    'a ; inside a single-quoted argument is data, not a separator',
-  );
-  assert.equal(
-    runsCheck('# texto; node scripts/i18n-inventory.mjs --check'),
-    false,
-    'a ; inside a comment is not a separator',
-  );
-  assert.equal(
-    runsCheck('npm test # then; node scripts/i18n-inventory.mjs --check'),
-    false,
-    'a trailing comment cannot accredit the check',
-  );
+  assert.equal(runsCheck('echo "texto; node scripts/i18n-inventory.mjs --check ;fin"'), false, 'a ; inside a quoted echo argument is data, not a separator');
+  assert.equal(runsCheck("echo 'texto; node scripts/i18n-inventory.mjs --check'"), false, 'a ; inside a single-quoted argument is data, not a separator');
+  assert.equal(runsCheck('# texto; node scripts/i18n-inventory.mjs --check'), false, 'a ; inside a comment is not a separator');
+  assert.equal(runsCheck('npm test # then; node scripts/i18n-inventory.mjs --check'), false, 'a trailing comment cannot accredit the check');
   assert.equal(
     runsCheck('echo "texto" && node scripts/i18n-inventory.mjs --check'),
     false,
@@ -654,8 +673,7 @@ test('separators inside quotes or comments do not fabricate a check segment (#16
 });
 
 /** One job that installs and then runs the given step lines (6-space `- ` indent). */
-const workflowWith = (...stepLines) =>
-  ['jobs:', '  checks:', '    steps:', '      - run: npm ci', ...stepLines, '  '].join('\n');
+const workflowWith = (...stepLines) => ['jobs:', '  checks:', '    steps:', '      - run: npm ci', ...stepLines, '  '].join('\n');
 const accredits = (yaml) => runsCheckAfterInstall(parseWorkflowRuns(yaml));
 const CHECK = 'node scripts/i18n-inventory.mjs --check';
 
@@ -715,14 +733,26 @@ test('a check whose failure cannot fail the step does not accredit it (#160)', (
   assert.equal(accredits(workflowWith(`      - run: ${CHECK} | tee out.txt`)), false, 'a pipe reports the exit code of tee');
   assert.equal(accredits(workflowWith(`      - run: ${CHECK} &`)), false, 'a background check is never awaited');
   assert.equal(accredits(workflowWith('      - run: |', '          set +e', `          ${CHECK}`)), false, 'set +e lets the step pass after a failed check');
-  assert.equal(accredits(workflowWith(`      - run: ${CHECK} && echo ok`)), false, 'a check before && can be masked by later statements; only statement position accredits (#186 review)');
-  assert.equal(accredits(workflowWith(`      - run: ${CHECK} 2>&1`)), false, 'only the literal canonical command accredits; extra words are not the gate (#186 review)');
+  assert.equal(
+    accredits(workflowWith(`      - run: ${CHECK} && echo ok`)),
+    false,
+    'a check before && can be masked by later statements; only statement position accredits (#186 review)',
+  );
+  assert.equal(
+    accredits(workflowWith(`      - run: ${CHECK} 2>&1`)),
+    false,
+    'only the literal canonical command accredits; extra words are not the gate (#186 review)',
+  );
   assert.equal(accredits(workflowWith(`      - run: ${CHECK} > report.txt`)), false, 'an output redirection is not the canonical invocation (#186 review)');
 });
 
 test('compound runs still accredit the check in statement position (#186 review)', () => {
   assert.equal(accredits(workflowWith(`      - run: npm test; ${CHECK}`)), true, 'a ;-separated check runs unconditionally and fails the step under bash -e');
-  assert.equal(accredits(workflowWith('      - run: |', `          ${CHECK}`, '          echo done')), true, 'a failed plain check still fails the step before any later statement');
+  assert.equal(
+    accredits(workflowWith('      - run: |', `          ${CHECK}`, '          echo done')),
+    true,
+    'a failed plain check still fails the step before any later statement',
+  );
 });
 
 test('step and job settings that skip or tolerate the check do not accredit it (#160)', () => {
@@ -737,9 +767,29 @@ test('step and job settings that skip or tolerate the check do not accredit it (
   assert.equal(accredits(job('if: false')), false, 'a conditional job may be skipped');
   assert.equal(accredits(job('continue-on-error: true')), false, 'a job allowed to fail is not a gate');
 
-  const jobDefaults = ['jobs:', '  checks:', '    defaults:', '      run:', '        shell: pwsh', '    steps:', '      - run: npm ci', `      - run: ${CHECK}`, '  '].join('\n');
+  const jobDefaults = [
+    'jobs:',
+    '  checks:',
+    '    defaults:',
+    '      run:',
+    '        shell: pwsh',
+    '    steps:',
+    '      - run: npm ci',
+    `      - run: ${CHECK}`,
+    '  ',
+  ].join('\n');
   assert.equal(accredits(jobDefaults), false, 'a job default shell outside bash/sh is not the supported subset');
-  const workflowDefaults = ['defaults:', '  run:', '    shell: python', 'jobs:', '  checks:', '    steps:', '      - run: npm ci', `      - run: ${CHECK}`, '  '].join('\n');
+  const workflowDefaults = [
+    'defaults:',
+    '  run:',
+    '    shell: python',
+    'jobs:',
+    '  checks:',
+    '    steps:',
+    '      - run: npm ci',
+    `      - run: ${CHECK}`,
+    '  ',
+  ].join('\n');
   assert.equal(accredits(workflowDefaults), false, 'a workflow default shell outside bash/sh is not the supported subset');
 
   const actionInput = workflowWith('      - uses: some/action@v1', '        with:', `          run: ${CHECK}`);

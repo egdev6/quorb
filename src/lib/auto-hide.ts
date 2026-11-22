@@ -40,9 +40,15 @@ export function watchPreparation(phase: RevealPhase, onStalled: () => void): () 
 export function waitForViewport(): Promise<void> {
   return new Promise((resolve) => {
     let frame = 0;
-    const finish = () => { window.clearTimeout(timer); window.cancelAnimationFrame(frame); resolve(); };
+    const finish = () => {
+      window.clearTimeout(timer);
+      window.cancelAnimationFrame(frame);
+      resolve();
+    };
     const timer = window.setTimeout(finish, 120);
-    frame = window.requestAnimationFrame(() => { frame = window.requestAnimationFrame(finish); });
+    frame = window.requestAnimationFrame(() => {
+      frame = window.requestAnimationFrame(finish);
+    });
   });
 }
 

@@ -27,11 +27,13 @@ test('valid zero-finding report completes with scanned count', () => {
 });
 
 test('known rules map to advisory findings with canonical rule ids', () => {
-  const out = call(report([
-    result({ start: { line: 3 } }),
-    result({ check_id: 'inputs.dynamic-function-construction', path: '/snapshot/b.ts', start: { line: 5 } }),
-    result({ check_id: 'inputs.shell-command-execution', start: { line: 7 }, extra: {} }),
-  ]));
+  const out = call(
+    report([
+      result({ start: { line: 3 } }),
+      result({ check_id: 'inputs.dynamic-function-construction', path: '/snapshot/b.ts', start: { line: 5 } }),
+      result({ check_id: 'inputs.shell-command-execution', start: { line: 7 }, extra: {} }),
+    ]),
+  );
   assert.equal(out.status, 'completed');
   assert.equal(out.scannedFiles, 2);
   assert.deepEqual(out.findings, [
@@ -49,10 +51,12 @@ test('raw scanner messages, snippets, metadata and extra fields never reach outp
 });
 
 test('all findings are preserved without truncation', () => {
-  const results = Array.from({ length: 50 }, (_, i) => result({
-    path: i % 2 ? '/snapshot/b.ts' : '/snapshot/a.js',
-    start: { line: i + 1 },
-  }));
+  const results = Array.from({ length: 50 }, (_, i) =>
+    result({
+      path: i % 2 ? '/snapshot/b.ts' : '/snapshot/a.js',
+      start: { line: i + 1 },
+    }),
+  );
   assert.equal(call(report(results)).findings.length, 50);
 });
 
@@ -73,7 +77,10 @@ test('empty or duplicate expected target sets are rejected', () => {
 
 test('scanned set must match expected exactly: no missing, unexpected or duplicate', () => {
   assert.throws(() => normalizeSemgrep(report(), ['/snapshot/a.js', '/snapshot/missing.js'], { root: ROOT }), /invalid-semgrep-report/);
-  assert.throws(() => normalizeSemgrep(report([], ['/snapshot/a.js', '/snapshot/b.ts', '/snapshot/extra.js']), TARGETS, { root: ROOT }), /invalid-semgrep-report/);
+  assert.throws(
+    () => normalizeSemgrep(report([], ['/snapshot/a.js', '/snapshot/b.ts', '/snapshot/extra.js']), TARGETS, { root: ROOT }),
+    /invalid-semgrep-report/,
+  );
   assert.throws(() => normalizeSemgrep(report([], ['/snapshot/a.js', '/snapshot/a.js']), ['/snapshot/a.js'], { root: ROOT }), /invalid-semgrep-report/);
 });
 
@@ -108,6 +115,19 @@ test('unknown rule terminals and non-WARNING severities are rejected', () => {
 });
 
 test('malformed top-level and result shapes are rejected', () => {
-  const cases = [null, [], {}, { ...report(), results: 'nope' }, { ...report(), errors: 'x' }, { ...report(), paths: {} }, { ...report(), paths: { scanned: 'x' } }, report([null]), report([[]]), report([{ check_id: 7 }]), report([result({ start: {} })]), report([result({ extra: 'x' })])];
+  const cases = [
+    null,
+    [],
+    {},
+    { ...report(), results: 'nope' },
+    { ...report(), errors: 'x' },
+    { ...report(), paths: {} },
+    { ...report(), paths: { scanned: 'x' } },
+    report([null]),
+    report([[]]),
+    report([{ check_id: 7 }]),
+    report([result({ start: {} })]),
+    report([result({ extra: 'x' })]),
+  ];
   for (const bad of cases) assert.throws(() => call(bad), /invalid-semgrep-report/);
 });

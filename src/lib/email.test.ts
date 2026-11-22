@@ -13,9 +13,16 @@ const email = { enabled: false, consent: true, sender: 'sender@example.test', re
 // No acredita la UI montada, el llavero ni un envío real.
 function persistenceFixture(globalEnabled: boolean, emailEnabled: boolean | undefined, failSave = false) {
   const alerts: AlertsConfig = {
-    enabled: globalEnabled, native: true, threshold: 80, exceededEffect: 'none',
-    onReset: true, resetEffect: 'none', exceededMedia: null, resetMedia: null,
-    mediaSize: 'small', mediaSound: false,
+    enabled: globalEnabled,
+    native: true,
+    threshold: 80,
+    exceededEffect: 'none',
+    onReset: true,
+    resetEffect: 'none',
+    exceededMedia: null,
+    resetMedia: null,
+    mediaSize: 'small',
+    mediaSound: false,
     ...(emailEnabled === undefined ? {} : { email: { ...email, enabled: emailEnabled, consent: false, sender: '', recipient: '' } }),
   };
   let stored = { locale: 'es', opacity: 0.5, alerts } as AppConfig;
@@ -33,20 +40,27 @@ function persistenceFixture(globalEnabled: boolean, emailEnabled: boolean | unde
     throw new Error(`Unexpected command: ${command}`);
   });
   const queue = createWriteQueue();
-  const enqueueSave = (build: () => AppConfig | Promise<AppConfig>) => queue.run(async () => {
-    const saved = await api.saveConfig(await build());
-    baseline = saved;
-    return saved;
-  });
+  const enqueueSave = (build: () => AppConfig | Promise<AppConfig>) =>
+    queue.run(async () => {
+      const saved = await api.saveConfig(await build());
+      baseline = saved;
+      return saved;
+    });
   return { mockInvoke, queue, enqueueSave, stored: () => stored, baseline: () => baseline };
 }
 
 const draftAlerts = (saved: AlertsConfig, globalEnabled: boolean, emailEnabled: boolean): AlertsConfig => ({
-  ...saved, enabled: globalEnabled, email: { ...email, enabled: emailEnabled },
+  ...saved,
+  enabled: globalEnabled,
+  email: { ...email, enabled: emailEnabled },
 });
 
 const sendTest = (alerts: AlertsConfig, enqueueSave: ReturnType<typeof persistenceFixture>['enqueueSave']) =>
-  sendEmailTest(alerts.email!, () => persistEmailTestAlerts(alerts, enqueueSave), () => api.sendEmailAlert(null));
+  sendEmailTest(
+    alerts.email!,
+    () => persistEmailTestAlerts(alerts, enqueueSave),
+    () => api.sendEmailAlert(null),
+  );
 
 describe('email test persistence (#256, S16)', () => {
   afterEach(() => vi.mocked(invoke).mockReset().mockResolvedValue('accepted'));
@@ -69,9 +83,7 @@ describe('email test persistence (#256, S16)', () => {
     };
 
     expect(await sendTest(alerts, f.enqueueSave)).toBe('accepted');
-    expect(f.mockInvoke.mock.calls).toEqual([
-      ['get_config'], ['save_config', { config: expected }], ['send_email_alert', { event: null }],
-    ]);
+    expect(f.mockInvoke.mock.calls).toEqual([['get_config'], ['save_config', { config: expected }], ['send_email_alert', { event: null }]]);
     expect(f.stored()).toEqual(expected);
     expect(f.baseline()).toEqual(expected);
     expect(alerts).toEqual(beforeDraft);
@@ -82,7 +94,9 @@ describe('email test persistence (#256, S16)', () => {
     const alerts = draftAlerts(f.stored().alerts, false, false);
     let release!: () => void;
     const earlier = f.enqueueSave(async () => {
-      await new Promise<void>((resolve) => { release = resolve; });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
       return { ...f.stored(), opacity: 0.8, alerts: { ...f.stored().alerts, enabled: true, email: { ...email, enabled: true } } };
     });
     await Promise.resolve();
@@ -94,8 +108,10 @@ describe('email test persistence (#256, S16)', () => {
     expect(await pending).toBe('accepted');
     const expected = { ...latest, alerts: { ...alerts, enabled: true, email: { ...email, enabled: true } } };
     expect(f.mockInvoke.mock.calls).toEqual([
-      ['save_config', { config: latest }], ['get_config'],
-      ['save_config', { config: expected }], ['send_email_alert', { event: null }],
+      ['save_config', { config: latest }],
+      ['get_config'],
+      ['save_config', { config: expected }],
+      ['send_email_alert', { event: null }],
     ]);
     expect(f.stored()).toEqual(expected);
     expect(f.baseline()).toEqual(expected);
@@ -114,23 +130,25 @@ describe('email test persistence (#256, S16)', () => {
     expect(f.baseline()).toEqual(original);
   });
 
-  it.each([[true, true], [true, false], [false, true], [false, false]] as const)(
-    'normal Save still persists draft switches (%s, %s) through the canonical coordinator',
-    async (globalEnabled, emailEnabled) => {
-      const f = persistenceFixture(!globalEnabled, !emailEnabled);
-      const snapshot = { ...f.stored(), alerts: draftAlerts(f.stored().alerts, globalEnabled, emailEnabled) };
-      const applyAutostart = vi.fn();
-      const result = await runMixedSave(
-        { configDirty: true, configSnapshot: snapshot, autostartDirty: false, autostartDesired: false },
-        { saveConfig: (s) => enqueueCanonicalConfig(f.enqueueSave, s, () => ({})), applyAutostart },
-      );
-      expect(result).toEqual({ config: { status: 'saved', saved: snapshot }, autostart: { status: 'skipped' } });
-      expect(f.mockInvoke.mock.calls).toEqual([['save_config', { config: snapshot }]]);
-      expect(f.stored()).toEqual(snapshot);
-      expect(f.baseline()).toEqual(snapshot);
-      expect(applyAutostart).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ] as const)('normal Save still persists draft switches (%s, %s) through the canonical coordinator', async (globalEnabled, emailEnabled) => {
+    const f = persistenceFixture(!globalEnabled, !emailEnabled);
+    const snapshot = { ...f.stored(), alerts: draftAlerts(f.stored().alerts, globalEnabled, emailEnabled) };
+    const applyAutostart = vi.fn();
+    const result = await runMixedSave(
+      { configDirty: true, configSnapshot: snapshot, autostartDirty: false, autostartDesired: false },
+      { saveConfig: (s) => enqueueCanonicalConfig(f.enqueueSave, s, () => ({})), applyAutostart },
+    );
+    expect(result).toEqual({ config: { status: 'saved', saved: snapshot }, autostart: { status: 'skipped' } });
+    expect(f.mockInvoke.mock.calls).toEqual([['save_config', { config: snapshot }]]);
+    expect(f.stored()).toEqual(snapshot);
+    expect(f.baseline()).toEqual(snapshot);
+    expect(applyAutostart).not.toHaveBeenCalled();
+  });
 });
 
 describe('email Settings actions', () => {
@@ -143,21 +161,30 @@ describe('email Settings actions', () => {
   });
 
   it('requires explicit consent and valid addresses before persisting or sending', async () => {
-    const persist = vi.fn(); const send = vi.fn();
+    const persist = vi.fn();
+    const send = vi.fn();
     expect(emailReady(undefined)).toBe(false);
     expect(await sendEmailTest({ ...email, consent: false }, persist, send)).toBe('consentRequired');
     expect(await sendEmailTest({ ...email, sender: 'bad\r\naddress' }, persist, send)).toBe('configurationMissing');
-    expect(persist).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('persists before one explicit test and never activates automatic sending', async () => {
     const order: string[] = [];
-    const persist = vi.fn(async () => { order.push('save'); });
-    const send = vi.fn(async () => { order.push('send'); return 'accepted' as const; });
+    const persist = vi.fn(async () => {
+      order.push('save');
+    });
+    const send = vi.fn(async () => {
+      order.push('send');
+      return 'accepted' as const;
+    });
     const before = { ...email };
     expect(await sendEmailTest(email, persist, send)).toBe('accepted');
-    expect(order).toEqual(['save', 'send']); expect(send).toHaveBeenCalledTimes(1);
-    expect(email).toEqual(before); expect(email.enabled).toBe(false);
+    expect(order).toEqual(['save', 'send']);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(email).toEqual(before);
+    expect(email.enabled).toBe(false);
   });
 
   it('failed save does not send and diagnostics never echo errors', async () => {

@@ -11,22 +11,32 @@ export function surfaceClipFor(size: { w: number; h: number }, radii: readonly n
     throw new Error('Invalid native surface dimensions');
   }
   const limit = Math.min(size.w, size.h) / 2;
-  const radius = (n: number) => Number.isFinite(n) ? Math.min(limit, Math.max(0, n * scale)) : 0;
+  const radius = (n: number) => (Number.isFinite(n) ? Math.min(limit, Math.max(0, n * scale)) : 0);
   return { width: size.w, height: size.h, radii: [radius(radii[0]), radius(radii[1]), radius(radii[2]), radius(radii[3])] };
 }
 
 /** Backdrop cosmetics must not prevent a usable widget/popup from appearing. */
-export async function clipSurfaceSafely(clip: SurfaceClip, apply: (clip: SurfaceClip) => Promise<unknown>, report: (error: unknown) => void = console.warn, surface?: HTMLElement): Promise<void> {
+export async function clipSurfaceSafely(
+  clip: SurfaceClip,
+  apply: (clip: SurfaceClip) => Promise<unknown>,
+  report: (error: unknown) => void = console.warn,
+  surface?: HTMLElement,
+): Promise<void> {
   // The native mask clips only the backdrop; CSS must always clip foreground content.
   if (surface) delete surface.dataset.nativeRounded;
   try {
     await apply(clip);
+  } catch (error) {
+    report(error);
   }
-  catch (error) { report(error); }
 }
 
 /** Read computed radii: docked edges and dragging can override the theme radius. */
 export function measureSurfaceClip(element: HTMLElement, size: { w: number; h: number }, scale: number): SurfaceClip {
   const style = getComputedStyle(element);
-  return surfaceClipFor(size, [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map(Number.parseFloat), scale);
+  return surfaceClipFor(
+    size,
+    [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map(Number.parseFloat),
+    scale,
+  );
 }

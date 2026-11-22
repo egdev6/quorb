@@ -80,6 +80,7 @@ You need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and W
 git clone https://github.com/egdev6/quorb
 cd quorb
 npm install
+npm run hooks:install   # once per clone: Lefthook pre-push hook (Biome + cargo fmt)
 npm run app:dev
 ```
 
@@ -96,8 +97,11 @@ To build a local installer, run `npm run app:build`. Outputs are written under `
 | `npm run app:dev` | Run the desktop app with hot reload |
 | `npm run app:build` | Build a local installer |
 | `npm run typecheck` | TypeScript checks |
-| `npm test` | Vitest tests |
+| `npm test` | Vitest tests plus the scripts' Node tests |
 | `cd src-tauri; cargo test` | Rust tests |
+| `npm run check` | Biome lint + format check (CI runs `npx biome ci`) |
+| `npm run check:fix` | Apply Biome safe fixes and formatting |
+| `npm run hooks:install` | Install the Lefthook `pre-push` hook (once per clone) |
 | `npm run bump x.y.z` | Update the version |
 | `npm run setup:signing` | Maintainer signing setup; creates keys and can upload GitHub secrets |
 | `npm run app:release` | Build a signed update; requires signing credentials |
@@ -194,13 +198,13 @@ For WSL sessions, select the distro in Settings and configure credential file pa
 
 ### Roadmap
 
-Windows Authenticode signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. A signed, notarized macOS ARM64 release is available above, with manual updates. Linux public releases and a Linux updater are not part of this project yet; Linux local development is covered in the section below.
+Windows Authenticode signing and winget distribution, click-through mode and NaN's GLM four-hour window remain roadmap items, not current capabilities. A signed, notarized macOS ARM64 release is available above, with manual updates. Linux `.deb` and `.AppImage` installers are published with each release since v0.9.1, with manual updates; a Linux updater is not part of the project yet. Linux local development is covered in the section below.
 
 ## Linux development notes
 
-A native Linux port is under development (tracking issues #105–#108 of the ODD project `quorb-linux-local-v1`). Since v0.9.1 the `.deb` and `.AppImage` are published in each release; for local development:
+The native Linux port was delivered through issues #105–#108 of the ODD project `quorb-linux-local-v1`. Since v0.9.1 the `.deb` and `.AppImage` are published in each release; for local development:
 
-- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run app:dev`.
+- Requirements: Node 22+, Rust, and the usual Linux system libraries of Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Run from source with `npm install` + `npm run hooks:install` + `npm run app:dev`.
 - Local installable bundles are decided: `.deb` for Debian/Ubuntu and `.AppImage` for Arch and the rest (see [`docs/build-linux.md`](./docs/build-linux.md)). They are built and verified by the manual Linux workflow (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) or locally with `npm run app:build` + the `.testcontainer/verify-*.sh` scripts. CI artifacts stay private to each run; public installers are attached to each release by `.github/workflows/linux-release.yml` (see [docs/release-linux.md](./docs/release-linux.md)).
 - Session and behaviour limits depend on the desktop session, and Settings shows them per surface in the «Sesión de escritorio» block:
   - X11: complete behaviour of always-on-top, tray icon, global shortcuts and transparency (the last only with a compositing WM).

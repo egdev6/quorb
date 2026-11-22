@@ -4,7 +4,7 @@ import { providerOf } from './accounts';
 /** Live palette: Claude/Codex use quota periods; model/API providers keep ring order. */
 export function meterColor(report: UsageReport, meter: Meter, index: number): string {
   const provider = providerOf(report.id);
-  if (provider !== 'claude' && provider !== 'codex') return `var(--ring-${index % 3 + 1})`;
+  if (provider !== 'claude' && provider !== 'codex') return `var(--ring-${(index % 3) + 1})`;
 
   const seconds = meter.windowSeconds;
   if (seconds != null && seconds > 0) {

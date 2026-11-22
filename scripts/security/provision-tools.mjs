@@ -14,7 +14,9 @@ const WHEEL = /^[A-Za-z0-9_.+-]+\.whl$/;
 const LABEL = /^[A-Za-z0-9_.+-]{1,200}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const IMMUTABLE = /^\/packages\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{60}\/[^/]+$/;
-const fail = () => { throw new Error(FAIL); };
+const fail = () => {
+  throw new Error(FAIL);
+};
 
 function validateManifest(manifest) {
   if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) fail();
@@ -34,7 +36,11 @@ function validateManifest(manifest) {
     if (typeof url !== 'string' || !SHA256.test(sha256)) fail();
     if (!Number.isInteger(size) || size <= 0 || size > MAX_ARTIFACT_BYTES) fail();
     let parsed;
-    try { parsed = new URL(url); } catch { fail(); }
+    try {
+      parsed = new URL(url);
+    } catch {
+      fail();
+    }
     if (parsed.protocol !== 'https:' || parsed.hostname !== 'files.pythonhosted.org') fail();
     if (parsed.username !== '' || parsed.password !== '' || parsed.port !== '') fail();
     if (parsed.search !== '' || parsed.hash !== '') fail();
@@ -53,7 +59,12 @@ function validateManifest(manifest) {
 function destinationParent(destination) {
   if (typeof destination !== 'string' || !isAbsolute(destination)) fail();
   let exists = true;
-  try { lstatSync(destination); } catch (error) { if (error.code !== 'ENOENT') fail(); exists = false; }
+  try {
+    lstatSync(destination);
+  } catch (error) {
+    if (error.code !== 'ENOENT') fail();
+    exists = false;
+  }
   if (exists) fail();
   const parent = dirname(destination);
   const info = statSync(parent, { throwIfNoEntry: false });
@@ -66,7 +77,9 @@ async function install(artifact, stage, fetchImpl) {
   let response;
   try {
     response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(60000) });
-  } catch { fail(); }
+  } catch {
+    fail();
+  }
   if (!response || response.ok !== true || !response.body) fail();
   const digest = createHash('sha256');
   let received = 0;
@@ -92,7 +105,7 @@ async function install(artifact, stage, fetchImpl) {
 }
 
 export async function provisionTools({ manifest, destination }, deps = { fetch: globalThis.fetch }) {
-  const fetchImpl = (deps && typeof deps.fetch === 'function') ? deps.fetch : globalThis.fetch;
+  const fetchImpl = deps && typeof deps.fetch === 'function' ? deps.fetch : globalThis.fetch;
   let stage;
   let created = false;
   try {
@@ -104,9 +117,21 @@ export async function provisionTools({ manifest, destination }, deps = { fetch: 
     for (const artifact of artifacts) renameSync(join(stage, artifact.filename), join(destination, artifact.filename));
     return { directory: destination, artifacts: artifacts.length };
   } catch {
-    if (created) { try { rmSync(destination, { recursive: true, force: true }); } catch { /* own dir only */ } }
+    if (created) {
+      try {
+        rmSync(destination, { recursive: true, force: true });
+      } catch {
+        /* own dir only */
+      }
+    }
     fail();
   } finally {
-    if (stage) { try { rmSync(stage, { recursive: true, force: true }); } catch { /* private stage */ } }
+    if (stage) {
+      try {
+        rmSync(stage, { recursive: true, force: true });
+      } catch {
+        /* private stage */
+      }
+    }
   }
 }

@@ -19,7 +19,9 @@ export function linuxAssetNames(version) {
 async function readJson(response, signal) {
   if (!response?.ok || response.status !== 200 || typeof response.body?.getReader !== 'function') throw new Error();
   const reader = response.body.getReader();
-  const cancel = () => { void reader.cancel().catch(() => {}); };
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
   signal.addEventListener('abort', cancel, { once: true });
   let complete = false;
   try {
@@ -45,37 +47,47 @@ async function readJson(response, signal) {
 }
 
 // No import-time I/O; Git and HTTP can be replaced by offline test fakes.
-export async function preflightRelease({ root = projectRoot, env = process.env,
-  execFileSync = execute, fetch = globalThis.fetch } = {}) {
-  const { GITHUB_REF: ref, RELEASE_VERSION: version, RELEASE_SOURCE_SHA: sourceSha,
-    GITHUB_REPOSITORY, GH_TOKEN: token } = env;
+export async function preflightRelease({ root = projectRoot, env = process.env, execFileSync = execute, fetch = globalThis.fetch } = {}) {
+  const { GITHUB_REF: ref, RELEASE_VERSION: version, RELEASE_SOURCE_SHA: sourceSha, GITHUB_REPOSITORY, GH_TOKEN: token } = env;
   validateReleaseInputs({ ref, version, sourceSha });
   if (GITHUB_REPOSITORY !== repository || typeof token !== 'string' || !token.trim() || /[\r\n]/.test(token)) {
     throw new Error('Invalid release environment');
   }
-  const git = (args) => execFileSync('git', args, {
-    cwd: root, encoding: 'utf8', timeout: 10_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const git = (args) =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
   let failure = 'Release source_sha must be an ancestor of origin/main';
   try {
     git(['merge-base', '--is-ancestor', sourceSha, 'origin/main']);
     failure = 'Release manifest versions or Tauri configuration do not match source_sha';
     const at = (file) => git(['show', `${sourceSha}:${file}`]);
-    const versions = [packageJsonVersion(at('package.json')),
+    const versions = [
+      packageJsonVersion(at('package.json')),
       ...packageLockVersions(at('package-lock.json')),
       cargoTomlVersion(at('src-tauri/Cargo.toml')),
-      cargoLockVersion(at('src-tauri/Cargo.lock'))];
+      cargoLockVersion(at('src-tauri/Cargo.lock')),
+    ];
     const tauri = JSON.parse(at('src-tauri/tauri.conf.json'));
-    if (versions.some((value) => value !== version) || tauri?.productName !== 'Quorb' ||
-        !['../package.json', version].includes(tauri?.version)) throw new Error();
+    if (versions.some((value) => value !== version) || tauri?.productName !== 'Quorb' || !['../package.json', version].includes(tauri?.version))
+      throw new Error();
 
     // Bound all pages, annotated-tag hops and response bodies by one deadline.
     const signal = AbortSignal.timeout(30_000);
-    const request = async (route) => readJson(await fetch(`https://api.github.com/repos/${repository}${route}`, {
-      method: 'GET', redirect: 'error', signal,
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28' },
-    }), signal);
+    const request = async (route) =>
+      readJson(
+        await fetch(`https://api.github.com/repos/${repository}${route}`, {
+          method: 'GET',
+          redirect: 'error',
+          signal,
+          headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
+        }),
+        signal,
+      );
     const list = async (route) => {
       const entries = [];
       for (let page = 1; page <= 20; page++) {
@@ -92,8 +104,7 @@ export async function preflightRelease({ root = projectRoot, env = process.env,
     if (releases.some((release) => typeof release.tag_name !== 'string')) throw new Error();
     const found = releases.filter((release) => release.tag_name === `v${version}`);
     if (found.length === 0) throw new Error(`Release v${version} must already exist`);
-    if (found.length !== 1 || !Number.isSafeInteger(found[0].id) || found[0].id <= 0 ||
-        typeof found[0].draft !== 'boolean') throw new Error();
+    if (found.length !== 1 || !Number.isSafeInteger(found[0].id) || found[0].id <= 0 || typeof found[0].draft !== 'boolean') throw new Error();
     const release = found[0];
 
     failure = 'Release tag must point at source_sha';
@@ -121,8 +132,7 @@ export async function preflightRelease({ root = projectRoot, env = process.env,
     if (failure === 'Unable to verify release metadata' && error.message === `Release v${version} must already exist`) {
       throw new Error(error.message);
     }
-    if (failure === 'Unable to verify release assets' &&
-        linuxAssetNames(version).some((name) => error.message === `Release already contains ${name}`)) {
+    if (failure === 'Unable to verify release assets' && linuxAssetNames(version).some((name) => error.message === `Release already contains ${name}`)) {
       throw new Error(error.message);
     }
     throw new Error(failure);
@@ -130,6 +140,10 @@ export async function preflightRelease({ root = projectRoot, env = process.env,
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { console.log(JSON.stringify(await preflightRelease())); }
-  catch (error) { console.error(error.message); process.exitCode = 1; }
+  try {
+    console.log(JSON.stringify(await preflightRelease()));
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

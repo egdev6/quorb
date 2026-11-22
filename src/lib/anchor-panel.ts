@@ -26,8 +26,7 @@ export const NO_PANEL: PanelState = { providerId: null, anchored: false };
  * puntero no lo cambia por debajo (para cambiar de provider hay que hacer
  * clic, que además mantiene el anclaje).
  */
-export const hoverPanel = (state: PanelState, providerId: string): PanelState =>
-  state.anchored ? state : { providerId, anchored: false };
+export const hoverPanel = (state: PanelState, providerId: string): PanelState => (state.anchored ? state : { providerId, anchored: false });
 
 /**
  * El clic ancla el panel.
@@ -134,5 +133,4 @@ export const REORDER_GUARD_MS = 300;
  * True cuando el gesto sobre el orbe fue un arrastre de reordenación y no un
  * clic: reordenar no puede anclar el panel por accidente.
  */
-export const isReorderGesture = (lastReorderAt: number, now: number): boolean =>
-  now - lastReorderAt < REORDER_GUARD_MS;
+export const isReorderGesture = (lastReorderAt: number, now: number): boolean => now - lastReorderAt < REORDER_GUARD_MS;

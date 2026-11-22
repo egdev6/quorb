@@ -45,9 +45,10 @@ test('ICNS approval requires exact path, hash and regular non-executable mode', 
 
 test('repository policy pins the preliminary macOS icon approval', () => {
   const policy = validatePolicy(JSON.parse(readFileSync(new URL('../../.github/security/policy.json', import.meta.url), 'utf8')));
-  assert.deepEqual(policy.approvedBinaryImages.filter(image => image.path.endsWith('.icns')), [
-    { path: 'src-tauri/icons/icon.icns', sha256: 'd987765bbdea610ebacb99161739d4e226a3841497e211fc98eb376b092ebbbc' },
-  ]);
+  assert.deepEqual(
+    policy.approvedBinaryImages.filter((image) => image.path.endsWith('.icns')),
+    [{ path: 'src-tauri/icons/icon.icns', sha256: 'd987765bbdea610ebacb99161739d4e226a3841497e211fc98eb376b092ebbbc' }],
+  );
 });
 
 test('repository policy pins seven preliminary transparent-icon approvals without expanding the allowlist', () => {
@@ -62,7 +63,10 @@ test('repository policy pins seven preliminary transparent-icon approvals withou
     { path: 'src/assets/quorb-logo.png', sha256: '646cf10a0c465fe7d11f2e6c6be544fdddfda93256d47f22aa04a009d1d01f1b' },
   ];
   assert.equal(policy.approvedBinaryImages.length, 19);
-  assert.deepEqual(policy.approvedBinaryImages.filter(image => expected.some(approval => approval.path === image.path)), expected);
+  assert.deepEqual(
+    policy.approvedBinaryImages.filter((image) => expected.some((approval) => approval.path === image.path)),
+    expected,
+  );
 });
 
 test('image approval never exempts links, executable modes or bidi paths', () => {
@@ -80,7 +84,12 @@ test('image exemption handles bytes beyond text limit but never missing bytes', 
 });
 
 test('image approvals reject bad hashes, traversal, duplicates and source exemptions', () => {
-  for (const approvals of [[{ ...imageApproval, sha256: 'bad' }], [{ ...imageApproval, path: '../logo.png' }], [imageApproval, imageApproval], [{ ...imageApproval, path: 'src/main.ts' }]]) {
+  for (const approvals of [
+    [{ ...imageApproval, sha256: 'bad' }],
+    [{ ...imageApproval, path: '../logo.png' }],
+    [imageApproval, imageApproval],
+    [{ ...imageApproval, path: 'src/main.ts' }],
+  ]) {
     assert.throws(() => validatePolicy(pol({ approvedBinaryImages: approvals })), TypeError);
   }
 });
@@ -106,7 +115,13 @@ test('zero-width joiner alerts but does not block', () => {
 test('nonblocking Cf on first line cannot mask later bidi', () => {
   const r = analyze([src('src/a.ts', 'a\u200db\nline\u202e\n')], pol());
   assert.equal(r.ok, false);
-  assert.deepEqual(r.findings.map(f => [f.severity, f.line]), [['alert', 1], ['block', 2]]);
+  assert.deepEqual(
+    r.findings.map((f) => [f.severity, f.line]),
+    [
+      ['alert', 1],
+      ['block', 2],
+    ],
+  );
 });
 
 test('bidi in tracked Markdown (non-source extension) is scanned and blocks', () => {

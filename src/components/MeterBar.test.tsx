@@ -21,7 +21,17 @@ describe('MeterBar marca lo viejo (B2)', () => {
   // `readAt` se arma con la hora local para que el test no dependa de la zona de la
   // máquina (el instante sigue siendo UTC).
   const localReadAt = new Date(2026, 10, 10, 8, 30).toISOString();
-  const stale: Meter = { ...fresh, id: 'model:deepseek-v4-flash', label: 'deepseek-v4-flash', percent: 95.558, used: 955_581_032, limit: 1_000_000_000, unit: 'tokens', stale: true, readAt: localReadAt };
+  const stale: Meter = {
+    ...fresh,
+    id: 'model:deepseek-v4-flash',
+    label: 'deepseek-v4-flash',
+    percent: 95.558,
+    used: 955_581_032,
+    limit: 1_000_000_000,
+    unit: 'tokens',
+    stale: true,
+    readAt: localReadAt,
+  };
 
   it('renders a fresh meter exactly as before', () => {
     // Un medidor fresco no cambia ni un byte: la marca sólo aparece con lo viejo.
@@ -124,7 +134,6 @@ describe('MeterBar y la base de la cuota (T48)', () => {
     expect(html).toContain('quota could not be read');
   });
 });
-
 
 // T1-T5 (#268): los medidores que declara el backend (el fondo del periodo y el
 // saldo) se muestran con la etiqueta del catálogo y con el importe tal cual.

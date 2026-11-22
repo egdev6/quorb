@@ -7,16 +7,30 @@ const sha = 'a'.repeat(40);
 const names = ['Tests and build (Windows)', 'Tests and bundle (macOS ARM64)', 'Static code safety', 'Secrets scan'];
 const bytes = Buffer.from('fixture DMG bytes, not a mountable image');
 const input = {
-  version: '0.6.0', sourceSha: sha, dmgName: 'Quorb_0.6.0_aarch64.dmg',
-  sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length,
+  version: '0.6.0',
+  sourceSha: sha,
+  dmgName: 'Quorb_0.6.0_aarch64.dmg',
+  sha256: createHash('sha256').update(bytes).digest('hex'),
+  size: bytes.length,
 };
 function source() {
   return {
-    ref: 'refs/heads/main', expectedVersion: '0.6.0', version: '0.6.0',
-    sourceSha: sha, workflowSha: sha, headSha: sha,
-    checks: { total_count: 4, check_runs: names.map((name) => ({
-      name, status: 'completed', conclusion: 'success', head_sha: sha, app: { slug: 'github-actions' },
-    })) },
+    ref: 'refs/heads/main',
+    expectedVersion: '0.6.0',
+    version: '0.6.0',
+    sourceSha: sha,
+    workflowSha: sha,
+    headSha: sha,
+    checks: {
+      total_count: 4,
+      check_runs: names.map((name) => ({
+        name,
+        status: 'completed',
+        conclusion: 'success',
+        head_sha: sha,
+        app: { slug: 'github-actions' },
+      })),
+    },
   };
 }
 
@@ -31,8 +45,11 @@ test('accepts only the exact main source and four uniquely successful Actions ch
 
 test('rejects non-main refs, invalid or mismatched stable versions and provenance', () => {
   const cases = [
-    ['ref', 'main'], ['ref', 'refs/heads/feature'], ['ref', 'refs/heads/main\n'],
-    ['version', '0.6.1'], ['expectedVersion', '0.6.1'],
+    ['ref', 'main'],
+    ['ref', 'refs/heads/feature'],
+    ['ref', 'refs/heads/main\n'],
+    ['version', '0.6.1'],
+    ['expectedVersion', '0.6.1'],
   ];
   for (const version of ['0.06.0', '01.6.0', '0.6.00', '0.6', '0.6.0-rc.1', '0.6.0+build', '../0.6.0', '0.6.0\n', null]) {
     cases.push(['version', version], ['expectedVersion', version]);
@@ -49,11 +66,18 @@ test('rejects non-main refs, invalid or mismatched stable versions and provenanc
 });
 
 test('rejects malformed, paginated or incomplete REST check responses before granting authority', () => {
-  for (const checks of [null, {}, [], { total_count: 0, check_runs: [] },
+  for (const checks of [
+    null,
+    {},
+    [],
+    { total_count: 0, check_runs: [] },
     { total_count: 5, check_runs: source().checks.check_runs },
     { total_count: '4', check_runs: source().checks.check_runs },
-    { total_count: -1, check_runs: [] }, { total_count: 1, check_runs: [null] },
-    { total_count: 1, check_runs: [{}] }, { total_count: 4, check_runs: {} }]) {
+    { total_count: -1, check_runs: [] },
+    { total_count: 1, check_runs: [null] },
+    { total_count: 1, check_runs: [{}] },
+    { total_count: 4, check_runs: {} },
+  ]) {
     assert.throws(() => validatePreviewSource({ ...source(), checks }), /preview checks/);
   }
   const missing = source();
@@ -70,9 +94,17 @@ test('rejects malformed, paginated or incomplete REST check responses before gra
 
 test('each required name rejects duplicate, unsuccessful, pending, stale or non-Actions results', () => {
   for (let index = 0; index < names.length; index++) {
-    for (const patch of [{ conclusion: 'failure' }, { conclusion: 'skipped' }, { conclusion: null },
-      { status: 'in_progress' }, { status: 'queued' }, { head_sha: 'b'.repeat(40) },
-      { app: { slug: 'other' } }, { app: null }, { name: `${names[index]} ` }]) {
+    for (const patch of [
+      { conclusion: 'failure' },
+      { conclusion: 'skipped' },
+      { conclusion: null },
+      { status: 'in_progress' },
+      { status: 'queued' },
+      { head_sha: 'b'.repeat(40) },
+      { app: { slug: 'other' } },
+      { app: null },
+      { name: `${names[index]} ` },
+    ]) {
       const value = source();
       Object.assign(value.checks.check_runs[index], patch);
       assert.throws(() => validatePreviewSource(value), /preview checks/);
@@ -86,9 +118,16 @@ test('each required name rejects duplicate, unsuccessful, pending, stale or non-
 
 test('builds a deterministic unsigned preview manifest with a fixed policy', () => {
   const expected = {
-    schemaVersion: 1, delivery: 'unsigned-preview', developerId: false, notarized: false,
-    arch: 'arm64', minimumSystemVersion: '15.0', updater: 'manual', retentionDays: 14,
-    version: input.version, sourceSha: sha,
+    schemaVersion: 1,
+    delivery: 'unsigned-preview',
+    developerId: false,
+    notarized: false,
+    arch: 'arm64',
+    minimumSystemVersion: '15.0',
+    updater: 'manual',
+    retentionDays: 14,
+    version: input.version,
+    sourceSha: sha,
     dmg: { name: input.dmgName, sha256: input.sha256, size: bytes.length },
   };
   assert.deepEqual(buildPreviewManifest(input), expected);
@@ -105,8 +144,15 @@ test('rejects unsafe names, invalid digest, size, version, SHA and policy inject
   for (const sha256 of ['', 'a'.repeat(63), 'G'.repeat(64), 'A'.repeat(64), `${input.sha256}\n`, null]) cases.push({ sha256 });
   for (const size of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '12', null]) cases.push({ size });
   cases.push({ version: '0.06.0' }, { sourceSha: 'A'.repeat(40) });
-  for (const [key, value] of [['delivery', 'signed'], ['developerId', true], ['notarized', true],
-    ['arch', 'x64'], ['minimumSystemVersion', '12.0'], ['updater', 'automatic'], ['retentionDays', 90]]) {
+  for (const [key, value] of [
+    ['delivery', 'signed'],
+    ['developerId', true],
+    ['notarized', true],
+    ['arch', 'x64'],
+    ['minimumSystemVersion', '12.0'],
+    ['updater', 'automatic'],
+    ['retentionDays', 90],
+  ]) {
     cases.push({ [key]: value });
   }
   for (const patch of cases) assert.throws(() => buildPreviewManifest({ ...input, ...patch }), /preview manifest/);

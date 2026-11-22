@@ -68,14 +68,7 @@ describe('isConnectionDirty', () => {
   // sucia; el login usa lo GUARDADO, no lo que se ve en pantalla.
   it('detects a sessionEnv switch from host to wsl', () => {
     expect(
-      isConnectionDirty(
-        account,
-        account,
-        provider,
-        provider,
-        { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' },
-        { sessionEnv: 'host', wslDistro: '' },
-      ),
+      isConnectionDirty(account, account, provider, provider, { sessionEnv: 'wsl', wslDistro: 'Ubuntu-22.04' }, { sessionEnv: 'host', wslDistro: '' }),
     ).toBe(true);
   });
 
@@ -114,7 +107,10 @@ describe('createPresencePoller', () => {
     const poller = createPresencePoller({
       exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
       onResult,
-      setInterval: (fn) => { tick = fn; return 7; },
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
       clearInterval: () => {},
     });
     poller.start();
@@ -139,7 +135,10 @@ describe('createPresencePoller', () => {
     const poller = createPresencePoller({
       exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
       onResult,
-      setInterval: (fn) => { tick = fn; return 7; },
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
       clearInterval: () => {},
     });
     poller.start();
@@ -165,10 +164,16 @@ describe('createPresencePoller', () => {
     const poller = createPresencePoller({
       exists: () => new Promise<boolean>((resolve, reject) => requests.push({ resolve, reject })),
       onResult,
-      setInterval: (fn) => { tick = fn; return 7; },
+      setInterval: (fn) => {
+        tick = fn;
+        return 7;
+      },
       clearInterval: () => {},
     });
-    const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+    const flush = async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    };
     poller.start();
     requests[0].resolve(true);
     await flush();
@@ -196,7 +201,10 @@ describe('createPresencePoller', () => {
     const poller = createPresencePoller({
       exists,
       onResult,
-      setInterval: (fn) => { ticks.push(fn); return ticks.length; },
+      setInterval: (fn) => {
+        ticks.push(fn);
+        return ticks.length;
+      },
       clearInterval: (handle) => cleared.push(handle),
     });
     poller.start();

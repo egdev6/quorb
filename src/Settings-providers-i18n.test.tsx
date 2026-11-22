@@ -65,7 +65,18 @@ const cfg = enabledOnly('claude', 'copilot');
 
 const card = (locale: Locale, tab: 'claude' | 'copilot' = 'claude', drawerOpen = true, platform: 'windows' | 'macos' | 'linux' = 'windows') =>
   renderToStaticMarkup(
-    <ProvidersCard locale={locale} cfg={cfg} secrets={{}} tab={tab} drawerOpen={drawerOpen} onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform={platform} />,
+    <ProvidersCard
+      locale={locale}
+      cfg={cfg}
+      secrets={{}}
+      tab={tab}
+      drawerOpen={drawerOpen}
+      onSelectTab={noop}
+      onRefreshMinutes={noop}
+      onSessionEnv={noop}
+      onWslDistro={noop}
+      platform={platform}
+    />,
   );
 
 const descriptions: [es: string, en: string][] = [
@@ -89,14 +100,22 @@ const descriptions: [es: string, en: string][] = [
 describe('Providers list: tab descriptions and badges (SSR, i18n)', () => {
   it('renders the Spanish literals copied verbatim from the current code', () => {
     const html = card('es');
-    expectAll(html, descriptions.map(([es]) => es), 'es');
+    expectAll(
+      html,
+      descriptions.map(([es]) => es),
+      'es',
+    );
     expectAll(html, ['ChatGPT y Codex', 'Claude', 'GitHub Copilot', 'NaN Builders', '9Router', 'z.ai'], 'es');
     expectAll(html, ['Activo', 'Falta conectar', 'Desactivado', 'Conectar', 'Configurar', ' · 2 cuentas'], 'es');
   });
 
   it('renders the English texts when the locale is en, with no Spanish left', () => {
     const html = card('en');
-    expectAll(html, descriptions.map(([, en]) => en), 'en');
+    expectAll(
+      html,
+      descriptions.map(([, en]) => en),
+      'en',
+    );
     // «ChatGPT y Codex» es el único nombre con una conjunción española; el resto son marcas.
     expectAll(html, ['ChatGPT and Codex', 'Claude', 'GitHub Copilot', 'NaN Builders', '9Router', 'z.ai'], 'en');
     expectAll(html, ['Active', 'Needs connecting', 'Disabled', 'Connect', 'Set up', ' · 2 accounts'], 'en');
@@ -128,12 +147,34 @@ describe('ProvidersCard: session-environment selector is Windows-only (PR #248)'
   it('warns that WSL without a distro reads the host session (PR #248)', () => {
     const wslCfg = { ...cfg, sessionEnv: 'wsl', wslDistro: '  ' } as AppConfig;
     const empty = renderToStaticMarkup(
-      <ProvidersCard locale="es" cfg={wslCfg} secrets={{}} tab="claude" drawerOpen onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform="windows" />,
+      <ProvidersCard
+        locale="es"
+        cfg={wslCfg}
+        secrets={{}}
+        tab="claude"
+        drawerOpen
+        onSelectTab={noop}
+        onRefreshMinutes={noop}
+        onSessionEnv={noop}
+        onWslDistro={noop}
+        platform="windows"
+      />,
     );
     expect(empty).toContain('Sin distro, WSL no está completo');
     // Con distro escrita, la ayuda normal (sin el aviso).
     const named = renderToStaticMarkup(
-      <ProvidersCard locale="es" cfg={{ ...wslCfg, wslDistro: 'Ubuntu-22.04' } as AppConfig} secrets={{}} tab="claude" drawerOpen onSelectTab={noop} onRefreshMinutes={noop} onSessionEnv={noop} onWslDistro={noop} platform="windows" />,
+      <ProvidersCard
+        locale="es"
+        cfg={{ ...wslCfg, wslDistro: 'Ubuntu-22.04' } as AppConfig}
+        secrets={{}}
+        tab="claude"
+        drawerOpen
+        onSelectTab={noop}
+        onRefreshMinutes={noop}
+        onSessionEnv={noop}
+        onWslDistro={noop}
+        platform="windows"
+      />,
     );
     expect(named).toContain('Distro donde viven los CLIs');
     expect(named).not.toContain('Sin distro, WSL no está completo');
@@ -201,17 +242,12 @@ describe('PAGES labels, titles and nav chrome (SSR, i18n)', () => {
       'en',
     );
     expectAll(nav('en'), ['aria-label="Collapse the menu"', 'title="Collapse the menu"'], 'en');
-    expectNone(
-      html,
-      ['Proveedores', 'Suscripciones y APIs', 'Secciones de ajustes', 'Activos pero sin configurar', 'Expandir el menú', 'Contraer'],
-      'en',
-    );
+    expectNone(html, ['Proveedores', 'Suscripciones y APIs', 'Secciones de ajustes', 'Activos pero sin configurar', 'Expandir el menú', 'Contraer'], 'en');
   });
 });
 
 describe('Providers shell: headings, drawer and accounts (SSR, i18n)', () => {
-  const drawerHead = (locale: Locale) =>
-    renderToStaticMarkup(<ProviderDrawerHead locale={locale} tab="copilot" state="warn" onClose={noop} />);
+  const drawerHead = (locale: Locale) => renderToStaticMarkup(<ProviderDrawerHead locale={locale} tab="copilot" state="warn" onClose={noop} />);
   const accounts: Account[] = [{ id: 'claude:b', provider: 'claude', label: 'Cuenta 2', enabled: true } as Account];
   const bar = (locale: Locale, tab: 'claude' | 'nine_router') =>
     renderToStaticMarkup(<AccountsBar locale={locale} tab={tab} accounts={accounts} selectedId={tab} onSelect={noop} onAdd={noop} />);
@@ -232,24 +268,28 @@ describe('Providers shell: headings, drawer and accounts (SSR, i18n)', () => {
     );
     expectAll(drawerHead('es'), ['Configuración', 'Cerrar la configuración', 'Falta conectar', 'GitHub Copilot'], 'es');
     expectAll(bar('es', 'claude'), ['aria-label="Cuentas"', 'Principal', '+ Añadir cuenta', 'Cuenta 2'], 'es');
-    expectAll(
-      bar('es', 'nine_router'),
-      ['Los subproveedores de 9Router se descubren solos desde su historial de uso; no se añaden a mano.'],
-      'es',
-    );
+    expectAll(bar('es', 'nine_router'), ['Los subproveedores de 9Router se descubren solos desde su historial de uso; no se añaden a mano.'], 'es');
     expect(bar('es', 'nine_router')).not.toContain('Añadir cuenta');
   });
 
   it('renders the English texts when the locale is en, with no Spanish left', () => {
     const html = card('en') + drawerHead('en') + bar('en', 'claude') + bar('en', 'nine_router');
-    expectAll(card('en'), ['aria-label="Providers"', '<h2>Providers</h2>', 'Check every', 'min', 'Subscriptions', 'APIs and credits', 'To change the order of the rings, drag them on the strip.'], 'en');
-    expectAll(drawerHead('en'), ['Configuration', 'Close the configuration', 'Needs connecting', 'GitHub Copilot'], 'en');
-    expectAll(bar('en', 'claude'), ['aria-label="Accounts"', 'Main', '+ Add account'], 'en');
     expectAll(
-      bar('en', 'nine_router'),
-      ['The 9Router sub-providers are discovered automatically from its usage history; they are not added by hand.'],
+      card('en'),
+      [
+        'aria-label="Providers"',
+        '<h2>Providers</h2>',
+        'Check every',
+        'min',
+        'Subscriptions',
+        'APIs and credits',
+        'To change the order of the rings, drag them on the strip.',
+      ],
       'en',
     );
+    expectAll(drawerHead('en'), ['Configuration', 'Close the configuration', 'Needs connecting', 'GitHub Copilot'], 'en');
+    expectAll(bar('en', 'claude'), ['aria-label="Accounts"', 'Main', '+ Add account'], 'en');
+    expectAll(bar('en', 'nine_router'), ['The 9Router sub-providers are discovered automatically from its usage history; they are not added by hand.'], 'en');
     expectNone(
       html,
       [
@@ -303,7 +343,11 @@ describe('Save bar, unsaved changes and global notices (SSR, i18n)', () => {
     const readable = renderToStaticMarkup(<AutostartNotice locale="es" error="fallo" unread={false} busy={false} onRetry={noop} />);
     expect(readable).toContain('fallo');
     expect(readable).not.toContain('Reintentar');
-    expectAll(renderToStaticMarkup(<DesktopSessionNotice locale="es" wmInfo={wm} />), ['Sesión de escritorio: Wayland', ' · gnome', 'con límites:', 'sin límites conocidos:', 'texto del backend', 'nota del backend'], 'es');
+    expectAll(
+      renderToStaticMarkup(<DesktopSessionNotice locale="es" wmInfo={wm} />),
+      ['Sesión de escritorio: Wayland', ' · gnome', 'con límites:', 'sin límites conocidos:', 'texto del backend', 'nota del backend'],
+      'es',
+    );
   });
 
   it('renders the English texts when the locale is en, with no Spanish left', () => {
@@ -321,35 +365,75 @@ describe('Save bar, unsaved changes and global notices (SSR, i18n)', () => {
     expect(foot('en', 'window')).not.toContain('Done');
     expectAll(
       html,
-      ['Start at login', 'Could not read “Start at login”: ', 'Retry', 'Desktop session: Wayland', ' · gnome', 'with limits:', 'no known limits:', 'texto del backend'],
+      [
+        'Start at login',
+        'Could not read “Start at login”: ',
+        'Retry',
+        'Desktop session: Wayland',
+        ' · gnome',
+        'with limits:',
+        'no known limits:',
+        'texto del backend',
+      ],
       'en',
     );
     expectNone(
       html.replace('texto del backend', '').replace(/nota del backend/g, ''),
-      ['Listo', 'Cerrar', 'Guardar cambios', 'Guardando', 'Arrancar al iniciar sesión', 'No se pudo leer', 'Reintentar', 'Sesión de escritorio', 'con límites', 'sin límites conocidos'],
+      [
+        'Listo',
+        'Cerrar',
+        'Guardar cambios',
+        'Guardando',
+        'Arrancar al iniciar sesión',
+        'No se pudo leer',
+        'Reintentar',
+        'Sesión de escritorio',
+        'con límites',
+        'sin límites conocidos',
+      ],
       'en',
     );
   });
 });
 
 describe('HealthStep, healthSummary and CliMissing (SSR, i18n)', () => {
-  const report = (over: Partial<UsageReport>): UsageReport => ({
-    id: 'claude',
-    name: 'Claude',
-    kind: 'subscription',
-    status: 'ok',
-    plan: null,
-    meters: [],
-    spend: null,
-    message: null,
-    action: null,
-    fetchedAt: '2026-01-01T00:00:00Z',
-    ...over,
-  } as UsageReport);
-  const meter = (percent: number | null) => ({ id: 'five_hour', label: 'Sesión 5 h', percent, used: null, limit: null, unit: null, resetsAt: null, windowSeconds: null });
+  const report = (over: Partial<UsageReport>): UsageReport =>
+    ({
+      id: 'claude',
+      name: 'Claude',
+      kind: 'subscription',
+      status: 'ok',
+      plan: null,
+      meters: [],
+      spend: null,
+      message: null,
+      action: null,
+      fetchedAt: '2026-01-01T00:00:00Z',
+      ...over,
+    }) as UsageReport;
+  const meter = (percent: number | null) => ({
+    id: 'five_hour',
+    label: 'Sesión 5 h',
+    percent,
+    used: null,
+    limit: null,
+    unit: null,
+    resetsAt: null,
+    windowSeconds: null,
+  });
   const view = (locale: Locale, h: Health, over: { hidden?: boolean; dirty?: boolean; onLogin?: () => void } = {}) =>
     renderToStaticMarkup(
-      <HealthStepView locale={locale} h={h} hidden={over.hidden ?? false} dirty={over.dirty ?? false} busy={false} saving={false} onRun={noop} onSave={noop} onLogin={over.onLogin} />,
+      <HealthStepView
+        locale={locale}
+        h={h}
+        hidden={over.hidden ?? false}
+        dirty={over.dirty ?? false}
+        busy={false}
+        saving={false}
+        onRun={noop}
+        onSave={noop}
+        onLogin={over.onLogin}
+      />,
     );
   const done = (r: UsageReport | null): Health => ({ phase: 'done', report: r });
 
@@ -453,7 +537,9 @@ describe('HealthStep, healthSummary and CliMissing (SSR, i18n)', () => {
     // el chequeo de salud pasa por `planLabel` y por `declaredLabel`, como el resto del panel.
     const credits = report({
       plan: 'plan.premium',
-      meters: [{ id: 'allocation', label: 'Asignación del periodo', percent: 2, used: 109.4, limit: 4853, unit: 'credits', resetsAt: null, windowSeconds: null }],
+      meters: [
+        { id: 'allocation', label: 'Asignación del periodo', percent: 2, used: 109.4, limit: 4853, unit: 'credits', resetsAt: null, windowSeconds: null },
+      ],
     });
     expect(healthSummary(credits, 'es')).toBe('Premium · Asignación del periodo al 2%');
     expect(healthSummary(credits, 'en')).toBe('Premium · Period allowance at 2%');
@@ -466,7 +552,12 @@ describe('HealthStep, healthSummary and CliMissing (SSR, i18n)', () => {
   it('CliMissing renders the Spanish literals verbatim and the English texts in en', () => {
     expectAll(
       missing('es', 'codex'),
-      ['Falta Codex CLI en este equipo.', 'Quorb inicia sesión con su login oficial. Instálalo desde una terminal (necesita Node.js); Quorb lo detecta solo al terminar.', 'npm install -g @openai/codex', 'Copiar'],
+      [
+        'Falta Codex CLI en este equipo.',
+        'Quorb inicia sesión con su login oficial. Instálalo desde una terminal (necesita Node.js); Quorb lo detecta solo al terminar.',
+        'npm install -g @openai/codex',
+        'Copiar',
+      ],
       'es',
     );
     expectAll(missing('es', 'claude'), ['Falta Claude Code en este equipo.', 'Instálalo desde PowerShell; Quorb lo detecta solo al terminar.'], 'es');
@@ -474,7 +565,12 @@ describe('HealthStep, healthSummary and CliMissing (SSR, i18n)', () => {
     const en = missing('en', 'codex') + missing('en', 'claude');
     expectAll(
       missing('en', 'codex'),
-      ['Codex CLI is missing on this computer.', 'Quorb signs in with its official login. Install it from a terminal (needs Node.js); Quorb detects it on its own when it finishes.', 'npm install -g @openai/codex', 'Copy'],
+      [
+        'Codex CLI is missing on this computer.',
+        'Quorb signs in with its official login. Install it from a terminal (needs Node.js); Quorb detects it on its own when it finishes.',
+        'npm install -g @openai/codex',
+        'Copy',
+      ],
       'en',
     );
     expectAll(missing('en', 'claude'), ['Claude Code is missing on this computer.', 'Install it from PowerShell;'], 'en');

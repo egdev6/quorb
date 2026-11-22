@@ -16,7 +16,26 @@ import type { AppConfig } from './types';
  */
 export function dataKey(c: AppConfig | null): string {
   return c
-    ? JSON.stringify([c.locale, c.sessionEnv, c.wslDistro, c.claude, c.codex, c.gemini, c.cursor, c.grok, c.copilot, c.openrouter, c.anthropicApi, c.openaiApi, c.nan, c.minimax, c.nineRouter, c.zai, c.opencodeGo, c.antigravity])
+    ? JSON.stringify([
+        c.locale,
+        c.sessionEnv,
+        c.wslDistro,
+        c.claude,
+        c.codex,
+        c.gemini,
+        c.cursor,
+        c.grok,
+        c.copilot,
+        c.openrouter,
+        c.anthropicApi,
+        c.openaiApi,
+        c.nan,
+        c.minimax,
+        c.nineRouter,
+        c.zai,
+        c.opencodeGo,
+        c.antigravity,
+      ])
     : '';
 }
 

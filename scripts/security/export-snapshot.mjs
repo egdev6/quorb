@@ -13,12 +13,14 @@ const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 // Git for Windows rejects node's os.devNull (\\.\nul) as a config path, so use
 // the Git-aware null device on that platform while still suppressing globals.
 const GIT_NULL_CONFIG = process.platform === 'win32' ? 'NUL' : devNull;
-const fail = () => { throw new Error('snapshot-export-failed'); };
-const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const fail = () => {
+  throw new Error('snapshot-export-failed');
+};
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 function safeOriginal(path) {
   if (!path || /[\p{Cc}\p{Cf}\\:]/u.test(path)) fail();
-  if (path.split('/').some(p => !p || p === '.' || p === '..' || p.toLowerCase() === '.git')) fail();
+  if (path.split('/').some((p) => !p || p === '.' || p === '..' || p.toLowerCase() === '.git')) fail();
 }
 
 export function exportSnapshot({ repo, commit, parent, scope = 'js-ts' }) {
@@ -27,10 +29,16 @@ export function exportSnapshot({ repo, commit, parent, scope = 'js-ts' }) {
     if (!['js-ts', 'workflows'].includes(scope)) fail();
     if (typeof repo !== 'string' || typeof parent !== 'string' || typeof commit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit)) fail();
     // Do not inherit Git overrides, replacement objects, global config or lazy network fetches.
-    const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
-      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_NULL_CONFIG, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' };
-    const git = args => execFileSync('git', args, { cwd: repo, env,
-      stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024, timeout: 10000 });
+    const env = {
+      PATH: process.env.PATH,
+      SystemRoot: process.env.SystemRoot,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: GIT_NULL_CONFIG,
+      GIT_NO_REPLACE_OBJECTS: '1',
+      GIT_NO_LAZY_FETCH: '1',
+      GIT_TERMINAL_PROMPT: '0',
+    };
+    const git = (args) => execFileSync('git', args, { cwd: repo, env, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024, timeout: 10000 });
     if (git(['cat-file', '-t', commit]).toString().trim() !== 'commit') fail();
     const records = decoder.decode(git(['ls-tree', '-rz', '-l', commit])).split('\0');
     if (records.pop() !== '' || records.length > 10000) fail();
@@ -48,13 +56,18 @@ export function exportSnapshot({ repo, commit, parent, scope = 'js-ts' }) {
       seen.add(originalPath);
       const fields = record.slice(0, tab).trim().split(/\s+/);
       const [mode, type, oid, sizeText] = fields;
-      if (fields.length !== 4 || !['100644', '100755'].includes(mode) || type !== 'blob' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(oid) || !/^\d+$/.test(sizeText)) fail();
+      if (
+        fields.length !== 4 ||
+        !['100644', '100755'].includes(mode) ||
+        type !== 'blob' ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(oid) ||
+        !/^\d+$/.test(sizeText)
+      )
+        fail();
       const size = Number(sizeText);
       if (!Number.isSafeInteger(size)) fail();
       const extension = extname(originalPath).toLowerCase();
-      const included = scope === 'workflows'
-        ? /^\.github\/workflows\/[^/]+\.(?:yml|yaml)$/.test(originalPath)
-        : EXTENSIONS.has(extension);
+      const included = scope === 'workflows' ? /^\.github\/workflows\/[^/]+\.(?:yml|yaml)$/.test(originalPath) : EXTENSIONS.has(extension);
       if (!included) {
         excluded.push({ path: originalPath, reason: scope === 'workflows' ? 'outside-workflow-scope' : 'outside-js-ts-scope' });
         continue;

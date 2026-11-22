@@ -12,21 +12,35 @@ const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const checksum = (name, bytes) => Buffer.from(`${hash(bytes)}  ${name}\n`);
 
 function fixture({ failAt = 0, rollbackFailure = false, badResponse = false } = {}) {
-  const files = new Map([[deb, Buffer.from('deb bundle')], [appimage, Buffer.from('appimage bundle')]]);
-  const env = { GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: 'egdev6/quorb',
-    RELEASE_VERSION: version, RELEASE_SOURCE_SHA: 'a'.repeat(40), RELEASE_ID: '42',
-    GH_TOKEN: 'fixture-token', BUNDLE_DIR: '/fake-bundles',
-    DEB_SHA256: hash(files.get(deb)), APPIMAGE_SHA256: hash(files.get(appimage)) };
+  const files = new Map([
+    [deb, Buffer.from('deb bundle')],
+    [appimage, Buffer.from('appimage bundle')],
+  ]);
+  const env = {
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'egdev6/quorb',
+    RELEASE_VERSION: version,
+    RELEASE_SOURCE_SHA: 'a'.repeat(40),
+    RELEASE_ID: '42',
+    GH_TOKEN: 'fixture-token',
+    BUNDLE_DIR: '/fake-bundles',
+    DEB_SHA256: hash(files.get(deb)),
+    APPIMAGE_SHA256: hash(files.get(appimage)),
+  };
   const calls = [];
   const stored = new Map([['windows.exe', { id: 10, bytes: Buffer.from('untouched') }]]);
   let attempt = 0;
-  const options = { env,
+  const options = {
+    env,
     io: {
       readdirSync: () => [...files.keys()],
       lstatSync: (file) => ({ isFile: () => true, isSymbolicLink: () => false, size: files.get(path.basename(file)).length }),
       readFileSync: (file) => files.get(path.basename(file)),
     },
-    preflight: async () => { calls.push('preflight'); return { releaseId: 42 }; },
+    preflight: async () => {
+      calls.push('preflight');
+      return { releaseId: 42 };
+    },
     fetch: async (url, request) => {
       calls.push([url, request]);
       if (request.method === 'DELETE') {
@@ -65,12 +79,19 @@ test('rejects wrong, missing, extra, nonregular or modified artifact files befor
     (f) => f.files.delete(deb),
     (f) => f.files.set('unexpected.txt', Buffer.from('x')),
     (f) => f.files.set(deb, Buffer.from('changed')),
-    (f) => { f.env.DEB_SHA256 = 'x'.repeat(64); },
-    (f) => { f.options.io.lstatSync = () => ({ isFile: () => false, isSymbolicLink: () => true, size: 1 }); },
-    (f) => { f.files.set(appimage, Buffer.alloc(0)); },
+    (f) => {
+      f.env.DEB_SHA256 = 'x'.repeat(64);
+    },
+    (f) => {
+      f.options.io.lstatSync = () => ({ isFile: () => false, isSymbolicLink: () => true, size: 1 });
+    },
+    (f) => {
+      f.files.set(appimage, Buffer.alloc(0));
+    },
   ];
   for (const change of scenarios) {
-    const f = fixture(); change(f);
+    const f = fixture();
+    change(f);
     await assert.rejects(f.run());
     assert.deepEqual(f.calls, []);
     assert.deepEqual([...f.stored.keys()], ['windows.exe']);
@@ -83,7 +104,10 @@ test('revalidates release identity and uploads exactly four assets without overw
   assert.equal(f.calls[0], 'preflight');
   const requests = f.calls.slice(1);
   assert.equal(requests.length, 4);
-  assert.deepEqual(requests.map(([url]) => new URL(url).searchParams.get('name')), names);
+  assert.deepEqual(
+    requests.map(([url]) => new URL(url).searchParams.get('name')),
+    names,
+  );
   for (const [url, request] of requests) {
     assert.ok(url.startsWith('https://uploads.github.com/repos/egdev6/quorb/releases/42/assets?name='));
     assert.equal(request.method, 'POST');
@@ -97,11 +121,20 @@ test('revalidates release identity and uploads exactly four assets without overw
 
 test('changed identity, collision or invalid release ID abort before writes', async () => {
   for (const change of [
-    (f) => { f.options.preflight = async () => ({ releaseId: 43 }); },
-    (f) => { f.options.preflight = async () => { throw new Error('Release already contains an asset'); }; },
-    (f) => { f.env.RELEASE_ID = '42/../10'; },
+    (f) => {
+      f.options.preflight = async () => ({ releaseId: 43 });
+    },
+    (f) => {
+      f.options.preflight = async () => {
+        throw new Error('Release already contains an asset');
+      };
+    },
+    (f) => {
+      f.env.RELEASE_ID = '42/../10';
+    },
   ]) {
-    const f = fixture(); change(f);
+    const f = fixture();
+    change(f);
     await assert.rejects(f.run());
     assert.ok(!f.calls.some((call) => Array.isArray(call)));
     assert.deepEqual([...f.stored.keys()], ['windows.exe']);
@@ -117,7 +150,10 @@ test('each partial upload failure rolls back every confirmed asset from this run
       return true;
     });
     const deletions = f.calls.filter((call) => Array.isArray(call) && call[1].method === 'DELETE');
-    assert.deepEqual(deletions.map(([url]) => Number(url.split('/').at(-1))), Array.from({ length: failAt - 1 }, (_, i) => 100 + failAt - 1 - i));
+    assert.deepEqual(
+      deletions.map(([url]) => Number(url.split('/').at(-1))),
+      Array.from({ length: failAt - 1 }, (_, i) => 100 + failAt - 1 - i),
+    );
     assert.deepEqual([...f.stored.keys()], ['windows.exe']);
   }
 });
@@ -137,7 +173,10 @@ test('a name claimed after preflight is never overwritten or deleted on upload f
   assert.deepEqual(f.stored.get(appimage), { id: 900, bytes: Buffer.from('concurrent upload') });
   assert.deepEqual([...f.stored.keys()], ['windows.exe', appimage]);
   const deletes = f.calls.filter((call) => Array.isArray(call) && call[1].method === 'DELETE');
-  assert.deepEqual(deletes.map(([url]) => Number(url.split('/').at(-1))), [102, 101]);
+  assert.deepEqual(
+    deletes.map(([url]) => Number(url.split('/').at(-1))),
+    [102, 101],
+  );
 });
 
 test('ambiguous responses roll back confirmed IDs only; failed cleanup is reported and attempted for all', async () => {

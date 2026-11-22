@@ -41,10 +41,7 @@ describe('placementOutcome', () => {
   });
 
   it('asks for a retry and keeps the reason when the manager did not grant the geometry', () => {
-    const outcome = placementOutcome(
-      report({ status: 'limited', bounds: { x: 0, y: 0, w: 320, h: 260 }, reason: 'size_refused' }),
-      requested,
-    );
+    const outcome = placementOutcome(report({ status: 'limited', bounds: { x: 0, y: 0, w: 320, h: 260 }, reason: 'size_refused' }), requested);
     expect(outcome.failed).toBe(true);
     // El motivo del backend llega al estado accesible del widget, localizado.
     expect(outcome.reason).toBe('size_refused');
@@ -67,10 +64,7 @@ describe('placementOutcome', () => {
   });
 
   it('does not cache anything when the native read failed', () => {
-    const outcome = placementOutcome(
-      report({ status: 'unverified', bounds: null, reason: 'read_failed' }),
-      requested,
-    );
+    const outcome = placementOutcome(report({ status: 'unverified', bounds: null, reason: 'read_failed' }), requested);
     expect(outcome.bounds).toBeNull();
     expect(outcome.failed).toBe(true);
     expect(outcome.reason).toBe('read_failed');
@@ -80,10 +74,7 @@ describe('placementOutcome', () => {
   it('does not cache anything when the native window was not viewable yet', () => {
     // Sin lectura no hay geometría fiable: la solicitud tampoco se cachea y
     // el motivo llega al reintento.
-    const outcome = placementOutcome(
-      report({ status: 'unverified', bounds: null, reason: 'not_viewable' }),
-      requested,
-    );
+    const outcome = placementOutcome(report({ status: 'unverified', bounds: null, reason: 'not_viewable' }), requested);
     expect(outcome.bounds).toBeNull();
     expect(outcome.failed).toBe(true);
     expect(outcome.reason).toBe('not_viewable');
@@ -102,8 +93,7 @@ describe('placementOutcome', () => {
 });
 
 describe('readPlacementWithRetries', () => {
-  const notViewable = (): WidgetPlacementReport =>
-    report({ status: 'unverified', bounds: null, reason: 'not_viewable' });
+  const notViewable = (): WidgetPlacementReport => report({ status: 'unverified', bounds: null, reason: 'not_viewable' });
 
   /** Devuelve los informes de la secuencia, repitiendo el último. */
   const sequence = (...reports: WidgetPlacementReport[]) => {
@@ -239,13 +229,7 @@ describe('the reason codes', () => {
   });
 
   it('carries no user-facing text: every key is translated by the catalog', () => {
-    const codes: WidgetPlacementReason[] = [
-      'size_refused',
-      'position_refused',
-      'not_viewable',
-      'read_failed',
-      'superseded',
-    ];
+    const codes: WidgetPlacementReason[] = ['size_refused', 'position_refused', 'not_viewable', 'read_failed', 'superseded'];
     for (const code of codes) {
       const key = reasonKey(code)!;
       // La clave existe en los dos catálogos y su texto no es la clave.
@@ -297,10 +281,7 @@ describe('the read-back marker', () => {
     const plain = placementOutcome(report({ read_back: false }), requested);
     expect(plain.readBack).toBe(false);
     // Y un informe sin geometría no es un read-back.
-    const none = placementOutcome(
-      report({ status: 'unverified', bounds: null, reason: 'not_viewable' }),
-      requested,
-    );
+    const none = placementOutcome(report({ status: 'unverified', bounds: null, reason: 'not_viewable' }), requested);
     expect(none.readBack).toBe(false);
     expect(none.bounds).toBeNull();
   });

@@ -9,7 +9,16 @@ const digest = (text) => createHash('sha256').update(normalize(text)).digest('he
 // Exact reviewed bytes, including every step, permission, pin and secret. This
 // replaces the old inline snapshot, not its strictness: no YAML subset matching.
 const reviewed = 'df1055991fe75d4c528361a7abec0c2f78952540393ad15f8c1e12e5689bcade';
-const requiredTests = ['macos-release-preflight', 'macos-release-workflow', 'macos-notary-checkpoint', 'macos-notary-submit', 'macos-notary-artifact', 'macos-release-resume', 'macos-release-resume-workflow', 'macos-release-resume-publish'];
+const requiredTests = [
+  'macos-release-preflight',
+  'macos-release-workflow',
+  'macos-notary-checkpoint',
+  'macos-notary-submit',
+  'macos-notary-artifact',
+  'macos-release-resume',
+  'macos-release-resume-workflow',
+  'macos-release-resume-publish',
+];
 
 function contract(draft, active, pkg) {
   assert.deepEqual(active, draft, 'Materialization must be byte-identical');
@@ -42,14 +51,15 @@ test('rejects deletion or mutation of every reviewed line, step order, pins and 
   const lines = text.split('\n');
   for (const [index, line] of lines.entries()) {
     if (!line.trim()) continue;
-    for (const change of [lines.filter((_, i) => i !== index).join('\n'), lines.map((value, i) => i === index ? `${value} # mutation` : value).join('\n')]) {
+    for (const change of [lines.filter((_, i) => i !== index).join('\n'), lines.map((value, i) => (i === index ? `${value} # mutation` : value)).join('\n')]) {
       assert.throws(() => contract(Buffer.from(change), Buffer.from(change), pkg()), undefined, line);
     }
   }
   const reversed = Buffer.from([...lines].reverse().join('\n'));
   assert.throws(() => contract(reversed, reversed, pkg()));
   for (const name of requiredTests) {
-    const changed = pkg(); changed.scripts.test = changed.scripts.test.replace(`scripts/${name}.test.mjs`, '');
+    const changed = pkg();
+    changed.scripts.test = changed.scripts.test.replace(`scripts/${name}.test.mjs`, '');
     assert.throws(() => contract(draft(), draft(), changed));
   }
 });

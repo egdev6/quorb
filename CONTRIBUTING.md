@@ -10,18 +10,17 @@ Thanks for taking the time to improve Quorb. Issues and pull requests are welcom
 
 ### Before you start
 
-Quorb currently targets Windows as its main platform; a Linux port is in progress (local development only, see the README Linux notes). For Windows you need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+Quorb currently targets Windows as its main platform; Linux has published `.deb` and `.AppImage` installers since v0.9.1 (see the README Linux notes). For Windows you need Node 22+, Rust with the MSVC toolchain, Microsoft C++ Build Tools and WebView2. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
-**Linux contributors**: the native port is tracked under [issue #105](https://github.com/egdev6/quorb/issues/105) and its baseline, support matrix and known limits are documented in [docs/build-linux.md](./docs/build-linux.md). For Linux build and tests, use the included devcontainer (`make up` then `make test`) — it provisions Node 22, Rust stable and the Tauri Linux system dependencies without touching the host. Automatic Linux checks (`.github/workflows/linux-pr-ci.yml`) run `npm ci`, `npm test`, `npm run build` and `cargo test --locked` (in `src-tauri`) on `ubuntu-22.04` for pull requests and pushes to `main`, reporting `Tests and build (Linux)` without making it a required check. The separate manual workflow (`.github/workflows/linux-ci.yml`) runs tests by default via `workflow_dispatch`; selecting `with_bundle: bundle` also builds the decided local formats (`.deb` and `.AppImage`) and verifies them. It does not trigger on tags, pull requests or pushes; CI artifacts stay private to the run and public Linux releases are out of scope. Passing tests and compilation does not validate the real desktop or Wayland experience. Do not claim support for a distro or compositor that is not marked as measured in [the matrix](./docs/build-linux.md#6-matriz-de-8-entornos-l0b--qué-funciona-y-qué-degrada).
+**Linux contributors**: the native port was delivered through issues [#105](https://github.com/egdev6/quorb/issues/105)–#108 and its baseline, support matrix and known limits are documented in [docs/build-linux.md](./docs/build-linux.md). For Linux build and tests, use the included devcontainer (`make up` then `make test`) — it provisions Node 22, Rust stable and the Tauri Linux system dependencies without touching the host. Automatic Linux checks (`.github/workflows/linux-pr-ci.yml`) run `npm ci`, `npm test`, `npm run build` and `cargo test --locked` (in `src-tauri`) on `ubuntu-22.04` for pull requests and pushes to `main`, reporting `Tests and build (Linux)` without making it a required check. The separate manual workflow (`.github/workflows/linux-ci.yml`) runs tests by default via `workflow_dispatch`; selecting `with_bundle: bundle` also builds the decided local formats (`.deb` and `.AppImage`) and verifies them. It does not trigger on tags, pull requests or pushes; CI artifacts stay private to the run; public Linux installers are attached to each release by `.github/workflows/linux-release.yml` (see [docs/release-linux.md](./docs/release-linux.md)). Passing tests and compilation does not validate the real desktop or Wayland experience. Do not claim support for a distro or compositor that is not marked as measured in [the matrix](./docs/build-linux.md#6-matriz-de-8-entornos-l0b--qué-funciona-y-qué-degrada).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
 cd quorb
 npm install
+npm run hooks:install   # once per clone: Lefthook pre-push hook (Biome + cargo fmt)
 npm run app:dev
 ```
-
-The repository is private today, so cloning requires access.
 
 ### Commands
 
@@ -34,9 +33,21 @@ These are the scripts declared in `package.json`:
 | `npm run typecheck` | TypeScript checks |
 | `npm test` | Vitest tests plus the release scripts' Node tests |
 | `cd src-tauri; cargo test` | Rust tests |
+| `npm run check` | Biome lint + format check (CI runs `npx biome ci`) |
+| `npm run check:fix` | Apply Biome safe fixes and formatting |
+| `npm run lint` / `npm run format` | Biome lint only / write formatting only |
+| `npm run hooks:install` | Install the Lefthook `pre-push` hook (once per clone) |
 | `node scripts/i18n-inventory.mjs` | Regenerate `docs/i18n-inventory.md` (CI runs it with `--check`); `--sites` prints `path:line \| text` rows |
 | `npm run app:dev` | Run the desktop app with hot reload |
 | `npm run app:build` | Build a local (unsigned) installer |
+
+### Lint and formatting (Biome + Lefthook)
+
+TypeScript and JavaScript under `src/`, `scripts/` and `vite.config.ts` are linted and formatted by [Biome](https://biomejs.dev) (`biome.json`); CSS is linted but not formatted, because tests assert literal CSS text. Excluded: the vendored design-system bundle `src/ds/egdev/` (a copy that must not be edited by hand) and the provider logos in `src/assets/logos/` (raw SVGs checked by security tests). CI runs `npx biome ci` in `ci.yml` and `linux-pr-ci.yml`; any lint error or unformatted file fails the check, warnings do not.
+
+After `npm install`, run `npm run hooks:install` once per clone to install the [Lefthook](https://lefthook.dev) `pre-push` hook (`lefthook.yml`; it is not automatic because the repository policy allows no npm lifecycle scripts). The hook runs `npx biome ci` and the Rust format check before every push. If it fails, run `npm run check:fix` (and `cargo fmt` for Rust), commit, and push again. Skipping it with `--no-verify` only moves the failure to CI.
+
+The repository-wide Biome formatting landed as a formatting-only commit listed in `.git-blame-ignore-revs`; run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame` skips it. If you had a branch open before that commit, rebase it on `main` and run `npm run check:fix` to resolve formatting conflicts.
 
 ### Rust formatting
 
@@ -150,7 +161,7 @@ npm run setup:signing
 
 That script generates the signing key in `%USERPROFILE%\.tauri\quorb.key` (it never overwrites an existing key), writes the public key to `src-tauri/tauri.conf.json` and, if GitHub CLI is authenticated, uploads `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as repository secrets. Keep a backup of the private key and its password: if they are lost, installed versions will not accept updates signed with a different key.
 
-**Production release workflow status.** The production workflow is `.github/workflows/release.yml`. It never triggers on tags or pushes: a maintainer starts it manually from the Actions tab on `main`, passing the stable `version` and the full 40-character `source_sha` of an already-merged commit. It validates the inputs, manifest versions, notes file, tag collision and updater public key, then runs the tests, builds on Windows and creates a **draft** release that you publish yourself. Signing secrets are only exposed in the signing/bundle step. Until the owner provisions the updater key and the repository secrets, treat the release as blocked, not automated.
+**Production release workflow status.** The production workflow is `.github/workflows/release.yml`. It never triggers on tags or pushes: a maintainer starts it manually from the Actions tab on `main`, passing the stable `version` and the full 40-character `source_sha` of an already-merged commit. It validates the inputs, manifest versions, notes file, tag collision and updater public key, then runs the tests, builds on Windows and creates a **draft** release that you publish yourself. Signing secrets are only exposed in the signing/bundle step. The updater key and the repository secrets are provisioned; v0.9.0 and v0.9.1 were published through this workflow.
 
 ---
 
@@ -160,18 +171,17 @@ Gracias por dedicar tiempo a mejorar Quorb. Se aceptan issues y pull requests, e
 
 ### Antes de empezar
 
-Quorb está dirigido actualmente a Windows como plataforma principal; hay un port Linux en marcha (solo desarrollo local, ver las notas de Linux del README). Para Windows se necesitan Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
+Quorb está dirigido actualmente a Windows como plataforma principal; Linux tiene instaladores `.deb` y `.AppImage` publicados desde v0.9.1 (ver las notas de Linux del README). Para Windows se necesitan Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y WebView2. Consultad los [requisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
 
-**Contribuidores de Linux**: el port nativo se sigue en la [issue #105](https://github.com/egdev6/quorb/issues/105) y su baseline, matriz de soporte y límites conocidos están documentados en [docs/build-linux.md](./docs/build-linux.md). Para compilar y testear en Linux, usad el devcontainer incluido (`make up` y luego `make test`) — aprovisiona Node 22, Rust estable y las dependencias de sistema de Tauri sin tocar el host. Las comprobaciones automáticas de Linux (`.github/workflows/linux-pr-ci.yml`) ejecutan `npm ci`, `npm test`, `npm run build` y `cargo test --locked` (en `src-tauri`) sobre `ubuntu-22.04` para pull requests y pushes a `main`, con el check `Tests and build (Linux)` sin convertirlo en obligatorio. El workflow manual separado (`.github/workflows/linux-ci.yml`) ejecuta tests por defecto mediante `workflow_dispatch`; seleccionar `with_bundle: bundle` también compila los formatos locales decididos (`.deb` y `.AppImage`) y los verifica. No se dispara con tags, pull requests ni pushes; los artefactos del CI quedan privados al run y las releases públicas de Linux quedan fuera de alcance. Pasar los tests y compilar no valida la experiencia real de escritorio ni de Wayland. No afirmar soporte de ninguna distro o compositor que no esté marcado como medido en [la matriz](./docs/build-linux.md#6-matriz-de-8-entornos-l0b--qué-funciona-y-qué-degrada).
+**Contribuidores de Linux**: el port nativo se entregó con las issues [#105](https://github.com/egdev6/quorb/issues/105)–#108 y su baseline, matriz de soporte y límites conocidos están documentados en [docs/build-linux.md](./docs/build-linux.md). Para compilar y testear en Linux, usad el devcontainer incluido (`make up` y luego `make test`) — aprovisiona Node 22, Rust estable y las dependencias de sistema de Tauri sin tocar el host. Las comprobaciones automáticas de Linux (`.github/workflows/linux-pr-ci.yml`) ejecutan `npm ci`, `npm test`, `npm run build` y `cargo test --locked` (en `src-tauri`) sobre `ubuntu-22.04` para pull requests y pushes a `main`, con el check `Tests and build (Linux)` sin convertirlo en obligatorio. El workflow manual separado (`.github/workflows/linux-ci.yml`) ejecuta tests por defecto mediante `workflow_dispatch`; seleccionar `with_bundle: bundle` también compila los formatos locales decididos (`.deb` y `.AppImage`) y los verifica. No se dispara con tags, pull requests ni pushes; los artefactos del CI quedan privados al run; los instaladores públicos de Linux se adjuntan a cada release con `.github/workflows/linux-release.yml` (ver [docs/release-linux.md](./docs/release-linux.md)). Pasar los tests y compilar no valida la experiencia real de escritorio ni de Wayland. No afirmar soporte de ninguna distro o compositor que no esté marcado como medido en [la matriz](./docs/build-linux.md#6-matriz-de-8-entornos-l0b--qué-funciona-y-qué-degrada).
 
 ```powershell
 git clone https://github.com/egdev6/quorb
 cd quorb
 npm install
+npm run hooks:install   # una vez por clon: hook pre-push de Lefthook (Biome + cargo fmt)
 npm run app:dev
 ```
-
-El repositorio es privado actualmente, así que clonarlo requiere acceso.
 
 ### Comandos
 
@@ -184,8 +194,20 @@ Estos son los scripts declarados en `package.json`:
 | `npm run typecheck` | Comprobar TypeScript |
 | `npm test` | Tests de Vitest y tests Node de los scripts de release |
 | `cd src-tauri; cargo test` | Tests de Rust |
+| `npm run check` | Lint y comprobación de formato con Biome (CI ejecuta `npx biome ci`) |
+| `npm run check:fix` | Aplicar los arreglos seguros y el formato de Biome |
+| `npm run lint` / `npm run format` | Solo lint de Biome / solo escribir el formato |
+| `npm run hooks:install` | Instalar el hook `pre-push` de Lefthook (una vez por clon) |
 | `npm run app:dev` | Ejecutar la app de escritorio con hot reload |
 | `npm run app:build` | Compilar un instalador local (sin firma) |
+
+### Lint y formato (Biome + Lefthook)
+
+El TypeScript y JavaScript de `src/`, `scripts/` y `vite.config.ts` se analizan y formatean con [Biome](https://biomejs.dev) (`biome.json`); el CSS se analiza pero no se formatea, porque hay tests que comprueban su texto literal. Se excluyen el bundle del design system `src/ds/egdev/` (una copia que no se edita a mano) y los logos de `src/assets/logos/` (SVG crudos validados por tests de seguridad). CI ejecuta `npx biome ci` en `ci.yml` y `linux-pr-ci.yml`: cualquier error de lint o archivo sin formatear hace fallar el check; los warnings no.
+
+Después de `npm install`, ejecutá una vez por clon `npm run hooks:install` para instalar el hook `pre-push` de [Lefthook](https://lefthook.dev) (`lefthook.yml`; no es automático porque la política del repositorio no admite scripts de ciclo de vida de npm). El hook ejecuta `npx biome ci` y la comprobación de formato de Rust antes de cada push. Si falla, ejecutá `npm run check:fix` (y `cargo fmt` para Rust), commiteá y volvé a hacer push. Saltarlo con `--no-verify` solo traslada el fallo a CI.
+
+El formato de Biome de todo el repositorio entró como commit solo-formato, listado en `.git-blame-ignore-revs`; ejecutá una vez `git config blame.ignoreRevsFile .git-blame-ignore-revs` para que `git blame` lo ignore. Si tenías una rama abierta antes de ese commit, rebaseala sobre `main` y ejecutá `npm run check:fix` para resolver los conflictos de formato.
 
 ### Formato de Rust
 
@@ -299,7 +321,7 @@ npm run setup:signing
 
 Ese script genera la clave de firma en `%USERPROFILE%\.tauri\quorb.key` (nunca sobrescribe una clave existente), escribe la clave pública en `src-tauri/tauri.conf.json` y, si GitHub CLI tiene sesión iniciada, sube `TAURI_SIGNING_PRIVATE_KEY` y `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` como secretos del repositorio. Guardad una copia de la clave privada y su contraseña: si se pierden, las versiones instaladas no aceptarán actualizaciones firmadas con otra clave.
 
-**Estado del workflow de producción.** El workflow de producción es `.github/workflows/release.yml`. No se dispara con tags ni pushes: un mantenedor lo inicia a mano desde la pestaña Actions sobre `main`, indicando la `version` estable y el `source_sha` completo de 40 caracteres de un commit ya fusionado. Valida los inputs, las versiones de los manifiestos, las notas, la colisión de tag y la clave pública del updater; después pasa los tests, compila en Windows y crea un **borrador** de release que publicas tú. Los secretos de firma solo se exponen en el paso de firma/empaquetado. Hasta que el owner aprovisione la clave y los secretos del repositorio, considera la release bloqueada, no automática.
+**Estado del workflow de producción.** El workflow de producción es `.github/workflows/release.yml`. No se dispara con tags ni pushes: un mantenedor lo inicia a mano desde la pestaña Actions sobre `main`, indicando la `version` estable y el `source_sha` completo de 40 caracteres de un commit ya fusionado. Valida los inputs, las versiones de los manifiestos, las notas, la colisión de tag y la clave pública del updater; después pasa los tests, compila en Windows y crea un **borrador** de release que publicas tú. Los secretos de firma solo se exponen en el paso de firma/empaquetado. La clave del updater y los secretos del repositorio ya están aprovisionados; v0.9.0 y v0.9.1 se publicaron con este workflow.
 
 <!-- egdev:contact:start -->
 ## Contact

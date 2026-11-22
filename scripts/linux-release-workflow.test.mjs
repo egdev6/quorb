@@ -10,8 +10,14 @@ test('manual dispatch accepts only the required version and source SHA', () => {
   const text = workflow();
   const trigger = text.split('\non:\n')[1]?.split('\npermissions:\n')[0];
   assert.ok(trigger);
-  assert.deepEqual([...trigger.matchAll(/^  ([\w-]+):/gm)].map((m) => m[1]), ['workflow_dispatch']);
-  assert.deepEqual([...trigger.matchAll(/^      ([\w-]+):/gm)].map((m) => m[1]), ['version', 'source_sha']);
+  assert.deepEqual(
+    [...trigger.matchAll(/^  ([\w-]+):/gm)].map((m) => m[1]),
+    ['workflow_dispatch'],
+  );
+  assert.deepEqual(
+    [...trigger.matchAll(/^      ([\w-]+):/gm)].map((m) => m[1]),
+    ['version', 'source_sha'],
+  );
   for (const name of ['version', 'source_sha']) {
     assert.match(trigger, new RegExp(`      ${name}:\\n(?:        [^\\n]*\\n)*?        required: true\\n(?:        [^\\n]*\\n)*?        type: string`));
   }
@@ -55,7 +61,20 @@ test('validated exact source is built and clean-container verified before same-r
   assert.match(build, /ref: \$\{\{ needs\.preflight\.outputs\.source_sha \}\}\n\s+path: source/);
   assert.match(build, /working-directory: source\n\s+run: npm ci/);
   assert.match(build, /working-directory: source\n\s+run: npm run app:build/);
-  for (const dependency of ['pkg-config', 'libdbus-1-dev', 'libwebkit2gtk-4.1-dev', 'libxdo-dev', 'libssl-dev', 'libayatana-appindicator3-dev', 'librsvg2-dev', 'libsecret-1-dev', 'libfuse2', 'xvfb', 'dbus-x11']) assert.ok(build.includes(dependency), dependency);
+  for (const dependency of [
+    'pkg-config',
+    'libdbus-1-dev',
+    'libwebkit2gtk-4.1-dev',
+    'libxdo-dev',
+    'libssl-dev',
+    'libayatana-appindicator3-dev',
+    'librsvg2-dev',
+    'libsecret-1-dev',
+    'libfuse2',
+    'xvfb',
+    'dbus-x11',
+  ])
+    assert.ok(build.includes(dependency), dependency);
   assert.match(build, /source\/src-tauri\/target\/release\/bundle\/deb\/Quorb_\$\{RELEASE_VERSION\}_amd64\.deb/);
   assert.match(build, /source\/src-tauri\/target\/release\/bundle\/appimage\/Quorb_\$\{RELEASE_VERSION\}_amd64\.AppImage/);
   assert.match(build, /docker build -t quorb-build-verify \.testcontainer/);
@@ -81,7 +100,21 @@ test('Tauri naming configuration and npm test wiring agree with the release cont
 
 test('Linux release documentation explains the operator and user caveats', () => {
   const text = read('docs/release-linux.md');
-  for (const expression of [/workflow_dispatch|Actions/i, /\bversion\b/, /\bsource_sha\b/, /\.deb/, /\.AppImage/, /\.sha256/, /main/, /manual/i, /latest\.json/, /libfuse2/i, /desktop/i, /recommend/i]) assert.match(text, expression);
+  for (const expression of [
+    /workflow_dispatch|Actions/i,
+    /\bversion\b/,
+    /\bsource_sha\b/,
+    /\.deb/,
+    /\.AppImage/,
+    /\.sha256/,
+    /main/,
+    /manual/i,
+    /latest\.json/,
+    /libfuse2/i,
+    /desktop/i,
+    /recommend/i,
+  ])
+    assert.match(text, expression);
 });
 
 test('job-level env uses only contexts GitHub allows there', () => {

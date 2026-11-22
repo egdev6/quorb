@@ -3,21 +3,35 @@ import { disclosureOpen, popupMeterColor, saveDisclosure } from './popup-prefere
 import type { Meter, UsageReport } from './types';
 
 const meter = (windowSeconds: number | null, percent: number | null = 20): Meter => ({
-  id: '', label: 'Limit', percent, used: null, limit: null, unit: null, resetsAt: null, windowSeconds,
+  id: '',
+  label: 'Limit',
+  percent,
+  used: null,
+  limit: null,
+  unit: null,
+  resetsAt: null,
+  windowSeconds,
 });
 const report = (meters: Meter[], kind: UsageReport['kind'] = 'subscription'): UsageReport => ({
-  id: 'claude', name: 'Claude', kind, status: 'ok', plan: null, meters,
-  spend: null, message: null, action: null, fetchedAt: '',
+  id: 'claude',
+  name: 'Claude',
+  kind,
+  status: 'ok',
+  plan: null,
+  meters,
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '',
 });
-const colors = (r: UsageReport) => r.meters.filter(m => m.percent != null).map((m, i) => popupMeterColor(r, m, i));
+const colors = (r: UsageReport) => r.meters.filter((m) => m.percent != null).map((m, i) => popupMeterColor(r, m, i));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('popup preferences', () => {
   it('uses white hours and accent for every weekly quota regardless of order or count', () => {
     const white = '#ffffff';
     const accent = 'var(--popup-primary, #ff0036)';
-    expect(colors(report([meter(18000), meter(604800), meter(604800), meter(604800)])))
-      .toEqual([white, accent, accent, accent]);
+    expect(colors(report([meter(18000), meter(604800), meter(604800), meter(604800)]))).toEqual([white, accent, accent, accent]);
     expect(colors(report([meter(604800), meter(18000)]))).toEqual([accent, white]);
   });
 

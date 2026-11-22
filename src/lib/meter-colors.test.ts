@@ -3,11 +3,26 @@ import { meterColor } from './meter-colors';
 import type { Meter, UsageReport } from './types';
 
 const meter = (id: string, label: string, windowSeconds: number | null = null): Meter => ({
-  id, label, percent: 10, used: null, limit: null, unit: null, resetsAt: null, windowSeconds,
+  id,
+  label,
+  percent: 10,
+  used: null,
+  limit: null,
+  unit: null,
+  resetsAt: null,
+  windowSeconds,
 });
 const report = (id = 'claude'): UsageReport => ({
-  id, name: id, kind: 'subscription', status: 'ok', plan: null, meters: [], spend: null,
-  message: null, action: null, fetchedAt: '',
+  id,
+  name: id,
+  kind: 'subscription',
+  status: 'ok',
+  plan: null,
+  meters: [],
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '',
 });
 
 describe('meterColor without window duration', () => {

@@ -11,8 +11,13 @@ export function scopeSvg(name: string, svg: string): string {
     .replace(/\bid="([^"]+)"/g, `id="${p}$1"`)
     .replace(/url\(#([^)]+)\)/g, `url(#${p}$1)`)
     .replace(/(xlink:)?href="#([^"]+)"/g, (_m, x = '', id) => `${x}href="#${p}${id}"`)
-    .replace(/\bclass="([^"]+)"/g, (_m, cls: string) => `class="${cls.split(/\s+/).map((c) => p + c).join(' ')}"`)
-    .replace(/<style([^>]*)>([\s\S]*?)<\/style>/g, (_m, attrs, css: string) =>
-      `<style${attrs}>${css.replace(/\.(-?[_a-zA-Z][\w-]*)/g, `.${p}$1`)}</style>`,
-    );
+    .replace(
+      /\bclass="([^"]+)"/g,
+      (_m, cls: string) =>
+        `class="${cls
+          .split(/\s+/)
+          .map((c) => p + c)
+          .join(' ')}"`,
+    )
+    .replace(/<style([^>]*)>([\s\S]*?)<\/style>/g, (_m, attrs, css: string) => `<style${attrs}>${css.replace(/\.(-?[_a-zA-Z][\w-]*)/g, `.${p}$1`)}</style>`);
 }

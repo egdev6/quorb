@@ -21,21 +21,35 @@ const DECODER = new TextDecoder('utf-8', { fatal: true });
 export class OperationalError extends Error {}
 
 const esc = (s) => s.replace(ESC, (c) => '\\u{' + c.codePointAt(0).toString(16).padStart(4, '0') + '}');
-const bad = (msg) => { throw new TypeError('policy: ' + msg); };
+const bad = (msg) => {
+  throw new TypeError('policy: ' + msg);
+};
 
 export function validatePolicy(policy) {
   if (policy === null || typeof policy !== 'object' || Array.isArray(policy)) bad('must be an object');
-  const keys = Object.keys(policy).filter(k => k !== 'approvedBinaryImages').sort().join(',');
+  const keys = Object.keys(policy)
+    .filter((k) => k !== 'approvedBinaryImages')
+    .sort()
+    .join(',');
   if (keys !== 'allowedRootLifecycleHooks,allowedSymlinks,bidiExceptions,maxTextBytes,schemaVersion') bad('unexpected or missing keys');
   if (policy.schemaVersion !== 1 || !Number.isInteger(policy.maxTextBytes) || policy.maxTextBytes < 0) bad('schemaVersion/maxTextBytes invalid');
-  for (const key of ['allowedSymlinks', 'allowedRootLifecycleHooks', 'bidiExceptions']) if (!Array.isArray(policy[key]) || policy[key].some((v) => typeof v !== 'string')) bad(key + ' must be an array of strings');
+  for (const key of ['allowedSymlinks', 'allowedRootLifecycleHooks', 'bidiExceptions'])
+    if (!Array.isArray(policy[key]) || policy[key].some((v) => typeof v !== 'string')) bad(key + ' must be an array of strings');
   if (policy.bidiExceptions.length > 0) bad('bidiExceptions are not supported in this draft');
   const images = policy.approvedBinaryImages ?? [];
   if (!Array.isArray(images)) bad('approvedBinaryImages must be an array');
   const paths = new Set();
   for (const image of images) {
     if (!image || typeof image !== 'object' || Object.keys(image).sort().join(',') !== 'path,sha256') bad('invalid image approval');
-    if (typeof image.path !== 'string' || image.path.startsWith('/') || image.path.includes('\\') || image.path.includes(':') || image.path.split('/').some(p => !p || p === '.' || p === '..') || !IMAGE_EXT.has(extname(image.path).toLowerCase())) bad('invalid image path');
+    if (
+      typeof image.path !== 'string' ||
+      image.path.startsWith('/') ||
+      image.path.includes('\\') ||
+      image.path.includes(':') ||
+      image.path.split('/').some((p) => !p || p === '.' || p === '..') ||
+      !IMAGE_EXT.has(extname(image.path).toLowerCase())
+    )
+      bad('invalid image path');
     if (typeof image.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(image.sha256) || paths.has(image.path)) bad('invalid or duplicate image approval');
     paths.add(image.path);
   }
@@ -52,11 +66,16 @@ function scanText(text, path, add) {
 
 function checkHooks(text, path, policy, add) {
   let data;
-  try { data = JSON.parse(text); } catch { throw new OperationalError('package.json is not valid JSON'); }
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new OperationalError('package.json is not valid JSON');
+  }
   const scripts = data && typeof data === 'object' ? data.scripts : null;
   if (!scripts || typeof scripts !== 'object') return;
   for (const hook of ROOT_HOOKS) {
-    if (typeof scripts[hook] === 'string' && !(path === 'package.json' && policy.allowedRootLifecycleHooks.includes(hook))) add('block', 'lifecycle-hook', path, 0);
+    if (typeof scripts[hook] === 'string' && !(path === 'package.json' && policy.allowedRootLifecycleHooks.includes(hook)))
+      add('block', 'lifecycle-hook', path, 0);
   }
 }
 
@@ -75,20 +94,46 @@ export function analyze(entries, policy) {
     if (bytes !== null && !Buffer.isBuffer(bytes)) throw new TypeError('entry.bytes must be a Buffer or null');
     if (BIDI.test(path)) add('block', 'bidi-control-path', path, 0);
     else if (CF.test(path)) add('alert', 'cf-format-path', path, 0);
-    if (mode === SYMLINK_MODE) { if (!policy.allowedSymlinks.includes(path)) add('block', 'symlink-not-allowed', path, 0); continue; }
-    if (mode === '160000') { add('block', 'gitlink-not-allowed', path, 0); continue; }
+    if (mode === SYMLINK_MODE) {
+      if (!policy.allowedSymlinks.includes(path)) add('block', 'symlink-not-allowed', path, 0);
+      continue;
+    }
+    if (mode === '160000') {
+      add('block', 'gitlink-not-allowed', path, 0);
+      continue;
+    }
     if (!BLOB_MODES.includes(mode)) throw new TypeError('unsupported mode: ' + mode);
-    const approval = (policy.approvedBinaryImages ?? []).find(image => image.path === path);
-    if (approval && mode === '100644' && bytes !== null && bytes.length <= MAX_IMAGE_BYTES && createHash('sha256').update(bytes).digest('hex') === approval.sha256) {
+    const approval = (policy.approvedBinaryImages ?? []).find((image) => image.path === path);
+    if (
+      approval &&
+      mode === '100644' &&
+      bytes !== null &&
+      bytes.length <= MAX_IMAGE_BYTES &&
+      createHash('sha256').update(bytes).digest('hex') === approval.sha256
+    ) {
       approvedExclusions.push({ path: esc(path), sha256: approval.sha256 });
       continue;
     }
     if (approval) add('block', 'image-approval-mismatch', path, 0);
     const isSource = SOURCE_EXT.has(extname(path).toLowerCase());
-    if (bytes === null || bytes.length > policy.maxTextBytes) { if (isSource) add('block', 'source-too-large', path, 0); else coverageGaps.push({ path: esc(path), reason: 'large' }); continue; }
-    if (bytes.includes(0)) { if (isSource) throw new OperationalError('nul-byte-in-source'); coverageGaps.push({ path: esc(path), reason: 'binary' }); continue; }
+    if (bytes === null || bytes.length > policy.maxTextBytes) {
+      if (isSource) add('block', 'source-too-large', path, 0);
+      else coverageGaps.push({ path: esc(path), reason: 'large' });
+      continue;
+    }
+    if (bytes.includes(0)) {
+      if (isSource) throw new OperationalError('nul-byte-in-source');
+      coverageGaps.push({ path: esc(path), reason: 'binary' });
+      continue;
+    }
     let text;
-    try { text = DECODER.decode(bytes); } catch { if (isSource) throw new OperationalError('invalid-utf8-in-source'); coverageGaps.push({ path: esc(path), reason: 'binary' }); continue; }
+    try {
+      text = DECODER.decode(bytes);
+    } catch {
+      if (isSource) throw new OperationalError('invalid-utf8-in-source');
+      coverageGaps.push({ path: esc(path), reason: 'binary' });
+      continue;
+    }
     scanText(text, path, add);
     if (path === 'package.json' || path.endsWith('/package.json')) checkHooks(text, path, policy, add);
   }
@@ -112,10 +157,13 @@ function readSnapshot(repo, policy) {
     if (tab < 0) throw new OperationalError('unexpected git ls-tree output');
     const [mode, type, oid, sizeRaw] = line.slice(0, tab).split(/\s+/);
     const path = line.slice(tab + 1);
-    if (type !== 'blob' || mode === SYMLINK_MODE) { entries.push({ path, mode, bytes: null }); continue; }
+    if (type !== 'blob' || mode === SYMLINK_MODE) {
+      entries.push({ path, mode, bytes: null });
+      continue;
+    }
     const size = Number(sizeRaw);
     if (!Number.isInteger(size) || size < 0) throw new OperationalError('unexpected blob size');
-    const approvedImage = (policy.approvedBinaryImages ?? []).some(image => image.path === path);
+    const approvedImage = (policy.approvedBinaryImages ?? []).some((image) => image.path === path);
     const limit = approvedImage ? MAX_IMAGE_BYTES : policy.maxTextBytes;
     entries.push({ path, mode, bytes: size > limit ? null : git(repo, ['cat-file', 'blob', oid]) });
   }
@@ -125,8 +173,11 @@ function readSnapshot(repo, policy) {
 export function main(argv) {
   const { repo, policyPath } = parseArgs(argv);
   let policy;
-  try { policy = validatePolicy(JSON.parse(readFileSync(policyPath, 'utf8'))); }
-  catch { throw new OperationalError('policy-load-failed'); }
+  try {
+    policy = validatePolicy(JSON.parse(readFileSync(policyPath, 'utf8')));
+  } catch {
+    throw new OperationalError('policy-load-failed');
+  }
   const report = analyze(readSnapshot(repo, policy), policy);
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   if (report.findings.some((f) => f.severity === 'block')) return 1;
@@ -134,6 +185,10 @@ export function main(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { process.exitCode = main(process.argv.slice(2)); }
-  catch { process.stderr.write('operational-error\n'); process.exitCode = 2; }
+  try {
+    process.exitCode = main(process.argv.slice(2));
+  } catch {
+    process.stderr.write('operational-error\n');
+    process.exitCode = 2;
+  }
 }

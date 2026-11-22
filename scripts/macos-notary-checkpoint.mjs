@@ -14,28 +14,47 @@ export const positiveId = (value) => typeof value === 'string' && /^[1-9][0-9]*$
 export const uuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 export const hex = (value, length) => typeof value === 'string' && new RegExp(`^[0-9a-f]{${length}}$`).test(value);
 const bindingKeys = ['repository', 'workflowPath', 'workflowSha', 'sourceSha', 'version', 'releaseId', 'runId', 'runAttempt'];
-const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
-  Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+const exactKeys = (value, keys) =>
+  value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 
 export function validateTrusted(trusted) {
   validateReleaseInputs({ ref: 'refs/heads/main', version: trusted.version, sourceSha: trusted.sourceSha });
-  if (trusted.repository !== repository || trusted.workflowPath !== workflowPath || !hex(trusted.workflowSha, 40) ||
-      !['releaseId', 'runId', 'runAttempt'].every((key) => positiveId(trusted[key]))) throw new Error('Invalid checkpoint context');
+  if (
+    trusted.repository !== repository ||
+    trusted.workflowPath !== workflowPath ||
+    !hex(trusted.workflowSha, 40) ||
+    !['releaseId', 'runId', 'runAttempt'].every((key) => positiveId(trusted[key]))
+  )
+    throw new Error('Invalid checkpoint context');
   return trusted;
 }
 
 export function trustedEnvironment(env = process.env) {
   if (env.GITHUB_REF !== 'refs/heads/main') throw new Error('Checkpoint requires main');
-  return validateTrusted({ repository: env.GITHUB_REPOSITORY, workflowPath, workflowSha: env.GITHUB_SHA,
-    sourceSha: env.RELEASE_SOURCE_SHA, version: env.RELEASE_VERSION, releaseId: env.RELEASE_ID,
-    runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT });
+  return validateTrusted({
+    repository: env.GITHUB_REPOSITORY,
+    workflowPath,
+    workflowSha: env.GITHUB_SHA,
+    sourceSha: env.RELEASE_SOURCE_SHA,
+    version: env.RELEASE_VERSION,
+    releaseId: env.RELEASE_ID,
+    runId: env.GITHUB_RUN_ID,
+    runAttempt: env.GITHUB_RUN_ATTEMPT,
+  });
 }
 
 export function validateManifest(value, trusted) {
   validateTrusted(trusted);
-  if (!exactKeys(value, ['schema', ...bindingKeys, 'dmgName', 'size', 'sha256']) || value.schema !== 1 ||
-      bindingKeys.some((key) => value[key] !== trusted[key]) || value.dmgName !== `Quorb_${trusted.version}_aarch64.dmg` ||
-      !Number.isSafeInteger(value.size) || value.size < 1 || value.size > MAX_DMG || !hex(value.sha256, 64)) {
+  if (
+    !exactKeys(value, ['schema', ...bindingKeys, 'dmgName', 'size', 'sha256']) ||
+    value.schema !== 1 ||
+    bindingKeys.some((key) => value[key] !== trusted[key]) ||
+    value.dmgName !== `Quorb_${trusted.version}_aarch64.dmg` ||
+    !Number.isSafeInteger(value.size) ||
+    value.size < 1 ||
+    value.size > MAX_DMG ||
+    !hex(value.sha256, 64)
+  ) {
     throw new Error('Invalid checkpoint manifest');
   }
   return value;
@@ -46,18 +65,26 @@ export function validateDmg(bytes, manifest) {
 }
 
 export function validateReceipt(value, trusted, artifact, manifest) {
-  if (!exactKeys(value, ['schema', ...bindingKeys, 'checkpointArtifactId', 'checkpointArtifactDigest', 'submissionId', 'dmgSha256']) ||
-      value.schema !== 1 || bindingKeys.some((key) => value[key] !== trusted[key]) || !uuid(value.submissionId) ||
-      value.checkpointArtifactId !== String(artifact.id) || value.checkpointArtifactDigest !== artifact.digest?.replace(/^sha256:/, '') ||
-      !hex(value.checkpointArtifactDigest, 64) || value.dmgSha256 !== manifest.sha256) throw new Error('Invalid submission receipt');
+  if (
+    !exactKeys(value, ['schema', ...bindingKeys, 'checkpointArtifactId', 'checkpointArtifactDigest', 'submissionId', 'dmgSha256']) ||
+    value.schema !== 1 ||
+    bindingKeys.some((key) => value[key] !== trusted[key]) ||
+    !uuid(value.submissionId) ||
+    value.checkpointArtifactId !== String(artifact.id) ||
+    value.checkpointArtifactDigest !== artifact.digest?.replace(/^sha256:/, '') ||
+    !hex(value.checkpointArtifactDigest, 64) ||
+    value.dmgSha256 !== manifest.sha256
+  )
+    throw new Error('Invalid submission receipt');
   return value;
 }
 
 // Tauri bundler 2.10.1 sign.rs notarize_auth checks both flows. Absent, not empty:
 // API key/issuer presence alone can trigger its private_keys directory search.
 export function signingEnvironment(env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith('APPLE_API_') &&
-    !['APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID'].includes(key)));
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !key.startsWith('APPLE_API_') && !['APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID'].includes(key)),
+  );
 }
 
 export function buildSigned({ env = process.env, run = execFileSync } = {}) {
@@ -66,7 +93,9 @@ export function buildSigned({ env = process.env, run = execFileSync } = {}) {
   }
   try {
     run('npm', ['run', 'app:build:mac'], { cwd: 'source', env: signingEnvironment(env), stdio: 'inherit' });
-  } catch { throw new Error('Signed build failed'); }
+  } catch {
+    throw new Error('Signed build failed');
+  }
 }
 
 export function createCheckpoint({ env = process.env, io = fs, verify = verifyMacosBundle, signature = verifyDeveloperSignature } = {}) {
@@ -88,5 +117,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (process.argv[2] === 'build') buildSigned();
     else if (process.argv[2] === 'stage') createCheckpoint();
     else throw new Error('Expected build or stage');
-  } catch (error) { console.error(error.message); process.exitCode = 1; }
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

@@ -7,9 +7,20 @@ import { ProviderDetails } from './ProviderDetails';
 import type { UsageReport } from '../lib/types';
 
 const report: UsageReport = {
-  id: 'claude:extra', name: 'Claude · Trabajo', kind: 'subscription', status: 'ok', plan: null,
-  meters: [], spend: null, message: null, action: null, fetchedAt: '2026-10-17T00:00:00Z',
-  daily: [{ date: '2026-10-15', value: 10 }, { date: '2026-10-16', value: 20 }],
+  id: 'claude:extra',
+  name: 'Claude · Trabajo',
+  kind: 'subscription',
+  status: 'ok',
+  plan: null,
+  meters: [],
+  spend: null,
+  message: null,
+  action: null,
+  fetchedAt: '2026-10-17T00:00:00Z',
+  daily: [
+    { date: '2026-10-15', value: 10 },
+    { date: '2026-10-16', value: 20 },
+  ],
 };
 
 const render = (locale: 'es' | 'en') => renderToStaticMarkup(<ProviderDetails report={report} locale={locale} />);
@@ -17,7 +28,9 @@ const render = (locale: 'es' | 'en') => renderToStaticMarkup(<ProviderDetails re
 describe('ProviderDetails meter short label (T2c-S1)', () => {
   const withMeter: UsageReport = {
     ...report,
-    meters: [{ id: 'weekly', label: 'Semana · todos', percent: 40, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: 604800 }],
+    meters: [
+      { id: 'weekly', label: 'Semana · todos', percent: 40, used: null, limit: null, unit: null, resetsAt: '2026-10-06T10:45:00Z', windowSeconds: 604800 },
+    ],
   };
   const renderMeter = (locale: 'es' | 'en') => renderToStaticMarkup(<ProviderDetails report={withMeter} locale={locale} />);
 

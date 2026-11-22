@@ -7,11 +7,20 @@ import { hash } from './macos-notary-checkpoint.mjs';
 const dmgName = 'Quorb_0.8.0_aarch64.dmg';
 function fixture({ checksumFailure = false, dmgFailure = false, rollbackFailure = false, releaseId = 42 } = {}) {
   const calls = [];
-  const files = new Map([[dmgName, Buffer.from('final DMG')], [`${dmgName}.sha256`, Buffer.from('final checksum')]]);
+  const files = new Map([
+    [dmgName, Buffer.from('final DMG')],
+    [`${dmgName}.sha256`, Buffer.from('final checksum')],
+  ]);
   const options = {
     env: { RELEASE_ID: '42', GH_TOKEN: 'synthetic' },
-    load: async () => { calls.push('load'); return { dmgName, files }; },
-    preflight: async () => { calls.push('preflight'); return { releaseId }; },
+    load: async () => {
+      calls.push('load');
+      return { dmgName, files };
+    },
+    preflight: async () => {
+      calls.push('preflight');
+      return { releaseId };
+    },
     fetch: async (url, opts) => {
       calls.push([url, opts]);
       if (opts.method === 'DELETE') return new Response(null, { status: rollbackFailure ? 500 : 204 });
@@ -58,8 +67,15 @@ function finalFixture() {
   const f = producerFixture();
   const finalSha256 = hash(f.bytes);
   const archive = zipFiles({ [dmgName]: f.bytes, [`${dmgName}.sha256`]: `${finalSha256}  ${dmgName}\n` });
-  Object.assign(f.env, { GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', GITHUB_REPOSITORY_ID: '10', GITHUB_SHA: f.run.head_sha,
-    FINAL_ARTIFACT_ID: '999', FINAL_ARTIFACT_DIGEST: hash(archive), FINAL_SHA256: finalSha256 });
+  Object.assign(f.env, {
+    GITHUB_RUN_ID: '123',
+    GITHUB_RUN_ATTEMPT: '2',
+    GITHUB_REPOSITORY_ID: '10',
+    GITHUB_SHA: f.run.head_sha,
+    FINAL_ARTIFACT_ID: '999',
+    FINAL_ARTIFACT_DIGEST: hash(archive),
+    FINAL_SHA256: finalSha256,
+  });
   f.run.path = '.github/workflows/macos-release-resume.yml';
   const artifact = { ...f.checkpoint, id: 999, name: 'macos-notary-final-123-2', size_in_bytes: archive.length, digest: `sha256:${hash(archive)}` };
   f.artifacts.splice(0, f.artifacts.length, artifact);
