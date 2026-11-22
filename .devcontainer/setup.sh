@@ -38,6 +38,7 @@ npm ci
 echo
 echo "✔ Quorb devcontainer environment ready."
 echo "  Commands (from the workspace root, which has package.json):"
+echo "    Git hooks:       npm run hooks:install   (once per clone; Lefthook pre-push: Biome + cargo fmt)"
 echo "    Tests:           npm test"
 echo "    Rust:            (cd src-tauri && cargo test --locked)"
 echo "    Typecheck:       npm run typecheck"
