@@ -80,6 +80,7 @@ Necesitáis Node 22+, Rust con el toolchain MSVC, Microsoft C++ Build Tools y We
 git clone https://github.com/egdev6/quorb
 cd quorb
 npm install
+npm run hooks:install   # una vez por clon: hook pre-push de Lefthook (Biome + cargo fmt)
 npm run app:dev
 ```
 
@@ -96,8 +97,11 @@ Para compilar un instalador local, ejecutad `npm run app:build`. Los archivos se
 | `npm run app:dev` | Ejecutar la app de escritorio con hot reload |
 | `npm run app:build` | Compilar un instalador local |
 | `npm run typecheck` | Comprobar TypeScript |
-| `npm test` | Tests de Vitest |
+| `npm test` | Tests de Vitest y tests Node de los scripts |
 | `cd src-tauri; cargo test` | Tests de Rust |
+| `npm run check` | Lint y comprobación de formato con Biome (CI ejecuta `npx biome ci`) |
+| `npm run check:fix` | Aplicar los arreglos seguros y el formato de Biome |
+| `npm run hooks:install` | Instalar el hook `pre-push` de Lefthook (una vez por clon) |
 | `npm run bump x.y.z` | Actualizar la versión |
 | `npm run setup:signing` | Preparar la firma: crea claves y puede subir secretos a GitHub |
 | `npm run app:release` | Compilar una actualización firmada; requiere credenciales de firma |
@@ -196,13 +200,13 @@ Para sesiones en WSL, elegid la distro en Ajustes y configurad las rutas de cred
 
 ### Hoja de ruta
 
-La firma Authenticode de Windows y distribución por winget, el modo click-through y la ventana de cuatro horas de GLM en NaN siguen siendo objetivos, no funcionalidades actuales. La release macOS ARM64 firmada y notarizada está enlazada arriba, con actualizaciones manuales. Las releases públicas de Linux y el updater de Linux no forman parte del proyecto por ahora; el desarrollo local de Linux está recogido en la sección siguiente.
+La firma Authenticode de Windows y distribución por winget, el modo click-through y la ventana de cuatro horas de GLM en NaN siguen siendo objetivos, no funcionalidades actuales. La release macOS ARM64 firmada y notarizada está enlazada arriba, con actualizaciones manuales. Los instaladores `.deb` y `.AppImage` de Linux se publican en cada release desde v0.9.1, con actualizaciones manuales; el updater de Linux no forma parte del proyecto por ahora. El desarrollo local de Linux está recogido en la sección siguiente.
 
 ## Notas de desarrollo Linux
 
-Está en marcha un port nativo de Linux (issues ODD #105–#108 del proyecto `quorb-linux-local-v1`). Desde v0.9.1 el `.deb` y el `.AppImage` se publican en cada release; para desarrollo local:
+El port nativo de Linux se entregó con las issues ODD #105–#108 del proyecto `quorb-linux-local-v1`. Desde v0.9.1 el `.deb` y el `.AppImage` se publican en cada release; para desarrollo local:
 
-- Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run app:dev`.
+- Requisitos: Node 22+, Rust y las librerías de sistema habituales de Tauri (`libwebkit2gtk-4.1-dev`, `libdbus-1-dev`, `pkg-config`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`). Para ejecutar desde fuente, `npm install` + `npm run hooks:install` + `npm run app:dev`.
 - Los formatos de bundle local instalable ya están decididos: `.deb` para Debian/Ubuntu y `.AppImage` para Arch y el resto (ver [`docs/build-linux.md`](./docs/build-linux.md)). Se construyen y verifican con el workflow manual de Linux (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) o localmente con `npm run app:build` + los scripts `.testcontainer/verify-*.sh`. Los artefactos del CI quedan privados a cada run; los instaladores públicos se adjuntan a cada release con `.github/workflows/linux-release.yml` (ver [docs/release-linux.md](./docs/release-linux.md)).
 - Las limitaciones de sesión y comportamiento dependen del escritorio, y Ajustes las muestra por superficie en el bloque «Sesión de escritorio»:
   - X11: comportamiento completo de siempre-encima, icono de bandeja, atajos globales y transparencia (esta última solo con un compositor).
