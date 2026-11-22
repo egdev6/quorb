@@ -19,6 +19,50 @@ function setup(isOpen: () => boolean = () => true) {
 afterEach(() => vi.useRealTimers());
 
 describe('createDetailPresence', () => {
+  it.each(['widget', 'detail'] as const)('ignores shortcut-only entry into %s before any shortcut', (surface) => {
+    const { tracker, scheduleClose, cancelClose } = setup();
+    tracker.entryDuringShortcutGrace(surface);
+    expect(tracker.isAnyInside()).toBe(false);
+    expect(scheduleClose).not.toHaveBeenCalled();
+    expect(cancelClose).not.toHaveBeenCalled();
+    // The ignored entry must not reconcile native presence either.
+    tracker.sample(false, false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+    expect(cancelClose).not.toHaveBeenCalled();
+  });
+
+  it.each(['widget', 'detail'] as const)('consumes shortcut grace on the first entry into %s', (surface) => {
+    const { tracker, scheduleClose, cancelClose } = setup();
+    tracker.beginShortcut();
+    tracker.sample(false, false);
+    expect(scheduleClose).not.toHaveBeenCalled();
+    expect(cancelClose).not.toHaveBeenCalled();
+    tracker.entryDuringShortcutGrace(surface);
+    expect(tracker.isAnyInside()).toBe(true);
+    expect(scheduleClose).not.toHaveBeenCalled();
+    expect(cancelClose).toHaveBeenCalledTimes(1);
+    tracker.sample(false, false);
+    expect(tracker.isAnyInside()).toBe(false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+    expect(cancelClose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['widget', 'detail'] as const)('ignores shortcut-only entry into %s after grace was consumed', (surface) => {
+    const { tracker, scheduleClose, cancelClose } = setup();
+    tracker.beginShortcut();
+    tracker.sample(true, false);
+    // No later DOM entry may change even an already-inside native sample.
+    tracker.entryDuringShortcutGrace(surface);
+    expect(tracker.isAnyInside()).toBe(true);
+    expect(scheduleClose).not.toHaveBeenCalled();
+    expect(cancelClose).toHaveBeenCalledTimes(1);
+    tracker.sample(false, false);
+    tracker.entryDuringShortcutGrace(surface);
+    expect(tracker.isAnyInside()).toBe(false);
+    expect(scheduleClose).toHaveBeenCalledTimes(1);
+    expect(cancelClose).toHaveBeenCalledTimes(1);
+  });
+
   it('cierra aunque la primera observación ya esté fuera de ambas ventanas y no haya mouseleave', () => {
     const { tracker, scheduleClose } = setup();
     tracker.sample(false, false);

@@ -406,8 +406,9 @@ export function Widget() {
 
   /** A pointer transition reported by one of the two surfaces. */
   const applyHover = (event: HoverTransition) => {
-    // Entry between native samples also ends the shortcut's initial grace.
-    if (event.kind === 'enter') presenceRef.cursor(event.surface, true);
+    // Entry between native samples ends shortcut grace, without feeding
+    // ordinary hover into the native presence tracker.
+    if (event.kind === 'enter') presenceRef.entryDuringShortcutGrace(event.surface);
     const at = Date.now();
     const previous = hoverPresence();
     const next = nextPointerTarget(previous, { ...event, at });

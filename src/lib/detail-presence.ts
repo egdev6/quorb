@@ -47,6 +47,8 @@ export interface DetailPresence {
   isAnyInside(): boolean;
   /** Start a shortcut lifetime: absence cannot close it before first entry. */
   beginShortcut(): void;
+  /** Consume shortcut grace on entry; otherwise leave native presence and timers untouched. */
+  entryDuringShortcutGrace(surface: PresenceSurface): void;
   /** Forget presence (popup closed by another path). */
   reset(): void;
 }
@@ -80,10 +82,12 @@ export function createDetailPresence(hooks: DetailPresenceHooks): DetailPresence
     else hooks.scheduleClose();
   };
 
+  const cursor = (surface: PresenceSurface, next: boolean) => {
+    sample(surface === 'widget' ? next : inside.widget, surface === 'detail' ? next : inside.detail);
+  };
+
   return {
-    cursor(surface, next) {
-      sample(surface === 'widget' ? next : inside.widget, surface === 'detail' ? next : inside.detail);
-    },
+    cursor,
     sample,
     isAnyInside() {
       return inside.widget || inside.detail;
@@ -92,6 +96,9 @@ export function createDetailPresence(hooks: DetailPresenceHooks): DetailPresence
       // A repeated shortcut starts a new initial lifetime too.
       reset();
       awaitingEntry = true;
+    },
+    entryDuringShortcutGrace(surface) {
+      if (awaitingEntry) cursor(surface, true);
     },
     reset,
   };
