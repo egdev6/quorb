@@ -8,6 +8,8 @@
  *
  * DOM handlers remain the fast close path; native samples provide a fallback
  * using the same close timer, independently of stale DOM presence flags.
+ * A shortcut keeps its eight-second timeout until the first DOM or sampled
+ * entry into either surface; subsequent exits use the ordinary close delay.
  */
 
 import type { Os } from './os-detect';
@@ -43,6 +45,8 @@ export interface DetailPresence {
   sample(widget: boolean, detail: boolean): void;
   /** True while the cursor is over either surface. */
   isAnyInside(): boolean;
+  /** Start a shortcut lifetime: absence cannot close it before first entry. */
+  beginShortcut(): void;
   /** Forget presence (popup closed by another path). */
   reset(): void;
 }
@@ -50,12 +54,24 @@ export interface DetailPresence {
 export function createDetailPresence(hooks: DetailPresenceHooks): DetailPresence {
   const inside: Record<PresenceSurface, boolean> = { widget: false, detail: false };
   let reconciled = false;
+  let awaitingEntry = false;
+
+  const reset = () => {
+    awaitingEntry = false;
+    reconciled = false;
+    inside.widget = false;
+    inside.detail = false;
+  };
 
   const sample = (widget: boolean, detail: boolean) => {
     const wasInside = inside.widget || inside.detail;
     const anyInside = widget || detail;
     inside.widget = widget;
     inside.detail = detail;
+    if (awaitingEntry) {
+      if (!anyInside) return;
+      awaitingEntry = false;
+    }
     // Repeated outside samples must not keep restarting the close delay.
     if (reconciled && wasInside === anyInside) return;
     reconciled = true;
@@ -72,11 +88,12 @@ export function createDetailPresence(hooks: DetailPresenceHooks): DetailPresence
     isAnyInside() {
       return inside.widget || inside.detail;
     },
-    reset() {
-      reconciled = false;
-      inside.widget = false;
-      inside.detail = false;
+    beginShortcut() {
+      // A repeated shortcut starts a new initial lifetime too.
+      reset();
+      awaitingEntry = true;
     },
+    reset,
   };
 }
 

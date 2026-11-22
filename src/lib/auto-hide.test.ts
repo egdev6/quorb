@@ -19,6 +19,7 @@ import { resetDragMode, setDragMode } from './drag-session';
 import { contains, nearestEdge, panelHeightLimit, stripRect, type Edge } from './dock';
 import { DETAIL_EVENTS, physicalPanelBounds } from './detail-panel';
 import { POINTER_SURFACE_EVENT } from './hover-presence';
+import type { DetailPresence } from './detail-presence';
 import { NO_PANEL, type PanelState } from './anchor-panel';
 import type { UsageReport } from './types';
 import { SLOT, SKIP, WIDGET_REFS, WIDGET_STATE_COUNT, WIDGET_REF_COUNT, WIDGET_STATES } from './test-slots';
@@ -1809,6 +1810,75 @@ describe('hover presence wiring', () => {
     widgetEffects.effects = [];
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  const openShortcut = async () => {
+    const el = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 40 }) };
+    widgetEffects.refs[SLOT.orbsRef].current = { querySelector: () => el };
+    (widgetEffects.refs[SLOT.openPeakRef].current as () => void)();
+    await vi.advanceTimersByTimeAsync(80);
+  };
+  const nativePresence = () => widgetEffects.refs[SLOT.presenceRef].current as DetailPresence;
+
+  it('keeps a shortcut detail open for exactly eight seconds despite outside native samples (#309)', async () => {
+    await wire();
+    await openShortcut();
+    for (let i = 0; i < 20; i++) {
+      nativePresence().sample(false, false);
+      await vi.advanceTimersByTimeAsync(i === 19 ? 399 : 400);
+      expect(widgetEffects.states[SLOT.panel]).toMatchObject({ providerId: 'a', anchored: false });
+    }
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+  });
+
+  it.each(['widget', 'detail'] as const)('ends shortcut grace on DOM entry into %s before the next native sample (#309)', async (surface) => {
+    const { dock, detail } = await wire();
+    await openShortcut();
+    nativePresence().sample(false, false);
+    if (surface === 'widget') dock.onMouseEnter();
+    else detail('enter');
+    // No further entry or leave event: the next native sample must recover
+    // the missed DOM leave, even though entry happened between samples.
+    nativePresence().sample(false, false);
+    await vi.advanceTimersByTimeAsync(279);
+    expect(widgetEffects.states[SLOT.panel]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+  });
+
+  it.each(['widget', 'detail'] as const)('holds a shortcut detail inside %s then closes normally on native exit (#309)', async (surface) => {
+    await wire();
+    await openShortcut();
+    nativePresence().sample(surface === 'widget', surface === 'detail');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(widgetEffects.states[SLOT.panel]).toMatchObject({ providerId: 'a' });
+    nativePresence().sample(false, false);
+    await vi.advanceTimersByTimeAsync(279);
+    expect(widgetEffects.states[SLOT.panel]).toMatchObject({ providerId: 'a' });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+  });
+
+  it('restarts the eight-second lifetime on a repeated shortcut without changing provider (#309)', async () => {
+    await wire();
+    await openShortcut();
+    nativePresence().sample(false, false);
+    await vi.advanceTimersByTimeAsync(100);
+    await openShortcut();
+    nativePresence().sample(false, false);
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+  });
+
+  it('leaves an already-pinned detail untouched by the shortcut (#309)', async () => {
+    await wire(true, { providerId: 'b', anchored: true });
+    await openShortcut();
+    nativePresence().sample(false, false);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'b', anchored: true });
   });
 
   it('closes the detail when it reports leave even if the strip never reported mouseleave', async () => {

@@ -406,6 +406,8 @@ export function Widget() {
 
   /** A pointer transition reported by one of the two surfaces. */
   const applyHover = (event: HoverTransition) => {
+    // Entry between native samples also ends the shortcut's initial grace.
+    if (event.kind === 'enter') presenceRef.cursor(event.surface, true);
     const at = Date.now();
     const previous = hoverPresence();
     const next = nextPointerTarget(previous, { ...event, at });
@@ -1234,6 +1236,7 @@ export function Widget() {
       cancelTimers();
       setAnchorRel(relOf(el));
       setPanel((current) => hoverPanel(current, top.id));
+      presenceRef.beginShortcut();
       // Si no pasas el ratón por encima, se cierra solo (salvo que se anclara).
       armClose(8000);
     }, 80);
