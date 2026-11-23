@@ -43,6 +43,27 @@ capabilities eliminadas, no-new-privileges, límites de CPU/memoria/procesos y t
 El runner elimina sus temporales y contenedores; el operador elimina el wheelhouse cuando termine.
 Una creación Docker que termine tarde tras un timeout no tiene garantía absoluta de ausencia de residuos.
 
+## Códigos de salida y diagnóstico (criterios de #276)
+
+`code-safety.mjs scan` sale con `0` solo cuando el análisis se resuelve, tenga o no findings
+(los hallazgos son advisory y nunca cambian el exit). Ante un fallo:
+
+| Exit | Clase | Etapas |
+| --- | --- | --- |
+| `2` | Contrato (determinista; relanzar no sirve) | `argv`, `bad-command`, `input`, `platform`, `uid`, `trusted-files`, `trusted-lock`, `snapshot`, `mount-path`, `wheelhouse`, `control`, `control-hash`, `snapshot-hash`, `trusted-manifest`, `provision-result`, `report-normalize`, `tamper`, `unknown` |
+| `3` | Infraestructura (relanzar puede servir) | `docker-create`, `scanner`, `report-parse`, `cleanup`, `provision` |
+
+`tamper` es un fallo de integridad: nunca debe relanzarse automáticamente, aunque un
+consumidor tenga política de reintentos. `report-parse` se distingue de `report-normalize`
+porque la salida truncada del scanner es infraestructura, mientras que normalizar un JSON
+válido es contrato.
+
+El diagnóstico se imprime en stderr y en `$GITHUB_STEP_SUMMARY` (workflow) como una única
+línea JSON con solo campos cerrados: `label`, `scanner` (`semgrep`/`zizmor`/`null`),
+`stage` (tabla anterior), `class` (`contract`/`infrastructure`), `exit` (código de la
+herramienta interna, `null` si no aplica) y `durationMs`. No se propaga stdout/stderr del
+scanner, rutas, commits, dependencias ni snippets, y no se suben artefactos.
+
 ## Cobertura e integridad
 
 - Inventario independiente desde Git: rutas originales, bytes, SHA-256 y exclusiones explícitas.
@@ -102,3 +123,16 @@ RED→GREEN observado. No se recortan pruebas para reducir el tamaño de revisi�
 `bootstrap.json` únicamente declara la copia futura con `ensure`; no ejecutarlo con apply ahora.
 Los pins de checkout/setup-node son los previamente revisados. El runner hospedado y el major Node son
 plataforma administrada, no pins herméticos. Rollback futuro: retirar solo esta capa mediante cambio revisado.
+
+## Migración para consumidores (baseline fijada)
+
+Quienes consuman `code-safety.mjs` desde un `TRUSTED_BASELINE` (p. ej. cadencia) deben
+actualizar esa baseline a un commit que incluya este cambio. Al hacerlo:
+
+- `0` continúa significando run resuelto (con o sin findings); no se añade un exit de hallazgo.
+- `2` pasa a significar error de contrato determinista: relanzar no ayudará.
+- El nuevo `3` indica infraestructura: relanzar puede servir, si la política del consumidor
+  lo permite. `tamper` (exit 2) no debe reintentarse jamás.
+- El workflow de ejemplo ahora escribe el diagnóstico de campos cerrados en
+  `$GITHUB_STEP_SUMMARY` además de stderr. Los consumidores que subían artefactos con el
+  detalle deben retirarlos: el contrato no incluye texto libre ni salidas del scanner.

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { main } from './code-safety.mjs';
+import { main, cli } from './code-safety.mjs';
 
 const MODULE = fileURLToPath(new URL('./code-safety.mjs', import.meta.url));
 const FAIL = 'code-safety-failed';
@@ -135,16 +135,159 @@ test('provision loads the module-relative trusted manifest and forwards it verba
   );
 });
 
-test('CLI child fails closed with a generic label, exit 2, empty stdout and no leaked input', () => {
+test('CLI reports a closed contract diagnostic without leaking invalid input', () => {
   const secret = 'LEAK-ME-1234';
-  const runs = [['bogus'], ['provision', `relative/${secret}`], ['scan', '/repo', 'not-a-hash', '/wheels', '/parent'], ['scan', '/repo', COMMIT]];
-  for (const argv of runs) {
+  const runs = [
+    { argv: ['bogus'], stage: 'bad-command' },
+    { argv: ['provision', `relative/${secret}`], stage: 'input' },
+    { argv: ['scan', '/repo', 'not-a-hash', '/wheels', '/parent'], stage: 'input' },
+    { argv: ['scan', '/repo', COMMIT], stage: 'argv' },
+  ];
+  for (const { argv, stage } of runs) {
     const result = spawnSync(process.execPath, [MODULE, ...argv], { encoding: 'utf8' });
     assert.equal(result.status, 2, argv.join(' '));
     assert.equal(result.stdout, '');
-    assert.equal(result.stderr, `${FAIL}\n`);
+    const [prefix, ...extra] = result.stderr.trimEnd().split('\n');
+    assert.deepEqual(extra, []);
+    const separator = prefix.indexOf(' ');
+    assert.equal(prefix.slice(0, separator), FAIL);
+    const diagnostic = JSON.parse(prefix.slice(separator + 1));
+    assert.deepEqual({ ...diagnostic, durationMs: 0 }, {
+      label: FAIL,
+      scanner: null,
+      stage,
+      class: 'contract',
+      exit: null,
+      durationMs: 0,
+    });
+    assert.ok(Number.isInteger(diagnostic.durationMs) && diagnostic.durationMs >= 0);
     assert.ok(!result.stderr.includes(secret));
   }
+});
+
+test('CLI emits closed diagnostics and distinct exit codes for contract and infrastructure', async () => {
+  for (const { runner, stage, expectedExit, expectedClass, scanner, internalExit } of [
+    {
+      runner: 'runSemgrep',
+      stage: 'report-normalize',
+      expectedExit: 2,
+      expectedClass: 'contract',
+      scanner: 'semgrep',
+      internalExit: null,
+    },
+    {
+      runner: 'runSemgrep',
+      stage: 'report-parse',
+      expectedExit: 3,
+      expectedClass: 'infrastructure',
+      scanner: 'semgrep',
+      internalExit: null,
+    },
+    {
+      runner: 'runSemgrep',
+      stage: 'trusted-lock',
+      expectedExit: 2,
+      expectedClass: 'contract',
+      scanner: 'semgrep',
+      internalExit: null,
+    },
+    {
+      runner: 'runSemgrep',
+      stage: 'docker-create',
+      expectedExit: 3,
+      expectedClass: 'infrastructure',
+      scanner: 'semgrep',
+      internalExit: 125,
+    },
+    {
+      runner: 'runZizmor',
+      stage: 'scanner',
+      expectedExit: 3,
+      expectedClass: 'infrastructure',
+      scanner: 'zizmor',
+      internalExit: 2,
+    },
+  ]) {
+    let stdout = '';
+    let stderr = '';
+    const deps = {
+      runSemgrep: async () => {
+        if (runner === 'runSemgrep') {
+          throw Object.assign(new Error(`${scanner}-run-failed:${stage}`), {
+            scanner,
+            internalExit,
+            durationMs: 27,
+          });
+        }
+        return { findings: [] };
+      },
+      runZizmor: async () => {
+        if (runner === 'runZizmor') {
+          throw Object.assign(new Error(`${scanner}-run-failed:${stage}`), {
+            scanner,
+            internalExit,
+            durationMs: 27,
+          });
+        }
+        return { findings: [] };
+      },
+    };
+    const exit = await cli(['scan', '/repo', COMMIT, '/wheels', '/parent'], deps, {
+      stdout: (text) => { stdout += text; },
+      stderr: (text) => { stderr += text; },
+    });
+    assert.equal(exit, expectedExit);
+    assert.equal(stdout, '');
+    const [line, ...extra] = stderr.trimEnd().split('\n');
+    assert.deepEqual(extra, []);
+    const separator = line.indexOf(' ');
+    assert.equal(line.slice(0, separator), FAIL);
+    const parsed = JSON.parse(line.slice(separator + 1));
+    assert.deepEqual({ ...parsed, durationMs: 27 }, {
+      label: FAIL,
+      scanner,
+      stage,
+      class: expectedClass,
+      exit: internalExit,
+      durationMs: 27,
+    });
+    assert.ok(Number.isInteger(parsed.durationMs) && parsed.durationMs >= 0);
+  }
+});
+
+test('classifies contract and infrastructure runner failures by stage', async () => {
+  const err = (message, meta) => Object.assign(new Error(message), meta);
+  await assert.rejects(
+    main(['scan', '/repo', COMMIT, '/wheels', '/parent'], {
+      runSemgrep: () => { throw err('semgrep-run-failed:docker-create', { scanner: 'semgrep', internalExit: 125, durationMs: 12 }); },
+      runZizmor: () => ({ findings: [] }),
+    }),
+    (error) => error.message === FAIL
+      && error.className === 'infrastructure'
+      && error.stage === 'docker-create'
+      && error.scanner === 'semgrep'
+      && error.exit === 125
+      && error.durationMs === 12,
+  );
+  await assert.rejects(
+    main(['scan', '/repo', COMMIT, '/wheels', '/parent'], {
+      runSemgrep: () => { throw err('semgrep-run-failed:trusted-lock', { scanner: 'semgrep' }); },
+      runZizmor: () => ({ findings: [] }),
+    }),
+    (error) => error.message === FAIL
+      && error.className === 'contract'
+      && error.stage === 'trusted-lock',
+  );
+  await assert.rejects(
+    main(['scan', '/repo', COMMIT, '/wheels', '/parent'], {
+      runSemgrep: () => ({ findings: [] }),
+      runZizmor: () => { throw err('zizmor-run-failed:scanner', { scanner: 'zizmor', internalExit: 2, durationMs: 7 }); },
+    }),
+    (error) => error.message === FAIL
+      && error.className === 'infrastructure'
+      && error.stage === 'scanner'
+      && error.scanner === 'zizmor',
+  );
 });
 
 test('workflow adoption pins the reviewed integrated baseline and keeps target execution separate', () => {
@@ -157,8 +300,9 @@ test('workflow adoption pins the reviewed integrated baseline and keeps target e
     assert.match(workflow, /ref: \$\{\{ env\.TRUSTED_BASELINE \}\}/);
     assert.match(workflow, /ref: \$\{\{ env\.TARGET_COMMIT \}\}/);
     assert.match(workflow, /node trusted\/scripts\/security\/code-safety\.mjs scan/);
+    assert.match(workflow, /\$GITHUB_STEP_SUMMARY/);
     assert.match(workflow, /permissions:\r?\n  contents: read/);
-    assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write/);
+    assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write|actions\/upload-artifact/);
   }
 });
 

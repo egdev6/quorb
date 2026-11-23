@@ -22,18 +22,66 @@ const COMMIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const UNSAFE = /[\p{Cc}\p{Cf}]/u;
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 
-const fail = () => {
-  throw new Error(FAIL);
+const CONTRACT_STAGES = new Set([
+  'argv', 'bad-command', 'input', 'platform', 'uid', 'trusted-files', 'trusted-lock',
+  'snapshot', 'mount-path', 'wheelhouse', 'control', 'control-hash', 'snapshot-hash',
+  'trusted-manifest', 'report-normalize', 'provision-result', 'tamper', 'unknown',
+]);
+const INFRASTRUCTURE_STAGES = new Set([
+  'docker-create', 'scanner', 'report-parse', 'cleanup', 'provision',
+]);
+const SCANNERS = new Set(['semgrep', 'zizmor']);
+const ALL_STAGES = new Set([...CONTRACT_STAGES, ...INFRASTRUCTURE_STAGES]);
+
+class CodeSafetyError extends Error {
+  constructor({ className, scanner = null, stage = 'unknown', exit = null, durationMs = 0 }) {
+    super(FAIL);
+    this.name = 'CodeSafetyError';
+    this.className = className === 'infrastructure' ? 'infrastructure' : 'contract';
+    this.scanner = SCANNERS.has(scanner) ? scanner : null;
+    this.stage = ALL_STAGES.has(stage) ? stage : 'unknown';
+    this.exit = Number.isInteger(exit) ? exit : null;
+    this.durationMs = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : 0;
+  }
+}
+
+const fail = (stage = 'unknown') => {
+  const safeStage = ALL_STAGES.has(stage) ? stage : 'unknown';
+  const className = INFRASTRUCTURE_STAGES.has(safeStage) ? 'infrastructure' : 'contract';
+  throw new CodeSafetyError({ className, stage: safeStage });
 };
 const defaultReadManifest = () => JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
 
+function runnerError(error, fallbackScanner) {
+  const match = /^(semgrep|zizmor)-run-failed:([a-z0-9-]+)$/.exec(error?.message ?? '');
+  const scanner = SCANNERS.has(error?.scanner) ? error.scanner : (match?.[1] ?? fallbackScanner);
+  const stage = ALL_STAGES.has(match?.[2]) ? match[2] : 'unknown';
+  const className = INFRASTRUCTURE_STAGES.has(stage) ? 'infrastructure' : 'contract';
+  return new CodeSafetyError({
+    className,
+    scanner,
+    stage,
+    exit: error?.internalExit,
+    durationMs: error?.durationMs,
+  });
+}
+
+const diagnosis = (error) => JSON.stringify({
+  label: FAIL,
+  scanner: SCANNERS.has(error?.scanner) ? error.scanner : null,
+  stage: ALL_STAGES.has(error?.stage) ? error.stage : 'unknown',
+  class: error?.className === 'infrastructure' ? 'infrastructure' : 'contract',
+  exit: Number.isInteger(error?.exit) ? error.exit : null,
+  durationMs: Number.isFinite(error?.durationMs) ? Math.max(0, Math.round(error.durationMs)) : 0,
+});
+
 function safePath(value) {
-  if (typeof value !== 'string' || !isAbsolute(value) || UNSAFE.test(value)) fail();
+  if (typeof value !== 'string' || !isAbsolute(value) || UNSAFE.test(value)) fail('input');
   return value;
 }
 
 async function runProvision(argv, deps) {
-  if (argv.length !== 2) fail();
+  if (argv.length !== 2) fail('argv');
   const destination = safePath(argv[1]);
   const provisionTools = deps.provisionTools ?? defaultProvisionTools;
   const readManifest = deps.readManifest ?? defaultReadManifest;
@@ -41,23 +89,23 @@ async function runProvision(argv, deps) {
   try {
     manifest = await readManifest();
   } catch {
-    return fail();
+    return fail('trusted-manifest');
   }
   let result;
   try {
     result = await provisionTools({ manifest, destination });
-  } catch {
-    return fail();
+  } catch (error) {
+    throw new CodeSafetyError({ className: 'infrastructure', scanner: null, stage: 'provision', durationMs: 0 });
   }
-  if (result === null || typeof result !== 'object') fail();
+  if (result === null || typeof result !== 'object') fail('provision-result');
   return { directory: result.directory, artifacts: result.artifacts };
 }
 
 async function runScan(argv, deps) {
-  if (argv.length !== 5) fail();
+  if (argv.length !== 5) fail('argv');
   const repo = safePath(argv[1]);
   const commit = argv[2];
-  if (typeof commit !== 'string' || !COMMIT_SHA.test(commit)) fail();
+  if (typeof commit !== 'string' || !COMMIT_SHA.test(commit)) fail('input');
   const wheelhouse = safePath(argv[3]);
   const parent = safePath(argv[4]);
   const runSemgrep = deps.runSemgrep ?? defaultRunSemgrep;
@@ -67,14 +115,14 @@ async function runScan(argv, deps) {
   let semgrep;
   try {
     semgrep = await runSemgrep(input);
-  } catch {
-    return fail();
+  } catch (error) {
+    throw runnerError(error, 'semgrep');
   }
   let zizmor;
   try {
     zizmor = await runZizmor(input);
-  } catch {
-    return fail();
+  } catch (error) {
+    throw runnerError(error, 'zizmor');
   }
   return { semgrep, zizmor };
 }
@@ -82,10 +130,10 @@ async function runScan(argv, deps) {
 // Returns the report object so tests can assert on it; the CLI wrapper below owns
 // stdout. Strict argv length and shape are validated per command.
 export async function main(argv, deps = {}) {
-  if (!Array.isArray(argv) || argv.length === 0) fail();
+  if (!Array.isArray(argv) || argv.length === 0) fail('argv');
   if (argv[0] === 'provision') return runProvision(argv, deps);
   if (argv[0] === 'scan') return runScan(argv, deps);
-  fail();
+  fail('bad-command');
 }
 
 function serialize(report) {
@@ -99,13 +147,22 @@ function serialize(report) {
   return `${json}\n`;
 }
 
-async function cli(argv) {
+export async function cli(argv, deps = {}, output = {}) {
+  const stdout = output.stdout ?? ((text) => process.stdout.write(text));
+  const stderr = output.stderr ?? ((text) => process.stderr.write(text));
+  const startedAt = performance.now();
   try {
-    process.stdout.write(serialize(await main(argv)));
+    stdout(serialize(await main(argv, deps)));
     return 0;
-  } catch {
-    process.stderr.write(`${FAIL}\n`);
-    return 2;
+  } catch (error) {
+    const failure = error instanceof CodeSafetyError
+      ? error
+      : new CodeSafetyError({ className: 'contract', stage: 'unknown' });
+    if (failure.durationMs === 0) {
+      failure.durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+    }
+    stderr(`${FAIL} ${diagnosis(failure)}\n`);
+    return failure.className === 'infrastructure' ? 3 : 2;
   }
 }
 

@@ -67,9 +67,24 @@ jobs:
       - name: Analyze inert Git blobs offline
         shell: bash
         run: |
+          diagnostic_file="$RUNNER_TEMP/quorb-code-safety/diagnostic.txt"
+          set +e
           node trusted/scripts/security/code-safety.mjs scan \
             "$GITHUB_WORKSPACE/target" "$TARGET_COMMIT" \
-            "$RUNNER_TEMP/quorb-code-safety/wheels" "$RUNNER_TEMP/quorb-code-safety"
+            "$RUNNER_TEMP/quorb-code-safety/wheels" "$RUNNER_TEMP/quorb-code-safety" 2>"$diagnostic_file"
+          code=$?
+          set -e
+          if [[ "$code" -ne 0 ]]; then
+            diagnostic="$(cat "$diagnostic_file")"
+            printf '%s\n' "$diagnostic" >&2
+            {
+              echo '## Code safety diagnostic'
+              echo
+              printf '%s\n' "$diagnostic"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -f -- "$diagnostic_file"
+          exit "$code"
       - name: Remove temporary downloaded tools
         if: always()
         shell: bash

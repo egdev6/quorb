@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runSemgrep } from './run-semgrep.mjs';
+import { runSemgrep, runZizmor } from './run-semgrep.mjs';
 
 const IMAGE = 'docker.io/library/python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d';
 const COMMIT = 'a'.repeat(40);
@@ -174,13 +174,33 @@ test('docker create and scanner failures are operational with host cleanup', (t)
   assert.throws(() => runSemgrep(input(f2), deps(f2, scanFail)), /semgrep-run-failed:scanner/);
 });
 
-test('unparseable or incomplete reports are operational', (t) => {
-  for (const stdout of ['not json', JSON.stringify(report(['/inputs/other.ts']))]) {
-    const f = fixture(t);
-    const { execute } = startedReport(stdout);
-    assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:report/);
-    assert.deepEqual(readdirSync(f.parent), []);
-  }
+test('unparseable and incomplete reports fail at distinct report stages', (t) => {
+  const parseFixture = fixture(t);
+  const { execute: parseExecute } = startedReport('not json');
+  assert.throws(() => runSemgrep(input(parseFixture), deps(parseFixture, parseExecute)), /semgrep-run-failed:report-parse/);
+
+  const normalizeFixture = fixture(t);
+  const { execute: normalizeExecute } = startedReport(JSON.stringify(report(['/inputs/other.ts'])));
+  assert.throws(() => runSemgrep(input(normalizeFixture), deps(normalizeFixture, normalizeExecute)), /semgrep-run-failed:report-normalize/);
+
+  assert.deepEqual(readdirSync(parseFixture.parent), []);
+  assert.deepEqual(readdirSync(normalizeFixture.parent), []);
+});
+
+test('zizmor failures identify the zizmor scanner and retain internal exit/duration', (t) => {
+  const f = fixture(t);
+  const { execute } = capture((args) =>
+    args[0] === 'create'
+      ? { status: 17, stdout: '', stderr: '' }
+      : { status: 0, stdout: '', stderr: '' },
+  );
+  assert.throws(
+    () => runZizmor(input(f), deps(f, execute)),
+    (error) => error.message === 'zizmor-run-failed:docker-create'
+      && error.scanner === 'zizmor'
+      && error.internalExit === 17
+      && Number.isInteger(error.durationMs),
+  );
 });
 
 test('removes container and host temp dirs on success and on start timeout', (t) => {
