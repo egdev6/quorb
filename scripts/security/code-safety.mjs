@@ -23,13 +23,26 @@ const UNSAFE = /[\p{Cc}\p{Cf}]/u;
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 
 const CONTRACT_STAGES = new Set([
-  'argv', 'bad-command', 'input', 'platform', 'uid', 'trusted-files', 'trusted-lock',
-  'snapshot', 'mount-path', 'wheelhouse', 'control', 'control-hash', 'snapshot-hash',
-  'trusted-manifest', 'report-normalize', 'provision-result', 'tamper', 'unknown',
+  'argv',
+  'bad-command',
+  'input',
+  'platform',
+  'uid',
+  'trusted-files',
+  'trusted-lock',
+  'snapshot',
+  'mount-path',
+  'wheelhouse',
+  'control',
+  'control-hash',
+  'snapshot-hash',
+  'trusted-manifest',
+  'report-normalize',
+  'provision-result',
+  'tamper',
+  'unknown',
 ]);
-const INFRASTRUCTURE_STAGES = new Set([
-  'docker-create', 'scanner', 'report-parse', 'cleanup', 'provision',
-]);
+const INFRASTRUCTURE_STAGES = new Set(['docker-create', 'scanner', 'report-parse', 'cleanup', 'provision']);
 const SCANNERS = new Set(['semgrep', 'zizmor']);
 const ALL_STAGES = new Set([...CONTRACT_STAGES, ...INFRASTRUCTURE_STAGES]);
 
@@ -66,14 +79,15 @@ function runnerError(error, fallbackScanner) {
   });
 }
 
-const diagnosis = (error) => JSON.stringify({
-  label: FAIL,
-  scanner: SCANNERS.has(error?.scanner) ? error.scanner : null,
-  stage: ALL_STAGES.has(error?.stage) ? error.stage : 'unknown',
-  class: error?.className === 'infrastructure' ? 'infrastructure' : 'contract',
-  exit: Number.isInteger(error?.exit) ? error.exit : null,
-  durationMs: Number.isFinite(error?.durationMs) ? Math.max(0, Math.round(error.durationMs)) : 0,
-});
+const diagnosis = (error) =>
+  JSON.stringify({
+    label: FAIL,
+    scanner: SCANNERS.has(error?.scanner) ? error.scanner : null,
+    stage: ALL_STAGES.has(error?.stage) ? error.stage : 'unknown',
+    class: error?.className === 'infrastructure' ? 'infrastructure' : 'contract',
+    exit: Number.isInteger(error?.exit) ? error.exit : null,
+    durationMs: Number.isFinite(error?.durationMs) ? Math.max(0, Math.round(error.durationMs)) : 0,
+  });
 
 function safePath(value) {
   if (typeof value !== 'string' || !isAbsolute(value) || UNSAFE.test(value)) fail('input');
@@ -94,7 +108,7 @@ async function runProvision(argv, deps) {
   let result;
   try {
     result = await provisionTools({ manifest, destination });
-  } catch (error) {
+  } catch {
     throw new CodeSafetyError({ className: 'infrastructure', scanner: null, stage: 'provision', durationMs: 0 });
   }
   if (result === null || typeof result !== 'object') fail('provision-result');
@@ -155,9 +169,7 @@ export async function cli(argv, deps = {}, output = {}) {
     stdout(serialize(await main(argv, deps)));
     return 0;
   } catch (error) {
-    const failure = error instanceof CodeSafetyError
-      ? error
-      : new CodeSafetyError({ className: 'contract', stage: 'unknown' });
+    const failure = error instanceof CodeSafetyError ? error : new CodeSafetyError({ className: 'contract', stage: 'unknown' });
     if (failure.durationMs === 0) {
       failure.durationMs = Math.max(0, Math.round(performance.now() - startedAt));
     }

@@ -35,6 +35,29 @@ function fixture(t) {
   return { base, root, source, wheelhouse, parent, inventory };
 }
 
+// zizmor scans workflows, so its inventory exposes mounted `NNNNNN.yml` files that map
+// back to `.github/workflows/<name>.yml` originals instead of js/ts sources.
+function zizmorFixture(t) {
+  const base = mkdtempSync(join(tmpdir(), 'run-zizmor-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, 'snapshot');
+  mkdirSync(root);
+  const source = join(root, '000000.yml');
+  writeFileSync(source, 'on: push');
+  const wheelhouse = join(base, 'wheels');
+  mkdirSync(wheelhouse);
+  const parent = join(base, 'out');
+  mkdirSync(parent);
+  const inventory = {
+    commit: COMMIT,
+    root,
+    targets: [{ path: source, originalPath: '.github/workflows/ci.yml', sha256: sha('on: push') }],
+    excluded: [],
+  };
+  return { base, root, source, wheelhouse, parent, inventory };
+}
+const zizmorReport = () => ({ version: '1.30.1', reports: [{ path: '/inputs/000000.yml', findings: [] }] });
+
 const input = (f) => ({ repo: '/repo', commit: COMMIT, wheelhouse: f.wheelhouse, parent: f.parent });
 const deps = (f, execute, extra = {}) => ({ platform: 'linux', uid: 1000, gid: 1000, exportSnapshot: () => f.inventory, execute, ...extra });
 
@@ -189,17 +212,11 @@ test('unparseable and incomplete reports fail at distinct report stages', (t) =>
 
 test('zizmor failures identify the zizmor scanner and retain internal exit/duration', (t) => {
   const f = fixture(t);
-  const { execute } = capture((args) =>
-    args[0] === 'create'
-      ? { status: 17, stdout: '', stderr: '' }
-      : { status: 0, stdout: '', stderr: '' },
-  );
+  const { execute } = capture((args) => (args[0] === 'create' ? { status: 17, stdout: '', stderr: '' } : { status: 0, stdout: '', stderr: '' }));
   assert.throws(
     () => runZizmor(input(f), deps(f, execute)),
-    (error) => error.message === 'zizmor-run-failed:docker-create'
-      && error.scanner === 'zizmor'
-      && error.internalExit === 17
-      && Number.isInteger(error.durationMs),
+    (error) =>
+      error.message === 'zizmor-run-failed:docker-create' && error.scanner === 'zizmor' && error.internalExit === 17 && Number.isInteger(error.durationMs),
   );
 });
 
@@ -239,16 +256,25 @@ test('uncertain create still attempts named cleanup and never returns success', 
   assert.ok(!existsSync(f.root));
 });
 
-test('cleanup failure is operational, never green', (t) => {
-  const f = fixture(t);
-  const { execute } = capture((args) =>
-    args[0] === 'create'
-      ? { status: 0, stdout: '', stderr: '' }
-      : args[0] === 'start'
-        ? { status: 0, stdout: JSON.stringify(report()), stderr: '' }
-        : { status: 1, stdout: '', stderr: 'permission denied' },
-  );
-  assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:cleanup/);
+test('cleanup failure is operational, never green, and names the scanner that ran', (t) => {
+  for (const [run, scanner, fixtureFor, stdout] of [
+    [runSemgrep, 'semgrep', fixture, JSON.stringify(report())],
+    [runZizmor, 'zizmor', zizmorFixture, JSON.stringify(zizmorReport())],
+  ]) {
+    const f = fixtureFor(t);
+    const { execute } = capture((args) =>
+      args[0] === 'create'
+        ? { status: 0, stdout: '', stderr: '' }
+        : args[0] === 'start'
+          ? { status: 0, stdout, stderr: '' }
+          : { status: 1, stdout: '', stderr: 'permission denied' },
+    );
+    assert.throws(
+      () => run(input(f), deps(f, execute)),
+      (error) => error.message === `${scanner}-run-failed:cleanup` && error.scanner === scanner && Number.isInteger(error.durationMs),
+      scanner,
+    );
+  }
 });
 
 test('never echoes raw scanner output or secrets in errors', (t) => {

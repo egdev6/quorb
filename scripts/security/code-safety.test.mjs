@@ -152,14 +152,17 @@ test('CLI reports a closed contract diagnostic without leaking invalid input', (
     const separator = prefix.indexOf(' ');
     assert.equal(prefix.slice(0, separator), FAIL);
     const diagnostic = JSON.parse(prefix.slice(separator + 1));
-    assert.deepEqual({ ...diagnostic, durationMs: 0 }, {
-      label: FAIL,
-      scanner: null,
-      stage,
-      class: 'contract',
-      exit: null,
-      durationMs: 0,
-    });
+    assert.deepEqual(
+      { ...diagnostic, durationMs: 0 },
+      {
+        label: FAIL,
+        scanner: null,
+        stage,
+        class: 'contract',
+        exit: null,
+        durationMs: 0,
+      },
+    );
     assert.ok(Number.isInteger(diagnostic.durationMs) && diagnostic.durationMs >= 0);
     assert.ok(!result.stderr.includes(secret));
   }
@@ -233,8 +236,12 @@ test('CLI emits closed diagnostics and distinct exit codes for contract and infr
       },
     };
     const exit = await cli(['scan', '/repo', COMMIT, '/wheels', '/parent'], deps, {
-      stdout: (text) => { stdout += text; },
-      stderr: (text) => { stderr += text; },
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      },
     });
     assert.equal(exit, expectedExit);
     assert.equal(stdout, '');
@@ -243,14 +250,17 @@ test('CLI emits closed diagnostics and distinct exit codes for contract and infr
     const separator = line.indexOf(' ');
     assert.equal(line.slice(0, separator), FAIL);
     const parsed = JSON.parse(line.slice(separator + 1));
-    assert.deepEqual({ ...parsed, durationMs: 27 }, {
-      label: FAIL,
-      scanner,
-      stage,
-      class: expectedClass,
-      exit: internalExit,
-      durationMs: 27,
-    });
+    assert.deepEqual(
+      { ...parsed, durationMs: 27 },
+      {
+        label: FAIL,
+        scanner,
+        stage,
+        class: expectedClass,
+        exit: internalExit,
+        durationMs: 27,
+      },
+    );
     assert.ok(Number.isInteger(parsed.durationMs) && parsed.durationMs >= 0);
   }
 });
@@ -259,34 +269,36 @@ test('classifies contract and infrastructure runner failures by stage', async ()
   const err = (message, meta) => Object.assign(new Error(message), meta);
   await assert.rejects(
     main(['scan', '/repo', COMMIT, '/wheels', '/parent'], {
-      runSemgrep: () => { throw err('semgrep-run-failed:docker-create', { scanner: 'semgrep', internalExit: 125, durationMs: 12 }); },
+      runSemgrep: () => {
+        throw err('semgrep-run-failed:docker-create', { scanner: 'semgrep', internalExit: 125, durationMs: 12 });
+      },
       runZizmor: () => ({ findings: [] }),
     }),
-    (error) => error.message === FAIL
-      && error.className === 'infrastructure'
-      && error.stage === 'docker-create'
-      && error.scanner === 'semgrep'
-      && error.exit === 125
-      && error.durationMs === 12,
+    (error) =>
+      error.message === FAIL &&
+      error.className === 'infrastructure' &&
+      error.stage === 'docker-create' &&
+      error.scanner === 'semgrep' &&
+      error.exit === 125 &&
+      error.durationMs === 12,
   );
   await assert.rejects(
     main(['scan', '/repo', COMMIT, '/wheels', '/parent'], {
-      runSemgrep: () => { throw err('semgrep-run-failed:trusted-lock', { scanner: 'semgrep' }); },
+      runSemgrep: () => {
+        throw err('semgrep-run-failed:trusted-lock', { scanner: 'semgrep' });
+      },
       runZizmor: () => ({ findings: [] }),
     }),
-    (error) => error.message === FAIL
-      && error.className === 'contract'
-      && error.stage === 'trusted-lock',
+    (error) => error.message === FAIL && error.className === 'contract' && error.stage === 'trusted-lock',
   );
   await assert.rejects(
     main(['scan', '/repo', COMMIT, '/wheels', '/parent'], {
       runSemgrep: () => ({ findings: [] }),
-      runZizmor: () => { throw err('zizmor-run-failed:scanner', { scanner: 'zizmor', internalExit: 2, durationMs: 7 }); },
+      runZizmor: () => {
+        throw err('zizmor-run-failed:scanner', { scanner: 'zizmor', internalExit: 2, durationMs: 7 });
+      },
     }),
-    (error) => error.message === FAIL
-      && error.className === 'infrastructure'
-      && error.stage === 'scanner'
-      && error.scanner === 'zizmor',
+    (error) => error.message === FAIL && error.className === 'infrastructure' && error.stage === 'scanner' && error.scanner === 'zizmor',
   );
 });
 
