@@ -1256,13 +1256,13 @@ export function Widget() {
   // posición): el muestreo degrada, nunca adivina.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
-    // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
-    // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
-    if (!shouldSampleNativePresence(osFromUA(navigator.userAgent))) return;
     if (!panel.providerId) {
       presenceRef.reset();
       return;
     }
+    // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
+    // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
+    if (!shouldSampleNativePresence(osFromUA(navigator.userAgent))) return;
     let disposed = false;
     const boundsOf = async (label: string): Promise<PhysicalBounds | null> => {
       try {

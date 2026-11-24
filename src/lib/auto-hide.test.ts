@@ -1838,6 +1838,58 @@ describe('hover presence wiring', () => {
     expect(nativePresence().isAnyInside()).toBe(false);
   });
 
+  it.each([
+    ['Windows', 'widget'],
+    ['Windows', 'detail'],
+    ['Linux', 'widget'],
+    ['Linux', 'detail'],
+  ] as const)('clears expired shortcut grace before ordinary %s %s entry (#309)', async (os, surface) => {
+    vi.stubGlobal('navigator', { userAgent: os === 'Windows' ? 'Windows NT 10.0' : 'X11; Linux x86_64' });
+    const commit = async () => {
+      // Keep the live state and refs across renders. Run the actual Widget
+      // effect on both open and CLOSED transitions, never reset the tracker
+      // from the test: non-sampling platforms must still forget shortcut grace.
+      const controls = await wire(false, (widgetEffects.states[SLOT.panel] as PanelState | undefined) ?? NO_PANEL);
+      const presenceEffect = widgetEffects.effects.find((e) => e.deps?.length === 2 && e.deps[1] === nativePresence());
+      expect(presenceEffect).toBeDefined();
+      presenceEffect!.run(); // No native sampling or cleanup on Windows/Linux.
+      return controls;
+    };
+
+    await commit();
+    await openShortcut();
+    await commit();
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+    const closed = await commit();
+
+    // Reopen via ordinary orb hover, preserving its delayed open behavior.
+    closed.hover({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 40 }) } as HTMLElement);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
+    const ordinary = await commit();
+    ordinary.dock.onMouseLeave();
+    const clearClose = vi.spyOn(window, 'clearTimeout');
+    if (surface === 'widget') ordinary.dock.onMouseEnter();
+    else ordinary.detail('enter');
+    expect(nativePresence().isAnyInside()).toBe(false);
+    // Only DOM presence cancels the legitimate pending close; no residual
+    // shortcut tracker entry may cancel it a second time.
+    expect(clearClose).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
+    if (surface === 'widget') ordinary.dock.onMouseLeave();
+    else ordinary.detail('leave');
+    await vi.advanceTimersByTimeAsync(279);
+    expect(widgetEffects.states[SLOT.panel]).toEqual({ providerId: 'a', anchored: false });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(widgetEffects.states[SLOT.panel]).toEqual(NO_PANEL);
+    expect(nativePresence().isAnyInside()).toBe(false);
+  });
+
   it.each(['widget', 'detail'] as const)('ends shortcut grace on a relayed entry into %s (#309)', async (surface) => {
     const { native } = await wire();
     await openShortcut();
