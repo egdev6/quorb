@@ -52,6 +52,8 @@ use model::UsageReport;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -91,6 +93,10 @@ const TYPE_HINT_WINDOWS: &[&str] = &[WIDGET, DETAIL];
 /// (`src/lib/anchor-focus.ts`): el payload es `(etiqueta, tiene_foco)`.
 const FOCUS_EVENT: &str = "window-focus";
 const TRAY_ID: &str = "main";
+/// Evento con el que Rust pregunta al frontend de Ajustes si se puede salir
+/// cuando el hub pide un «Salir» (#281). El payload es el token de la petición.
+#[cfg(windows)]
+const NEXO_QUIT_EVENT: &str = "nexo-quit-request";
 
 #[tauri::command]
 async fn set_surface_clip(
@@ -1497,6 +1503,17 @@ fn start_main_ui(app: &AppHandle) -> tauri::Result<()> {
     // hub); fuera de Windows se crea aquí como siempre. (#281)
     #[cfg(not(windows))]
     build_tray(app)?;
+    // En Windows el icono del plugin sólo puede existir cuando la UI principal ya
+    // está: en el primer arranque el selector de idioma sigue abierto y el icono
+    // se solaparía con él (#281). Al terminar la UI se marca como lista y se pide
+    // el icono. Con el hub unificado `set_visible` no hace nada: manda el hub.
+    #[cfg(windows)]
+    {
+        MAIN_UI_READY.store(true, Ordering::SeqCst);
+        if let Some(handle) = tauri_plugin_nexo::handle(app) {
+            handle.set_visible(true);
+        }
+    }
     Ok(())
 }
 
@@ -1527,6 +1544,122 @@ fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon<tauri::Wry
         builder = builder.icon(icon.clone());
     }
     builder.build(app)
+}
+
+/// La UI principal ya existe (#235, #281).
+///
+/// En Windows la bandeja la crea la factory del plugin de Nexo, pero el icono no
+/// debe aparecer antes de que `start_main_ui` haya levantado la UI: en el primer
+/// arranque el selector de idioma sigue abierto y el icono se solaparía con él.
+/// La factory rechaza mientras esta bandera no esté puesta, y `start_main_ui` la
+/// pone al terminar (entonces el plugin pide el icono y lo crea).
+#[cfg(windows)]
+static MAIN_UI_READY: AtomicBool = AtomicBool::new(false);
+
+/// Factory del icono para el plugin de Nexo.
+///
+/// El plugin la llama en cuanto decide que Quorb debe tener icono propio (sin hub
+/// unificado, o al caer el hub). Se rechaza mientras la UI principal no exista:
+/// así el primer arranque se comporta como en `main`, donde la bandeja se crea al
+/// final de `start_main_ui`. El plugin reintenta la creación cuando el host pide
+/// el icono después de que la UI esté lista.
+#[cfg(windows)]
+fn nexo_tray_factory(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon<tauri::Wry>> {
+    if !MAIN_UI_READY.load(Ordering::SeqCst) {
+        // `tauri::Error::Io` es el error genérico disponible sin dependencias
+        // nuevas; el plugin solo lo registra y vuelve a intentarlo más tarde.
+        return Err(tauri::Error::Io(std::io::Error::other(
+            "la UI principal todavía no está lista",
+        )));
+    }
+    build_tray(app)
+}
+
+/// Un «Salir» del hub pendiente de respuesta del frontend de Ajustes (#281).
+#[cfg(windows)]
+#[derive(Default)]
+struct NexoQuitState {
+    /// La petición viva: `(token, responder)`. Como mucho una: el hub no
+    /// solapa peticiones de «Salir».
+    pending: Mutex<Option<(u64, tauri_plugin_nexo::QuitResponder)>>,
+    /// Siguiente token de petición; distingue respuestas de peticiones viejas.
+    next_token: AtomicU64,
+}
+
+/// Decide un «Salir» del hub.
+///
+/// Sin la ventana de Ajustes abierta no hay nada que perder: se acepta, igual
+/// que en la bandeja nativa. Con Ajustes abierta la única fuente de verdad es el
+/// frontend, así que se le pregunta y se espera su respuesta; el plugin concede
+/// unos 9 s y rechaza solo si nadie contesta.
+#[cfg(windows)]
+fn nexo_decide_quit(app: &AppHandle, reply: tauri_plugin_nexo::QuitResponder) {
+    use tauri_plugin_nexo::QuitDecision;
+    let settings_open = app.get_webview_window(SETTINGS).is_some();
+    match nexo_policy::quit_plan(settings_open) {
+        nexo_policy::QuitPlan::Accept => reply.respond(QuitDecision::Accept),
+        nexo_policy::QuitPlan::Ask => {
+            let state = app.state::<NexoQuitState>();
+            let token = state.next_token.fetch_add(1, Ordering::SeqCst);
+            *state.pending.lock().unwrap() = Some((token, reply));
+            if app.emit_to(SETTINGS, NEXO_QUIT_EVENT, token).is_err() {
+                // No se pudo preguntar: no se puede probar que sea seguro salir,
+                // así que se rechaza con el motivo localizado. El plugin
+                // rechazaría igual por tiempo agotado, pero el motivo propio
+                // está traducido y explica por qué no se sale.
+                nexo_answer_quit(app, token, false);
+            }
+        }
+    }
+}
+
+/// Aplica la respuesta del frontend de Ajustes a la petición de «Salir».
+///
+/// `allow = false` significa que hay cambios sin guardar o un guardado en curso:
+/// se rechaza el «Salir» con el motivo localizado en el idioma vigente.
+#[cfg(windows)]
+fn nexo_answer_quit(app: &AppHandle, token: u64, allow: bool) {
+    use tauri_plugin_nexo::QuitDecision;
+    let state = app.state::<NexoQuitState>();
+    let mut pending = state.pending.lock().unwrap();
+    if !matches!(&*pending, Some((expected, _)) if *expected == token) {
+        return;
+    }
+    let Some((_, reply)) = pending.take() else {
+        return;
+    };
+    drop(pending);
+    if allow {
+        reply.respond(QuitDecision::Accept);
+    } else {
+        let reason = i18n::text(current_locale(app), i18n::Msg::NexoQuitBlocked);
+        reply.respond(QuitDecision::Refuse(reason.to_string()));
+    }
+}
+
+/// Respuesta del frontend de Ajustes a un «Salir» del hub (#281).
+///
+/// El frontend reporta si hay cambios sin guardar o un guardado en curso; la
+/// decisión final vive en `nexo_policy`, que es lo que se testea.
+#[cfg(windows)]
+#[tauri::command]
+fn nexo_quit_answer(app: AppHandle, token: u64, dirty: bool, saving: bool) -> Result<(), String> {
+    let allow = nexo_policy::quit_allowed(nexo_policy::settings_state(dirty, saving));
+    nexo_answer_quit(&app, token, allow);
+    Ok(())
+}
+
+/// Fuera de Windows no hay hub de Nexo: el comando existe para que la lista de
+/// handlers sea la misma en todas las plataformas (#281).
+#[cfg(not(windows))]
+#[tauri::command]
+fn nexo_quit_answer(
+    _app: AppHandle,
+    _token: u64,
+    _dirty: bool,
+    _saving: bool,
+) -> Result<(), String> {
+    Err("Nexo no está disponible en esta plataforma".into())
 }
 
 /// Traduce un clic de menú (nativo o del hub) a su acción, por id estable.
@@ -1596,9 +1729,11 @@ fn nexo_menu_items(locale: i18n::Locale) -> Vec<tauri_plugin_nexo::MenuItem> {
 }
 
 /// Sincroniza los menús de Nexo con el idioma vigente:
-/// - el menú del hub (via `replace_menu`), y
-/// - la bandeja nativa si ya existe (puede haberse creado con el fallback `Es`
-///   de la factory antes de que `AppState` estuviera disponible).
+/// - el menú del hub (via `replace_menu`), que se registró con los labels por
+///   defecto porque el plugin se construye antes de leer la config, y
+/// - la bandeja nativa si ya existe. Tras el gating de `nexo_tray_factory` la
+///   bandeja no puede adelantarse al arranque, pero el chequeo es barato y
+///   cubre el relabelado en caliente desde `apply_locale`.
 /// Silencioso: un fallo nativo puntual no aborta el arranque ni el guardado.
 #[cfg(windows)]
 fn nexo_sync_menu(app: &AppHandle) {
@@ -1619,26 +1754,44 @@ fn nexo_sync_menu(app: &AppHandle) {
 /// Construye el plugin de Nexo (solo Windows). La factory del tray es lazy:
 /// si el hub acepta la unificación no se llama, sin Nexo se llama al instante,
 /// y si el hub cae el plugin restaura el icono con la misma factory.
+///
+/// La factory no crea el icono hasta que la UI principal exista (#281): en el
+/// primer arranque el selector de idioma sigue abierto y el icono se solaparía
+/// con él, igual que en `main`.
 #[cfg(windows)]
 fn nexo_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
-    use tauri_plugin_nexo::{AppInfo, Options, QuitDecision};
+    use tauri_plugin_nexo::{AppInfo, Options};
 
-    let items = nexo_menu_items(i18n::Locale::Es);
-    let options = Options::new(
-        AppInfo {
-            id: "quorb".into(),
-            name: "Quorb".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-        },
-        build_tray,
-    )
-    .menu(items, |app, id| dispatch_tray_action(app, id))
-    .expect("el menú del hub debe respetar los límites del protocolo")
-    .show(show_widget)
-    .quit(
-        |_app, _reason, reply| reply.respond(QuitDecision::Accept),
-        |app| app.exit(0),
-    );
+    let app_info = AppInfo {
+        id: "quorb".into(),
+        name: "Quorb".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    };
+    // El menú se registra con los labels por defecto; `setup` lo reemplaza con
+    // el idioma real de la config.
+    let base = Options::new(app_info.clone(), nexo_tray_factory)
+        .show(show_widget)
+        .quit(
+            |app, _reason, reply| nexo_decide_quit(app, reply),
+            |app| app.exit(0),
+        );
+    // Si el menú no cabe en los límites del protocolo se registra el motivo y se
+    // sigue sin menú del hub, en vez de tumbar el arranque: el resto de
+    // capacidades (show, quit) no dependen del menú.
+    let options = match base.menu(nexo_menu_items(i18n::Locale::Es), |app, id| {
+        dispatch_tray_action(app, id)
+    }) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("El menú del hub de Nexo excede los límites del protocolo; se sigue sin él: {error}");
+            Options::new(app_info, nexo_tray_factory)
+                .show(show_widget)
+                .quit(
+                    |app, _reason, reply| nexo_decide_quit(app, reply),
+                    |app| app.exit(0),
+                )
+        }
+    };
     tauri_plugin_nexo::configured(options)
 }
 
@@ -1666,6 +1819,9 @@ pub fn run() {
     // cliente en el setup y crea la bandeja nativa de forma lazy según el hub.
     #[cfg(windows)]
     let builder = builder.plugin(nexo_plugin());
+    // Peticiones de «Salir» del hub a la espera de que Ajustes responda (#281).
+    #[cfg(windows)]
+    let builder = builder.manage(NexoQuitState::default());
     #[cfg(not(target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     let builder = builder
@@ -1791,6 +1947,7 @@ pub fn run() {
             cli_status,
             check_provider,
             open_settings,
+            nexo_quit_answer,
             show_detail,
             set_detail_bounds,
             set_widget_bounds,

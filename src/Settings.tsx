@@ -30,6 +30,7 @@ import {
 import { ACCOUNT_SECRETS, CLI_INSTALL, SESSION_DIR, accountReady, accountsOf, defaultSessionDir, newAccount, secretKey } from './lib/accounts';
 import { ACCENT_PRESETS, DEFAULT_ACCENT, derivePalette, normalizeHex } from './lib/palette';
 import { isDirty, isSettingsDirty, reconcileLive, reconcileSaved, withCanonicalLive } from './lib/settings-dirty';
+import { registerNexoQuitState } from './lib/nexo-quit';
 import { createLiveCloseHandler, createLiveSaver, type LiveSaver, type LiveState } from './lib/settings-live';
 import { createAutostartController } from './lib/autostart-controller';
 import {
@@ -3342,6 +3343,18 @@ export function Settings() {
   // relecturas se serializan para no pisarse (B5).
   const queueRef = useRef<WriteQueue | null>(null);
   if (!queueRef.current) queueRef.current = createWriteQueue();
+
+  // Estado que consulta el hub de Nexo antes de dejar salir (#281): si hay
+  // cambios sin guardar o un guardado en curso, la salida se rechaza. Se
+  // recalcula en cada render para que la respuesta sea la del momento, no la de
+  // un render viejo. Va antes del `return` temprano: los hooks no pueden ser
+  // condicionales.
+  const nexoQuitRef = useRef<{ dirty: boolean; saving: boolean }>({ dirty: false, saving: false });
+  nexoQuitRef.current = {
+    dirty: isSettingsDirty(baseline, cfg, autostartState.confirmed, autostartDraft),
+    saving: saving || liveState.saving || liveState.pending,
+  };
+  useEffect(() => registerNexoQuitState(() => nexoQuitRef.current), []);
 
   // Cola de escrituras de config de Ajustes: el guardado inmediato y el completo
   // no se pisan a medias y la base solo avanza con lo que confirma el backend.

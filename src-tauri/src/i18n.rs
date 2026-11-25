@@ -25,6 +25,11 @@ pub enum Msg {
     TraySettings,
     /// Bandeja: «Salir».
     TrayQuit,
+    /// Nexo: motivo para rechazar un «Salir» del hub porque Ajustes tiene
+    /// cambios sin guardar o un guardado en curso (#281). Solo lo construye la
+    /// integración de Windows; en el resto se queda como catálogo traducido.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    NexoQuitBlocked,
     /// Prefijo del título de Ajustes: «Ajustes · {canal}».
     SettingsTitle,
     /// Sufijo del título del panel de detalle: «{canal} · detalle».
@@ -112,6 +117,7 @@ pub const ALL_MSGS: &[Msg] = &[
     Msg::TrayRefresh,
     Msg::TraySettings,
     Msg::TrayQuit,
+    Msg::NexoQuitBlocked,
     Msg::SettingsTitle,
     Msg::DetailTitle,
     Msg::OverlayTitle,
@@ -175,6 +181,12 @@ pub fn text(locale: Locale, msg: Msg) -> &'static str {
         (Locale::En, Msg::TraySettings) => "Settings…",
         (Locale::Es, Msg::TrayQuit) => "Salir",
         (Locale::En, Msg::TrayQuit) => "Quit",
+        (Locale::Es, Msg::NexoQuitBlocked) => {
+            "Hay cambios sin guardar en Ajustes. Guárdalos o descártalos antes de salir."
+        }
+        (Locale::En, Msg::NexoQuitBlocked) => {
+            "There are unsaved changes in Settings. Save or discard them before quitting."
+        }
         (Locale::Es, Msg::SettingsTitle) => "Ajustes",
         (Locale::En, Msg::SettingsTitle) => "Settings",
         (Locale::Es, Msg::DetailTitle) => "detalle",

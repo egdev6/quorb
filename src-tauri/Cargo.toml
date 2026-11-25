@@ -82,6 +82,12 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 # Solo Linux: comprueba la regla de KWin documentada en build-linux.md (#227).
 regex = "1"
 
+[dev-dependencies]
+# El protocolo de Nexo, solo para los tests: permite validar el menú real de
+# cada idioma contra el mismo codificador que usa el host (#281). Mismo repo y
+# mismo tag fijado que el plugin, así que no introduce una versión nueva.
+nexo-protocol = { git = "https://github.com/egdev6/tauri-plugin-nexo", tag = "v0.1.1" }
+
 [profile.release]
 codegen-units = 1
 lto = true
