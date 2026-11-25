@@ -287,7 +287,10 @@ describe('detail-local physical fit', () => {
   it.each(['top', 'bottom', 'left', 'right'] as Edge[])('contains text scale 2.25 on narrow fractional-DPI monitors on %s', (edge) => {
     const vertical = edge === 'left' || edge === 'right';
     for (const sf of [1, 1.02, 1.25, 1.5, 1.75, 2]) {
-      for (const origin of [[0, 0], [-1973, -237]]) {
+      for (const origin of [
+        [0, 0],
+        [-1973, -237],
+      ]) {
         const monitor = { x: origin[0] / sf, y: origin[1] / sf, w: 397 / sf, h: 611 / sf };
         for (const offset of [0, 0.5, 1]) {
           const strip = stripRect(monitor, edge, offset, vertical ? 40 * 2.25 : 120 * 2.25, vertical ? 120 * 2.25 : 40 * 2.25);
