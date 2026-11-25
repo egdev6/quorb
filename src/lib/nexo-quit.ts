@@ -1,17 +1,45 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import type { LiveState } from './settings-live';
 
 /**
  * Estado de Ajustes que decide si se puede salir (#281).
  *
  * Solo la ventana de Ajustes lo conoce: el backend no puede saber si hay un
- * borrador sin guardar ni un guardado en curso.
+ * borrador sin guardar, un guardado en curso ni un autoguardado fallido.
  */
 export interface NexoQuitState {
   /** Hay cambios manuales sin guardar. */
   dirty: boolean;
   /** Hay un guardado en curso (manual o vivo). */
   saving: boolean;
+  /** Un autoguardado falló y sigue sin resolverse. */
+  failed: boolean;
+}
+
+/** Señales de Ajustes de las que se deriva `NexoQuitState`. */
+export interface NexoQuitSignals {
+  /** Cambios manuales sin guardar. */
+  dirty: boolean;
+  /** Guardado manual en curso. */
+  manualSaving: boolean;
+  /** Estado del autoguardado vivo; su `error` marca un fallo sin resolver. */
+  live: Pick<LiveState, 'saving' | 'pending' | 'error'>;
+}
+
+/**
+ * Deriva el estado que se envía al hub a partir de las señales de Ajustes.
+ *
+ * Un autoguardado rechazado deja el saver en `saving:false, pending:false` con
+ * `error` puesto: el cambio no está persistido, así que salir lo perdería. Por
+ * eso `failed` es una señal propia y no se pliega en `saving`.
+ */
+export function quitStateFrom(signals: NexoQuitSignals): NexoQuitState {
+  return {
+    dirty: signals.dirty,
+    saving: signals.manualSaving || signals.live.saving || signals.live.pending,
+    failed: signals.live.error !== null,
+  };
 }
 
 /** Lee el estado vigente de Ajustes. */
@@ -35,8 +63,13 @@ export function registerNexoQuitState(read: StateReader): () => void {
   reader = read;
   if (!unlisten) {
     void listen<number>('nexo-quit-request', (event) => {
-      const state = reader?.() ?? { dirty: false, saving: false };
-      void invoke('nexo_quit_answer', { token: event.payload, dirty: state.dirty, saving: state.saving }).catch(() => {
+      const state = reader?.() ?? { dirty: false, saving: false, failed: false };
+      void invoke('nexo_quit_answer', {
+        token: event.payload,
+        dirty: state.dirty,
+        saving: state.saving,
+        failed: state.failed,
+      }).catch(() => {
         // Sin respuesta el backend rechaza por tiempo agotado: un fallo aquí no
         // debe romper la ventana de Ajustes.
       });

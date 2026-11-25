@@ -68,6 +68,17 @@ pub enum SettingsState {
     Dirty,
     /// Hay un guardado en curso: salir lo dejaría a medias.
     Saving,
+    /// Un autoguardado falló y sigue sin resolverse: el cambio no está persistido.
+    Failed,
+}
+
+/// Motivo por el que Ajustes bloquea la salida.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitBlock {
+    /// Hay cambios sin guardar o un guardado en curso.
+    PendingChanges,
+    /// Un autoguardado falló y sigue pendiente de reintento.
+    SaveFailed,
 }
 
 /// Qué debe hacer el host ante un «Salir» del hub.
@@ -94,11 +105,16 @@ pub fn quit_plan(settings_open: bool) -> QuitPlan {
 
 /// Estado de Ajustes a partir de lo que reporta el frontend.
 ///
-/// Un guardado en curso tiene prioridad sobre un borrador: mientras se escribe,
-/// salir dejaría la configuración a medias.
-pub fn settings_state(dirty: bool, saving: bool) -> SettingsState {
+/// Un guardado en curso tiene prioridad sobre un fallo previo, y ambos sobre un
+/// borrador: mientras se escribe o queda algo sin persistir, salir dejaría la
+/// configuración a medias.
+pub fn settings_state(dirty: bool, saving: bool, failed: bool) -> SettingsState {
     if saving {
         SettingsState::Saving
+    } else if failed {
+        // Un autoguardado rechazado deja el saver en `saving:false`, así que este
+        // caso necesita su propia señal: el cambio existió pero no se persistió.
+        SettingsState::Failed
     } else if dirty {
         SettingsState::Dirty
     } else {
@@ -106,11 +122,16 @@ pub fn settings_state(dirty: bool, saving: bool) -> SettingsState {
     }
 }
 
-/// Si el estado comunicado por Ajustes permite salir.
+/// Motivo con el que Ajustes bloquea la salida, o `None` si se puede salir.
 ///
-/// Un guardado en curso también bloquea: cortarlo deja la configuración a medias.
-pub fn quit_allowed(state: SettingsState) -> bool {
-    matches!(state, SettingsState::Clean)
+/// Un guardado en curso o un autoguardado fallido también bloquean: cortarlos
+/// deja la configuración a medias o pierde el cambio.
+pub fn quit_block(state: SettingsState) -> Option<QuitBlock> {
+    match state {
+        SettingsState::Clean => None,
+        SettingsState::Failed => Some(QuitBlock::SaveFailed),
+        SettingsState::Dirty | SettingsState::Saving => Some(QuitBlock::PendingChanges),
+    }
 }
 
 #[cfg(test)]
@@ -165,19 +186,41 @@ mod tests {
 
     #[test]
     fn quit_is_allowed_only_without_pending_changes_or_an_in_flight_save() {
-        assert!(quit_allowed(SettingsState::Clean));
-        assert!(!quit_allowed(SettingsState::Dirty));
-        assert!(!quit_allowed(SettingsState::Saving));
+        assert!(quit_block(SettingsState::Clean).is_none());
+        assert!(quit_block(SettingsState::Dirty).is_some());
+        assert!(quit_block(SettingsState::Saving).is_some());
+        // Un autoguardado fallido deja el saver en `saving:false`; bloquearlo es
+        // justo lo que evita perder el cambio al salir desde el hub.
+        assert!(quit_block(SettingsState::Failed).is_some());
+    }
+
+    #[test]
+    fn quit_block_explains_why_settings_blocks_the_exit() {
+        assert_eq!(quit_block(SettingsState::Clean), None);
+        assert_eq!(
+            quit_block(SettingsState::Dirty),
+            Some(QuitBlock::PendingChanges)
+        );
+        assert_eq!(
+            quit_block(SettingsState::Saving),
+            Some(QuitBlock::PendingChanges)
+        );
+        assert_eq!(
+            quit_block(SettingsState::Failed),
+            Some(QuitBlock::SaveFailed)
+        );
     }
 
     #[test]
     fn settings_state_maps_what_the_frontend_reports() {
-        assert_eq!(settings_state(false, false), SettingsState::Clean);
-        assert_eq!(settings_state(true, false), SettingsState::Dirty);
-        assert_eq!(settings_state(false, true), SettingsState::Saving);
-        // Un guardado en curso manda sobre un borrador: ambos bloquean, pero el
-        // guardado es el que hay que dejar terminar.
-        assert_eq!(settings_state(true, true), SettingsState::Saving);
+        assert_eq!(settings_state(false, false, false), SettingsState::Clean);
+        assert_eq!(settings_state(true, false, false), SettingsState::Dirty);
+        assert_eq!(settings_state(false, true, false), SettingsState::Saving);
+        assert_eq!(settings_state(false, false, true), SettingsState::Failed);
+        // Prioridad: guardado en curso > fallo sin resolver > borrador.
+        assert_eq!(settings_state(true, true, true), SettingsState::Saving);
+        assert_eq!(settings_state(true, true, false), SettingsState::Saving);
+        assert_eq!(settings_state(true, false, true), SettingsState::Failed);
     }
 
     #[test]

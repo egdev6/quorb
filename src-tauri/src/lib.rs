@@ -1607,7 +1607,7 @@ fn nexo_decide_quit(app: &AppHandle, reply: tauri_plugin_nexo::QuitResponder) {
                 // así que se rechaza con el motivo localizado. El plugin
                 // rechazaría igual por tiempo agotado, pero el motivo propio
                 // está traducido y explica por qué no se sale.
-                nexo_answer_quit(app, token, false);
+                nexo_answer_quit(app, token, false, i18n::Msg::NexoQuitBlocked);
             }
         }
     }
@@ -1618,7 +1618,7 @@ fn nexo_decide_quit(app: &AppHandle, reply: tauri_plugin_nexo::QuitResponder) {
 /// `allow = false` significa que hay cambios sin guardar o un guardado en curso:
 /// se rechaza el «Salir» con el motivo localizado en el idioma vigente.
 #[cfg(windows)]
-fn nexo_answer_quit(app: &AppHandle, token: u64, allow: bool) {
+fn nexo_answer_quit(app: &AppHandle, token: u64, allow: bool, block_reason: i18n::Msg) {
     use tauri_plugin_nexo::QuitDecision;
     let state = app.state::<NexoQuitState>();
     let mut pending = state.pending.lock().unwrap();
@@ -1632,7 +1632,7 @@ fn nexo_answer_quit(app: &AppHandle, token: u64, allow: bool) {
     if allow {
         reply.respond(QuitDecision::Accept);
     } else {
-        let reason = i18n::text(current_locale(app), i18n::Msg::NexoQuitBlocked);
+        let reason = i18n::text(current_locale(app), block_reason);
         reply.respond(QuitDecision::Refuse(reason.to_string()));
     }
 }
@@ -1643,9 +1643,20 @@ fn nexo_answer_quit(app: &AppHandle, token: u64, allow: bool) {
 /// decisión final vive en `nexo_policy`, que es lo que se testea.
 #[cfg(windows)]
 #[tauri::command]
-fn nexo_quit_answer(app: AppHandle, token: u64, dirty: bool, saving: bool) -> Result<(), String> {
-    let allow = nexo_policy::quit_allowed(nexo_policy::settings_state(dirty, saving));
-    nexo_answer_quit(&app, token, allow);
+fn nexo_quit_answer(
+    app: AppHandle,
+    token: u64,
+    dirty: bool,
+    saving: bool,
+    failed: bool,
+) -> Result<(), String> {
+    let state = nexo_policy::settings_state(dirty, saving, failed);
+    let block = nexo_policy::quit_block(state);
+    let reason = match block {
+        Some(nexo_policy::QuitBlock::SaveFailed) => i18n::Msg::NexoQuitSaveFailed,
+        _ => i18n::Msg::NexoQuitBlocked,
+    };
+    nexo_answer_quit(&app, token, block.is_none(), reason);
     Ok(())
 }
 
@@ -1658,6 +1669,7 @@ fn nexo_quit_answer(
     _token: u64,
     _dirty: bool,
     _saving: bool,
+    _failed: bool,
 ) -> Result<(), String> {
     Err("Nexo no está disponible en esta plataforma".into())
 }

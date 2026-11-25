@@ -30,6 +30,10 @@ pub enum Msg {
     /// integración de Windows; en el resto se queda como catálogo traducido.
     #[cfg_attr(not(windows), allow(dead_code))]
     NexoQuitBlocked,
+    /// Nexo: motivo para rechazar un «Salir» del hub porque un autoguardado
+    /// falló y sigue sin resolverse (#281).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    NexoQuitSaveFailed,
     /// Prefijo del título de Ajustes: «Ajustes · {canal}».
     SettingsTitle,
     /// Sufijo del título del panel de detalle: «{canal} · detalle».
@@ -118,6 +122,7 @@ pub const ALL_MSGS: &[Msg] = &[
     Msg::TraySettings,
     Msg::TrayQuit,
     Msg::NexoQuitBlocked,
+    Msg::NexoQuitSaveFailed,
     Msg::SettingsTitle,
     Msg::DetailTitle,
     Msg::OverlayTitle,
@@ -186,6 +191,12 @@ pub fn text(locale: Locale, msg: Msg) -> &'static str {
         }
         (Locale::En, Msg::NexoQuitBlocked) => {
             "There are unsaved changes in Settings. Save or discard them before quitting."
+        }
+        (Locale::Es, Msg::NexoQuitSaveFailed) => {
+            "No se pudo guardar un cambio en Ajustes. Reinténtalo antes de salir."
+        }
+        (Locale::En, Msg::NexoQuitSaveFailed) => {
+            "A Settings change could not be saved. Try again before quitting."
         }
         (Locale::Es, Msg::SettingsTitle) => "Ajustes",
         (Locale::En, Msg::SettingsTitle) => "Settings",
