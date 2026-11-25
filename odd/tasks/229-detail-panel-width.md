@@ -13,8 +13,8 @@ S7 — Owner-requested tests: «En los tests, además de lo que indicas, convien
 Approval source for S2–S7: https://github.com/egdev6/quorb/issues/229#issuecomment-7157846474
 
 ## Tasks
-T1 — S1–S7; route: bounded worker (context backstop), parent owns physical strategy; done (automated implementation checks); fitting and detail-local physical containment implemented with comments; commit: pending work-unit T2; RED exit1 20 failed/87 passed, final GREEN exit0 107 passed, typecheck exit0.
-T2 — S1–S7; route: parent spot-check, assessment and independent verifier only if named risk requires it; in_progress; full suite, physical-strategy contrast, native review when due, one coherent local fix commit; commit: pending.
+T1 — S1–S7; route: bounded worker (context backstop), parent owns physical strategy; done (automated implementation checks); fitting and detail-local physical containment implemented with comments; commit: 3b7332d; RED exit1 20 failed/87 passed, final GREEN exit0 107 passed, typecheck exit0.
+T2 — S1–S7; route: parent spot-check and assessment; done (automated local work); full suite exit0 (1287 Vitest + 329 Node), parent spot-check exit0 107/107, typecheck exit0; source commit 3b7332d; committed ASSESS medium, reviewDue=false/under_budget, no independent verifier required, no native review started. Peer base-study received, not a verification of the implementation; Windows proof remains T3.
 T3 — S7; route: human Windows runtime; blocked (no Windows runtime available); visual check of text scale, clipping, corners and interaction; commit: N/A.
 
 ## Log
@@ -25,3 +25,7 @@ L4 — Risk forecast: detail-only behavior, no data/security/concurrency/deliver
 
 L5 — Writer T1 evidence: RED exit1 (20 failed/87 passed), first GREEN exit1 (4 failed/103 passed, DOM operation-order ulp mismatch), corrected and final GREEN exit0 (107/107), typecheck exit0. Logs: /var/folders/9f/dwn9fytx6zx61dklp7tcs_nr0000gn/T/gpWrafwp/gaQgcva7/quorb-229-writer.g9WfmN/. Parent spot check exit0 107/107; git diff --check exit0. Full npm test job-1 exit0.
 L6 — Initial uncommitted ASSESS unavailable because untracked task document lacked declaration; no review lineage created. Will assess the committed work-unit selector after local commit. Windows visual validation unavailable; T3 remains blocked. Risk: none (detail-only fitting logic and callsite; shared converter, payload, strip geometry, and native placement contracts unchanged).
+
+L7 — Work-unit commit 3b7332d, 310 authored changed lines. ASSESS over base 0852eba386c340dece3a03cfadbf6e1deb3a021c with committedOnly=true: medium, reviewDue=false, reviewDueReason=under_budget, independentVerifier=false. No receipt/approval claimed. Full npm test exit0: 1287 Vitest + 329 Node tests, zero failures. Peer contrast was pending at this point (resolved in L8); T3 awaits Windows runtime. No push/PR.
+
+L8 — Peer base-study received: agrees width/height factor, real strip bounds, min1/no failure gate and local physical fix. Its context predates 3b7332d, so this is research support, NOT an independent review of current code. No new proven defect. Proposed ceil logical width and size-only shrink were not adopted: implementation preserves proportional fit and uniformly refits DOM before any surface resize. Suggested risks (shared panelRect/concurrent queue) do not apply to the diff: neither implementation nor contracts changed there. Automated T2 complete; T3 remains blocked. Rollback boundary: five source/test files changed by 3b7332d, no unrelated edits.
