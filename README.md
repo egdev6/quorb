@@ -208,8 +208,8 @@ The native Linux port was delivered through issues #105–#108 of the ODD projec
 - Local installable bundles are decided: `.deb` for Debian/Ubuntu and `.AppImage` for Arch and the rest (see [`docs/build-linux.md`](./docs/build-linux.md)). They are built and verified by the manual Linux workflow (`.github/workflows/linux-ci.yml`, `with_bundle: bundle`) or locally with `npm run app:build` + the `.testcontainer/verify-*.sh` scripts. CI artifacts stay private to each run; public installers are attached to each release by `.github/workflows/linux-release.yml` (see [docs/release-linux.md](./docs/release-linux.md)).
 - Session and behaviour limits depend on the desktop session, and Settings shows them per surface in the «Sesión de escritorio» block:
   - X11: complete behaviour of always-on-top, tray icon, global shortcuts and transparency (the last only with a compositing WM).
-  - GNOME on Wayland: AppIndicator extension needed to see the tray icon; always-on-top and click-through are limited by Mutter; global shortcut registration may be denied.
-  - KDE on Wayland: tray and always-on-top supported; the global-shortcut portal may still deny the registration.
+  - GNOME on Wayland: AppIndicator extension needed to see the tray icon; always-on-top and click-through are limited by Mutter; global shortcuts are not global here (the X11 registration only responds while an X11 window has the keyboard focus).
+  - KDE on Wayland: tray and always-on-top supported; global shortcuts are not global here (the X11 registration only responds while an X11 window has the keyboard focus).
   - WLR-based compositors (Hyprland, sway): very strict always-on-top; no tray if your bar has no StatusNotifier support.
 - Quick diagnostics: `echo $XDG_SESSION_TYPE` (session type), `echo $XDG_CURRENT_DESKTOP` (current desktop), `$ quorb` debug from the terminal, plus Settings › Atajos for the shortcut registration errors.
 - First run and config: if `config.json` exists but cannot be read, Quorb uses default values and does not show the first-run language selector; the first save from Settings replaces that file.
