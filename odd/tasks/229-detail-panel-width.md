@@ -1,0 +1,27 @@
+# #229 — Fit detail panel width to the work area
+Branch: `fix/229-detail-panel-width`; base: `0852eba386c340dece3a03cfadbf6e1deb3a021c`; delivery: ask-on-risk, local work only.
+Checks: focused Vitest, `npm test`, `npm run typecheck`; forecast: 250–400 authored diff lines, one coherent work-unit commit.
+
+## Specs
+S1 — Issue requirement: «Que el panel nunca se salga del área de trabajo en ancho, igual que ya ocurre en altura.» Source: https://github.com/egdev6/quorb/issues/229
+S2 — Owner-approved geometry: «**Factor:** el mínimo entre el de altura y el de ancho, con escalado uniforme. El límite horizontal es `area.w` en los bordes superior e inferior, y el espacio libre junto a la tira, descontando la separación, en los laterales. `DetailPlacement` ya incluye `strip` y `edge`, así que no hace falta cambiar el payload.»
+S3 — Owner-approved height: «**Altura devuelta:** `maxHeight` solo cuando la altura es el límite activo; si no, `ceil(natural × factor)`.»
+S4 — Owner-approved degenerate case: «**Sin espacio útil:** igual que `panelHeightLimit`, el límite de ancho se acota a un mínimo de 1, sin usar `placement-failed`, que queda para fallos de colocación nativa.»
+S5 — Owner-approved physical containment: «**Píxeles físicos:** verificar que los bordes derecho e inferior no superen el área tras el redondeo de `physicalPanelBounds`, resolviéndolo en el detalle sin tocar el conversor compartido con la tira.»
+S6 — Scope exclusions: «**Fuera de alcance:** escala mínima legible, scroll y redistribución del contenido.» «#265 y #314 quedan fuera.» Keep payload, shared converter, strip geometry and #250 placement/retry contracts unchanged.
+S7 — Owner-requested tests: «En los tests, además de lo que indicas, conviene ampliar la prueba de contención de los cuatro bordes con escala de texto 2,25 y áreas estrechas (la actual usa ancho 300 sin escala) y actualizar la aserción de `DetailPanel.test.tsx` si cambia la llamada a `fitPanel`.» Check no fit, width-only, height-only, both with each dominant axis and ties, negative monitor origins, fractional DPI, actual DOM/native size coherence, and existing placement behavior. Manual Windows visual validation must be reported unavailable if no Windows runtime exists.
+Approval source for S2–S7: https://github.com/egdev6/quorb/issues/229#issuecomment-7157846474
+
+## Tasks
+T1 — S1–S7; route: bounded worker (context backstop), parent owns physical strategy; done (automated implementation checks); fitting and detail-local physical containment implemented with comments; commit: pending work-unit T2; RED exit1 20 failed/87 passed, final GREEN exit0 107 passed, typecheck exit0.
+T2 — S1–S7; route: parent spot-check, assessment and independent verifier only if named risk requires it; in_progress; full suite, physical-strategy contrast, native review when due, one coherent local fix commit; commit: pending.
+T3 — S7; route: human Windows runtime; blocked (no Windows runtime available); visual check of text scale, clipping, corners and interaction; commit: N/A.
+
+## Log
+L1 — User implementation request verbatim: «sabiendo esto empezamos con el desarrollo apoyandonos de la sesion 01a21247-9d8d-7760-bdf0-ce334663beda para lo que necesites, tanto en investigacion , como en desarrollo, tu decides»
+L2 — Preimplementation: branch verified clean; GitHub assignee ludevdot verified against `gh api user`; owner approval and latest acknowledgement read. RDD on. Peer 01a21247-9d8d-7760-bdf0-ce334663beda asked for read-only physical containment strategy. No source edits yet.
+L3 — Research: fitPanel only caps height; width is already rendered basal monitor width (CSS layout divides by base). Shared physicalPanelBounds rounds origin and ceils size; changing it would affect strip behavior. #250 does not validate work-area containment. Explorer supplied focused runner `npx vitest run --dir src lib/detail-panel.test.ts lib/dock.test.ts DetailPanel.placement.test.tsx`; `npm test` includes Vitest and Node scripts, `npm run typecheck` is available. No tests run yet. Existing comments are the proportionate fitting documentation; no CLI/API/help behavior changes planned.
+L4 — Risk forecast: detail-only behavior, no data/security/concurrency/delivery changes intended. Reassess item 3 if shared unrequested behavior changes; do not alter shared converter or strip. Physical strategy implemented in fitDetailPanel: recover integer physical work-area origin/size separately, derive inward strip bounds with ceil/floor, uniformly refit DOM if native rounded dimensions exceed budget, then clamp physical origin. No truncation beneath larger content; shared converter unchanged.
+
+L5 — Writer T1 evidence: RED exit1 (20 failed/87 passed), first GREEN exit1 (4 failed/103 passed, DOM operation-order ulp mismatch), corrected and final GREEN exit0 (107/107), typecheck exit0. Logs: /var/folders/9f/dwn9fytx6zx61dklp7tcs_nr0000gn/T/gpWrafwp/gaQgcva7/quorb-229-writer.g9WfmN/. Parent spot check exit0 107/107; git diff --check exit0. Full npm test job-1 exit0.
+L6 — Initial uncommitted ASSESS unavailable because untracked task document lacked declaration; no review lineage created. Will assess the committed work-unit selector after local commit. Windows visual validation unavailable; T3 remains blocked. Risk: none (detail-only fitting logic and callsite; shared converter, payload, strip geometry, and native placement contracts unchanged).

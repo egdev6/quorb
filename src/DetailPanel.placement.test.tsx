@@ -11,12 +11,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DetailPanel } from './DetailPanel';
 import type { DetailPlacementReport } from './detail-placement';
-import { DETAIL_EVENTS, type DetailState, type PhysicalBounds } from './lib/detail-panel';
+import { DETAIL_EVENTS, panelScaleFromTransform, type DetailState, type PhysicalBounds } from './lib/detail-panel';
+import { panelHeightLimit, stripRect, type Edge } from './lib/dock';
 
 const harness = vi.hoisted(() => ({
   states: [] as unknown[],
   stateIndex: 0,
   stateWrite: vi.fn(),
+  textScale: 1,
   refs: [] as { current: unknown }[],
   refIndex: 0,
   effects: [] as { run: () => void | (() => void) }[],
@@ -73,7 +75,7 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ hide: nati
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}), emitTo: native.emitTo }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn(async () => {}) }));
 vi.mock('./i18n/use-locale', () => ({ useLocale: () => 'es' }));
-vi.mock('./lib/useTextScale', () => ({ useTextScale: () => 1 }));
+vi.mock('./lib/useTextScale', () => ({ useTextScale: () => harness.textScale }));
 
 const granted: PhysicalBounds = { x: 815, y: 88, w: 330, h: 400 };
 
@@ -162,14 +164,14 @@ const failureNotices = () =>
  * Monta el panel con estado y ejecuta su efecto de placement real con la
  * secuencia de informes nativa indicada.
  */
-const runPlacement = async (reports: DetailPlacementReport[], place?: () => Promise<DetailPlacementReport>) => {
+const runPlacement = async (reports: DetailPlacementReport[], place?: () => Promise<DetailPlacementReport>, state = detailState) => {
   harness.states = [];
   harness.stateIndex = 0;
   harness.refs = [];
   harness.refIndex = 0;
   harness.effects = [];
   harness.layoutEffects = [];
-  harness.states[0] = detailState; // `data`: hay algo que colocar.
+  harness.states[0] = state; // `data`: hay algo que colocar.
   let index = 0;
   native.setDetailBounds.mockImplementation(place ?? (async () => reports[Math.min(index++, reports.length - 1)]));
   native.setSurfaceClip.mockResolvedValue(undefined);
@@ -177,7 +179,7 @@ const runPlacement = async (reports: DetailPlacementReport[], place?: () => Prom
   // El componente registra sus efectos al llamarse.
   DetailPanel();
   harness.refs[0].current = panelElement; // `panelRef`
-  harness.refs[1].current = detailState; // `dataRef`: la sesión de detalle vigente
+  harness.refs[1].current = state; // `dataRef`: la sesión de detalle vigente
   expect(harness.layoutEffects).toHaveLength(1);
   const cleanup = harness.layoutEffects[0].run();
   await flush();
@@ -198,6 +200,8 @@ describe('the detail placement effect (#250/S17)', () => {
       devicePixelRatio: 1,
     });
     panelHeight = 400;
+    panelElement.style.transform = 'scale(1)';
+    harness.textScale = 1;
     resize = null;
     vi.stubGlobal(
       'ResizeObserver',
@@ -225,6 +229,58 @@ describe('the detail placement effect (#250/S17)', () => {
     vi.resetAllMocks();
   });
 
+  it.each(['top', 'bottom', 'left', 'right'] as Edge[])('keeps the rendered transform and native size coherent on narrow %s placements', async (edge) => {
+    harness.textScale = 2.25;
+    const sf = 1.25;
+    const area = { x: -1973 / sf, y: -237 / sf, w: 397 / sf, h: 611 / sf };
+    const vertical = edge === 'left' || edge === 'right';
+    const strip = stripRect(area, edge, 1, vertical ? 90 : 270, vertical ? 270 : 90);
+    const state = {
+      ...detailState,
+      area,
+      strip,
+      edge,
+      anchor: vertical ? strip.y + strip.h : strip.x + strip.w,
+      scaleFactor: sf,
+      maxHeight: panelHeightLimit(area, edge, strip),
+    };
+    const cleanup = await runPlacement([applied()], undefined, state);
+    // Re-render the real component with its committed fit and inspect its JSX style.
+    harness.stateIndex = 0;
+    harness.refIndex = 0;
+    const tree = DetailPanel();
+    if (!tree) throw new Error('Expected the detail panel to render');
+    const style = tree.props.children.props.style;
+    const zoom = panelScaleFromTransform(style.transform);
+    const physical = native.setDetailBounds.mock.calls[0][0] as PhysicalBounds;
+    expect(zoom).toBeLessThan(1);
+    expect(style.width).toBe(state.width);
+    expect(style.visibility).toBe('visible');
+    expect(physical.w).toBeGreaterThanOrEqual(style.width * zoom * harness.textScale * sf);
+    expect(physical.h).toBeGreaterThanOrEqual(panelHeight * zoom * harness.textScale * sf);
+    expect(physical.x).toBeGreaterThanOrEqual(-1973);
+    expect(physical.y).toBeGreaterThanOrEqual(-237);
+    expect(physical.x + physical.w).toBeLessThanOrEqual(-1576);
+    expect(physical.y + physical.h).toBeLessThanOrEqual(374);
+    const clip = native.setSurfaceClip.mock.calls[0][0];
+    expect(clip.width).toBe(physical.w);
+    expect(clip.height).toBe(physical.h);
+    expect(clip.radii[0]).toBeCloseTo(Math.min(physical.w / 2, physical.h / 2, 14 * zoom * harness.textScale * sf), 10);
+    expect(native.showDetail).toHaveBeenCalledTimes(1);
+    expect(native.hide).not.toHaveBeenCalled();
+    expect(failureNotices()).toEqual([]);
+    if (typeof cleanup === 'function') cleanup();
+  });
+
+  it('still requests native placement for a degenerate area rather than declaring placement failure', async () => {
+    const state = { ...detailState, area: { x: 0, y: 0, w: 0, h: 0 }, maxHeight: 1 };
+    const cleanup = await runPlacement([applied()], undefined, state);
+    expect(native.setDetailBounds).toHaveBeenCalledTimes(1);
+    expect(native.showDetail).toHaveBeenCalledTimes(1);
+    expect(failureNotices()).toEqual([]);
+    if (typeof cleanup === 'function') cleanup();
+  });
+
   it('never places nor shows the panel when the native placement failed', async () => {
     const cleanup = await runPlacement([readFailed()]);
     // La colocación se vuelve a pedir: la inicial más el presupuesto acotado
@@ -247,6 +303,7 @@ describe('the detail placement effect (#250/S17)', () => {
   it('shows the panel as before when the placement is confirmed', async () => {
     const cleanup = await runPlacement([applied()]);
     expect(native.setDetailBounds).toHaveBeenCalledTimes(1);
+    expect(native.setDetailBounds).toHaveBeenCalledWith(granted);
     expect(native.showDetail).toHaveBeenCalledTimes(1);
     expect(positioned()).toBe(true);
     // Sólo la geometría confirmada (read-back) queda cacheada.

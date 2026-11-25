@@ -23,9 +23,8 @@ describe('DetailPanel (SSR)', () => {
   // clips and re-lays out with it; physical bounds keep the monitor scale alone.
   it('fits and clips with the text scale of its own window', () => {
     expect(source).toContain('const textScale = useTextScale();');
-    expect(source).toContain('fitPanel(data, layoutHeightOf(panel, entry), base, textScale)');
+    expect(source).toContain('fitDetailPanel(data, layoutHeightOf(panel, entry), base, textScale, data.scaleFactor)');
     expect(source).toContain('measureSurfaceClip(panel, physical, next.zoom * textScale * data.scaleFactor)');
-    expect(source).toContain('physicalPanelBounds(detailBounds(data, next), data.scaleFactor)');
     expect(source).toContain('}, [data, enqueue, textScale]);');
   });
 });
