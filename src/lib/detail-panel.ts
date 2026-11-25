@@ -75,7 +75,7 @@ export interface PanelFit {
   zoom: number;
   /** Rendered logical width after proportional scaling. */
   width: number;
-  /** Rendered logical height; never above `maxHeight`. */
+  /** Rendered logical height, ceiled except at an active height limit. */
   height: number;
   /** Whether the content had to be scaled down to fit the work area. */
   scaled: boolean;
@@ -87,21 +87,91 @@ export interface PanelFit {
  * `layoutHeight` is the panel's unscaled CSS height (transforms do not reflow, so
  * this is stable regardless of the scale currently applied). The natural height,
  * in monitor units, is that value at basal zoom times `scale`, the text scale of
- * the detail window (#228). When it exceeds `maxHeight` the whole panel is scaled
- * down proportionally; otherwise it keeps its basal zoom and natural height. The
- * zoom is a CSS transform, so it never carries the text scale; width and height
- * are monitor units. Returning `maxHeight` verbatim when scaling avoids the ceil()
- * phantom pixel that a 600.000061 rendered box would otherwise produce.
+ * the detail window (#228). Width already includes basal zoom. The smaller of
+ * the width and height factors uniformly shrinks the content, never enlarging it.
+ * Zoom is a CSS transform and never carries the text scale; sizes are monitor
+ * units. Return maxHeight verbatim only when height is active (including ties),
+ * avoiding a ceil() phantom pixel; otherwise ceil the scaled natural height.
  */
 export function fitPanel(placement: DetailPlacement, layoutHeight: number, base: number, scale = 1): PanelFit {
+  return fitWithin(placement, layoutHeight, base, scale, panelWidthLimit(placement), placement.maxHeight);
+}
+
+/** Space inward of the actual strip, not an assumed flush strip of the same size. */
+function panelWidthLimit({ area, strip, edge }: DetailPlacement): number {
+  const available = edge === 'left' ? area.x + area.w - strip.x - strip.w - 8 : edge === 'right' ? strip.x - 8 - area.x : area.w;
+  return Math.max(1, available);
+}
+
+function fitWithin(placement: DetailPlacement, layoutHeight: number, base: number, scale: number, maxWidth: number, maxHeight: number): PanelFit {
   const natural = Math.max(1, layoutHeight) * base * scale;
-  const factor = natural > placement.maxHeight ? placement.maxHeight / natural : 1;
+  const heightLimit = Math.max(1, maxHeight);
+  const heightFactor = heightLimit / natural;
+  const factor = Math.min(1, heightFactor, Math.max(1, maxWidth) / (placement.width * scale));
   return {
     zoom: base * factor,
     width: placement.width * scale * factor,
-    height: factor < 1 ? Math.max(1, placement.maxHeight) : Math.max(1, Math.ceil(natural)),
+    height: heightFactor === factor ? heightLimit : Math.max(1, Math.ceil(natural * factor)),
     scaled: factor < 1,
   };
+}
+
+/**
+ * Fit and place only the detail in the integer physical space inward of its strip.
+ * Widget.geoOf divides integer work-area position/size by sf; round those values
+ * back separately (do not ceil the logical area's size like a rendered surface).
+ * Inward strip boundaries round into the free space, retaining at least gap 8.
+ *
+ * Usually only the rounded origin needs clamping. If ceil(size × sf) will not fit,
+ * refit the content uniformly before converting again, never truncate the native
+ * surface under a larger DOM transform. A tiny physical inset absorbs float error
+ * at integer size boundaries. If logical ceil(height) still exceeds the physical
+ * budget, use its whole-logical-pixel height limit and refit by the same rules.
+ * Full containment requires usable width/height >= ceil(sf), since detailBounds
+ * pads each dimension to at least one logical pixel. Impossible areas retain that
+ * minimum and still use the normal native placement/retry path, not a new failure.
+ */
+export function fitDetailPanel(
+  placement: DetailPlacement,
+  layoutHeight: number,
+  base: number,
+  scale: number,
+  sf: number,
+): { fit: PanelFit; physical: PhysicalBounds } {
+  const { area, strip, edge } = placement;
+  let left = Math.round(area.x * sf);
+  let top = Math.round(area.y * sf);
+  let right = left + Math.round(area.w * sf);
+  let bottom = top + Math.round(area.h * sf);
+  if (edge === 'left') left = Math.max(left, Math.ceil((strip.x + strip.w + 8) * sf));
+  if (edge === 'right') right = Math.min(right, Math.floor((strip.x - 8) * sf));
+  if (edge === 'top') top = Math.max(top, Math.ceil((strip.y + strip.h + 8) * sf));
+  if (edge === 'bottom') bottom = Math.min(bottom, Math.floor((strip.y - 8) * sf));
+  const width = Math.max(1, right - left);
+  const height = Math.max(1, bottom - top);
+  let fit = fitPanel(placement, layoutHeight, base, scale);
+  const physicalOf = (value: PanelFit) => {
+    const bounds = detailBounds(placement, value);
+    // Use the DOM's operation order too: algebraically equal products can differ
+    // by an ulp, and ceil must cover the painted size rather than clip that ulp.
+    bounds.w = Math.max(bounds.w, (placement.width / base) * value.zoom * scale);
+    bounds.h = Math.max(bounds.h, Math.max(1, layoutHeight) * value.zoom * scale);
+    return physicalPanelBounds(bounds, sf);
+  };
+  let physical = physicalOf(fit);
+  if (physical.w > width || physical.h > height) {
+    const maxWidth = Math.min(panelWidthLimit(placement), (width - 1e-9) / sf);
+    const maxHeight = Math.min(placement.maxHeight, (height - 1e-9) / sf);
+    fit = fitWithin(placement, layoutHeight, base, scale, maxWidth, maxHeight);
+    physical = physicalOf(fit);
+    if (physical.h > height) {
+      fit = fitWithin(placement, layoutHeight, base, scale, maxWidth, Math.floor(maxHeight));
+      physical = physicalOf(fit);
+    }
+  }
+  physical.x = Math.max(left, Math.min(physical.x, right - physical.w));
+  physical.y = Math.max(top, Math.min(physical.y, bottom - physical.h));
+  return { fit, physical };
 }
 
 /** Logical bounds of the fitted panel next to its strip. */

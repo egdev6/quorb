@@ -13,10 +13,8 @@ import { clipSurfaceSafely, measureSurfaceClip } from './lib/surface-clip';
 import {
   createLatestQueue,
   basePanelZoom,
-  detailBounds,
-  fitPanel,
+  fitDetailPanel,
   panelScaleFromTransform,
-  physicalPanelBounds,
   sameFit,
   DETAIL_EVENTS,
   type DetailInteraction,
@@ -149,11 +147,12 @@ export function DetailPanel() {
     const layout = (entry?: ResizeObserverEntry) => {
       const panel = panelRef.current;
       if (disposed || !panel) return;
-      const next = fitPanel(data, layoutHeightOf(panel, entry), base, textScale);
+      // Fit the DOM and native surface together, including physical rounding at
+      // the work-area edges; never clip the surface under a larger transform.
+      const { fit: next, physical } = fitDetailPanel(data, layoutHeightOf(panel, entry), base, textScale, data.scaleFactor);
       setFit((old) => (old && sameFit(old, next) ? old : next));
       // Compare native (physical) bounds, not logical ones: a DPI change with identical
       // logical geometry must still resize the window.
-      const physical = physicalPanelBounds(detailBounds(data, next), data.scaleFactor);
       // #215: the cache only ever holds
       // read-back-confirmed geometry, so the ±1 px rounding tolerance of X11 applies
       // by the same rule as the widget; on a platform without read-back the cache
