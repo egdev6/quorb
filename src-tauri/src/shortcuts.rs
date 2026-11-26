@@ -1,26 +1,26 @@
 //! Atajos globales: seams por capacidad y modelo de estados (#312, slice 1).
 //!
-//! Este modulo no tiene portal, ni D-Bus, ni cliente: solo los seams por los
-//! que el slice 2 enchufa la implementacion real. La idea es que **la caneria
+//! Este módulo no tiene portal, ni D-Bus, ni cliente: sólo los seams por los
+//! que el slice 2 enchufa la implementación real. La idea es que **la canería
 //! no cambie** cuando cambia la implementación: el registro pasa por un trait, la
-//! deteccion por otro, y el estado final sale de una funcion pura que solo
+//! detección por otro, y el estado final sale de una función pura que sólo
 //! consume observaciones.
 //!
-//! El estado de **capacidad** (¿el atajo quedo global, degradado o roto?) se
-//! llama `ShortcutCapability` a proposito, porque el plugin
+//! El estado de **capacidad** (¿el atajo quedó global, degradado o roto?) se
+//! llama `ShortcutCapability` a propósito, porque el plugin
 //! `tauri-plugin-global-shortcut` ya tiene un `ShortcutState` que es otra cosa:
-//! el estado de **pulsacion** (`Pressed`/`Released`).
+//! el estado de **pulsación** (`Pressed`/`Released`).
 //!
 //! Vocabulario: `global-hotkey#172` (sin mergear) nombra `trigger_description`,
-//! `HotKey::with_description` y `GLOBAL_HOTKEY_APP_ID`. La version que usa
+//! `HotKey::with_description` y `GLOBAL_HOTKEY_APP_ID`. La versión que usa
 //! `tauri-plugin-global-shortcut` hoy es `global-hotkey` 0.8, que no tiene
-//! ninguno de los tres, asi que en este slice no hay nada que alinear: el
-//! modelo solo anticipa la forma (`AppIdState`, `TriggerMatch`) para que el
+//! ninguno de los tres, así que en este slice no hay nada que alinear: el
+//! modelo sólo anticipa la forma (`AppIdState`, `TriggerMatch`) para que el
 //! slice 2 los use con esos nombres cuando elija el crate del portal.
 //!
-//! Los elementos que el slice 2 todavia no consume llevan `allow(dead_code)`
-//! propio: no se silencia el modulo entero, para que el codigo muerto que se
-//! agregue despues siga avisando.
+//! Los elementos que el slice 2 todavía no consume llevan `allow(dead_code)`
+//! propio: no se silencia el módulo entero, para que el código muerto que se
+//! agregue después siga avisando.
 
 use tauri_plugin_global_shortcut::Shortcut;
 
@@ -93,7 +93,12 @@ impl AppIdState {
 }
 
 /// Versión mínima de la interfaz del portal que expone `ConfigureShortcuts`
-/// (GlobalShortcuts v2): por debajo, el portal no informa el trigger asignado.
+/// (GlobalShortcuts v2).
+///
+/// Es lo **único** que la v2 agrega: `trigger_description` ya viene en las
+/// respuestas de `BindShortcuts` y `ListShortcuts` desde la v1
+/// (`org.freedesktop.portal.GlobalShortcuts`), así que poder comparar el
+/// trigger no depende de la versión del portal (#312, S14).
 #[allow(dead_code)]
 pub(crate) const PORTAL_VERSION_CONFIGURE: u32 = 2;
 
@@ -114,6 +119,11 @@ pub(crate) enum ProbeOutcome {
     /// que corrige `BindShortcuts`. Por eso el estado no sale de la sonda, sino
     /// de la sonda **más** la comparación del trigger.
     ///
+    /// La versión no decide si se puede comparar el trigger —eso depende de que
+    /// la respuesta traiga `trigger_description`, que la v1 ya trae— sino qué
+    /// funciones se pueden pedir: `ConfigureShortcuts` es lo único de la v2
+    /// (#312, S14).
+    ///
     /// `app_id` dice cómo se resolvió la identidad de la app (#312, S4). Con el
     /// portal presente pero el app-id sin resolver no hay sesión de atajos: el
     /// estado cae al mínimo garantizable por la sesión, pero la detección
@@ -129,10 +139,12 @@ pub(crate) enum ProbeOutcome {
 
 #[allow(dead_code)]
 impl ProbeOutcome {
-    /// ¿La interfaz puede informar el trigger asignado? Con v1 no: entonces la
-    /// comparación es `TriggerMatch::Unknown` y la UI no puede afirmar que el
-    /// escritorio haya reasignado nada (#312, S12).
-    pub(crate) fn can_read_trigger(self) -> bool {
+    /// ¿La interfaz del portal expone `ConfigureShortcuts` (GlobalShortcuts v2)?
+    ///
+    /// La versión del portal no decide si se puede **comparar** el trigger: eso
+    /// depende de que la respuesta traiga `trigger_description`, que la v1 ya
+    /// trae (#312, S14). La versión sólo decide qué funciones se pueden pedir.
+    pub(crate) fn supports_configure(self) -> bool {
         matches!(
             self,
             ProbeOutcome::Present { version, .. } if version >= PORTAL_VERSION_CONFIGURE
@@ -204,9 +216,13 @@ pub(crate) enum TriggerMatch {
     Same,
     /// El escritorio asignó otro trigger: se conoce el real y difiere.
     Different,
-    /// No se pudo comparar: la interfaz del portal no informa el trigger
-    /// (`can_read_trigger()` es `false`) o la lectura falló. La UI muestra el
-    /// trigger que informe el escritorio sin afirmar que fue reasignado.
+    /// No se pudo comparar: la respuesta del portal no trajo `trigger_description`
+    /// o la lectura falló. La UI muestra el trigger que informe el escritorio sin
+    /// afirmar que fue reasignado.
+    ///
+    /// La causa es la **respuesta**, no la versión de la interfaz:
+    /// `trigger_description` viene en `BindShortcuts` y `ListShortcuts` desde la
+    /// v1 (#312, S14).
     Unknown,
 }
 
@@ -226,9 +242,10 @@ pub(crate) struct ShortcutStatus {
     pub(crate) state: ShortcutCapability,
     /// Resultado de la sonda, sin reinterpretar.
     pub(crate) detection: ProbeOutcome,
-    /// Comparación del trigger ya normalizada: es `Unknown` cuando la interfaz
-    /// del portal no informa el trigger, y es lo que permite mostrar el que
-    /// asignó el escritorio sin presentarlo como reasignación.
+    /// Comparación del trigger ya normalizada: es `Unknown` cuando no hay un
+    /// portal utilizable (o la respuesta no trajo `trigger_description`), y es lo
+    /// que permite mostrar el que asignó el escritorio sin presentarlo como
+    /// reasignación.
     pub(crate) trigger: TriggerMatch,
 }
 
@@ -255,29 +272,34 @@ pub(crate) struct ShortcutStatus {
 /// afirmar que el portal no esté.
 ///
 /// `trigger` sólo tiene sentido cuando la detección es `Present` con el app-id
-/// resuelto **y** la interfaz informa el trigger: el slice 2 lo lee antes de
-/// derivar, así que nunca hay que pasar un valor inventado. Si
-/// `can_read_trigger()` es `false` (portal v1) la comparación se normaliza a
+/// resuelto: el slice 2 lo lee antes de derivar, así que nunca hay que pasar un
+/// valor inventado. Sin un portal utilizable la comparación se normaliza a
 /// `TriggerMatch::Unknown` y queda así en `ShortcutStatus::trigger`: un `Same`
 /// que no se pudo comprobar no puede prometer el trigger preferido (#312, S7).
+///
+/// La versión de la interfaz **no** participa en esta regla: la comparación
+/// depende de que la respuesta del portal traiga `trigger_description`, que
+/// `BindShortcuts` y `ListShortcuts` ya devuelven desde la v1. Con la v1 el
+/// escritorio puede haber reasignado la tecla y hay que poder decirlo
+/// (#312, S14).
 #[allow(dead_code)]
 pub(crate) fn derive_shortcut_status(
     session: SessionKind,
     detection: ProbeOutcome,
     trigger: TriggerMatch,
 ) -> ShortcutStatus {
-    // La comparación sólo existe si la interfaz informa el trigger: con la v1
-    // del portal un `TriggerMatch::Same` no se puede dar por comprobado
-    // (#312, S7), así que se normaliza a `Unknown`.
-    let trigger = if detection.can_read_trigger() {
-        trigger
-    } else {
-        TriggerMatch::Unknown
-    };
     let portal_usable = matches!(
         detection,
         ProbeOutcome::Present { app_id, .. } if app_id.is_resolved()
     );
+    // La comparación sólo cuenta con un portal utilizable: sin app-id resuelto
+    // no hay sesión de atajos de la que venga una respuesta (#312, S7), así que
+    // un `Same` que no se pudo comprobar se normaliza a `Unknown`.
+    let trigger = if portal_usable {
+        trigger
+    } else {
+        TriggerMatch::Unknown
+    };
     let state = if portal_usable {
         match trigger {
             TriggerMatch::Same => ShortcutCapability::Active,
@@ -449,6 +471,8 @@ mod tests {
                 app_id: AppIdState::Resolved
             }
         );
+        // La v1 ya trae `trigger_description`: se puede comparar (#312, S14).
+        assert_eq!(status.trigger, TriggerMatch::Same);
     }
 
     // --- Matriz de estados --------------------------------------------------
@@ -526,47 +550,40 @@ mod tests {
         );
     }
 
+    /// La versión del portal **no** decide si la comparación es posible: la
+    /// respuesta trae `trigger_description` desde la v1 (`BindShortcuts` y
+    /// `ListShortcuts`), así que en los escritorios que exponen la v1 —GNOME
+    /// 48/49, KDE— un escritorio que reasignó la tecla tiene que poder decirlo
+    /// (#312, S14).
     #[test]
-    fn la_version_del_portal_decide_si_la_comparacion_es_posible() {
-        // #312, S7: la sonda sola no basta para prometer el trigger preferido.
-        // Con la v1 del portal la interfaz no lo informa, así que un `Same`
-        // llegado por error se normaliza a `Unknown`.
-        let v1 = derive_shortcut_status(
-            SessionKind::Wayland { xwayland: true },
-            ProbeOutcome::Present {
-                version: 1,
-                app_id: AppIdState::Resolved,
-            },
-            TriggerMatch::Same,
-        );
-        assert_eq!(
-            v1.trigger,
-            TriggerMatch::Unknown,
-            "con v1 no hay trigger que comparar: el `Same` no puede darse por bueno"
-        );
-        assert_ne!(v1.state, ShortcutCapability::Remapped);
-        let v2 = derive_shortcut_status(
-            SessionKind::Wayland { xwayland: true },
-            ProbeOutcome::Present {
-                version: PORTAL_VERSION_CONFIGURE,
-                app_id: AppIdState::Resolved,
-            },
-            TriggerMatch::Same,
-        );
-        assert_eq!(v2.trigger, TriggerMatch::Same);
-        assert_eq!(v2.state, ShortcutCapability::Active);
-        // La comparación es una versión mínima, no una igualdad: una interfaz
-        // futura (v3) sigue informando el trigger.
-        let v3 = derive_shortcut_status(
-            SessionKind::X11,
-            ProbeOutcome::Present {
-                version: PORTAL_VERSION_CONFIGURE + 1,
-                app_id: AppIdState::Resolved,
-            },
-            TriggerMatch::Different,
-        );
-        assert_eq!(v3.trigger, TriggerMatch::Different);
-        assert_eq!(v3.state, ShortcutCapability::Remapped);
+    fn la_comparacion_no_depende_de_la_version_del_portal() {
+        for version in [1, PORTAL_VERSION_CONFIGURE, PORTAL_VERSION_CONFIGURE + 1] {
+            let igual = derive_shortcut_status(
+                SessionKind::Wayland { xwayland: true },
+                ProbeOutcome::Present {
+                    version,
+                    app_id: AppIdState::Resolved,
+                },
+                TriggerMatch::Same,
+            );
+            assert_eq!(igual.trigger, TriggerMatch::Same);
+            assert_eq!(igual.state, ShortcutCapability::Active);
+
+            let distinto = derive_shortcut_status(
+                SessionKind::Wayland { xwayland: true },
+                ProbeOutcome::Present {
+                    version,
+                    app_id: AppIdState::Resolved,
+                },
+                TriggerMatch::Different,
+            );
+            assert_eq!(distinto.trigger, TriggerMatch::Different);
+            assert_eq!(
+                distinto.state,
+                ShortcutCapability::Remapped,
+                "con `trigger_description` presente, el escritorio puede haber reasignado"
+            );
+        }
     }
 
     // --- Desconocido no es ausente -----------------------------------------
@@ -740,19 +757,21 @@ mod tests {
 
     // --- Versión de la interfaz ---------------------------------------------
 
+    /// La versión del portal sólo habilita `ConfigureShortcuts`: no decide si
+    /// se puede comparar el trigger (#312, S14).
     #[test]
-    fn solo_la_interfaz_v2_informa_el_trigger_asignado() {
+    fn la_version_solo_habilita_configure_shortcuts() {
         assert!(ProbeOutcome::Present {
             version: PORTAL_VERSION_CONFIGURE,
             app_id: AppIdState::Resolved
         }
-        .can_read_trigger());
+        .supports_configure());
         assert!(!ProbeOutcome::Present {
             version: 1,
             app_id: AppIdState::Resolved
         }
-        .can_read_trigger());
-        assert!(!ProbeOutcome::Absent.can_read_trigger());
-        assert!(!ProbeOutcome::Unknown.can_read_trigger());
+        .supports_configure());
+        assert!(!ProbeOutcome::Absent.supports_configure());
+        assert!(!ProbeOutcome::Unknown.supports_configure());
     }
 }
