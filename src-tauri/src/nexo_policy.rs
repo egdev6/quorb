@@ -70,6 +70,9 @@ pub enum SettingsState {
     Saving,
     /// Un autoguardado falló y sigue sin resolverse: el cambio no está persistido.
     Failed,
+    /// Un efecto nativo falló tras persistir: la configuración está guardada, pero
+    /// el ajuste no llegó a aplicarse (p. ej. «siempre encima»).
+    ApplyFailed,
 }
 
 /// Motivo por el que Ajustes bloquea la salida.
@@ -79,6 +82,8 @@ pub enum QuitBlock {
     PendingChanges,
     /// Un autoguardado falló y sigue pendiente de reintento.
     SaveFailed,
+    /// Un efecto nativo falló tras persistir: el dato está guardado, el efecto no.
+    ApplyFailed,
 }
 
 /// Qué debe hacer el host ante un «Salir» del hub.
@@ -108,13 +113,21 @@ pub fn quit_plan(settings_open: bool) -> QuitPlan {
 /// Un guardado en curso tiene prioridad sobre un fallo previo, y ambos sobre un
 /// borrador: mientras se escribe o queda algo sin persistir, salir dejaría la
 /// configuración a medias.
-pub fn settings_state(dirty: bool, saving: bool, failed: bool) -> SettingsState {
+pub fn settings_state(
+    dirty: bool,
+    saving: bool,
+    failed: bool,
+    apply_failed: bool,
+) -> SettingsState {
     if saving {
         SettingsState::Saving
     } else if failed {
         // Un autoguardado rechazado deja el saver en `saving:false`, así que este
         // caso necesita su propia señal: el cambio existió pero no se persistió.
         SettingsState::Failed
+    } else if apply_failed {
+        // El dato sí quedó guardado: lo que falló fue aplicarlo.
+        SettingsState::ApplyFailed
     } else if dirty {
         SettingsState::Dirty
     } else {
@@ -130,6 +143,7 @@ pub fn quit_block(state: SettingsState) -> Option<QuitBlock> {
     match state {
         SettingsState::Clean => None,
         SettingsState::Failed => Some(QuitBlock::SaveFailed),
+        SettingsState::ApplyFailed => Some(QuitBlock::ApplyFailed),
         SettingsState::Dirty | SettingsState::Saving => Some(QuitBlock::PendingChanges),
     }
 }
@@ -209,18 +223,51 @@ mod tests {
             quit_block(SettingsState::Failed),
             Some(QuitBlock::SaveFailed)
         );
+        assert_eq!(
+            quit_block(SettingsState::ApplyFailed),
+            Some(QuitBlock::ApplyFailed)
+        );
     }
 
     #[test]
     fn settings_state_maps_what_the_frontend_reports() {
-        assert_eq!(settings_state(false, false, false), SettingsState::Clean);
-        assert_eq!(settings_state(true, false, false), SettingsState::Dirty);
-        assert_eq!(settings_state(false, true, false), SettingsState::Saving);
-        assert_eq!(settings_state(false, false, true), SettingsState::Failed);
-        // Prioridad: guardado en curso > fallo sin resolver > borrador.
-        assert_eq!(settings_state(true, true, true), SettingsState::Saving);
-        assert_eq!(settings_state(true, true, false), SettingsState::Saving);
-        assert_eq!(settings_state(true, false, true), SettingsState::Failed);
+        assert_eq!(
+            settings_state(false, false, false, false),
+            SettingsState::Clean
+        );
+        assert_eq!(
+            settings_state(true, false, false, false),
+            SettingsState::Dirty
+        );
+        assert_eq!(
+            settings_state(false, true, false, false),
+            SettingsState::Saving
+        );
+        assert_eq!(
+            settings_state(false, false, true, false),
+            SettingsState::Failed
+        );
+        assert_eq!(
+            settings_state(false, false, false, true),
+            SettingsState::ApplyFailed
+        );
+        // Prioridad: guardado en curso > fallo de escritura > fallo de efecto > borrador.
+        assert_eq!(
+            settings_state(true, true, true, true),
+            SettingsState::Saving
+        );
+        assert_eq!(
+            settings_state(true, true, false, false),
+            SettingsState::Saving
+        );
+        assert_eq!(
+            settings_state(true, false, true, true),
+            SettingsState::Failed
+        );
+        assert_eq!(
+            settings_state(true, false, false, true),
+            SettingsState::ApplyFailed
+        );
     }
 
     #[test]

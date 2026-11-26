@@ -3337,7 +3337,7 @@ export function Settings() {
   const savedTimer = useRef<number | undefined>(undefined);
   // Ciclo de vida: en `false` no se actualiza la UI ni se recrean timers.
   const aliveRef = useRef(true);
-  const [liveState, setLiveState] = useState<LiveState>({ saving: false, error: null, pending: false });
+  const [liveState, setLiveState] = useState<LiveState>({ saving: false, error: null, pending: false, saveError: null });
   const liveRef = useRef<LiveSaver | null>(null);
   // Cola única de escrituras de Ajustes: guardado manual, patch vivo y
   // relecturas se serializan para no pisarse (B5).
@@ -3349,7 +3349,7 @@ export function Settings() {
   // salida se rechaza. Se recalcula en cada render para que la respuesta sea la
   // del momento, no la de un render viejo. Va antes del `return` temprano: los
   // hooks no pueden ser condicionales.
-  const nexoQuitRef = useRef<NexoQuitState>({ dirty: false, saving: false, failed: false });
+  const nexoQuitRef = useRef<NexoQuitState>({ dirty: false, saving: false, failed: false, applyFailed: false });
   nexoQuitRef.current = quitStateFrom({
     dirty: isSettingsDirty(baseline, cfg, autostartState.confirmed, autostartDraft),
     manualSaving: saving,

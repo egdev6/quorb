@@ -1649,11 +1649,13 @@ fn nexo_quit_answer(
     dirty: bool,
     saving: bool,
     failed: bool,
+    apply_failed: bool,
 ) -> Result<(), String> {
-    let state = nexo_policy::settings_state(dirty, saving, failed);
+    let state = nexo_policy::settings_state(dirty, saving, failed, apply_failed);
     let block = nexo_policy::quit_block(state);
     let reason = match block {
         Some(nexo_policy::QuitBlock::SaveFailed) => i18n::Msg::NexoQuitSaveFailed,
+        Some(nexo_policy::QuitBlock::ApplyFailed) => i18n::Msg::NexoQuitApplyFailed,
         _ => i18n::Msg::NexoQuitBlocked,
     };
     nexo_answer_quit(&app, token, block.is_none(), reason);
@@ -1670,6 +1672,7 @@ fn nexo_quit_answer(
     _dirty: bool,
     _saving: bool,
     _failed: bool,
+    _apply_failed: bool,
 ) -> Result<(), String> {
     Err("Nexo no está disponible en esta plataforma".into())
 }

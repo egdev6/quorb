@@ -13,8 +13,10 @@ export interface NexoQuitState {
   dirty: boolean;
   /** Hay un guardado en curso (manual o vivo). */
   saving: boolean;
-  /** Un autoguardado falló y sigue sin resolverse. */
+  /** Un autoguardado falló y el cambio NO está persistido. */
   failed: boolean;
+  /** Un ajuste se persistió pero su efecto nativo falló (p. ej. «siempre encima»). */
+  applyFailed: boolean;
 }
 
 /** Señales de Ajustes de las que se deriva `NexoQuitState`. */
@@ -23,22 +25,28 @@ export interface NexoQuitSignals {
   dirty: boolean;
   /** Guardado manual en curso. */
   manualSaving: boolean;
-  /** Estado del autoguardado vivo; su `error` marca un fallo sin resolver. */
-  live: Pick<LiveState, 'saving' | 'pending' | 'error'>;
+  /** Estado del autoguardado vivo; sus errores marcan fallos sin resolver. */
+  live: Pick<LiveState, 'saving' | 'pending' | 'error' | 'saveError'>;
 }
 
 /**
  * Deriva el estado que se envía al hub a partir de las señales de Ajustes.
  *
  * Un autoguardado rechazado deja el saver en `saving:false, pending:false` con
- * `error` puesto: el cambio no está persistido, así que salir lo perdería. Por
+ * el error puesto: el cambio no está persistido, así que salir lo perdería. Por
  * eso `failed` es una señal propia y no se pliega en `saving`.
+ *
+ * `failed` y `applyFailed` se distinguen porque no es lo mismo: un rechazo de
+ * escritura deja el dato sin guardar, mientras que un efecto nativo que falla
+ * tras persistir deja la configuración guardada y solo sin aplicar. Bloquean
+ * igual, pero el motivo que ve el usuario no es el mismo.
  */
 export function quitStateFrom(signals: NexoQuitSignals): NexoQuitState {
   return {
     dirty: signals.dirty,
     saving: signals.manualSaving || signals.live.saving || signals.live.pending,
-    failed: signals.live.error !== null,
+    failed: signals.live.saveError !== null,
+    applyFailed: signals.live.error !== null && signals.live.saveError === null,
   };
 }
 
@@ -63,12 +71,18 @@ export function registerNexoQuitState(read: StateReader): () => void {
   reader = read;
   if (!unlisten) {
     void listen<number>('nexo-quit-request', (event) => {
-      const state = reader?.() ?? { dirty: false, saving: false, failed: false };
+      // Sin lector no se sabe si hay cambios sin guardar: no se responde y deja
+      // que el timeout del plugin rechace. Responder «se puede salir» a ciegas
+      // podría perder trabajo (p. ej. entre el desmontaje de Ajustes y la
+      // destrucción de su ventana, el listener sigue vivo sin lector).
+      const state = reader?.();
+      if (!state) return;
       void invoke('nexo_quit_answer', {
         token: event.payload,
         dirty: state.dirty,
         saving: state.saving,
         failed: state.failed,
+        applyFailed: state.applyFailed,
       }).catch(() => {
         // Sin respuesta el backend rechaza por tiempo agotado: un fallo aquí no
         // debe romper la ventana de Ajustes.
