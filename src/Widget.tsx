@@ -406,6 +406,9 @@ export function Widget() {
 
   /** A pointer transition reported by one of the two surfaces. */
   const applyHover = (event: HoverTransition) => {
+    // Entry between native samples ends shortcut grace, without feeding
+    // ordinary hover into the native presence tracker.
+    if (event.kind === 'enter') presenceRef.entryDuringShortcutGrace(event.surface);
     const at = Date.now();
     const previous = hoverPresence();
     const next = nextPointerTarget(previous, { ...event, at });
@@ -1234,6 +1237,7 @@ export function Widget() {
       cancelTimers();
       setAnchorRel(relOf(el));
       setPanel((current) => hoverPanel(current, top.id));
+      presenceRef.beginShortcut();
       // Si no pasas el ratón por encima, se cierra solo (salvo que se anclara).
       armClose(8000);
     }, 80);
@@ -1252,13 +1256,13 @@ export function Widget() {
   // posición): el muestreo degrada, nunca adivina.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional dependency list; adding the reported values would change when this hook re-runs.
   useEffect(() => {
-    // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
-    // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
-    if (!shouldSampleNativePresence(osFromUA(navigator.userAgent))) return;
     if (!panel.providerId) {
       presenceRef.reset();
       return;
     }
+    // Solo aplica en macOS (donde WebKit pierde eventos mouseleave en ventanas transparentes).
+    // En Linux/Wayland, cursorPosition() devuelve (0,0) y causa falsos cierres del popup.
+    if (!shouldSampleNativePresence(osFromUA(navigator.userAgent))) return;
     let disposed = false;
     const boundsOf = async (label: string): Promise<PhysicalBounds | null> => {
       try {

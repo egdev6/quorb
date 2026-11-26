@@ -4,6 +4,7 @@ import {
   createLatestQueue,
   detailBounds,
   fitPanel,
+  fitDetailPanel,
   isCurrentDetailInteraction,
   panelScaleFromTransform,
   panelWidthFor,
@@ -226,22 +227,126 @@ describe('panel fit with text scale', () => {
   });
 });
 
+describe('width-limited panel fit', () => {
+  it.each([
+    // width, maxHeight, expected factor: no shrink, width only, height only,
+    // both overflowing with width/height dominance, and an exact tie.
+    [1000, 1000, 1],
+    [300, 1000, 0.5],
+    [1000, 225, 0.5],
+    [240, 225, 0.4],
+    [300, 180, 0.4],
+    [300, 225, 0.5],
+  ])('uniformly fits width %s and height %s with factor %s', (width, maxHeight, factor) => {
+    const p = placement({ area: { ...area, w: width }, width: 400, maxHeight });
+    const fit = fitPanel(p, 400, 0.75, 1.5);
+    expect(fit.zoom).toBeCloseTo(0.75 * factor, 12);
+    // placement.width already includes basal zoom: never apply base twice.
+    expect(fit.width).toBeCloseTo(600 * factor, 12);
+    expect(fit.height).toBe(450 * factor);
+    expect(fit.scaled).toBe(factor < 1);
+  });
+
+  it.each(['top', 'bottom', 'left', 'right'] as Edge[])('uses real strip coordinates and gap 8 on %s', (edge) => {
+    const p = placement({
+      area: { x: -500, y: -100, w: 500, h: 900 },
+      edge,
+      strip: { x: -440, y: -60, w: 100, h: 80 },
+      width: 600,
+      maxHeight: 900,
+    });
+    const limit = edge === 'left' ? 332 : edge === 'right' ? 52 : 500;
+    const fit = fitPanel(p, 300, 1);
+    expect(fit.width).toBeCloseTo(limit, 12);
+    expect(fit.zoom).toBeCloseTo(limit / 600, 12);
+    expect(fit.height).toBe(Math.ceil(300 * (limit / 600)));
+    expect(fit.scaled).toBe(true);
+  });
+
+  it('ceils the scaled natural height, not maxHeight, when width alone is active', () => {
+    const fit = fitPanel(placement({ area: { ...area, w: 250 }, width: 400, maxHeight: 803.9216 }), 301, 1, 2);
+    expect(fit).toEqual({ zoom: 0.3125, width: 250, height: 189, scaled: true });
+  });
+
+  it.each(['top', 'bottom', 'left', 'right'] as Edge[])('clamps unusable width to one on %s without changing placement', (edge) => {
+    const p = placement({ area: { x: 0, y: 0, w: 0, h: 900 }, edge, strip: { x: 0, y: 0, w: 80, h: 80 }, width: 300, maxHeight: 900 });
+    const original = structuredClone(p);
+    const fit = fitPanel(p, 300, 1);
+    expect(fit.width).toBe(1);
+    expect(fit.height).toBe(1);
+    expect(fit.zoom).toBe(1 / 300);
+    expect(fit.scaled).toBe(true);
+    expect(p).toEqual(original);
+  });
+});
+
+// Work areas originate as integer physical position/size divided by sf (Widget.geoOf).
+// Full containment requires at least one logical pixel of usable space on each axis;
+// impossible/degenerate areas still fit without declaring a native placement failure.
+describe('detail-local physical fit', () => {
+  it.each(['top', 'bottom', 'left', 'right'] as Edge[])('contains text scale 2.25 on narrow fractional-DPI monitors on %s', (edge) => {
+    const vertical = edge === 'left' || edge === 'right';
+    for (const sf of [1, 1.02, 1.25, 1.5, 1.75, 2]) {
+      for (const origin of [
+        [0, 0],
+        [-1973, -237],
+      ]) {
+        const monitor = { x: origin[0] / sf, y: origin[1] / sf, w: 397 / sf, h: 611 / sf };
+        for (const offset of [0, 0.5, 1]) {
+          const strip = stripRect(monitor, edge, offset, vertical ? 40 * 2.25 : 120 * 2.25, vertical ? 120 * 2.25 : 40 * 2.25);
+          const p: DetailPlacement = {
+            area: monitor,
+            edge,
+            strip,
+            anchor: vertical ? strip.y + strip.h : strip.x + strip.w,
+            width: 333,
+            maxHeight: panelHeightLimit(monitor, edge, strip),
+          };
+          const original = structuredClone(p);
+          for (const layoutHeight of [120, 320, 5000]) {
+            const { fit, physical } = fitDetailPanel(p, layoutHeight, 0.75, 2.25, sf);
+            expect(physical.x).toBeGreaterThanOrEqual(origin[0]);
+            expect(physical.y).toBeGreaterThanOrEqual(origin[1]);
+            expect(physical.x + physical.w).toBeLessThanOrEqual(origin[0] + 397);
+            expect(physical.y + physical.h).toBeLessThanOrEqual(origin[1] + 611);
+            // Native size covers both dimensions painted by the same uniform DOM zoom.
+            expect(physical.w).toBeGreaterThanOrEqual((p.width / 0.75) * fit.zoom * 2.25 * sf);
+            expect(physical.h).toBeGreaterThanOrEqual(layoutHeight * fit.zoom * 2.25 * sf);
+            if (edge === 'left') expect(physical.x).toBeGreaterThanOrEqual(Math.ceil((strip.x + strip.w + 8) * sf));
+            if (edge === 'right') expect(physical.x + physical.w).toBeLessThanOrEqual(Math.floor((strip.x - 8) * sf));
+            if (edge === 'top') expect(physical.y).toBeGreaterThanOrEqual(Math.ceil((strip.y + strip.h + 8) * sf));
+            if (edge === 'bottom') expect(physical.y + physical.h).toBeLessThanOrEqual(Math.floor((strip.y - 8) * sf));
+          }
+          expect(p).toEqual(original);
+        }
+      }
+    }
+  });
+
+  it('preserves the previous fit and native geometry when no rounding adjustment is needed', () => {
+    const p = placement({ area: { x: 0, y: 0, w: 1920, h: 1080 }, strip: { x: 760, y: 0, w: 400, h: 80 }, anchor: 980 });
+    const fit = fitPanel(p, 400, 1);
+    expect(fitDetailPanel(p, 400, 1, 1, 1)).toEqual({ fit, physical: physicalPanelBounds(detailBounds(p, fit), 1) });
+  });
+});
+
 describe('independent detail window', () => {
   it.each(['top', 'bottom', 'left', 'right'] as Edge[])('fits the natural and scaled panel inside the monitor on %s without changing the strip', (edge) => {
     const vertical = edge === 'left' || edge === 'right';
+    const monitor = { ...area, w: 397 };
     for (const offset of [0, 0.5, 1]) {
-      const strip = stripRect(area, edge, offset, vertical ? 80 : 400, vertical ? 400 : 80);
+      const strip = stripRect(monitor, edge, offset, vertical ? 90 : 270, vertical ? 270 : 90);
       const original = { ...strip };
       const anchor = vertical ? strip.y + 40 : strip.x + 40;
       for (const layoutHeight of [120, 320, 5000]) {
-        const p: DetailPlacement = { area, strip, edge, anchor, width: 300, maxHeight: panelHeightLimit(area, edge, strip) };
-        const fit = fitPanel(p, layoutHeight, 1);
+        const p: DetailPlacement = { area: monitor, strip, edge, anchor, width: 300, maxHeight: panelHeightLimit(monitor, edge, strip) };
+        const fit = fitPanel(p, layoutHeight, 1, 2.25);
         const rect = detailBounds(p, fit);
-        expect(contains(area, rect.x, rect.y)).toBe(true);
-        expect(rect.x + rect.w).toBeLessThanOrEqual(area.x + area.w + 1e-9);
-        expect(rect.y + rect.h).toBeLessThanOrEqual(area.y + area.h + 1e-9);
-        // Scaling never widens the panel beyond its baseline width.
-        expect(rect.w).toBeLessThanOrEqual(p.width + 1e-9);
+        expect(contains(monitor, rect.x, rect.y)).toBe(true);
+        expect(rect.x + rect.w).toBeLessThanOrEqual(monitor.x + monitor.w + 1e-9);
+        expect(rect.y + rect.h).toBeLessThanOrEqual(monitor.y + monitor.h + 1e-9);
+        // Scaling never widens the panel beyond its text-scaled baseline width.
+        expect(rect.w).toBeLessThanOrEqual(p.width * 2.25 + 1e-9);
         expect(fit.height).toBeLessThanOrEqual(p.maxHeight);
         expect(strip).toEqual(original);
       }
