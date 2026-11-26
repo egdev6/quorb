@@ -78,6 +78,243 @@ Lo que PR1 **no** arregla (PR2): la pantalla X11 no coincide con el escritorio d
 - Una rama: `fix/314-gdk-origin-readback`, base `upstream/main` 61c4813, publicada en el fork `DonatoSilva/quorb`; la PR se abre contra `egdev6/quorb:main` (no hay permiso de push al upstream: `permissions.push = false`).
 - Unidades de commit: T2+T3+T4 en un commit de comportamiento (`fix(linux): leer el origen de la ventana en el orden del binding`), T5 como evidencia en el cuerpo de la PR, T6 sin commit, T7 con la PR.
 - El doc se actualiza con el commit que contiene cada tarea, y el `todo` se refleja en cada transición.
+- **Corte de commits (3 unidades, 538 líneas autorales):** `fdad9cd` — código y tests (4 archivos de Rust, el cambio de comportamiento); `343af25` — doc de la feature; `914c3fa` — anexo con los textos de publicación (235 líneas, sólo documentación).
+- El anexo es **meta-contenido sobre la PR** (borradores que el contributor todavía puede cambiar): si conviene un diff más chico para la revisión, se puede sacar del push sin tocar el código, porque la feature no depende de él. Decisión del contributor, no del ODD.
+
+## Anexos: textos de publicación (borradores, sin publicar)
+
+Todo lo de esta sección está **pendiente de aprobación del contributor**: no se
+publicó nada. La rama `fix/314-gdk-origin-readback` está sólo en local (no
+existe en `origin` ni en `upstream`) y no hay PR abierta.
+
+### A1. Título de la PR
+
+```
+fix(linux): leer el origen de la ventana en el orden del binding (#314)
+```
+
+### A2. Cuerpo de la PR
+
+```markdown
+## Related issue / Issue relacionada
+
+- Issue: #314
+- ODD: not applicable — `type:bug` con `status:approved` del owner. El alcance
+  aprobado está en su comentario del 2026-11-25 y se refleja en
+  `odd/tasks/314-gdk-origin-readback.md`.
+
+## Scope / Alcance
+
+**Entra**
+
+- `widget_placement.rs:840-842` y `detail_placement.rs:510-512`: el binding
+  `gdk 0.18.2` devuelve `Window::origin() -> (retorno, x, y)` y el código lo
+  desempaquetaba como `(ox, oy, rooted)`.
+- Un seam puro compartido por los dos lectores (`rooted_origin`): el retorno se
+  ignora por contrato (GDK lo documenta como "not meaningful, ignore") y la
+  garantía de que hay origen la da `is_viewable()`, que los dos lectores ya
+  consultaban. Cero llamadas nativas nuevas.
+- Se retira la rama `Err("the native window origin could not be read")`, que
+  producía `Reason::ReadFailed` con la tira docked arriba (el `y == 0` se leía
+  como "sin origen").
+- Regresiones con tuplas reales del binding: `y == 0`, origen `(0, 0)`,
+  coordenadas negativas, `y != 0`, conversión de escala y retorno no
+  significativo; más un pin que fija que los dos lectores consumen la tupla a
+  través del seam.
+
+**No entra**
+
+- `tao::outer_position()` ni otra capa de adaptadores.
+- La recuperación, el monitor de respaldo y la recolocación al relanzar: PR2.
+- El gate de #180, la auditoría de `src/lib/widget-recovery.ts` y cualquier
+  ruta de macOS.
+- La política de visibilidad: la regla pura en píxeles físicos es PR2.
+
+## Coordination / Coordinación
+
+- Contributor / Contribuidor: @DonatoSilva
+- Claim or agreement evidence / Evidencia de asignación o acuerdo: la issue
+  #314 está asignada a @DonatoSilva desde su apertura; el owner puso
+  `status:approved` y escribió el alcance de la PR1 el 2026-11-25.
+- Sin solapamiento: las PRs abiertas son #317 y #318 (mías, #312), #311 (#276)
+  y #303 (#281).
+
+## Acceptance and validation / Aceptación y validación
+
+- **Criteria satisfied**: la lectura del origen devuelve la posición real en
+  píxeles físicos en los dos lectores; el informe pasa de `ReadFailed`/
+  `PositionRefused` espurios a `Applied` con `read_back: true`; el frontend
+  deja de cachear una geometría corrupta en Linux.
+
+- **Checks actually run and results**:
+  - `cd src-tauri && cargo test --lib widget_placement` → 37 passed, 0 failed, 1 ignored.
+  - `cd src-tauri && cargo test --lib detail_placement` → 23 passed, 0 failed, 1 ignored.
+  - `cd src-tauri && cargo fmt --all -- --check` → limpio.
+  - `npm test` → verde. `npm run typecheck` → verde. `npx biome ci` → exit 0
+    (225 warnings preexistentes, 0 errores).
+  - **Traza X11** (misma máquina, `GDK_BACKEND=x11`, instrumentación desechable
+    ya revertida):
+    - antes: `origin crudo = (1, 4432, 379)` → `ox=1 oy=4432 rooted=379` →
+      origen `(1, 4432)` → `Limited` / `PositionRefused`;
+    - después: `origin crudo = (1, 4432, 379)` → origen `(4432, 379)` →
+      `Applied`, `read_back: true`.
+  - **Unidades** (`GDK_SCALE=2`): el binding devolvió `(2192, 141)` para una
+    posición de dispositivo de `(4384, 282)`: GDK devuelve píxeles de
+    aplicación, así que la conversión con el factor de la ventana es la
+    correcta.
+
+- **Checks not run and why**:
+  - **Windows y macOS**: los checks de Linux no validan otras plataformas.
+  - **Wayland nativo**: no hay read-back por diseño; el alcance es de #180.
+  - `email::tests::*_over_http` fallan de forma **no determinista** en este
+    entorno (5 fallos en una corrida, 0 en otra, sobre el mismo árbol): previo
+    y ajeno a este diff, pero no es un check confiable acá.
+
+- **Remaining blockers**: ninguno. La recuperación y la regla de visibilidad en
+  píxeles físicos siguen para la PR2, como pidió el owner.
+
+Refs #314
+```
+
+### A3. Comentario en la PR (respuesta punto por punto a la revisión)
+
+```markdown
+## Respuesta a la revisión
+
+Repaso punto por punto lo que pediste en la issue (#314), con la evidencia de
+cada uno.
+
+**1. «no es GDK quien transpone las coordenadas, sino Quorb quien interpreta
+mal la tupla»** — Confirmado y corregido. El binding fijado (`gdk 0.18.2`,
+`src/auto/window.rs:497-503`) devuelve `(retorno, x, y)`; los dos lectores lo
+desempaquetaban como `(ox, oy, rooted)`. Ahora los dos consumen la tupla
+cruda a través de un único seam puro (`widget_placement::rooted_origin`) y el
+valor de `y` dejó de ser un flag.
+
+**2. «GDK documenta el retorno como «Not meaningful, ignore», así que no
+basta con reordenar y seguir usando `retorno != 0` como indicador de éxito»** —
+El retorno se ignora por contrato y la garantía de que hay origen la da
+`is_viewable()`, que los dos lectores ya consultaban antes de leer
+(`widget_placement.rs:827`, `detail_placement.rs:505`). Con eso se retira la
+rama `Err("the native window origin could not be read")`: en Linux el informe
+ya no puede salir `ReadFailed` por una ventana que sí tiene posición.
+
+**3. «No hace falta sustituir la API por `tao::outer_position()` ni introducir
+otra capa de adaptadores»** — Cero llamadas nativas nuevas y cero adaptadores:
+el diff no añade ninguna llamada a GDK ni a tao.
+
+**4. «Corregir los comentarios y tests que asumen ese flag»** — Corregidos el
+doc-comment del módulo, el del seam y los de los dos lectores. El anterior se
+contradecía: decía que el retorno no era significativo y a la vez lo usaba
+como «no hay origen».
+
+**5. «Añadir regresiones con tuplas reales del binding: `y=0`, origen `(0,0)`,
+coordenadas negativas, `y` no nulo, conversión de escala y retorno no
+significativo»** — Los seis casos están fijados en un único juego, más la
+conversión de escala y un pin que fija que los dos lectores pasan la tupla
+cruda al seam. Sin ese pin, un lector que volviera a desempaquetar a mano
+dejaría todos los tests en verde.
+
+**6. «El `Fake` actual entrega geometría ya decodificada y no cubre esta
+frontera»** — Exacto: el seam puro es la frontera y es la que se testea. El
+`Fake` no se tocó.
+
+**7. «Repetir la traza X11 con la corrección para comprobar la lectura
+concedida»** — Repetida, con la misma instrumentación en las dos versiones
+(ya revertida). Mismo equipo, misma configuración:
+
+    antes:   origin crudo = (1, 4432, 379)
+             desempaquetado = ox=1  oy=4432  rooted=379
+             origen leído = (1, 4432)
+             Report = { status: Limited,  bounds: (x: 1, y: 4432),
+                        reason: PositionRefused, read_back: true }
+
+    después: origin crudo = (1, 4432, 379)
+             origen leído = (4432, 379)
+             Report = { status: Applied,  bounds: (x: 4432, y: 379),
+                        reason: None, read_back: true }
+
+La ventana real estaba en (4432, 379) en los dos casos. Antes la app
+informaba la tira en (1, 4432) — el código de retorno en la X y la X real en
+la Y — y el frontend se guardaba ese rectángulo imposible.
+
+**Un dato de la traza que confirma tu decisión de alcance** — Con
+`GDK_SCALE=2` el binding devolvió el origen (2192, 141) para una posición de
+dispositivo de (4384, 282): GDK devuelve píxeles de aplicación, mientras que
+`tao::outer_position()` devuelve píxeles físicos. No era un sustituto
+equivalente: la conversión con el factor de la ventana es la correcta y
+mantiene las unidades coherentes con el tamaño, que viene de
+`gdk_window_get_geometry` en lógicos.
+
+**8. «`Refs #314`, no cerrarla»** — Hecho: la PR no cierra la issue.
+
+**9. «sin cambios en el gate de #180; macOS fuera de alcance salvo
+evidencia»** — No se tocaron `display_kind()`, `wm_compat.rs`, la tolerancia
+de 1 px ni las rutas de Windows/macOS. `Status`/`Reason`/`Report` no cambian.
+
+**10. «El detalle entra en esta PR1 porque tiene exactamente el mismo defecto
+de lectura»** — El detalle usa el mismo seam; no hay copia.
+
+**Pendiente para la PR2** — La recuperación, el monitor de respaldo y la
+recolocación al relanzar quedan sin tocar. Un insumo que deja la traza: en
+XWayland la superficie X y el escritorio del compositor no coinciden (en esta
+máquina, 4480 px de desfase), y el desfase se cancela en HDMI-A-1 pero no en
+eDP-1, que es donde la tira se va del área visible. Conviene que la auditoría
+de la PR2 lea la ventana y los monitores desde la misma fuente.
+```
+
+### A4. Comentario en el issue (tono cercano, pide revisión, deja una pregunta)
+
+Va **después** de abrir la PR, para llevar el link.
+
+```markdown
+@egdev6 gracias por la revisión al detalle, y sobre todo por corregir el
+diagnóstico: tenías razón en que el problema no era de GDK, y eso fue
+justamente lo que dejó la PR1 acotada.
+
+Ya está abierta: {{PR_URL}}
+
+Quedó así:
+
+- Los dos lectores (tira y detalle) consumen la tupla cruda `(retorno, x, y)`
+  a través de un único seam puro. El retorno se ignora por contrato y la
+  garantía de «hay origen» pasa a ser `is_viewable()`, que ya se consultaba.
+- Se retira la rama que devolvía `ReadFailed`: en Linux el informe ya no
+  puede fallar por una ventana que sí tiene posición. Como efecto, el panel
+  de detalle deja de entrar en el camino que lo cerraba.
+- Las seis tuplas reales que pediste, más la conversión de escala y un pin
+  que fija que los dos lectores usen el seam (sin ese pin, uno que volviera a
+  desempaquetar a mano dejaría los tests en verde).
+
+Y la traza repetida con la corrección, que era lo que me faltaba:
+
+    antes:   (1, 4432, 379) → leído como (1, 4432) → Limited / PositionRefused
+    después: (1, 4432, 379) → leído como (4432, 379) → Applied / read_back
+
+Mismo equipo, misma configuración: la ventana estaba en (4432, 379) en los
+dos casos. Antes la app informaba la tira en (1, 4432) — el código de retorno
+en la X y la X real en la Y — y el frontend se guardaba ese rectángulo
+imposible, que es lo que después se comparaba contra el área del monitor.
+
+Un hallazgo de la traza que creo que te va a interesar: repetí la medición
+con `GDK_SCALE=2` y el binding devolvió (2192, 141) para una posición de
+dispositivo de (4384, 282). O sea, GDK devuelve píxeles de aplicación y
+`tao::outer_position()` devuelve píxeles físicos: tu decisión de no cambiar la
+API no sólo era la acotada, era además la que dejaba las unidades
+coherentes con el tamaño (que viene de `gdk_window_get_geometry`, en
+lógicos).
+
+Una pregunta para la PR2, que es lo que quedó abierto: la auditoría de
+recuperación va a necesitar leer la ventana y los monitores desde la misma
+fuente, porque en XWayland la superficie X y el escritorio del compositor
+difieren 4480 px (X: HDMI-A-1 en +1920, Hyprland: en -2560). El desfase se
+cancela justo en HDMI-A-1 y no en eDP-1, que es donde la tira se va del área
+visible. ¿Querés que la PR2 ataque primero el desfase de coordenadas o
+primero la regla pura de visibilidad en píxeles físicos?
+
+Cuando puedas, mirá la PR: son 4 archivos de Rust (2 de código, 2 de test)
+más el doc de ODD. Va con `Refs #314`, no la cierra.
+```
 
 ## Log
 
