@@ -584,8 +584,8 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
 /// nada: el `pub use` del módulo **es** la definición de la tira, así que
 /// comparar sus direcciones sólo podía fallar al compilar. Lo que protege de
 /// verdad es la fuente: una copia con el mismo nombre choca con el `pub use`
-/// (error de compilación) y una copia con otro nombre rompe la llamada
-/// canónica que este test exige.
+/// (error de compilación) y una copia con otro nombre deja de cumplir la
+/// llamada canónica que este test exige —que tiene que estar **presente**—.
 #[test]
 fn the_detail_has_no_copy_of_the_origin_seam() {
     let src = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
