@@ -83,9 +83,12 @@ Lo que PR1 **no** arregla (PR2): la pantalla X11 no coincide con el escritorio d
 
 ## Anexos: textos de publicación (borradores, sin publicar)
 
-Todo lo de esta sección está **pendiente de aprobación del contributor**: no se
-publicó nada. La rama `fix/314-gdk-origin-readback` está sólo en local (no
-existe en `origin` ni en `upstream`) y no hay PR abierta.
+Textos aprobados por el contributor y publicados: **PR #319**
+(https://github.com/egdev6/quorb/pull/319), rama
+`fix/314-gdk-origin-readback` en `origin`, base `main`, con `Refs #314`
+(no cierra la issue). Comentario técnico en la PR:
+https://github.com/egdev6/quorb/pull/319#issuecomment-7195835679 · aviso en
+la issue: https://github.com/egdev6/quorb/issues/314#issuecomment-7195835005
 
 ### A1. Título de la PR
 
@@ -329,3 +332,4 @@ más el doc de ODD. Va con `Refs #314`, no la cierra.
 - L9: evidencia del contributor — traza de una colocación real: `gdk_window.origin()=(1,1220)` con `rooted=false` para una ventana realmente en `(1220,0)`, mientras `tao_outer`, `tao_inner` y `gdk position` coinciden con la petición ("Mecanismo").
 - L11: el usuario decide sacar la hiper-refactorización (U1) a una issue aparte, **sin abrirla**: queda en memoria (Engram, `quorb/linux/placement-unification-deferred`) y se consulta cuando él lo pida. U2 (canal único de posición nativa) es el camino de la PR2; U3 se parte en un constructor único del informe (pequeño) y el ruteo por `drive()` (refactor, fuera).
 - L10: evidencia del contributor — la pantalla X11 no coincide con el escritorio del compositor (`xrandr` `eDP-1 +0+0` vs Hyprland `0x0`; un cliente en X `x` aparece en Hyprland en `x - 4480`). Es material de PR2, no de PR1 (S8).
+- L12: Publicación de la PR1 (2026-11-26, con OK explícito del contributor al texto final): **PR #319** con el título de A1 y el cuerpo de A2, A3 como comentario técnico en la PR y A4 en la issue con el link. Tres ajustes editoriales antes de publicar: la línea `ODD:` del cuerpo decía "not applicable" con un doc ODD entregado en la misma PR y pasa a declararlo como documento del proyecto; A3 se reduce a los diez puntos agrupados en cuatro bloques (la versión punto por punto tenía 90 líneas y repetía la tabla de unidades que el cuerpo de la PR ya declara); A4 baja de 1.900 a 438 caracteres, con el registro que el contributor usa en sus avisos (link, qué trae, qué queda, revisión cuando pueda). El hallazgo del desfase de 4480 px entre la superficie X y el escritorio del compositor sale del comentario de la issue y queda sólo acá, como insumo de la PR2: no se abre conversación sobre el orden de la PR2.
