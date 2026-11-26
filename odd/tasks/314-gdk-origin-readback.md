@@ -1,7 +1,7 @@
 # 314-gdk-origin-readback
 
-> Issue: https://github.com/egdev6/quorb/issues/314 — `type:bug`, `status:approved`; autor y assignee: @DonatoSilva. El owner aprobó el alcance de la PR1 el 2026-11-25 (L2, S1-S8).
-> Rama: `fix/314-gdk-origin-readback` (desde `upstream/main` 61c4813). Fork: `DonatoSilva/quorb` → base `egdev6/quorb:main`. PR: pendiente; `Refs #314`, no cierra la issue (S7).
+> Issue: https://github.com/egdev6/quorb/issues/314 — `type:bug`, `status:approved`; autor y assignee: @DonatoSilva. El owner aprobó el alcance de la PR1 el 2026-11-25 (L2, S1-S8) y la PR1 en sí el 2026-11-26 (L13).
+> Rama: `fix/314-gdk-origin-readback` (desde `upstream/main` 61c4813). Fork: `DonatoSilva/quorb` → base `egdev6/quorb:main`. PR: **#319** (publicada el 2026-11-26, `Refs #314`, no cierra la issue — S7).
 > Alcance: el defecto de lectura del origen en los dos lectores X11 (tira y detalle). Recuperación, monitor de respaldo y recolocación al relanzar: PR2 (S8).
 > Riesgo: item 3 (contrato `Report.reason` compartido con el front) → verificación independiente.
 
@@ -27,7 +27,7 @@ Contrato del binding (`gdk-0.18.2/src/auto/window.rs:497-503`):
 pub fn origin(&self) -> (i32, i32, i32) { … (ret, x.assume_init(), y.assume_init()) }
 ```
 
-⇒ hoy `ox = ret`, `oy = x`, `rooted = y`. Traza de una colocación real (L2, comentario del contributor en la issue):
+⇒ hoy `ox = ret`, `oy = x`, `rooted = y`. Traza de una colocación real (comentario del contributor en la issue):
 
 ```
 MOVE pide=(1220,0) -> lógico=(1220,0)   monitor GDK: eDP-1 origin=(0,0)
@@ -55,17 +55,17 @@ Lo que PR1 **no** arregla (PR2): la pantalla X11 no coincide con el escritorio d
 - D3: Desaparece la rama `Err("the native window origin could not be read")` y con ella el `ReadFailed` espurio. El `Err` que queda en `read_geometry` es el del cierre/timeout de la llamada nativa, que es un camino distinto y ya está cubierto (`widget_placement_test.rs:280`).
 - D4: **PR1 no unifica la validación entre los sistemas operativos.** Lo que ya está unificado es el *contrato*: `Status` / `Reason` / `Report` (`widget_placement.rs:49-96`) se compilan sin ningún `#[cfg(target_os)]` y el front consume el mismo vocabulario sin saber de qué SO vino el informe (`src/lib/widget-placement.ts:122-140`, `src/detail-placement.ts:56-79`). Lo que no está unificado es el *mecanismo*: sólo X11 tiene read-back nativo (ciclo `drive()`); Linux/Wayland nativo va por `window_fit::fit_plan`/`fit_widget` sin read-back (`widget_placement.rs:500-528`); Windows y macOS caen en `detail_geometry::apply_widget` con `read_back: false` (`widget_placement.rs:606-620`). PR1 arregla el único read-back que existe y **habilita** la fuente que después permite una auditoría de recuperación en Linux; no la crea (S8).
 - D5: Linux **no puede reusar la auditoría de Windows tal cual** — no por política, sino por su fuente de lectura: en xdg-shell `outerPosition()` es `(0,0)` por diseño y el sizing de GTK difiere, así que cada tick vería "ventana sana desplazada" y la recolocaría en bucle (el parpadeo y la tira que desaparece de #168/#148). Evidencia en el repo: `src/Widget.tsx:837-839`, `src/lib/widget-recovery.ts:30-39`, fijado por `src/lib/widget-recovery.test.ts:139-147`. El pin WU3 de `odd/tasks/180-wayland-compositor-drag.md:92-96` protege contra *reactivar la auditoría de Windows en la rama Wayland*, no contra construir una auditoría Linux con la fuente correcta. Wayland nativo y macOS quedan fuera por no tener geometría absoluta, no por decisión.
-- D6: El **flujo lógico ya está unificado**: un solo `trait Surface` (`widget_placement.rs:144-171`), una sola `drive()` (`:282-374`), un solo vocabulario `Status`/`Reason`/`Report` (`:49-96`, sin `cfg` por SO), y el read-back como **método del trait** (`read_geometry`), no como una rama por SO. No hay un flujo por sistema operativo: hay dos ejes distintos — dentro de Linux, X11 vs Wayland (`Transport`, `display_kind()`), y fuera de Linux, la ruta sin read-back (`detail_geometry::apply_widget`, `read_back: false`). Lo que sí está duplicado, y en tres puntos: (a) la bifurcación de transporte dentro de `place()` (`:569`); (b) **la posición nativa se lee por dos canales distintos** — el front pide `outerPosition()` a la webview (`src/Widget.tsx`, `src/lib/widget-recovery.ts`) y el Rust lee GDK (`read_geometry`) — y en Linux esos canales no pueden coexistir porque el del front miente; (c) `widget_placement.rs` y `detail_placement.rs` son dos copias casi idénticas del mismo ciclo (`drive`, `request_size_checked`, `report_of`, `failed_report`, `rooted_origin`, `read_geometry`), y por eso PR1 toca dos lectores. Hay tres unificaciones posibles, y **PR1 no hace ninguna**: **U1** — un módulo común de colocación parametrizado por la superficie, para eliminar (c): refactor grande, fuera del alcance aprobado ("chica y testeable"); candidato a issue propia. **U2** — un único canal de "posición nativa ahora" que usen tanto la verificación (push, Rust) como la auditoría (pull, TS), para eliminar (b): es el camino natural de PR2, y convertiría `shouldAuditNativePosition` de "¿es Windows?" en "¿este SO tiene fuente de posición nativa confiable?". **U3** — que la ruta sin read-back también pase por `drive()` con una superficie que reporte "no hay posición disponible", en vez de construir el informe a mano (`widget_placement.rs:615-617`): barato, pero toca la ruta de Windows y roza el gate de #180, así que tampoco entra en PR1. **U1 queda para una issue aparte, NO abierta**: el usuario pidió sacarla del alcance y conservarla en memoria (Engram, `quorb/linux/placement-unification-deferred`) hasta que la pida.
+- D6: El **flujo lógico ya está unificado**: un solo `trait Surface` (`widget_placement.rs:144-171`), una sola `drive()` (`:282-374`), un solo vocabulario `Status`/`Reason`/`Report` (`:49-96`, sin `cfg` por SO), y el read-back como **método del trait** (`read_geometry`), no como una rama por SO. No hay un flujo por sistema operativo: hay dos ejes distintos — dentro de Linux, X11 vs Wayland (`Transport`, `display_kind()`), y fuera de Linux, la ruta sin read-back (`detail_geometry::apply_widget`, `read_back: false`). Lo que sí está duplicado, y en tres puntos: (a) la bifurcación de transporte dentro de `place()` (`:569`); (b) **la posición nativa se lee por dos canales distintos** — el front pide `outerPosition()` a la webview (`src/Widget.tsx`, `src/lib/widget-recovery.ts`) y el Rust lee GDK (`read_geometry`) — y en Linux esos canales no pueden coexistir porque el del front miente; (c) `widget_placement.rs` y `detail_placement.rs` son dos copias casi idénticas del mismo ciclo (`drive`, `request_size_checked`, `report_of`, `failed_report`, `rooted_origin`, `read_geometry`), y por eso PR1 toca dos lectores. Hay tres unificaciones posibles, y **PR1 no hace ninguna**: **U1** — un módulo común de colocación parametrizado por la superficie, para eliminar (c): refactor grande, fuera del alcance aprobado ("chica y testeable"); candidato a issue propia. **U2** — un único canal de "posición nativa ahora" que usen tanto la verificación (push, Rust) como la auditoría (pull, TS), para eliminar (b): es el camino natural de PR2, y convertiría `shouldAuditNativePosition` de "¿es Windows?" en "¿este SO tiene fuente de posición nativa confiable?". **U3** — que la ruta sin read-back también pase por `drive()` con una superficie que reporte "no hay posición disponible", en vez de construir el informe a mano (`widget_placement.rs:615-617`): barato, pero toca la ruta de Windows y roza el gate de #180, así que tampoco entra en PR1. **U1 queda para una issue aparte, NO abierta**: el usuario pidió sacarla del alcance y conservarla en memoria —no en el repo— hasta que la pida.
 
 ## Tasks
 
-- [ ] T1 — S1-S11 — Crear este documento de feature + espejo Engram + `todo`. Route: inline. Commit: —
-- [ ] T2 — S5 — RED: test puro del contrato del binding con tuplas reales (`y=0`, origen `(0,0)`, coordenadas negativas, `y` no nulo, escala, retorno no significativo) en `widget_placement_test.rs` y `detail_placement_test.rs`. Route: inline. Commit: —
-- [ ] T3 — S1, S2, S3, S5 — GREEN: seam puro + consumo correcto de la tupla en los dos lectores (`widget_placement.rs:840-842`, `detail_placement.rs:510-512`); se retira la rama de error del origen. Route: inline. Commit: —
-- [ ] T4 — S4 — Corregir comentarios que describen el flag y el test que lo fijaba (`widget_placement_test.rs:642`); comprobar que los tests de pin del ciclo siguen verdes. Route: inline. Commit: —
-- [ ] T5 — S6 — Traza X11 con la corrección: arranque + un movimiento; capturar `origin()` crudo contra `tao` outer/inner y `gdk position`, y el `Report` resultante (`read_back: true`, `bounds` con el origen real). Instrumentación desechable, sin commit. Route: inline. Commit: —
-- [ ] T6 — S7, S9, S10, S11 — Checks: `cargo fmt --all`, `cargo test` (src-tauri), `npm test`, `npm run typecheck`, `npx biome ci`. Route: inline. Commit: —
-- [ ] T7 — S7, S8 — Commit + push al fork + PR a `egdev6/quorb` con la plantilla completa (alcance, exclusiones, coordinación, aceptación, evidencia de checks) y `Refs #314`; asignar la PR a @DonatoSilva. Route: inline. Commit: —
+- [x] T1 — S1-S11 — Crear este documento de feature. Route: inline. Commit: —
+- [x] T2 — S5 — RED: test puro del contrato del binding con tuplas reales (`y=0`, origen `(0,0)`, coordenadas negativas, `y` no nulo, escala, retorno no significativo) en `widget_placement_test.rs` y `detail_placement_test.rs`. Route: inline. Commit: —
+- [x] T3 — S1, S2, S3, S5 — GREEN: seam puro + consumo correcto de la tupla en los dos lectores (`widget_placement.rs:840-842`, `detail_placement.rs:510-512`); se retira la rama de error del origen. Route: inline. Commit: —
+- [x] T4 — S4 — Corregir comentarios que describen el flag y el test que lo fijaba (`widget_placement_test.rs:642`); comprobar que los tests de pin del ciclo siguen verdes. Route: inline. Commit: —
+- [x] T5 — S6 — Traza X11 con la corrección: arranque + un movimiento; capturar `origin()` crudo contra `tao` outer/inner y `gdk position`, y el `Report` resultante (`read_back: true`, `bounds` con el origen real). Instrumentación desechable, sin commit. Route: inline. Commit: —
+- [x] T6 — S7, S9, S10, S11 — Checks: `cargo fmt --all`, `cargo test` (src-tauri), `npm test`, `npm run typecheck`, `npx biome ci`. Route: inline. Commit: —
+- [x] T7 — S7, S8 — Commit + push al fork + PR a `egdev6/quorb` con la plantilla completa (alcance, exclusiones, coordinación, aceptación, evidencia de checks) y `Refs #314`; asignar la PR a @DonatoSilva. Route: inline. Commit: —
 
 ## Riesgo
 
@@ -77,259 +77,21 @@ Lo que PR1 **no** arregla (PR2): la pantalla X11 no coincide con el escritorio d
 
 - Una rama: `fix/314-gdk-origin-readback`, base `upstream/main` 61c4813, publicada en el fork `DonatoSilva/quorb`; la PR se abre contra `egdev6/quorb:main` (no hay permiso de push al upstream: `permissions.push = false`).
 - Unidades de commit: T2+T3+T4 en un commit de comportamiento (`fix(linux): leer el origen de la ventana en el orden del binding`), T5 como evidencia en el cuerpo de la PR, T6 sin commit, T7 con la PR.
-- El doc se actualiza con el commit que contiene cada tarea, y el `todo` se refleja en cada transición.
-- **Corte de commits (3 unidades, 538 líneas autorales):** `fdad9cd` — código y tests (4 archivos de Rust, el cambio de comportamiento); `343af25` — doc de la feature; `914c3fa` — anexo con los textos de publicación (235 líneas, sólo documentación).
-- El anexo es **meta-contenido sobre la PR** (borradores que el contributor todavía puede cambiar): si conviene un diff más chico para la revisión, se puede sacar del push sin tocar el código, porque la feature no depende de él. Decisión del contributor, no del ODD.
-
-## Anexos: textos de publicación (borradores, sin publicar)
-
-Textos aprobados por el contributor y publicados: **PR #319**
-(https://github.com/egdev6/quorb/pull/319), rama
-`fix/314-gdk-origin-readback` en `origin`, base `main`, con `Refs #314`
-(no cierra la issue). Comentario técnico en la PR:
-https://github.com/egdev6/quorb/pull/319#issuecomment-7195835679 · aviso en
-la issue: https://github.com/egdev6/quorb/issues/314#issuecomment-7195835005
-
-### A1. Título de la PR
-
-```
-fix(linux): leer el origen de la ventana en el orden del binding (#314)
-```
-
-### A2. Cuerpo de la PR
-
-```markdown
-## Related issue / Issue relacionada
-
-- Issue: #314
-- ODD: not applicable — `type:bug` con `status:approved` del owner. El alcance
-  aprobado está en su comentario del 2026-11-25 y se refleja en
-  `odd/tasks/314-gdk-origin-readback.md`.
-
-## Scope / Alcance
-
-**Entra**
-
-- `widget_placement.rs:840-842` y `detail_placement.rs:510-512`: el binding
-  `gdk 0.18.2` devuelve `Window::origin() -> (retorno, x, y)` y el código lo
-  desempaquetaba como `(ox, oy, rooted)`.
-- Un seam puro compartido por los dos lectores (`rooted_origin`): el retorno se
-  ignora por contrato (GDK lo documenta como "not meaningful, ignore") y la
-  garantía de que hay origen la da `is_viewable()`, que los dos lectores ya
-  consultaban. Cero llamadas nativas nuevas.
-- Se retira la rama `Err("the native window origin could not be read")`, que
-  producía `Reason::ReadFailed` con la tira docked arriba (el `y == 0` se leía
-  como "sin origen").
-- Regresiones con tuplas reales del binding: `y == 0`, origen `(0, 0)`,
-  coordenadas negativas, `y != 0`, conversión de escala y retorno no
-  significativo; más un pin que fija que los dos lectores consumen la tupla a
-  través del seam.
-
-**No entra**
-
-- `tao::outer_position()` ni otra capa de adaptadores.
-- La recuperación, el monitor de respaldo y la recolocación al relanzar: PR2.
-- El gate de #180, la auditoría de `src/lib/widget-recovery.ts` y cualquier
-  ruta de macOS.
-- La política de visibilidad: la regla pura en píxeles físicos es PR2.
-
-## Coordination / Coordinación
-
-- Contributor / Contribuidor: @DonatoSilva
-- Claim or agreement evidence / Evidencia de asignación o acuerdo: la issue
-  #314 está asignada a @DonatoSilva desde su apertura; el owner puso
-  `status:approved` y escribió el alcance de la PR1 el 2026-11-25.
-- Sin solapamiento: las PRs abiertas son #317 y #318 (mías, #312), #311 (#276)
-  y #303 (#281).
-
-## Acceptance and validation / Aceptación y validación
-
-- **Criteria satisfied**: la lectura del origen devuelve la posición real en
-  píxeles físicos en los dos lectores; el informe pasa de `ReadFailed`/
-  `PositionRefused` espurios a `Applied` con `read_back: true`; el frontend
-  deja de cachear una geometría corrupta en Linux.
-
-- **Checks actually run and results**:
-  - `cd src-tauri && cargo test --lib widget_placement` → 37 passed, 0 failed, 1 ignored.
-  - `cd src-tauri && cargo test --lib detail_placement` → 23 passed, 0 failed, 1 ignored.
-  - `cd src-tauri && cargo fmt --all -- --check` → limpio.
-  - `npm test` → verde. `npm run typecheck` → verde. `npx biome ci` → exit 0
-    (225 warnings preexistentes, 0 errores).
-  - **Traza X11** (misma máquina, `GDK_BACKEND=x11`, instrumentación desechable
-    ya revertida):
-    - antes: `origin crudo = (1, 4432, 379)` → `ox=1 oy=4432 rooted=379` →
-      origen `(1, 4432)` → `Limited` / `PositionRefused`;
-    - después: `origin crudo = (1, 4432, 379)` → origen `(4432, 379)` →
-      `Applied`, `read_back: true`.
-  - **Unidades** (`GDK_SCALE=2`): el binding devolvió `(2192, 141)` para una
-    posición de dispositivo de `(4384, 282)`: GDK devuelve píxeles de
-    aplicación, así que la conversión con el factor de la ventana es la
-    correcta.
-
-- **Checks not run and why**:
-  - **Windows y macOS**: los checks de Linux no validan otras plataformas.
-  - **Wayland nativo**: no hay read-back por diseño; el alcance es de #180.
-  - `email::tests::*_over_http` fallan de forma **no determinista** en este
-    entorno (5 fallos en una corrida, 0 en otra, sobre el mismo árbol): previo
-    y ajeno a este diff, pero no es un check confiable acá.
-
-- **Remaining blockers**: ninguno. La recuperación y la regla de visibilidad en
-  píxeles físicos siguen para la PR2, como pidió el owner.
-
-Refs #314
-```
-
-### A3. Comentario en la PR (respuesta punto por punto a la revisión)
-
-```markdown
-## Respuesta a la revisión
-
-Repaso punto por punto lo que pediste en la issue (#314), con la evidencia de
-cada uno.
-
-**1. «no es GDK quien transpone las coordenadas, sino Quorb quien interpreta
-mal la tupla»** — Confirmado y corregido. El binding fijado (`gdk 0.18.2`,
-`src/auto/window.rs:497-503`) devuelve `(retorno, x, y)`; los dos lectores lo
-desempaquetaban como `(ox, oy, rooted)`. Ahora los dos consumen la tupla
-cruda a través de un único seam puro (`widget_placement::rooted_origin`) y el
-valor de `y` dejó de ser un flag.
-
-**2. «GDK documenta el retorno como «Not meaningful, ignore», así que no
-basta con reordenar y seguir usando `retorno != 0` como indicador de éxito»** —
-El retorno se ignora por contrato y la garantía de que hay origen la da
-`is_viewable()`, que los dos lectores ya consultaban antes de leer
-(`widget_placement.rs:827`, `detail_placement.rs:505`). Con eso se retira la
-rama `Err("the native window origin could not be read")`: en Linux el informe
-ya no puede salir `ReadFailed` por una ventana que sí tiene posición.
-
-**3. «No hace falta sustituir la API por `tao::outer_position()` ni introducir
-otra capa de adaptadores»** — Cero llamadas nativas nuevas y cero adaptadores:
-el diff no añade ninguna llamada a GDK ni a tao.
-
-**4. «Corregir los comentarios y tests que asumen ese flag»** — Corregidos el
-doc-comment del módulo, el del seam y los de los dos lectores. El anterior se
-contradecía: decía que el retorno no era significativo y a la vez lo usaba
-como «no hay origen».
-
-**5. «Añadir regresiones con tuplas reales del binding: `y=0`, origen `(0,0)`,
-coordenadas negativas, `y` no nulo, conversión de escala y retorno no
-significativo»** — Los seis casos están fijados en un único juego, más la
-conversión de escala y un pin que fija que los dos lectores pasan la tupla
-cruda al seam. Sin ese pin, un lector que volviera a desempaquetar a mano
-dejaría todos los tests en verde.
-
-**6. «El `Fake` actual entrega geometría ya decodificada y no cubre esta
-frontera»** — Exacto: el seam puro es la frontera y es la que se testea. El
-`Fake` no se tocó.
-
-**7. «Repetir la traza X11 con la corrección para comprobar la lectura
-concedida»** — Repetida, con la misma instrumentación en las dos versiones
-(ya revertida). Mismo equipo, misma configuración:
-
-    antes:   origin crudo = (1, 4432, 379)
-             desempaquetado = ox=1  oy=4432  rooted=379
-             origen leído = (1, 4432)
-             Report = { status: Limited,  bounds: (x: 1, y: 4432),
-                        reason: PositionRefused, read_back: true }
-
-    después: origin crudo = (1, 4432, 379)
-             origen leído = (4432, 379)
-             Report = { status: Applied,  bounds: (x: 4432, y: 379),
-                        reason: None, read_back: true }
-
-La ventana real estaba en (4432, 379) en los dos casos. Antes la app
-informaba la tira en (1, 4432) — el código de retorno en la X y la X real en
-la Y — y el frontend se guardaba ese rectángulo imposible.
-
-**Un dato de la traza que confirma tu decisión de alcance** — Con
-`GDK_SCALE=2` el binding devolvió el origen (2192, 141) para una posición de
-dispositivo de (4384, 282): GDK devuelve píxeles de aplicación, mientras que
-`tao::outer_position()` devuelve píxeles físicos. No era un sustituto
-equivalente: la conversión con el factor de la ventana es la correcta y
-mantiene las unidades coherentes con el tamaño, que viene de
-`gdk_window_get_geometry` en lógicos.
-
-**8. «`Refs #314`, no cerrarla»** — Hecho: la PR no cierra la issue.
-
-**9. «sin cambios en el gate de #180; macOS fuera de alcance salvo
-evidencia»** — No se tocaron `display_kind()`, `wm_compat.rs`, la tolerancia
-de 1 px ni las rutas de Windows/macOS. `Status`/`Reason`/`Report` no cambian.
-
-**10. «El detalle entra en esta PR1 porque tiene exactamente el mismo defecto
-de lectura»** — El detalle usa el mismo seam; no hay copia.
-
-**Pendiente para la PR2** — La recuperación, el monitor de respaldo y la
-recolocación al relanzar quedan sin tocar. Un insumo que deja la traza: en
-XWayland la superficie X y el escritorio del compositor no coinciden (en esta
-máquina, 4480 px de desfase), y el desfase se cancela en HDMI-A-1 pero no en
-eDP-1, que es donde la tira se va del área visible. Conviene que la auditoría
-de la PR2 lea la ventana y los monitores desde la misma fuente.
-```
-
-### A4. Comentario en el issue (tono cercano, pide revisión, deja una pregunta)
-
-Va **después** de abrir la PR, para llevar el link.
-
-```markdown
-@egdev6 gracias por la revisión al detalle, y sobre todo por corregir el
-diagnóstico: tenías razón en que el problema no era de GDK, y eso fue
-justamente lo que dejó la PR1 acotada.
-
-Ya está abierta: {{PR_URL}}
-
-Quedó así:
-
-- Los dos lectores (tira y detalle) consumen la tupla cruda `(retorno, x, y)`
-  a través de un único seam puro. El retorno se ignora por contrato y la
-  garantía de «hay origen» pasa a ser `is_viewable()`, que ya se consultaba.
-- Se retira la rama que devolvía `ReadFailed`: en Linux el informe ya no
-  puede fallar por una ventana que sí tiene posición. Como efecto, el panel
-  de detalle deja de entrar en el camino que lo cerraba.
-- Las seis tuplas reales que pediste, más la conversión de escala y un pin
-  que fija que los dos lectores usen el seam (sin ese pin, uno que volviera a
-  desempaquetar a mano dejaría los tests en verde).
-
-Y la traza repetida con la corrección, que era lo que me faltaba:
-
-    antes:   (1, 4432, 379) → leído como (1, 4432) → Limited / PositionRefused
-    después: (1, 4432, 379) → leído como (4432, 379) → Applied / read_back
-
-Mismo equipo, misma configuración: la ventana estaba en (4432, 379) en los
-dos casos. Antes la app informaba la tira en (1, 4432) — el código de retorno
-en la X y la X real en la Y — y el frontend se guardaba ese rectángulo
-imposible, que es lo que después se comparaba contra el área del monitor.
-
-Un hallazgo de la traza que creo que te va a interesar: repetí la medición
-con `GDK_SCALE=2` y el binding devolvió (2192, 141) para una posición de
-dispositivo de (4384, 282). O sea, GDK devuelve píxeles de aplicación y
-`tao::outer_position()` devuelve píxeles físicos: tu decisión de no cambiar la
-API no sólo era la acotada, era además la que dejaba las unidades
-coherentes con el tamaño (que viene de `gdk_window_get_geometry`, en
-lógicos).
-
-Una pregunta para la PR2, que es lo que quedó abierto: la auditoría de
-recuperación va a necesitar leer la ventana y los monitores desde la misma
-fuente, porque en XWayland la superficie X y el escritorio del compositor
-difieren 4480 px (X: HDMI-A-1 en +1920, Hyprland: en -2560). El desfase se
-cancela justo en HDMI-A-1 y no en eDP-1, que es donde la tira se va del área
-visible. ¿Querés que la PR2 ataque primero el desfase de coordenadas o
-primero la regla pura de visibilidad en píxeles físicos?
-
-Cuando puedas, mirá la PR: son 4 archivos de Rust (2 de código, 2 de test)
-más el doc de ODD. Va con `Refs #314`, no la cierra.
-```
+- El doc se actualiza con el commit que contiene cada tarea.
+- **Corte de commits de la PR1:** `fdad9cd` — código y tests (4 archivos de Rust, el cambio de comportamiento); `343af25` — doc de la feature; `914c3fa` — anexo con los textos de publicación (235 líneas, sólo documentación). El anexo se retiró del documento en el seguimiento de la PR: los textos de publicación viven en la PR, no en el repo.
 
 ## Log
 
-- L1: "Vale quiero que mires si el issue 314 es mio y esta assigndo ??" — el usuario abre el trabajo sobre #314. Verificado: la issue es de @DonatoSilva, está asignada a @DonatoSilva, estado `OPEN`, labels `type:bug` + `status:approved`; sin PR solapada (abiertas: #317 y #318 de @DonatoSilva sobre #312, #311 y #303 de @sosan sobre #276 y #281).
-- L2: "tenemos todo lo necesario para iniciar ha realizar el ataqeu del issue ne su propia pr o nos falta tener en cuenta algo un permiso o responderle algo al owner ??" — verificado: el owner ya aprobó el alcance de la PR1 en la issue ("Aprobada la PR1 acotada al defecto de lectura… Paso la issue a `status:approved` con este alcance; sigue asignada a ti"), no hace falta responderle ni pedir permiso; la PR sale desde el fork porque `push` al upstream es `false`.
-- L3: "opcion 3, pero mas qeu el codigo exacto es ejemplo con contexto que yo pueda entender el flujo y logica del cambio y en que paso del ciclo de vida del software estamos agregando o quitando" — el usuario pide el plan con el flujo y el paso del ciclo de vida tocado; de ahí S9 y la sección "Mecanismo".
-- L4: "Pregunta esto unifica la validacion en los sistemas operativos soportados ?" — respuesta: el contrato está unificado (`Status`/`Reason`/`Report`, sin `cfg` por SO), el mecanismo no; PR1 no unifica (D4).
-- L5: "Por que linux no deberia tener auditoria de recuperacion ?" — respuesta: Linux X11 sí debería (es la mitad "no se recupera" del issue, PR2), pero no puede reusar la auditoría de Windows porque su fuente (`outerPosition()`) es `(0,0)` por diseño en xdg-shell y produciría un bucle de recolocación (#168/#148); el pin WU3 de #180 protege contra reactivar esa auditoría en Wayland, no contra construir una Linux con la fuente correcta (D5).
-- L6: "seun eso el flujo de validacion y read-back depende del sistema ?? osea no podemos unificar el flujo logico para no repetir codigo??" — el usuario pide corregir este ODD y pregunta por la unificación del flujo. Corrección aplicada: D4 reescrito (no es una prohibición de auditar Linux, es que la fuente de Windows es inválida en xdg-shell), D5 y D6 añadidos.
+- L1: el trabajo arranca sobre la issue #314, verificada como propia y asignada a @DonatoSilva, en estado `OPEN`, con las labels `type:bug` y `status:approved`, y sin PR solapada (abiertas: #317 y #318 de @DonatoSilva sobre #312, #311 y #303 de @sosan sobre #276 y #281).
+- L2: el owner ya había aprobado el alcance de la PR1 en la issue (PR1 acotada al defecto de lectura, issue a `status:approved` con ese alcance y asignada al contributor), así que no hace falta responderle ni pedir permiso; la PR sale desde el fork porque `push` al upstream es `false`.
+- L3: el plan se pide con el flujo y el paso del ciclo de vida que el cambio toca; de ahí S9 y la sección "Mecanismo".
+- L4: el owner pregunta si la validación se unifica entre los sistemas operativos soportados; respuesta: el contrato está unificado (`Status`/`Reason`/`Report`, sin `cfg` por SO), el mecanismo no; PR1 no unifica (D4).
+- L5: el owner pregunta por qué Linux no debería tener auditoría de recuperación; respuesta: Linux X11 sí debería (es la mitad "no se recupera" del issue, PR2), pero no puede reusar la auditoría de Windows porque su fuente (`outerPosition()`) es `(0,0)` por diseño en xdg-shell y produciría un bucle de recolocación (#168/#148); el pin WU3 de #180 protege contra reactivar esa auditoría en Wayland, no contra construir una Linux con la fuente correcta (D5).
+- L6: el owner pregunta si el flujo de validación y read-back depende del sistema y si se puede unificar el flujo lógico para no repetir código; corrección aplicada a este documento: D4 reescrito (no es una prohibición de auditar Linux, es que la fuente de Windows es inválida en xdg-shell), D5 y D6 añadidos.
 - L7: evidencia del maintainer — "la versión fijada, `gdk 0.18.2`, devuelve `(retorno, x, y)` en `Window::origin()` (`src/auto/window.rs:497–503`). En cambio, `widget_placement.rs:840–842` y `detail_placement.rs:510–512` la desempaquetan como `(ox, oy, rooted)`" (S1).
 - L8: evidencia del maintainer — "GDK documenta el retorno como «Not meaningful, ignore», así que no basta con reordenar y seguir usando `retorno != 0` como indicador de éxito" (S2, D1).
 - L9: evidencia del contributor — traza de una colocación real: `gdk_window.origin()=(1,1220)` con `rooted=false` para una ventana realmente en `(1220,0)`, mientras `tao_outer`, `tao_inner` y `gdk position` coinciden con la petición ("Mecanismo").
-- L11: el usuario decide sacar la hiper-refactorización (U1) a una issue aparte, **sin abrirla**: queda en memoria (Engram, `quorb/linux/placement-unification-deferred`) y se consulta cuando él lo pida. U2 (canal único de posición nativa) es el camino de la PR2; U3 se parte en un constructor único del informe (pequeño) y el ruteo por `drive()` (refactor, fuera).
 - L10: evidencia del contributor — la pantalla X11 no coincide con el escritorio del compositor (`xrandr` `eDP-1 +0+0` vs Hyprland `0x0`; un cliente en X `x` aparece en Hyprland en `x - 4480`). Es material de PR2, no de PR1 (S8).
-- L12: Publicación de la PR1 (2026-11-26, con OK explícito del contributor al texto final): **PR #319** con el título de A1 y el cuerpo de A2, A3 como comentario técnico en la PR y A4 en la issue con el link. Tres ajustes editoriales antes de publicar: la línea `ODD:` del cuerpo decía "not applicable" con un doc ODD entregado en la misma PR y pasa a declararlo como documento del proyecto; A3 se reduce a los diez puntos agrupados en cuatro bloques (la versión punto por punto tenía 90 líneas y repetía la tabla de unidades que el cuerpo de la PR ya declara); A4 baja de 1.900 a 438 caracteres, con el registro que el contributor usa en sus avisos (link, qué trae, qué queda, revisión cuando pueda). El hallazgo del desfase de 4480 px entre la superficie X y el escritorio del compositor sale del comentario de la issue y queda sólo acá, como insumo de la PR2: no se abre conversación sobre el orden de la PR2.
+- L11: el usuario decide sacar la hiper-refactorización (U1) a una issue aparte, **sin abrirla**: queda en memoria y se consulta cuando él lo pida. U2 (canal único de posición nativa) es el camino de la PR2; U3 se parte en un constructor único del informe (pequeño) y el ruteo por `drive()` (refactor, fuera).
+- L12: Publicación de la PR1 (2026-11-26, con OK explícito del contributor al texto final): **PR #319** contra `egdev6/quorb:main`, con `Refs #314`, un comentario técnico en la PR y un aviso en la issue. Tres ajustes editoriales antes de publicar: el cuerpo de la PR declaró este documento ODD como documento del proyecto (en vez de "not applicable"); el comentario técnico de la PR se redujo a los diez puntos agrupados en cuatro bloques (la versión punto por punto repetía la tabla de unidades que el cuerpo ya declara); el aviso de la issue bajó a 438 caracteres, con el registro que el contributor usa en sus avisos (link, qué trae, qué queda, revisión cuando pueda). El hallazgo del desfase de 4480 px entre la superficie X y el escritorio del compositor sale del comentario de la issue y queda sólo acá, como insumo de la PR2: no se abre conversación sobre el orden de la PR2.
+- L13: el owner aprobó la PR #319 (2026-11-26) y dejó cinco cambios menores, textuales: (1) acotar el pin de orden al cuerpo de `read_geometry`, porque la búsqueda sobre el archivo entero encontraba primero la mención `gdk_window_is_viewable()` del doc del módulo y el pin pasaba siempre; (2) corregir el pin de detalle, que comparaba el re-export del seam consigo mismo y sólo podía fallar al compilar; (3) reubicar el comentario de la conversión de escala, que había quedado encima del doc del pin, y documentar el test de escala; (4) declarar en el cuerpo de la PR el cambio observable en Linux (`ReadFailed` → `Applied`/`Limited` y el frontend pasa a cachear la geometría); (5) dejar este documento como documento de proyecto, sin anexos de publicación, registro de chat ni claves de memoria. Los puntos 1, 2, 3 y 5 se aplican como seguimiento de la PR1; el punto 4 es texto de la PR.
