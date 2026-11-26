@@ -17,8 +17,9 @@ mod pointer_crossing;
 mod providers;
 mod secrets;
 // El modelo de estados y la sonda del portal (#312) todavía no los consume
-// nadie: el slice 2 los enchufa con el cliente real. Sin avisos de código muerto.
-#[cfg_attr(not(test), allow(dead_code))]
+// nadie: el slice 2 los enchufa con el cliente real. Cada elemento pendiente
+// lleva su propio `allow(dead_code)` dentro del módulo, para no silenciar el
+// módulo entero.
 mod shortcuts;
 mod uninstall;
 // El módulo se compila también en Windows/macOS (el comando se invoca siempre),
