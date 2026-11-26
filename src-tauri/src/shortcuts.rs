@@ -30,7 +30,7 @@ use tauri_plugin_global_shortcut::Shortcut;
 /// enchufar el cliente del portal sin tocar a quien decide: el registro por
 /// X11 y el registro por portal implementan el mismo contrato, así que el
 /// código que arma el mapa de atajos no necesita saber cuál está detrás.
-pub trait ShortcutRegistrar {
+pub(crate) trait ShortcutRegistrar {
     /// Reserva `shortcut` como atajo global.
     ///
     /// `Err` lleva el motivo del fallo: es el texto que Ajustes muestra
@@ -60,19 +60,18 @@ impl<F: FnMut(&Shortcut) -> Result<(), String>> ShortcutRegistrar for F {
     }
 }
 
-/// Resultado de la sonda del portal: **tres** estados, no dos.
-/// Estado del app-id que el portal exige para identificar la app (S4).
+/// Estado del app-id que el portal exige para identificar la app (#312, S4).
 ///
 /// El portal no acepta un app-id libre en una app no sandboxed: lo deduce del
 /// scope de systemd (`app-<id>-*.scope`) o lo acepta por
 /// `org.freedesktop.host.portal.Registry.Register`, y en los dos caminos exige
 /// un `.desktop` con ese nombre base. Nombrar el resultado —en lugar de
 /// colapsarlo en `Absent` o `Unknown`— evita el respaldo silencioso que se
-/// descartó en #312 (S11): con el portal presente pero sin app-id, la UI dice
+/// descartó en #312 (#312, S11): con el portal presente pero sin app-id, la UI dice
 /// "el portal no pudo identificar la app" en vez de "no hay atajos globales".
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppIdState {
+pub(crate) enum AppIdState {
     /// El portal identificó la app: por el scope de systemd o por `Register`.
     Resolved,
     /// La app no tiene app-id: no hay `.desktop` con ese nombre base (una
@@ -80,14 +79,15 @@ pub enum AppIdState {
     Missing,
     /// `Registry.Register` existe y rechazó el app-id.
     Rejected,
-    /// El portal no ofrece `Registry` (< 1.19.3) y el scope tampoco dio un id.
+    /// El portal no ofrece `Registry` (anterior a 1.19.4; en el código desde
+    /// 1.19.3) y el scope de systemd tampoco dio un id.
     RegistryUnavailable,
 }
 
 #[allow(dead_code)]
 impl AppIdState {
     /// ¿El portal puede abrir sesión de atajos? Sólo con el app-id resuelto.
-    pub fn is_resolved(self) -> bool {
+    pub(crate) fn is_resolved(self) -> bool {
         matches!(self, AppIdState::Resolved)
     }
 }
@@ -95,7 +95,7 @@ impl AppIdState {
 /// Versión mínima de la interfaz del portal que expone `ConfigureShortcuts`
 /// (GlobalShortcuts v2): por debajo, el portal no informa el trigger asignado.
 #[allow(dead_code)]
-pub const PORTAL_VERSION_CONFIGURE: u32 = 2;
+pub(crate) const PORTAL_VERSION_CONFIGURE: u32 = 2;
 
 /// Resultado de la sonda del portal: **tres** estados, no dos.
 ///
@@ -105,19 +105,19 @@ pub const PORTAL_VERSION_CONFIGURE: u32 = 2;
 /// afirmaciones sería falsa si se fundieran.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProbeOutcome {
+pub(crate) enum ProbeOutcome {
     /// El portal de atajos está disponible.
     ///
     /// `version` es la versión de la interfaz del portal: 1 = `GlobalShortcuts`
-    /// v1, 2 = v2. **La versión no alcanza para prometer `active`** (S7): la
+    /// v1, 2 = v2. **La versión no alcanza para prometer `active`** (#312, S7): la
     /// interfaz v1 no distingue GNOME 48 de GNOME 49, que es justamente el caso
     /// que corrige `BindShortcuts`. Por eso el estado no sale de la sonda, sino
     /// de la sonda **más** la comparación del trigger.
     ///
-    /// `app_id` dice cómo se resolvió la identidad de la app (S4). Con el
+    /// `app_id` dice cómo se resolvió la identidad de la app (#312, S4). Con el
     /// portal presente pero el app-id sin resolver no hay sesión de atajos: el
     /// estado cae al mínimo garantizable por la sesión, pero la detección
-    /// conserva el motivo, así que no se confunde con un portal ausente (S11).
+    /// conserva el motivo, así que no se confunde con un portal ausente (#312, S11).
     Present { version: u32, app_id: AppIdState },
     /// No hay portal de atajos globales en esta sesión.
     Absent,
@@ -131,8 +131,8 @@ pub enum ProbeOutcome {
 impl ProbeOutcome {
     /// ¿La interfaz puede informar el trigger asignado? Con v1 no: entonces la
     /// comparación es `TriggerMatch::Unknown` y la UI no puede afirmar que el
-    /// escritorio haya reasignado nada (S12).
-    pub fn can_read_trigger(self) -> bool {
+    /// escritorio haya reasignado nada (#312, S12).
+    pub(crate) fn can_read_trigger(self) -> bool {
         matches!(
             self,
             ProbeOutcome::Present { version, .. } if version >= PORTAL_VERSION_CONFIGURE
@@ -143,12 +143,12 @@ impl ProbeOutcome {
 /// Seam de sonda: ¿hay portal de atajos globales en esta sesión?
 ///
 /// La sonda real (por D-Bus) es del slice 2: ahí se resuelve también el
-/// app-id que exige el portal, que no es libre en una app no sandboxed (S4):
+/// app-id que exige el portal, que no es libre en una app no sandboxed (#312, S4):
 /// el portal deduce el `app-<id>` del scope de systemd o acepta el que se le
 /// pase por `org.freedesktop.host.portal.Registry.Register`, pero en ambos
 /// casos exige que exista un `.desktop` con ese nombre base.
 #[allow(dead_code)]
-pub trait ShortcutProbe {
+pub(crate) trait ShortcutProbe {
     /// Sondea el portal. Un fallo se traduce a `ProbeOutcome::Unknown`.
     fn probe(&mut self) -> ProbeOutcome;
 }
@@ -159,7 +159,7 @@ pub trait ShortcutProbe {
 /// XWayland, WM) es asunto del slice 2.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionKind {
+pub(crate) enum SessionKind {
     /// Sesión X11 pura: el grab sobre la ventana raíz es global, no depende
     /// del foco.
     X11,
@@ -171,12 +171,12 @@ pub enum SessionKind {
 /// Estado de capacidad de un atajo global: qué se puede garantizar de él.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShortcutCapability {
+pub(crate) enum ShortcutCapability {
     /// Registrado y funcional globalmente.
     ///
     /// El estado no afirma que la combinación sea la preferida: eso lo dice la
     /// comparación (`TriggerMatch`), que viaja aparte en `ShortcutStatus` para
-    /// que la UI no presente un trigger sin comparar como reasignación (S12).
+    /// que la UI no presente un trigger sin comparar como reasignación (#312, S12).
     Active,
     /// El escritorio asignó otra tecla: el atajo pedido no es el que quedó
     /// asignado.
@@ -192,14 +192,14 @@ pub enum ShortcutCapability {
 
 /// Comparación entre el trigger preferido y el que asignó el escritorio.
 ///
-/// Tres valores y no un `bool` (S12): `Unknown` —no se pudo comparar— no es un
+/// Tres valores y no un `bool` (#312, S12): `Unknown` —no se pudo comparar— no es un
 /// "difiere", y con un `bool` ese caso terminaba en `Remapped`, afirmando una
 /// reasignación que nadie comprobó. El texto del trigger real
 /// (`trigger_description` en el vocabulario de `global-hotkey#172`) entra con el
 /// slice 2; en este slice sólo se compara.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TriggerMatch {
+pub(crate) enum TriggerMatch {
     /// El escritorio asignó el trigger preferido.
     Same,
     /// El escritorio asignó otro trigger: se conoce el real y difiere.
@@ -218,17 +218,18 @@ pub enum TriggerMatch {
 /// al mínimo garantizable por la sesión, pero la detección sigue diciendo
 /// `Unknown` y la comparación sigue diciendo "no se pudo comparar", así que la
 /// UI puede distinguir "no lo soporta" de "no se pudo comprobar" y de "no sé
-/// si reasignó" (S5, S6, S11, S12).
+/// si reasignó" (#312, S11, S12).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ShortcutStatus {
+pub(crate) struct ShortcutStatus {
     /// Qué se puede garantizar del atajo.
-    pub state: ShortcutCapability,
+    pub(crate) state: ShortcutCapability,
     /// Resultado de la sonda, sin reinterpretar.
-    pub detection: ProbeOutcome,
-    /// Comparación del trigger, sin reinterpretar: es lo que permite mostrar el
-    /// trigger que asignó el escritorio sin presentarlo como reasignación.
-    pub trigger: TriggerMatch,
+    pub(crate) detection: ProbeOutcome,
+    /// Comparación del trigger ya normalizada: es `Unknown` cuando la interfaz
+    /// del portal no informa el trigger, y es lo que permite mostrar el que
+    /// asignó el escritorio sin presentarlo como reasignación.
+    pub(crate) trigger: TriggerMatch,
 }
 
 /// Deriva el estado de un atajo a partir de las observaciones. Pura: no
@@ -238,8 +239,8 @@ pub struct ShortcutStatus {
 /// - portal **presente con el app-id resuelto**: el estado sale de la
 ///   comparación del trigger. `Active` si coincide, `Remapped` si difiere y
 ///   `Active` otra vez si no se pudo comparar: el atajo es global, pero la app
-///   no puede afirmar que sea el preferido ni que se haya reasignado (S12). La
-///   sonda por sí sola no promete `active` (S7), por eso la comparación entra
+///   no puede afirmar que sea el preferido ni que se haya reasignado (#312, S12). La
+///   sonda por sí sola no promete `active` (#312, S7), por eso la comparación entra
 ///   como dato.
 /// - portal ausente (`Absent`), sin poder comprobarlo (`Unknown`) o presente
 ///   **sin app-id resuelto** (`Present { app_id }`, S11): sólo queda el grab de
@@ -254,16 +255,25 @@ pub struct ShortcutStatus {
 /// afirmar que el portal no esté.
 ///
 /// `trigger` sólo tiene sentido cuando la detección es `Present` con el app-id
-/// resuelto: en el resto de los casos se ignora (no hay trigger que comparar).
-/// Con el portal usable tiene que ser la comparación real contra el trigger que
-/// devolvió el portal: el slice 2 lo lee antes de derivar, así que nunca hay que
-/// pasar un valor inventado (`TriggerMatch::Unknown` es el valor honesto cuando
-/// `can_read_trigger()` es `false`).
-pub fn derive_shortcut_status(
+/// resuelto **y** la interfaz informa el trigger: el slice 2 lo lee antes de
+/// derivar, así que nunca hay que pasar un valor inventado. Si
+/// `can_read_trigger()` es `false` (portal v1) la comparación se normaliza a
+/// `TriggerMatch::Unknown` y queda así en `ShortcutStatus::trigger`: un `Same`
+/// que no se pudo comprobar no puede prometer el trigger preferido (#312, S7).
+#[allow(dead_code)]
+pub(crate) fn derive_shortcut_status(
     session: SessionKind,
     detection: ProbeOutcome,
     trigger: TriggerMatch,
 ) -> ShortcutStatus {
+    // La comparación sólo existe si la interfaz informa el trigger: con la v1
+    // del portal un `TriggerMatch::Same` no se puede dar por comprobado
+    // (#312, S7), así que se normaliza a `Unknown`.
+    let trigger = if detection.can_read_trigger() {
+        trigger
+    } else {
+        TriggerMatch::Unknown
+    };
     let portal_usable = matches!(
         detection,
         ProbeOutcome::Present { app_id, .. } if app_id.is_resolved()
@@ -293,7 +303,8 @@ pub fn derive_shortcut_status(
 ///
 /// La sonda va por seam (`ShortcutProbe`) para que el cliente real del portal
 /// entre después sin cambiar esta lógica.
-pub fn probe_shortcut_status(
+#[allow(dead_code)]
+pub(crate) fn probe_shortcut_status(
     session: SessionKind,
     probe: &mut impl ShortcutProbe,
     trigger: TriggerMatch,
@@ -503,7 +514,7 @@ mod tests {
         let status = derive_shortcut_status(
             SessionKind::X11,
             ProbeOutcome::Present {
-                version: 1,
+                version: PORTAL_VERSION_CONFIGURE,
                 app_id: AppIdState::Resolved,
             },
             TriggerMatch::Different,
@@ -516,28 +527,46 @@ mod tests {
     }
 
     #[test]
-    fn la_version_del_portal_no_promete_activo_por_si_sola() {
-        // S7: la interfaz v1 no distingue GNOME 48 de 49, así que la sonda
-        // sola no alcanza; hace falta la comparación del trigger.
+    fn la_version_del_portal_decide_si_la_comparacion_es_posible() {
+        // #312, S7: la sonda sola no basta para prometer el trigger preferido.
+        // Con la v1 del portal la interfaz no lo informa, así que un `Same`
+        // llegado por error se normaliza a `Unknown`.
         let v1 = derive_shortcut_status(
             SessionKind::Wayland { xwayland: true },
             ProbeOutcome::Present {
                 version: 1,
                 app_id: AppIdState::Resolved,
             },
-            TriggerMatch::Different,
+            TriggerMatch::Same,
         );
+        assert_eq!(
+            v1.trigger,
+            TriggerMatch::Unknown,
+            "con v1 no hay trigger que comparar: el `Same` no puede darse por bueno"
+        );
+        assert_ne!(v1.state, ShortcutCapability::Remapped);
         let v2 = derive_shortcut_status(
             SessionKind::Wayland { xwayland: true },
             ProbeOutcome::Present {
-                version: 2,
+                version: PORTAL_VERSION_CONFIGURE,
+                app_id: AppIdState::Resolved,
+            },
+            TriggerMatch::Same,
+        );
+        assert_eq!(v2.trigger, TriggerMatch::Same);
+        assert_eq!(v2.state, ShortcutCapability::Active);
+        // La comparación es una versión mínima, no una igualdad: una interfaz
+        // futura (v3) sigue informando el trigger.
+        let v3 = derive_shortcut_status(
+            SessionKind::X11,
+            ProbeOutcome::Present {
+                version: PORTAL_VERSION_CONFIGURE + 1,
                 app_id: AppIdState::Resolved,
             },
             TriggerMatch::Different,
         );
-        assert_eq!(v1.state, ShortcutCapability::Remapped);
-        assert_eq!(v2.state, ShortcutCapability::Remapped);
-        assert_ne!(v1.state, ShortcutCapability::Active);
+        assert_eq!(v3.trigger, TriggerMatch::Different);
+        assert_eq!(v3.state, ShortcutCapability::Remapped);
     }
 
     // --- Desconocido no es ausente -----------------------------------------
@@ -599,7 +628,7 @@ mod tests {
         assert_ne!(desconocida.detection, ausente.detection);
     }
 
-    // --- App-id: el portal está, la app no se pudo identificar (S11) --------
+    // --- App-id: el portal está, la app no se pudo identificar (#312, S11) --------
 
     /// Un app-id sin resolver **no** se reporta como portal ausente ni como
     /// desconocido: la detección conserva el motivo, así que la UI puede decir
@@ -661,7 +690,7 @@ mod tests {
         assert!(!AppIdState::RegistryUnavailable.is_resolved());
     }
 
-    // --- Comparación del trigger: tres valores, no dos (S12) ----------------
+    // --- Comparación del trigger: tres valores, no dos (#312, S12) ----------------
 
     /// El caso central de S12: sin poder comparar, el estado **no** afirma que
     /// el escritorio haya reasignado nada.
