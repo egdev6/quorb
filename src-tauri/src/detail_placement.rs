@@ -26,8 +26,9 @@
 //!
 //! El read-back sale de GDK (la señal `gdk_window_is_viewable()`, la
 //! geometría escalada con el factor de escala de la propia ventana, el origen
-//! de `gdk_window_get_origin`) y sólo la geometría del read-back se compara
-//! con la tolerancia de ±1 px de redondeo de #205.
+//! de `gdk_window_get_origin`, cuyo retorno no significa nada) y sólo la
+//! geometría del read-back se compara con la tolerancia de ±1 px de redondeo
+//! de #205.
 //!
 //! Windows/macOS/Wayland nativo conservan intacto el camino existente de
 //! `detail_geometry::apply`: la petición se aplica como siempre y se informa
@@ -44,7 +45,12 @@ use crate::widget_placement::{
 // en Linux. En Windows/macOS el transporte aplica la petición e informa sin
 // read-back, así que estos símbolos no se importan ahí.
 #[cfg(target_os = "linux")]
-use crate::widget_placement::{rooted_origin, to_physical, SETTLE};
+use crate::widget_placement::{to_physical, SETTLE};
+// El seam del origen es **compartido** con la tira (#314): el detalle no
+// lleva una copia (una copia divergiría con el mismo defecto). Sólo se
+// reexporta para que los tests alcancen el mismo contrato desde aquí.
+#[cfg(test)]
+pub use crate::widget_placement::rooted_origin;
 // El informe es el espejo de `set_widget_bounds`: viajan los mismos tipos,
 // así el frontend trata con un solo contrato.
 pub use crate::widget_placement::{Report, Status};
@@ -505,14 +511,14 @@ impl Surface for UiSurface {
             let (_, _, gw, gh) = gdk_window.geometry();
             let size = (to_physical(gw, scale), to_physical(gh, scale));
             // El origen: `gdk_window_get_origin` da coordenadas relativas a
-            // la raíz. Su valor de retorno no confirma una lectura utilizable
-            // (#205): un 0 se lee como «no hay origen».
-            let (ox, oy, rooted) = gdk_window.origin();
-            let Some((ox, oy)) = rooted_origin(ox, oy, rooted != 0) else {
-                return Err("the native window origin could not be read".to_string());
-            };
+            // la raíz. La tupla cruda es `(retorno, x, y)` —el retorno va
+            // primero— y ese retorno no significa nada (GDK3: «not
+            // meaningful, ignore»), así que no puede ser un flag de éxito:
+            // la garantía de «hay origen» la da `is_viewable()`, que ya se
+            // consultó arriba (#314).
+            let (ox, oy) = crate::widget_placement::rooted_origin(gdk_window.origin(), scale);
             Ok(Some(Geometry {
-                origin: (to_physical(ox, scale), to_physical(oy, scale)),
+                origin: (ox, oy),
                 size,
             }))
         })

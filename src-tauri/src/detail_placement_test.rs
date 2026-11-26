@@ -570,6 +570,32 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
     );
 }
 
+/// #314: el detalle **no** tiene una copia del seam del origen: usa el de
+/// la tira. El contrato del binding (`(retorno, x, y)`, con el retorno sin
+/// significado) tiene **una sola** implementación y **un solo** juego de
+/// regresiones (`widget_placement_test.rs`); una copia por lector divergiría
+/// con el mismo defecto.
+///
+/// Este pin no mira qué hace el lector del detalle —eso no se puede observar
+/// sin una ventana GDK—: fija que el símbolo que el detalle reexporta **es**
+/// el de la tira. Si alguien reimplementa el seam en este módulo, el
+/// `pub use` desaparece o choca con la copia y este test falla.
+#[test]
+fn the_detail_has_no_copy_of_the_origin_seam() {
+    assert!(
+        std::ptr::fn_addr_eq(
+            rooted_origin as fn((i32, i32, i32), f64) -> (i32, i32),
+            crate::widget_placement::rooted_origin as fn((i32, i32, i32), f64) -> (i32, i32)
+        ),
+        "el detalle tiene que usar el seam compartido del origen, no una copia"
+    );
+    // Y el seam compartido sigue honrando el contrato: el retorno de la
+    // tupla cruda no significa nada (la garantía de «hay origen» la da la
+    // visibilidad, no el flag).
+    assert_eq!(rooted_origin((1, 1220, 0), 1.0), (1220, 0));
+    assert_eq!(rooted_origin((0, 1220, 0), 1.0), (1220, 0));
+}
+
 #[test]
 fn the_unverified_report_carries_no_geometry_and_no_reason() {
     // No X11 (y el oculto ilegible) sólo confirman que la petición se aplicó:

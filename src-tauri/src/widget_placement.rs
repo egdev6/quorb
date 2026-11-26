@@ -21,8 +21,9 @@
 //! visibilidad es del frontend: el backend nunca muestra la ventana. Los
 //! read-backs salen de GDK: la señal de visibilidad es
 //! `gdk_window_is_viewable()` y el origen sale de `gdk_window_get_origin`
-//! (relativo a la raíz): si esa llamada no da origen, la lectura no es
-//! utilizable.
+//! (relativo a la raíz). El retorno de esa llamada **no** significa nada
+//! (GDK3 lo documenta como «not meaningful, ignore»): la garantía de «hay
+//! origen» la da la visibilidad, que ya se consultó antes de leer (#314).
 
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -224,20 +225,26 @@ pub fn to_logical(physical: i32, scale: f64) -> i32 {
 
 /// El origen que se informa: el de la raíz (`gdk_window_get_origin`).
 ///
-/// `None` cuando la llamada no dio origen (`gdk_window_get_origin` devolvió
-/// 0). Ese 0 **no** confirma que la traducción de coordenadas haya fallado:
-/// GDK3 documenta su valor de retorno como «not meaningful, ignore» y en la
-/// práctica vale 0 sólo con la ventana destruida. Es la única señal
-/// disponible de «no hay origen», y por eso no se usa el único respaldo
-/// (`gdk_window_get_geometry`), que es **relativo al padre** —el marco de la
-/// decoración si el gestor reparenta la ventana— y mezclaría dos espacios de
-/// coordenadas: la lectura no sería utilizable.
-pub fn rooted_origin(x: i32, y: i32, ok: bool) -> Option<(i32, i32)> {
-    if ok {
-        Some((x, y))
-    } else {
-        None
-    }
+/// La tupla es **cruda**: el binding de GDK (`gdk 0.18.2`) devuelve
+/// `(retorno, x, y)` de `gdk_window_get_origin`, así que el retorno va
+/// **primero** y las coordenadas después. El retorno se **ignora por
+/// contrato**: GDK3 lo documenta como «not meaningful, ignore», así que no es
+/// un indicador de éxito ni de fallo —usarlo como flag hacía que una
+/// ventana con `y == 0` (la tira docked arriba) se leyera como «no hay
+/// origen» (#314).
+///
+/// La garantía de «hay origen» la da `is_viewable()`, que el lector consulta
+/// antes de leer: una ventana visible está mapeada y por lo tanto tiene
+/// posición en la raíz.
+///
+/// La conversión a píxeles físicos la hace esta misma función, con el
+/// factor que informa cada lector (el de su ventana: en DPI mixto el factor
+/// de la petición puede ser el de otro monitor). Es **la misma** conversión
+/// que aplicaba el lector antes de este cambio; lo que cambia aquí es de
+/// dónde salen las coordenadas, no su unidad.
+pub fn rooted_origin(raw: (i32, i32, i32), scale: f64) -> (i32, i32) {
+    let (_ret, x, y) = raw;
+    (to_physical(x, scale), to_physical(y, scale))
 }
 
 /// Píxeles físicos que representa un tamaño lógico de GTK.
@@ -829,20 +836,18 @@ impl Surface for UiSurface {
             let (_, _, gw, gh) = gdk_window.geometry();
             let size = (to_physical(gw, scale), to_physical(gh, scale));
             // El origen: `gdk_window_get_origin` da las coordenadas relativas
-            // a la raíz (que es lo que se informa). Su valor de retorno **no**
-            // confirma que la lectura sea utilizable: GDK3 lo documenta como
-            // «not meaningful, ignore» y en la práctica vale 0 sólo con la
-            // ventana destruida. Por eso el 0 se lee como «no hay origen» y
-            // no como una prueba de éxito, y por eso no se usa el respaldo de
-            // `gdk_window_get_geometry`: es relativo al padre (el marco de la
-            // decoración si el gestor reparenta la ventana) y mezclaría dos
-            // espacios de coordenadas.
-            let (ox, oy, rooted) = gdk_window.origin();
-            let Some((ox, oy)) = rooted_origin(ox, oy, rooted != 0) else {
-                return Err("the native window origin could not be read".to_string());
-            };
+            // a la raíz (que es lo que se informa). La tupla cruda es
+            // `(retorno, x, y)` —el retorno va primero— y ese retorno **no**
+            // significa nada (GDK3 lo documenta como «not meaningful,
+            // ignore»), así que no puede ser un flag de éxito: la garantía
+            // de «hay origen» la da `is_viewable()`, que ya se consultó
+            // arriba. Por eso no se usa el respaldo de
+            // `gdk_window_get_geometry`: es relativo al padre (el marco de
+            // la decoración si el gestor reparenta la ventana) y mezclaría
+            // dos espacios de coordenadas.
+            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);
             Ok(Some(Geometry {
-                origin: (to_physical(ox, scale), to_physical(oy, scale)),
+                origin: (ox, oy),
                 size,
             }))
         })

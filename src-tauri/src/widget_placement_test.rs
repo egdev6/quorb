@@ -638,14 +638,94 @@ fn a_non_positive_or_non_finite_scale_is_rejected_before_any_native_call() {
     assert!(p.validate("detail").is_err(), "sólo la ventana del widget");
 }
 
+/// #314: la tupla cruda del binding es `(retorno, x, y)` y el retorno no
+/// significa nada (GDK3: «not meaningful, ignore»). Los dos lectores la
+/// consumían como `(x, y, «hay origen»)`.
 #[test]
-fn the_origin_comes_from_the_root_or_there_is_no_reading_at_all() {
-    // La llamada a la raíz respondió: su origen es el que se informa.
-    assert_eq!(rooted_origin(1859, 899, true), Some((1859, 899)));
-    // Si falla, la lectura no es utilizable: el único respaldo disponible
-    // (`gdk_window_get_geometry`) es relativo al padre y mezclaría dos
-    // espacios de coordenadas.
-    assert_eq!(rooted_origin(0, 0, false), None);
+fn the_origin_is_read_from_the_raw_binding_tuple() {
+    // `y == 0`: la tira docked arriba. Es una posición válida, no «no hay
+    // origen» (el consumo anterior leía ese 0 como un fallo de lectura).
+    assert_eq!(rooted_origin((1, 1220, 0), 1.0), (1220, 0));
+    // El origen (0, 0) también es un origen.
+    assert_eq!(rooted_origin((1, 0, 0), 1.0), (0, 0));
+    // Coordenadas negativas (un monitor a la izquierda de la raíz).
+    assert_eq!(rooted_origin((1, -2560, -120), 1.0), (-2560, -120));
+    // `y` no nulo: el origen es (x, y), nunca (retorno, x).
+    assert_eq!(rooted_origin((1, 3537, 42), 1.0), (3537, 42));
+    // El retorno no es significativo: da igual lo que valga.
+    assert_eq!(rooted_origin((0, 1220, 0), 1.0), (1220, 0));
+    assert_eq!(rooted_origin((7, 3537, 42), 1.0), (3537, 42));
+}
+
+/// #314: el informe viaja en píxeles físicos y el seam convierte con el
+/// factor que informa el lector (el de su ventana). El binding da píxeles
+/// de aplicación: con `GDK_SCALE=2` devolvió (2192, 141) para una posición
+/// de dispositivo de (4384, 282).
+
+/// #314: el defecto era **estático** —un consumo equivocado de la tupla en el
+/// lector— y el `Fake` no llega a esa frontera (entrega geometría ya
+/// decodificada). El seam puro fija el contrato del binding; este pin fija
+/// que los dos lectores **consumen la tupla a través del seam** y que la
+/// visibilidad se consulta antes de leer. Sin él, un lector que volviera a
+/// desempaquetar la tupla a mano seguiría con todos los tests en verde.
+///
+/// El coste de un pin de fuente es que un renombre inocuo en el lector lo
+/// rompe; se acepta porque el otro lado (un lector que ya no usa el seam) no
+/// lo cubre ningún test de comportamiento.
+#[test]
+fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
+    let widget = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
+    let detail = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
+    for (name, src) in [
+        ("widget_placement.rs", &widget),
+        ("detail_placement.rs", &detail),
+    ] {
+        // La tupla cruda llega al seam; el lector no la desempaqueta a mano.
+        assert!(
+            src.contains("rooted_origin("),
+            "{name}: el lector no pasa la tupla al seam"
+        );
+        assert!(
+            src.contains(".origin()"),
+            "{name}: el lector no lee el origen"
+        );
+        // Y no queda ninguna forma de la semántica del flag viejo.
+        assert!(
+            !src.contains("rooted != 0"),
+            "{name}: conserva el flag `rooted`"
+        );
+        assert!(
+            !src.contains("(ox, oy, rooted)"),
+            "{name}: conserva el desempaquetado viejo"
+        );
+        assert!(
+            !src.contains("the native window origin could not be read"),
+            "{name}: conserva la rama Err retirada"
+        );
+        // La visibilidad se consulta antes de leer el origen: es la garantía
+        // de que hay un origen (D1).
+        let viewable = src.find("is_viewable()").expect("is_viewable");
+        let origin = src.find(".origin()").expect("origin");
+        assert!(
+            viewable < origin,
+            "{name}: lee el origen antes de mirar la visibilidad"
+        );
+    }
+    // Y el origen informado es el del seam: sin reescalar por segunda vez.
+    assert!(
+        widget.contains("origin: (ox, oy)"),
+        "la tira no informa el origen del seam"
+    );
+    assert!(
+        detail.contains("origin: (ox, oy)"),
+        "el detalle no informa el origen del seam"
+    );
+}
+
+#[test]
+fn the_origin_is_converted_to_physical_pixels_with_the_readers_factor() {
+    assert_eq!(rooted_origin((1, 1220, 0), 2.0), (2440, 0));
+    assert_eq!(rooted_origin((1, 1220, 42), 1.5), (1830, 63));
 }
 
 #[test]
