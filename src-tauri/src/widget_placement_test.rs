@@ -657,30 +657,40 @@ fn the_origin_is_read_from_the_raw_binding_tuple() {
     assert_eq!(rooted_origin((7, 3537, 42), 1.0), (3537, 42));
 }
 
-/// El cuerpo de una función del archivo fuente, para que un pin de fuente
-/// pueda mirar **el código** y no el doc del módulo.
+/// El cuerpo de una función del archivo fuente, ya **enmascarado** (sin
+/// comentarios, cadenas ni literales), para que un pin de fuente pueda
+/// mirar **el código** y no el doc del módulo.
 ///
-/// Recorta desde la firma hasta la llave que cierra el bloque, saltando
-/// comentarios, cadenas y literales de carácter. Una **declaración** de
-/// trait (`fn read_geometry(...);`) no tiene bloque: se salta hasta la
-/// definición.
-fn function_body<'a>(src: &'a str, signature: &str) -> &'a str {
+/// La firma se busca en el archivo **entero ya enmascarado**, no en el
+/// archivo crudo: si la firma apareciera dentro de un comentario, el
+/// enmascarado la habría borrado antes de la búsqueda y el recorte caería
+/// siempre en una definición de verdad. Buscarla en el archivo crudo dejaba
+/// que un doc-comment desplazara el recorte: el cuerpo empezaba a mitad de
+/// comentario, el enmascarado ya no veía el `//` y el texto del comentario
+/// pasaba por código.
+///
+/// Recorta desde la firma hasta la llave que cierra el bloque. Una
+/// **declaración** de trait (`fn read_geometry(...);`) no tiene bloque: se
+/// salta hasta la definición. Los offsets del enmascarado coinciden con los
+/// del original, así que el recorte sirve sobre cualquiera de los dos.
+fn function_body(src: &str, signature: &str) -> String {
+    let code = code_without_comments(src);
     let mut from = 0usize;
-    while let Some(rel) = src[from..].find(signature) {
+    while let Some(rel) = code[from..].find(signature) {
         let start = from + rel;
-        let open = match src[start..].find('{') {
+        let open = match code[start..].find('{') {
             Some(k) => start + k,
             None => {
                 from = start + signature.len();
                 continue;
             }
         };
-        if src[start..open].contains(';') {
+        if code[start..open].contains(';') {
             // Una declaración, no una definición: se sigue buscando.
             from = start + signature.len();
             continue;
         }
-        return &src[start..matching_brace(src, open)];
+        return code[start..matching_brace(&code, open)].to_string();
     }
     panic!("{signature} no está definido en el archivo");
 }
@@ -722,11 +732,14 @@ fn matching_delim(src: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<u
 }
 
 /// El código del archivo **sin lo que no es código**: comentarios, cadenas,
-/// literales crudos y literales de carácter quedan en blanco. Un pin que
-/// busca una llamada no puede darse por cumplido con que el texto aparezca
+/// literales crudos y literales de carácter quedan en blanco (los saltos de
+/// línea se conservan, así que los offsets son los del original).
+///
+/// Es la base de los pins de fuente: la firma del lector y las llamadas se
+/// buscan **sobre esta copia**, de modo que ni una ni otra pueden aparecer
 /// en un comentario —el cuerpo del lector menciona `is_viewable()` al
 /// explicar por qué el retorno no es un flag— ni dentro de un texto.
-fn code_without_comments(src: &str) -> String {
+pub(crate) fn code_without_comments(src: &str) -> String {
     String::from_utf8(mask_non_code(src)).expect("el código enmascarado sigue siendo UTF-8")
 }
 
@@ -735,6 +748,13 @@ fn code_without_comments(src: &str) -> String {
 /// carácter. Devuelve una copia del archivo con todo lo que no es código en
 /// blanco (los saltos de línea se conservan), así que los offsets coinciden
 /// con los del original.
+///
+/// Un **lifetime** (`'a`, `'static`) es código, no texto: se deja a la vista.
+/// Un literal de carácter (`'x'`, `'\n'`) sí es texto y se apaga; se
+/// distingue del lifetime por el cierre —el literal contiene un carácter (o
+/// una secuencia escapada) y cierra con comilla, el lifetime no cierra—,
+/// porque si no, el lifetime de un genérico (`<'a, 'b>`) se tomaría por un
+/// literal y apagaría código real.
 fn mask_non_code(src: &str) -> Vec<u8> {
     let bytes = src.as_bytes();
     let mut out = bytes.to_vec();
@@ -805,24 +825,46 @@ fn mask_non_code(src: &str) -> Vec<u8> {
                 i = end;
             }
             b'\'' => {
-                // Un literal de carácter (`'x'`) o un lifetime (`'a`): sólo
-                // se salta el literal, que cierra antes del fin de línea.
-                let mut j = i + 1;
-                while j < bytes.len() && j < i + 5 && bytes[j] != b'\n' {
-                    if bytes[j] == b'\\' {
-                        j += 2;
-                        continue;
+                // Un literal de carácter (`'x'`, `'\n'`) o un lifetime
+                // (`'a`, `'static`): se distinguen por el cierre. Un literal
+                // contiene **un** carácter —o una secuencia escapada— y
+                // cierra con comilla; un lifetime no cierra. Sin esa
+                // diferencia, `<'a, 'b>` se tomaría por un literal y
+                // apagaría código real.
+                let rest = &src[i..];
+                let mut chars = rest.char_indices();
+                chars.next(); // la comilla de apertura
+                let close = match chars.next() {
+                    // Una secuencia escapada: `'\n'`, `'\\'`, `'\''`.
+                    Some((off, '\\')) => {
+                        let after = off + 1;
+                        let len = rest[after..].chars().next().map_or(0, char::len_utf8);
+                        let quote = after + len;
+                        if rest[quote..].starts_with('\'') {
+                            Some(quote + 1)
+                        } else {
+                            None
+                        }
                     }
-                    if bytes[j] == b'\'' {
-                        break;
+                    // Un único carácter: `'x'`.
+                    Some((off, c)) if c != '\'' => {
+                        let quote = off + c.len_utf8();
+                        if rest[quote..].starts_with('\'') {
+                            Some(quote + 1)
+                        } else {
+                            None
+                        }
                     }
-                    j += 1;
-                }
-                if j < bytes.len() && j < i + 5 && bytes[j] == b'\'' {
-                    blank(&mut out, i, j + 1);
-                    i = j + 1;
-                } else {
-                    i += 1;
+                    _ => None,
+                };
+                match close {
+                    // Es un literal: se apaga entero.
+                    Some(end) => {
+                        blank(&mut out, i, i + end);
+                        i += end;
+                    }
+                    // Es un lifetime: es código, se deja.
+                    None => i += 1,
                 }
             }
             _ => i += 1,
@@ -859,22 +901,24 @@ fn raw_string_at(bytes: &[u8], i: usize) -> bool {
 /// El pin de orden, extraído del test para que los tests-sonda puedan
 /// mutar el archivo del lector y comprobar que el pin tiene dientes.
 ///
-/// Lo que tiene que fijar: el lector **consulta la visibilidad antes de
-/// leer el origen** (D1) y esa consulta existe de verdad —no es una
-/// mención en un comentario.
+/// Lo que tiene que fijar: en el cuerpo de `read_geometry` hay una
+/// **llamada** a `is_viewable()` y aparece **antes** de la lectura del
+/// origen. No comprueba que el valor de la llamada se use: lo que fija es
+/// el orden de las dos llamadas.
 fn order_pin_holds(src: &str, name: &str) -> bool {
     assert!(
         src.contains("fn read_geometry"),
         "{name}: no tiene un lector `read_geometry` que fijar"
     );
+    // El cuerpo viene **enmascarado** (la firma se buscó en el archivo
+    // entero ya enmascarado): ni la firma ni lo que la acompaña pueden salir
+    // de un comentario. El cuerpo del lector **menciona** `is_viewable()`
+    // al explicar por qué el retorno no es un flag, y esa mención precedía a
+    // la lectura del origen; con los comentarios fuera, la única mención
+    // que queda es la llamada.
     let body = function_body(src, "fn read_geometry");
-    // Los comentarios van en blanco: el cuerpo del lector **menciona**
-    // `is_viewable()` al explicar por qué el retorno no es un flag, y esa
-    // mención precedía a la lectura del origen. Con los comentarios fuera,
-    // la única mención que queda es la llamada.
-    let code = code_without_comments(body);
-    let viewable = code.find("is_viewable()");
-    let origin = code.find(".origin()");
+    let viewable = body.find("is_viewable()");
+    let origin = body.find(".origin()");
     matches!((viewable, origin), (Some(v), Some(o)) if v < o)
 }
 
@@ -889,16 +933,19 @@ fn seam_pin_holds(src: &str, name: &str) -> bool {
         "{name}: no tiene un lector `read_geometry` que fijar"
     );
     let (call, definitions) = seam_expectation(name);
-    // El seam compartido tiene una sola definición: una copia local (con el
-    // mismo nombre o con otro) rompe el pin.
+    // El seam compartido tiene una sola definición **en el archivo del
+    // lector**: una copia local (con el mismo nombre o con otro) rompe el
+    // pin. La unicidad en **todo** el código Rust del crate la fija el pin
+    // del proyecto (`one_seam_definition`): el conteo por archivo no ve una
+    // copia en otro módulo.
     let code = code_without_comments(src);
-    if code.matches("fn rooted_origin").count() != definitions {
+    if definitions_of(&code, "rooted_origin") != definitions {
         return false;
     }
     // Y el lector lo **usa**: dentro del cuerpo de `read_geometry`. A nivel
     // de archivo lo satisfaría la propia definición del seam, y un lector
     // que desempaquetara la tupla a mano pasaría el pin.
-    let body = code_without_comments(function_body(src, "fn read_geometry"));
+    let body = function_body(src, "fn read_geometry");
     let Some(at) = body.find(call) else {
         return false;
     };
@@ -925,6 +972,73 @@ fn seam_expectation(name: &str) -> (&'static str, usize) {
     }
 }
 
+/// Cuántas veces se **define** `name` en el código (ya enmascarado): cuenta
+/// `fn name` (con `pub` o `pub(crate)` delante) y no cuenta ni las llamadas
+/// ni los nombres que sólo se le parecen (`rooted_origin_bis`).
+pub(crate) fn definitions_of(code: &str, name: &str) -> usize {
+    let needle = format!("fn {name}");
+    let mut count = 0usize;
+    let mut from = 0usize;
+    while let Some(rel) = code[from..].find(&needle) {
+        let at = from + rel + needle.len();
+        let next = code[at..].chars().next();
+        if !next.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+            count += 1;
+        }
+        from = at;
+    }
+    count
+}
+
+/// Todas las fuentes Rust del crate, con su ruta: `src/…`, `examples/…` y
+/// `build.rs`. El pin del seam mira que el seam tenga **una sola
+/// definición** en todo el código Rust del proyecto, no sólo en el archivo
+/// del lector: una copia en otro módulo (importada o llamada por ruta)
+/// dejaría dos implementaciones del contrato del binding, y el conteo por
+/// archivo no la vería.
+///
+/// Se salta `target/`: ahí hay salidas generadas que no son código del
+/// proyecto.
+fn crate_rust_sources() -> Vec<(String, String)> {
+    let mut sources = Vec::new();
+    collect_rust_sources(std::path::Path::new("."), &mut sources);
+    sources.sort();
+    sources
+}
+
+/// Recorre un directorio y recoge sus fuentes Rust.
+fn collect_rust_sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "target" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_rust_sources(&path, out);
+        } else if name.ends_with(".rs") {
+            if let Ok(src) = std::fs::read_to_string(&path) {
+                out.push((path.to_string_lossy().to_string(), src));
+            }
+        }
+    }
+}
+
+/// ¿El seam del origen tiene **una sola definición** en el código Rust del
+/// crate? Una segunda implementación del contrato del binding (una copia
+/// local o una copia en otro módulo) dejaría los dos lectores con
+/// diagnósticos distintos.
+fn one_seam_definition(sources: &[(String, String)]) -> bool {
+    let mut total = 0usize;
+    for (_path, src) in sources {
+        total += definitions_of(&code_without_comments(src), "rooted_origin");
+    }
+    total == 1
+}
+
 /// #314: el defecto era **estático** —un consumo equivocado de la tupla en el
 /// lector— y el `Fake` no llega a esa frontera (entrega geometría ya
 /// decodificada). El seam puro fija el contrato del binding; este pin fija
@@ -932,17 +1046,24 @@ fn seam_expectation(name: &str) -> (&'static str, usize) {
 /// visibilidad se consulta antes de leer. Sin él, un lector que volviera a
 /// desempaquetar la tupla a mano seguiría con todos los tests en verde.
 ///
-/// El pin del orden mira **el cuerpo de `read_geometry`**, no el archivo
-/// entero: el doc del módulo de la tira menciona `gdk_window_is_viewable()`,
-/// y una búsqueda global encontraría esa mención —que siempre precede a la
-/// llamada— y daría el pin por cumplido sin comprobar nada. Dentro del
-/// cuerpo, además, la búsqueda va **sin comentarios**: el lector explica ahí
-/// que la garantía de «hay origen» la da `is_viewable()`, y esa mención
-/// precedía a la lectura del origen, así que el pin sólo miraba el texto.
+/// Los dos pins trabajan sobre el **código**: el archivo se enmascara entero
+/// (comentarios, cadenas y literales en blanco, con los offsets intactos) y
+/// sobre esa copia se busca la firma y se recorta el cuerpo. Así ni la firma
+/// ni las menciones que la acompañan pueden salir de un comentario: el doc
+/// del módulo de la tira menciona `gdk_window_is_viewable()` y el lector
+/// explica que la garantía de «hay origen» la da `is_viewable()`; las dos
+/// menciones precedían a la lectura del origen y bastaban para dar el pin
+/// por cumplido.
 ///
-/// El pin del seam también mira el **cuerpo** del lector: a nivel de archivo
-/// lo satisfaría la propia definición del seam (`pub fn rooted_origin(`), y
-/// un lector que desempaquetara la tupla a mano pasaría el pin.
+/// El recorte es **del cuerpo de `read_geometry`**, no del archivo: a nivel
+/// de archivo lo satisfaría la propia definición del seam
+/// (`pub fn rooted_origin(`), y un lector que desempaquetara la tupla a
+/// mano pasaría el pin.
+///
+/// Y el seam tiene **una sola definición en todo el código Rust del crate**:
+/// el conteo por archivo no ve una copia en otro módulo (importada o llamada
+/// por ruta), y dos implementaciones del contrato del binding dejarían los
+/// dos lectores con diagnósticos distintos.
 ///
 /// El coste de un pin de fuente es que un renombre inocuo en el lector lo
 /// rompe; se acepta porque el otro lado (un lector que ya no usa el seam) no
@@ -962,17 +1083,25 @@ fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
             seam_pin_holds(src, name),
             "{name}: el lector no pasa la tupla al seam"
         );
+        // El código del lector, sin comentarios ni textos: las comprobaciones
+        // de abajo miran el código, no el texto.
+        let code = code_without_comments(src);
         assert!(
-            src.contains(".origin()"),
+            code.contains(".origin()"),
             "{name}: el lector no lee el origen"
         );
-        // Y no queda ninguna forma de la semántica del flag viejo.
+        // Y no queda ninguna forma de la semántica del flag viejo. Las dos
+        // primeras comprobaciones van sobre el **código**: un comentario que
+        // mencione el desempaquetado viejo no puede hacer fallar el test.
+        // La tercera va sobre el archivo entero porque mira un **literal**:
+        // enmascarado, el literal desaparecería y la comprobación sería
+        // vacía.
         assert!(
-            !src.contains("rooted != 0"),
+            !code.contains("rooted != 0"),
             "{name}: conserva el flag `rooted`"
         );
         assert!(
-            !src.contains("(ox, oy, rooted)"),
+            !code.contains("(ox, oy, rooted)"),
             "{name}: conserva el desempaquetado viejo"
         );
         assert!(
@@ -987,16 +1116,24 @@ fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
         // menciones fuera, sólo cuenta la llamada.
         assert!(
             order_pin_holds(src, name),
-            "{name}: no consulta la visibilidad antes de leer el origen"
+            "{name}: no llama a `is_viewable()` antes de leer el origen en `read_geometry`"
         );
     }
+    // Y el seam tiene una sola definición en todo el código Rust del crate:
+    // una copia en otro módulo (importada o llamada por ruta) dejaría dos
+    // implementaciones del contrato del binding, y el conteo por archivo no
+    // la vería.
+    assert!(
+        one_seam_definition(&crate_rust_sources()),
+        "el seam del origen tiene que tener una sola definición en el código Rust del crate"
+    );
     // Y el origen informado es el del seam: sin reescalar por segunda vez.
     assert!(
-        widget.contains("origin: (ox, oy)"),
+        code_without_comments(&widget).contains("origin: (ox, oy)"),
         "la tira no informa el origen del seam"
     );
     assert!(
-        detail.contains("origin: (ox, oy)"),
+        code_without_comments(&detail).contains("origin: (ox, oy)"),
         "el detalle no informa el origen del seam"
     );
 }
@@ -1103,8 +1240,89 @@ fn the_seam_pin_fails_when_the_detail_reader_unpacks_the_tuple_by_hand() {
     );
 }
 
+/// La firma del lector no puede aparecer **dentro de un comentario**: si el
+/// recorte del cuerpo empieza en un comentario, el enmascarado ya no ve el
+/// `//` y el texto del comentario cuenta como si fuera código. Con un
+/// doc-comment que mencione la firma, la visibilidad y la lectura del
+/// origen, el pin de orden se daba por cumplido con un lector que **no**
+/// consultaba la visibilidad.
+#[test]
+fn the_order_pin_fails_when_the_visibility_check_only_lives_in_a_doc_comment() {
+    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
+    let broken = src
+        .replace(
+            "            if !gdk_window.is_viewable() {\n                return Ok(None);\n            }\n",
+            "",
+        )
+        .replace(
+            "    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
+            "    /// fn read_geometry consulta is_viewable() antes de .origin()\n    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
+        );
+    assert_ne!(
+        broken, src,
+        "no se encontró el bloque de visibilidad ni el lector"
+    );
+    assert!(
+        !order_pin_holds(&broken, "widget_placement.rs"),
+        "un lector que sólo menciona la visibilidad en un comentario tiene que fallar el pin"
+    );
+}
+
+/// Y lo mismo con el seam: la llamada al seam **en un comentario** no puede
+/// dar el pin por cumplido. El lector de verdad tiene que llamar al seam
+/// con la tupla cruda del binding.
+#[test]
+fn the_seam_pin_fails_when_the_seam_call_only_lives_in_a_doc_comment() {
+    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
+    let broken = src
+        .replace(
+            "    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
+            "    /// fn read_geometry llama rooted_origin(gdk_window.origin(), scale)\n    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
+        )
+        .replace(
+            "            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);",
+            "            let (ox, oy) = gdk_window.position();",
+        );
+    assert_ne!(
+        broken, src,
+        "no se encontró el lector ni la llamada al seam"
+    );
+    assert!(
+        !seam_pin_holds(&broken, "widget_placement.rs"),
+        "un lector que sólo menciona el seam en un comentario tiene que fallar el pin"
+    );
+}
+
+/// Una copia del seam en **otro módulo** tampoco puede pasar: el conteo por
+/// archivo no la vería (el archivo del lector sigue con su única
+/// definición), pero el proyecto tendría dos implementaciones del contrato
+/// del binding.
+#[test]
+fn the_seam_pin_fails_when_another_module_defines_a_copy() {
+    let reader = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
+    // El hueco es justamente que el conteo por archivo no ve la copia del
+    // otro módulo: el archivo del lector conserva su única definición.
+    assert_eq!(
+        definitions_of(&code_without_comments(&reader), "rooted_origin"),
+        1,
+        "el archivo del lector tiene su definición del seam"
+    );
+    // Y con la copia en otro módulo, el pin del proyecto tiene que caer.
+    let mut sources = crate_rust_sources();
+    sources.push((
+        "src/other_place.rs".to_string(),
+        "fn rooted_origin(raw: (i32, i32, i32), scale: f64) -> (i32, i32) {\n    (raw.1, raw.2)\n}\n"
+            .to_string(),
+    ));
+    assert!(
+        !one_seam_definition(&sources),
+        "una segunda definición del seam en otro módulo tiene que fallar el pin"
+    );
+}
+
 /// Y una copia local **con el mismo nombre** tampoco puede pasar: el seam
-/// compartido tiene que tener una sola definición en el repositorio.
+/// compartido tiene que tener una sola definición en el código Rust del
+/// crate.
 #[test]
 fn the_seam_pin_fails_when_the_reader_defines_its_own_copy() {
     let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
@@ -1128,6 +1346,35 @@ fn the_brace_matching_survives_a_raw_string_with_a_quote_inside() {
     let open = src.find('{').expect("la llave de apertura");
     let end = matching_brace(src, open);
     assert_eq!(&src[end..], "\n", "la llave que cierra es la del bloque");
+}
+
+/// El enmascarado distingue un literal de carácter de un **lifetime**: el
+/// lifetime (`'a`, `'static`) es código y no puede apagarse —si se apaga,
+/// el pin vería un archivo distinto del real—, y el literal (`'x'`, `'\n'`)
+/// es texto y sí se apaga.
+#[test]
+fn the_masking_keeps_the_lifetimes_and_blanks_the_character_literals() {
+    let src = "fn f<'a, 'b>(x: &'a str, y: &'b str) -> char {\n    let c = 'x';\n    let d = '\\n';\n    let e = 'ñ';\n    c\n}\n";
+    let code = code_without_comments(src);
+    assert!(
+        code.contains("<'a, 'b>") && code.contains("&'a str"),
+        "los lifetimes son código y no se apagan: {code}"
+    );
+    assert!(
+        !code.contains("'x'"),
+        "un literal de carácter es texto: {code}"
+    );
+    assert!(
+        !code.contains("'ñ'"),
+        "un literal con acento también: {code}"
+    );
+    assert!(
+        !code.contains("'\\n'"),
+        "un literal escapado también: {code}"
+    );
+    // Y los offsets se conservan: el enmascarado sustituye por espacios, no
+    // quita nada.
+    assert_eq!(code.len(), src.len(), "el enmascarado conserva los offsets");
 }
 
 /// #314: el informe viaja en **píxeles físicos** y el seam convierte con el

@@ -15,6 +15,7 @@
 use super::detail_placement::*;
 use crate::detail_geometry::Bounds;
 use crate::widget_placement::{Geometry, Reason, Status, Transport, READS};
+use crate::widget_placement_test::{code_without_comments, definitions_of};
 use crate::window_fit::{fit_plan, FitOutcome};
 use crate::window_fit_test::{hyprland_profile, FakeFitSurface};
 
@@ -580,6 +581,11 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
 /// sin una ventana GDK—: fija, **de fuente**, que el detalle llama al seam
 /// de la tira por su ruta canónica y que no define el suyo.
 ///
+/// Las comprobaciones van sobre el **código** (el archivo enmascarado: sin
+/// comentarios ni textos): un comentario que mencione la llamada canónica
+/// no puede dar el pin por cumplido, ni uno que mencione una definición
+/// puede hacer fallar el test.
+///
 /// La comparación de punteros de función que este pin tenía antes no fijaba
 /// nada: el `pub use` del módulo **es** la definición de la tira, así que
 /// comparar sus direcciones sólo podía fallar al compilar. Lo que protege de
@@ -589,12 +595,14 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
 #[test]
 fn the_detail_has_no_copy_of_the_origin_seam() {
     let src = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
+    let code = code_without_comments(&src);
     assert!(
-        src.contains("crate::widget_placement::rooted_origin("),
+        code.contains("crate::widget_placement::rooted_origin("),
         "el detalle tiene que llamar al seam compartido del origen, no a una copia"
     );
-    assert!(
-        !src.contains("fn rooted_origin"),
+    assert_eq!(
+        definitions_of(&code, "rooted_origin"),
+        0,
         "el detalle no puede definir su propia copia del seam del origen"
     );
     // Y el seam compartido sigue honrando el contrato: el retorno de la
