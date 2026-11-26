@@ -425,10 +425,20 @@ const AUTOSTART_NOTE_WAYLAND: &str = "Si el gestor de sesión ejecuta la entrada
 /// Atajos globales bajo Wayland (#312): `global-hotkey` 0.8 solo tiene backend
 /// X11, así que en Wayland el registro pasa por XWayland y no hay efecto global.
 /// El grab de XWayland solo se evalúa si el foco de teclado está en una app
-/// X11 (`xwayland-input.c` descarta los grabs pasivos) y `register()` devuelve
-/// `Ok` sin avisar: el fallo es silencioso, no una denegación. Sin XWayland no
-/// hay display, el registro falla de verdad y ese error sí llega a Ajustes.
-const WAYLAND_SHORTCUT_NOTE: &str = "En Wayland no hay atajo global: con XWayland el registro se hace por X11 y el atajo solo responde si el foco de teclado está en una ventana X11, sin error visible; sin XWayland el registro falla y el error sí se ve en Ajustes › Atajos.";
+/// X11 (`xwayland-input.c` descarta los grabs pasivos).
+///
+/// La nota no puede prometer un error visible: en `global-hotkey` 0.8 el
+/// registro falla en silencio **en los dos casos**. `GlobalHotKeyManager::new()`
+/// lanza el hilo de eventos y devuelve `Ok`; sin display,
+/// `RustConnection::connect(None)` falla dentro de ese hilo, que termina sin
+/// avisar al llamador (`platform_impl/x11/mod.rs:230`). Después `register()`
+/// ignora el envío (`let _ =`), el mensaje sin consumir se descarta con su
+/// `Sender` y `rx.recv()` da `Err`, pero `if let Ok(..)` lo saltea y la función
+/// devuelve `Ok(())` (`:49-58`). Con XWayland ese `Ok` viene de un grab pasivo
+/// que puede no evaluarse; sin XWayland, de la caída del hilo. Lo que Ajustes
+/// muestra en ambos casos es el aviso de capacidad de #181, no un error de
+/// registro.
+const WAYLAND_SHORTCUT_NOTE: &str = "En Wayland no hay atajo global: con XWayland el registro se hace por X11 y el atajo solo responde si el foco de teclado está en una ventana X11; sin XWayland el registro tampoco llega a funcionar. En los dos casos el registro no informa del fallo: Ajustes › Atajos solo muestra el aviso de capacidad.";
 
 const AOT_HYPRLAND_ADVISED: &str =
     "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide».";
@@ -1522,9 +1532,12 @@ mod tests {
 
     /// #312: el diagnóstico de atajos no puede afirmar que el registro depende
     /// del portal (en el repo no hay portal: ni `ashpd` ni `zbus` declarados) ni
-    /// que "puede denegarse" (bajo Wayland el fallo real es silencioso:
-    /// `register()` devuelve `Ok` sin efecto global). Todas las ramas Wayland
-    /// comparten la misma nota, para que no diverjan por escritorio.
+    /// que "puede denegarse". Tampoco puede prometer un error visible: en
+    /// `global-hotkey` 0.8 el registro falla en silencio **con y sin XWayland**
+    /// (revisión del owner, 2026-11-26). Y no puede dar a entender que Ajustes
+    /// no muestra nada: el aviso de capacidad de #181 sí se muestra. Todas las
+    /// ramas Wayland comparten la misma nota, para que no diverjan por
+    /// escritorio.
     #[test]
     fn wayland_shortcut_note_states_the_real_failure() {
         let cases = [
@@ -1561,8 +1574,16 @@ mod tests {
                 "{name}: la nota no dice cuándo responde el atajo: {note}"
             );
             assert!(
-                note.contains("sin error visible"),
-                "{name}: la nota no dice que el fallo no se ve: {note}"
+                note.contains("no informa del fallo"),
+                "{name}: la nota no dice que el registro calla el fallo: {note}"
+            );
+            assert!(
+                !note.contains("sí se ve") && !note.contains("sin error visible"),
+                "{name}: la nota promete (o insinúa) un error visible, y sin XWayland el fallo también es silencioso: {note}"
+            );
+            assert!(
+                note.contains("aviso"),
+                "{name}: la nota da a entender que Ajustes no muestra nada, pero #181 ya muestra el aviso de capacidad: {note}"
             );
             notes.push(note);
         }
