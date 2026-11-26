@@ -213,7 +213,7 @@ El port nativo de Linux se entregó con las issues ODD #105–#108 del proyecto 
   - GNOME sobre Wayland: hace falta la extensión AppIndicator para ver el icono de bandeja; siempre-encima y click-through limitados por Mutter; los atajos no son globales (el registro por X11 solo responde si el foco de teclado está en una ventana X11).
   - KDE sobre Wayland: bandeja y siempre-encima soportados; los atajos no son globales (el registro por X11 solo responde si el foco de teclado está en una ventana X11).
   - Compositores tipo WLR (Hyprland, sway): siempre-encima muy estricto; sin bandeja si tu barra no soporta StatusNotifier.
-- Diagnóstico rápido: `echo $XDG_SESSION_TYPE` (tipo de sesión), `echo $XDG_CURRENT_DESKTOP` (escritorio actual), `quorb` en consola para ver el debug, además de Ajustes › Atajos para los errores de registro de atajos.
+- Diagnóstico rápido: `echo $XDG_SESSION_TYPE` (tipo de sesión), `echo $XDG_CURRENT_DESKTOP` (escritorio actual), `quorb` en consola para ver el debug, además de Ajustes › Atajos para los errores y avisos de registro de atajos.
 - Primer arranque y configuración: si `config.json` existe pero no se puede leer, Quorb usa valores por defecto y no muestra el selector de idioma del primer arranque; el primer guardado desde Ajustes reemplaza ese archivo.
 - Desinstalar Quorb en Linux no borra `~/.config/es.egdev.quorb/config.json`. Para volver a ver el selector de idioma del primer arranque, borrad ese archivo.
 

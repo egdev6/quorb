@@ -425,20 +425,20 @@ const AUTOSTART_NOTE_WAYLAND: &str = "Si el gestor de sesión ejecuta la entrada
 /// Atajos globales bajo Wayland (#312): `global-hotkey` 0.8 solo tiene backend
 /// X11, así que en Wayland el registro pasa por XWayland y no hay efecto global.
 /// El grab de XWayland solo se evalúa si el foco de teclado está en una app
-/// X11 (`xwayland-input.c` descarta los grabs pasivos).
+/// X11: el compositor descarta los grabs pasivos de la superficie X11.
 ///
-/// La nota no puede prometer un error visible: en `global-hotkey` 0.8 el
-/// registro falla en silencio **en los dos casos**. `GlobalHotKeyManager::new()`
-/// lanza el hilo de eventos y devuelve `Ok`; sin display,
-/// `RustConnection::connect(None)` falla dentro de ese hilo, que termina sin
-/// avisar al llamador (`platform_impl/x11/mod.rs:230`). Después `register()`
-/// ignora el envío (`let _ =`), el mensaje sin consumir se descarta con su
-/// `Sender` y `rx.recv()` da `Err`, pero `if let Ok(..)` lo saltea y la función
-/// devuelve `Ok(())` (`:49-58`). Con XWayland ese `Ok` viene de un grab pasivo
-/// que puede no evaluarse; sin XWayland, de la caída del hilo. Lo que Ajustes
-/// muestra en ambos casos es el aviso de capacidad de #181, no un error de
-/// registro.
-const WAYLAND_SHORTCUT_NOTE: &str = "En Wayland no hay atajo global: con XWayland el registro se hace por X11 y el atajo solo responde si el foco de teclado está en una ventana X11; sin XWayland el registro tampoco llega a funcionar. En los dos casos el registro no informa del fallo: Ajustes › Atajos solo muestra el aviso de capacidad.";
+/// La nota no puede prometer un error visible: en los dos casos el registro no
+/// informa del fallo, aunque por motivos distintos. Con XWayland `register()`
+/// devuelve `Ok` y el grab pasivo puede no evaluarse nunca; sin XWayland el
+/// hilo de eventos muere y `register()` también devuelve `Ok`.
+/// `GlobalHotKeyManager::new()` (`platform_impl/x11/mod.rs:31-40`) lanza el hilo
+/// y devuelve `Ok` sin esperarlo; `RustConnection::connect(None)` falla dentro
+/// de ese hilo (`:230`), que termina sin avisar al llamador. Después
+/// `register()` (`:42-53`) ignora el envío (`let _ =`), el mensaje sin consumir
+/// se descarta con su `Sender` y `rx.recv()` da `Err`, pero `if let Ok(..)` lo
+/// saltea y la función cierra en `Ok(())`. Lo que Ajustes muestra es el aviso
+/// de capacidad de #181, no un error de registro.
+const WAYLAND_SHORTCUT_NOTE: &str = "En Wayland no hay atajo global: con XWayland el registro se hace por X11 y el atajo solo responde si el foco de teclado está en una ventana X11; sin XWayland el registro tampoco llega a funcionar. En los dos casos el registro no informa del fallo: Ajustes › Atajos muestra el aviso de capacidad, no un error de registro.";
 
 const AOT_HYPRLAND_ADVISED: &str =
     "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide».";
@@ -1531,13 +1531,13 @@ mod tests {
     }
 
     /// #312: el diagnóstico de atajos no puede afirmar que el registro depende
-    /// del portal (en el repo no hay portal: ni `ashpd` ni `zbus` declarados) ni
-    /// que "puede denegarse". Tampoco puede prometer un error visible: en
-    /// `global-hotkey` 0.8 el registro falla en silencio **con y sin XWayland**
-    /// (revisión del owner, 2026-11-26). Y no puede dar a entender que Ajustes
-    /// no muestra nada: el aviso de capacidad de #181 sí se muestra. Todas las
-    /// ramas Wayland comparten la misma nota, para que no diverjan por
-    /// escritorio.
+    /// del portal (ni `ashpd` ni `zbus` son dependencias directas en
+    /// `Cargo.toml`; `zbus` entra transitivo en `Cargo.lock`) ni que "puede
+    /// denegarse". Tampoco puede prometer un error visible: en `global-hotkey`
+    /// 0.8 el registro no informa del fallo **con y sin XWayland** (revisión del
+    /// owner, 2026-11-26). Y no puede dar a entender que Ajustes no muestra
+    /// nada: el aviso de capacidad de #181 sí se muestra. Todas las ramas
+    /// Wayland comparten la misma nota, para que no diverjan por escritorio.
     #[test]
     fn wayland_shortcut_note_states_the_real_failure() {
         let cases = [
@@ -1584,6 +1584,10 @@ mod tests {
             assert!(
                 note.contains("aviso"),
                 "{name}: la nota da a entender que Ajustes no muestra nada, pero #181 ya muestra el aviso de capacidad: {note}"
+            );
+            assert!(
+                note.contains("sin XWayland"),
+                "{name}: la nota no dice qué pasa sin XWayland: {note}"
             );
             notes.push(note);
         }
