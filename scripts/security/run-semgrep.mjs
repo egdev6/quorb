@@ -266,11 +266,12 @@ function runScanner(input, deps = {}, workflow = false) {
     if (control && !removeDir(control)) cleanupFailed = true;
     if (inventory && inventory.root && !removeDir(inventory.root)) cleanupFailed = true;
   }
-  // A cleanup failure outranks a scanner failure, but it must still be attributed to
-  // the scanner that actually ran. Routing it through the shared block below keeps a
-  // zizmor cleanup failure from surfacing as "semgrep-run-failed" and carries the
-  // scanner/duration metadata every other failure already gets.
-  if (cleanupFailed) {
+  // A cleanup failure never replaces an earlier failure: when the scanner already
+  // failed, that is the reason worth reporting. It also decides whether retrying
+  // can help, so downgrading the primary cause would give the wrong answer —
+  // `tamper` (integrity, exit 2, never retried) must not become `cleanup`
+  // (infrastructure, exit 3, retryable). Cleanup alone still fails the run.
+  if (!failure && cleanupFailed) {
     failure = new Error('semgrep-run-failed:cleanup');
     failure.internalExit = null;
   }

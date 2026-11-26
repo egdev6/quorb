@@ -5,13 +5,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { main, cli } from './code-safety.mjs';
+import { runSemgrep } from './run-semgrep.mjs';
 
 const MODULE = fileURLToPath(new URL('./code-safety.mjs', import.meta.url));
 const FAIL = 'code-safety-failed';
 const COMMIT = 'a'.repeat(40);
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const report = () => ({ version: '1.180.0', errors: [], skipped_rules: [], paths: { scanned: ['/inputs/000000.ts'] }, results: [] });
 const reject = (promise) => assert.rejects(promise, { message: FAIL });
 const bump = () => {
   throw new Error('dependency must not run');
@@ -195,6 +201,16 @@ test('CLI emits closed diagnostics and distinct exit codes for contract and infr
       internalExit: null,
     },
     {
+      // La integridad nunca es reintentable: `tamper` es exit 2 aunque la
+      // limpieza también falle.
+      runner: 'runSemgrep',
+      stage: 'tamper',
+      expectedExit: 2,
+      expectedClass: 'contract',
+      scanner: 'semgrep',
+      internalExit: null,
+    },
+    {
       runner: 'runSemgrep',
       stage: 'docker-create',
       expectedExit: 3,
@@ -325,4 +341,68 @@ test('importing the module performs no work and no CLI call', () => {
   assert.equal(result.status, 0);
   assert.equal(result.stdout, '');
   assert.equal(result.stderr, '');
+});
+
+test('a cleanup failure does not downgrade an integrity failure to infrastructure', async () => {
+  // La combinación que faltaba: el scanner detecta una modificación del snapshot
+  // (integridad) y además la limpieza del contenedor falla. El diagnóstico tiene
+  // que seguir siendo `tamper` —contrato, exit 2, nunca reintentable— y no
+  // `cleanup` —infraestructura, exit 3—. Se recorre el runner real con un
+  // transporte simulado, como en la reproducción.
+  const base = mkdtempSync(join(tmpdir(), 'code-safety-'));
+  try {
+    const root = join(base, 'snapshot');
+    mkdirSync(root);
+    const source = join(root, '000000.ts');
+    writeFileSync(source, 'void 0;');
+    const wheelhouse = join(base, 'wheels');
+    mkdirSync(wheelhouse);
+    const parent = join(base, 'out');
+    mkdirSync(parent);
+    const inventory = {
+      commit: COMMIT,
+      root,
+      targets: [{ path: source, originalPath: 'src/a.ts', sha256: sha256('void 0;') }],
+      excluded: [],
+    };
+    const execute = (_command, daemonArgs) => {
+      const args = daemonArgs[0] === '--host' ? daemonArgs.slice(2) : daemonArgs;
+      if (args[0] === 'create') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'start') {
+        // El snapshot cambia mientras el scanner corre: es un fallo de integridad.
+        chmodSync(source, 0o600);
+        writeFileSync(source, 'tampered');
+        return { status: 0, stdout: JSON.stringify(report()), stderr: '' };
+      }
+      // La limpieza falla: el contenedor se queda.
+      return { status: 1, stdout: '', stderr: 'permission denied' };
+    };
+    let stdout = '';
+    let stderr = '';
+    const exit = await cli(
+      ['scan', '/repo', COMMIT, wheelhouse, parent],
+      {
+        runSemgrep: (input) => runSemgrep(input, { uid: 1000, gid: 1000, exportSnapshot: () => inventory, execute }),
+        runZizmor: bump,
+      },
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: (text) => {
+          stderr += text;
+        },
+      },
+    );
+    assert.equal(exit, 2);
+    assert.equal(stdout, '');
+    const separator = stderr.indexOf(' ');
+    assert.equal(stderr.slice(0, separator), FAIL);
+    const parsed = JSON.parse(stderr.slice(separator + 1));
+    assert.equal(parsed.stage, 'tamper');
+    assert.equal(parsed.class, 'contract');
+    assert.equal(parsed.scanner, 'semgrep');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

@@ -319,3 +319,26 @@ test('detects snapshot and control mutation around the scanner', (t) => {
     assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:tamper/, which);
   }
 });
+
+test('a cleanup failure does not mask the integrity failure', (t) => {
+  // El snapshot se modifica (integridad) y además el contenedor no se puede
+  // eliminar (limpieza). Lo que hay que reportar es `tamper`: si la limpieza
+  // lo tapara, el fallo de integridad passaría a ser infraestructura
+  // reintentable, que es justo lo que no debe pasar.
+  const f = fixture(t);
+  const { execute } = capture((args) => {
+    if (args[0] === 'create') return { status: 0, stdout: '', stderr: '' };
+    if (args[0] === 'start') {
+      chmodSync(f.source, 0o600);
+      writeFileSync(f.source, 'tampered');
+      return { status: 0, stdout: JSON.stringify(report()), stderr: '' };
+    }
+    // La limpieza falla: el contenedor se queda.
+    return { status: 1, stdout: '', stderr: 'permission denied' };
+  });
+  assert.throws(
+    () => runSemgrep(input(f), deps(f, execute)),
+    (error) => error.message === 'semgrep-run-failed:tamper' && error.scanner === 'semgrep',
+    'la limpieza no debe sustituir al fallo de integridad',
+  );
+});

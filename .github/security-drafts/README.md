@@ -58,6 +58,12 @@ consumidor tenga política de reintentos. `report-parse` se distingue de `report
 porque la salida truncada del scanner es infraestructura, mientras que normalizar un JSON
 válido es contrato.
 
+Un fallo de limpieza (`cleanup`) no sustituye al fallo principal: si el scanner ya había
+fallado, se reporta ese, porque su clase es la que decide si relanzar puede servir. Así un
+`tamper` sigue siendo exit 2 aunque además el contenedor se quede sin eliminar, y no baja a
+infraestructura reintentable. `cleanup` solo se reporta cuando no hay otro fallo, y entonces
+el run tampoco sale con `0`.
+
 El diagnóstico se imprime en stderr y en `$GITHUB_STEP_SUMMARY` (workflow) como una única
 línea JSON con solo campos cerrados: `label`, `scanner` (`semgrep`/`zizmor`/`null`),
 `stage` (tabla anterior), `class` (`contract`/`infrastructure`), `exit` (código de la
