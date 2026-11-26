@@ -577,17 +577,25 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
 /// con el mismo defecto.
 ///
 /// Este pin no mira qué hace el lector del detalle —eso no se puede observar
-/// sin una ventana GDK—: fija que el símbolo que el detalle reexporta **es**
-/// el de la tira. Si alguien reimplementa el seam en este módulo, el
-/// `pub use` desaparece o choca con la copia y este test falla.
+/// sin una ventana GDK—: fija, **de fuente**, que el detalle llama al seam
+/// de la tira por su ruta canónica y que no define el suyo.
+///
+/// La comparación de punteros de función que este pin tenía antes no fijaba
+/// nada: el `pub use` del módulo **es** la definición de la tira, así que
+/// comparar sus direcciones sólo podía fallar al compilar. Lo que protege de
+/// verdad es la fuente: una copia con el mismo nombre choca con el `pub use`
+/// (error de compilación) y una copia con otro nombre rompe la llamada
+/// canónica que este test exige.
 #[test]
 fn the_detail_has_no_copy_of_the_origin_seam() {
+    let src = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
     assert!(
-        std::ptr::fn_addr_eq(
-            rooted_origin as fn((i32, i32, i32), f64) -> (i32, i32),
-            crate::widget_placement::rooted_origin as fn((i32, i32, i32), f64) -> (i32, i32)
-        ),
-        "el detalle tiene que usar el seam compartido del origen, no una copia"
+        src.contains("crate::widget_placement::rooted_origin("),
+        "el detalle tiene que llamar al seam compartido del origen, no a una copia"
+    );
+    assert!(
+        !src.contains("fn rooted_origin"),
+        "el detalle no puede definir su propia copia del seam del origen"
     );
     // Y el seam compartido sigue honrando el contrato: el retorno de la
     // tupla cruda no significa nada (la garantía de «hay origen» la da la

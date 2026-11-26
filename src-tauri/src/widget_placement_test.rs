@@ -657,10 +657,106 @@ fn the_origin_is_read_from_the_raw_binding_tuple() {
     assert_eq!(rooted_origin((7, 3537, 42), 1.0), (3537, 42));
 }
 
-/// #314: el informe viaja en píxeles físicos y el seam convierte con el
-/// factor que informa el lector (el de su ventana). El binding da píxeles
-/// de aplicación: con `GDK_SCALE=2` devolvió (2192, 141) para una posición
-/// de dispositivo de (4384, 282).
+/// El cuerpo de una función del archivo fuente, para que un pin de fuente
+/// pueda mirar **el código** y no el doc del módulo.
+///
+/// Recorta desde la firma hasta la llave que cierra el bloque, saltando
+/// comentarios, cadenas y literales de carácter. Una **declaración** de
+/// trait (`fn read_geometry(...);`) no tiene bloque: se salta hasta la
+/// definición.
+fn function_body<'a>(src: &'a str, signature: &str) -> &'a str {
+    let mut from = 0usize;
+    while let Some(rel) = src[from..].find(signature) {
+        let start = from + rel;
+        let open = match src[start..].find('{') {
+            Some(k) => start + k,
+            None => {
+                from = start + signature.len();
+                continue;
+            }
+        };
+        if src[start..open].contains(';') {
+            // Una declaración, no una definición: se sigue buscando.
+            from = start + signature.len();
+            continue;
+        }
+        return &src[start..matching_brace(src, open)];
+    }
+    panic!("{signature} no está definido en el archivo");
+}
+
+/// El índice justo después de la llave que cierra el bloque abierto en
+/// `open`, saltando comentarios y cadenas (una llave dentro de un texto no
+/// puede alterar la cuenta).
+fn matching_brace(src: &str, open: usize) -> usize {
+    let bytes = src.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            }
+            b'"' => {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'\'' => {
+                // Un literal de carácter (`'x'`) o un lifetime (`'a`): sólo
+                // se salta el literal, que cierra antes del fin de línea.
+                let mut j = i + 1;
+                while j < bytes.len() && j < i + 5 && bytes[j] != b'\n' {
+                    if bytes[j] == b'\\' {
+                        j += 2;
+                        continue;
+                    }
+                    if bytes[j] == b'\'' {
+                        break;
+                    }
+                    j += 1;
+                }
+                if j < bytes.len() && j < i + 5 && bytes[j] == b'\'' {
+                    i = j + 1;
+                } else {
+                    i += 1;
+                }
+            }
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                i += 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    panic!("la llave abierta en {open} no cierra");
+}
 
 /// #314: el defecto era **estático** —un consumo equivocado de la tupla en el
 /// lector— y el `Fake` no llega a esa frontera (entrega geometría ya
@@ -668,6 +764,11 @@ fn the_origin_is_read_from_the_raw_binding_tuple() {
 /// que los dos lectores **consumen la tupla a través del seam** y que la
 /// visibilidad se consulta antes de leer. Sin él, un lector que volviera a
 /// desempaquetar la tupla a mano seguiría con todos los tests en verde.
+///
+/// El pin del orden mira **el cuerpo de `read_geometry`**, no el archivo
+/// entero: el doc del módulo de la tira menciona `gdk_window_is_viewable()`,
+/// y una búsqueda global encontraría esa mención —que siempre precede a la
+/// llamada— y daría el pin por cumplido sin comprobar nada.
 ///
 /// El coste de un pin de fuente es que un renombre inocuo en el lector lo
 /// rompe; se acepta porque el otro lado (un lector que ya no usa el seam) no
@@ -703,9 +804,13 @@ fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
             "{name}: conserva la rama Err retirada"
         );
         // La visibilidad se consulta antes de leer el origen: es la garantía
-        // de que hay un origen (D1).
-        let viewable = src.find("is_viewable()").expect("is_viewable");
-        let origin = src.find(".origin()").expect("origin");
+        // de que hay un origen (D1). El recorte es al **cuerpo** de
+        // `read_geometry`: fuera de él, el doc del módulo menciona
+        // `gdk_window_is_viewable()` y la búsqueda global daría el pin por
+        // cumplido siempre.
+        let body = function_body(src, "fn read_geometry");
+        let viewable = body.find("is_viewable()").expect("is_viewable");
+        let origin = body.find(".origin()").expect("origin");
         assert!(
             viewable < origin,
             "{name}: lee el origen antes de mirar la visibilidad"
@@ -722,9 +827,19 @@ fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
     );
 }
 
+/// #314: el informe viaja en **píxeles físicos** y el seam convierte con el
+/// factor que informa el lector (el de su ventana: en DPI mixto el factor de
+/// la petición puede ser el de otro monitor). El binding de GDK devuelve
+/// píxeles de aplicación: con `GDK_SCALE=2` devolvió (2192, 141) para una
+/// posición de dispositivo de (4384, 282).
+///
+/// Lo que fija: la tupla cruda se convierte **una sola vez**, con el factor
+/// del lector, y el informe no reescala por segunda vez.
 #[test]
 fn the_origin_is_converted_to_physical_pixels_with_the_readers_factor() {
+    // Factor 2: el origen lógico (1220, 0) se informa como (2440, 0).
     assert_eq!(rooted_origin((1, 1220, 0), 2.0), (2440, 0));
+    // Factor 1.5: la conversión redondea (1220 × 1.5 = 1830, 42 × 1.5 = 63).
     assert_eq!(rooted_origin((1, 1220, 42), 1.5), (1830, 63));
 }
 
