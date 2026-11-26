@@ -382,7 +382,9 @@ test('a cleanup failure does not downgrade an integrity failure to infrastructur
     const exit = await cli(
       ['scan', '/repo', COMMIT, wheelhouse, parent],
       {
-        runSemgrep: (input) => runSemgrep(input, { uid: 1000, gid: 1000, exportSnapshot: () => inventory, execute }),
+        // El runner real solo corre en Linux; se declara explícitamente para que
+        // el test valide el camino de integridad también en Windows y macOS.
+        runSemgrep: (input) => runSemgrep(input, { platform: 'linux', uid: 1000, gid: 1000, exportSnapshot: () => inventory, execute }),
         runZizmor: bump,
       },
       {
