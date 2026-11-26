@@ -672,7 +672,8 @@ fn the_origin_is_read_from_the_raw_binding_tuple() {
 /// Recorta desde la firma hasta la llave que cierra el bloque. Una
 /// **declaración** de trait (`fn read_geometry(...);`) no tiene bloque: se
 /// salta hasta la definición. Los offsets del enmascarado coinciden con los
-/// del original, así que el recorte sirve sobre cualquiera de los dos.
+/// del texto normalizado (el que entra al enmascarado), así que el recorte
+/// sirve sobre cualquiera de los dos.
 fn function_body(src: &str, signature: &str) -> String {
     let code = code_without_comments(src);
     let mut from = 0usize;
@@ -733,21 +734,177 @@ fn matching_delim(src: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<u
 
 /// El código del archivo **sin lo que no es código**: comentarios, cadenas,
 /// literales crudos y literales de carácter quedan en blanco (los saltos de
-/// línea se conservan, así que los offsets son los del original).
+/// línea se conservan, así que los offsets son los del texto normalizado).
 ///
 /// Es la base de los pins de fuente: la firma del lector y las llamadas se
 /// buscan **sobre esta copia**, de modo que ni una ni otra pueden aparecer
 /// en un comentario —el cuerpo del lector menciona `is_viewable()` al
 /// explicar por qué el retorno no es un flag— ni dentro de un texto.
+///
+/// El texto entra **normalizado** (sin `\r`): el enmascarado conserva los
+/// offsets del texto normalizado, que es el que ven todos los consumidores.
 pub(crate) fn code_without_comments(src: &str) -> String {
     String::from_utf8(mask_non_code(src)).expect("el código enmascarado sigue siendo UTF-8")
+}
+
+/// Normaliza los finales de línea: `\r\n` → `\n`.
+///
+/// Es el **único** punto de normalización del camino de los pines, y está
+/// **antes** del enmascarado (que preserva offsets): con el texto normalizado
+/// antes, los pines y las sondas ven siempre lo mismo, se lean los fuentes
+/// como los traiga el checkout.
+///
+/// Hace falta porque el checkout de Windows trae los fuentes con `\r\n` y las
+/// sondas sustituyen bloques exactos escritos con `\n`: sin normalizar, la
+/// sustitución no encuentra el bloque, la sonda no muta nada y el pin se da
+/// por cumplido con un lector roto. Sólo el CI de Windows lo veía.
+///
+/// La normalización es **textual**: un `\r\n` dentro de un literal también se
+/// convierte. No importa: los pines miran el código enmascarado (con los
+/// literales en blanco) y esta función sólo existe en los tests — al código
+/// compilado no lo toca.
+pub(crate) fn normalize_line_endings(src: &str) -> std::borrow::Cow<'_, str> {
+    if src.contains('\r') {
+        std::borrow::Cow::Owned(src.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(src)
+    }
+}
+
+/// Lee un fuente del crate con los finales de línea normalizados.
+///
+/// Todo el texto que entra al camino de los pines pasa por aquí: los pines,
+/// las sondas y las comprobaciones tienen que ver **el mismo** texto, sin
+/// importar cómo lo traiga el checkout.
+pub(crate) fn read_source(path: &str) -> String {
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    normalize_line_endings(&raw).into_owned()
+}
+
+/// Sustituye un bloque escrito con `\n` por otro, respetando el final de
+/// línea del archivo: si el texto tiene `\r\n` (el checkout de Windows), el
+/// bloque se busca —y se inserta— con `\r\n`.
+///
+/// `None` si el bloque no está: una sonda tiene que notar que su mutación
+/// no se aplicó, porque si no, un bloque que cambiara de forma daría el pin
+/// por cumplido **sin mutar nada**.
+fn replace_block(src: &str, needle: &str, replacement: &str) -> Option<String> {
+    let (needle, replacement) = if src.contains("\r\n") {
+        (
+            needle.replace('\n', "\r\n"),
+            replacement.replace('\n', "\r\n"),
+        )
+    } else {
+        (needle.to_string(), replacement.to_string())
+    };
+    if !src.contains(&needle) {
+        return None;
+    }
+    Some(src.replace(&needle, &replacement))
+}
+
+/// El mismo texto, con los finales de línea de Windows (`\r\n`).
+fn to_crlf(src: &str) -> String {
+    src.replace("\r\n", "\n").replace('\n', "\r\n")
+}
+
+/// El bloque de la comprobación de visibilidad, tal cual está en los dos
+/// lectores (la tira y el detalle).
+const VISIBILITY_CHECK: &str =
+    "            if !gdk_window.is_viewable() {\n                return Ok(None);\n            }\n";
+/// La lectura del origen a través del seam, tal cual está en la tira.
+const WIDGET_ORIGIN_READ: &str =
+    "            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);\n";
+/// La lectura del origen a través del seam canónico, tal cual está en el
+/// detalle.
+const DETAIL_ORIGIN_READ: &str = "            let (ox, oy) = crate::widget_placement::rooted_origin(gdk_window.origin(), scale);\n";
+/// La firma del lector de geometría (la misma en los dos).
+const READ_GEOMETRY_SIGNATURE: &str =
+    "    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {";
+
+/// Las mutaciones que tienen que tumbar el pin de orden. Se extraen para que
+/// las sondas y la regresión de finales de línea apliquen **exactamente** la
+/// misma mutación: si divergieran, la regresión no probaría lo que las sondas
+/// comprueban.
+fn without_visibility_check(src: &str) -> Option<String> {
+    replace_block(src, VISIBILITY_CHECK, "")
+}
+
+fn with_visibility_check_after_the_origin(src: &str) -> Option<String> {
+    let without = replace_block(src, VISIBILITY_CHECK, "")?;
+    replace_block(
+        &without,
+        WIDGET_ORIGIN_READ,
+        &format!("{WIDGET_ORIGIN_READ}{VISIBILITY_CHECK}"),
+    )
+}
+
+fn with_visibility_check_in_a_doc_comment(src: &str) -> Option<String> {
+    let without = replace_block(src, VISIBILITY_CHECK, "")?;
+    replace_block(
+        &without,
+        READ_GEOMETRY_SIGNATURE,
+        &format!(
+            "    /// fn read_geometry consulta is_viewable() antes de .origin()\n{READ_GEOMETRY_SIGNATURE}"
+        ),
+    )
+}
+
+/// Las mutaciones que tienen que tumbar el pin del seam.
+fn with_manual_unpacking(src: &str) -> Option<String> {
+    replace_block(
+        src,
+        WIDGET_ORIGIN_READ,
+        "            let (_ret, ox, oy) = gdk_window.origin();\n",
+    )
+}
+
+fn with_local_copy_of_the_seam(src: &str) -> Option<String> {
+    replace_block(
+        src,
+        WIDGET_ORIGIN_READ,
+        "            let (ox, oy) = local_origin(gdk_window.origin(), scale);\n",
+    )
+}
+
+fn with_seam_call_in_a_doc_comment(src: &str) -> Option<String> {
+    let replaced = replace_block(
+        src,
+        WIDGET_ORIGIN_READ,
+        "            let (ox, oy) = gdk_window.position();\n",
+    )?;
+    replace_block(
+        &replaced,
+        READ_GEOMETRY_SIGNATURE,
+        &format!(
+            "    /// fn read_geometry llama rooted_origin(gdk_window.origin(), scale)\n{READ_GEOMETRY_SIGNATURE}"
+        ),
+    )
+}
+
+fn with_its_own_copy_of_the_seam(src: &str) -> Option<String> {
+    replace_block(
+        src,
+        READ_GEOMETRY_SIGNATURE,
+        &format!(
+            "    fn rooted_origin(raw: (i32, i32, i32), scale: f64) -> (i32, i32) {{\n        (raw.1, raw.2)\n    }}\n\n{READ_GEOMETRY_SIGNATURE}"
+        ),
+    )
+}
+
+fn with_manual_unpacking_in_the_detail(src: &str) -> Option<String> {
+    replace_block(
+        src,
+        DETAIL_ORIGIN_READ,
+        "            let (_ret, ox, oy) = gdk_window.origin();\n",
+    )
 }
 
 /// El recorrido que separa el **código** de lo que sólo es texto:
 /// comentarios, cadenas, literales crudos (`r"…"` y `r#"…"#`) y literales de
 /// carácter. Devuelve una copia del archivo con todo lo que no es código en
 /// blanco (los saltos de línea se conservan), así que los offsets coinciden
-/// con los del original.
+/// con los del texto **normalizado** (el que entra al enmascarado).
 ///
 /// Un **lifetime** (`'a`, `'static`) es código, no texto: se deja a la vista.
 /// Un literal de carácter (`'x'`, `'\n'`) sí es texto y se apaga; se
@@ -755,7 +912,14 @@ pub(crate) fn code_without_comments(src: &str) -> String {
 /// una secuencia escapada) y cierra con comilla, el lifetime no cierra—,
 /// porque si no, el lifetime de un genérico (`<'a, 'b>`) se tomaría por un
 /// literal y apagaría código real.
+///
+/// El texto se **normaliza** antes de enmascarar (`\r\n` → `\n`): es el
+/// único punto de normalización y tiene que estar antes, porque el
+/// enmascarado preserva offsets y todos los consumidores tienen que ver el
+/// mismo texto.
 fn mask_non_code(src: &str) -> Vec<u8> {
+    let normalized = normalize_line_endings(src);
+    let src: &str = normalized.as_ref();
     let bytes = src.as_bytes();
     let mut out = bytes.to_vec();
     let mut i = 0usize;
@@ -1021,7 +1185,10 @@ fn collect_rust_sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) 
             collect_rust_sources(&path, out);
         } else if name.ends_with(".rs") {
             if let Ok(src) = std::fs::read_to_string(&path) {
-                out.push((path.to_string_lossy().to_string(), src));
+                out.push((
+                    path.to_string_lossy().to_string(),
+                    normalize_line_endings(&src).into_owned(),
+                ));
             }
         }
     }
@@ -1072,8 +1239,8 @@ fn one_seam_definition(sources: &[(String, String)]) -> bool {
 /// verlos caer.
 #[test]
 fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
-    let widget = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let detail = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
+    let widget = read_source("src/widget_placement.rs");
+    let detail = read_source("src/detail_placement.rs");
     for (name, src) in [
         ("widget_placement.rs", &widget),
         ("detail_placement.rs", &detail),
@@ -1144,12 +1311,8 @@ fn the_readers_consume_the_raw_binding_tuple_through_the_seam() {
 /// que el pin pasaba aunque el lector dejara de consultar la visibilidad.
 #[test]
 fn the_order_pin_fails_when_the_visibility_check_is_gone() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let broken = src.replace(
-        "            if !gdk_window.is_viewable() {\n                return Ok(None);\n            }\n",
-        "",
-    );
-    assert_ne!(broken, src, "no se encontró el bloque de visibilidad");
+    let src = read_source("src/widget_placement.rs");
+    let broken = without_visibility_check(&src).expect("no se encontró el bloque de visibilidad");
     assert!(
         !order_pin_holds(&broken, "widget_placement.rs"),
         "el pin de orden tiene que fallar si el lector ya no consulta la visibilidad"
@@ -1160,13 +1323,9 @@ fn the_order_pin_fails_when_the_visibility_check_is_gone() {
 /// de leer el origen: el orden es la garantía (D1).
 #[test]
 fn the_order_pin_fails_when_the_visibility_is_checked_after_the_origin() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let check = "            if !gdk_window.is_viewable() {\n                return Ok(None);\n            }\n";
-    let read = "            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);\n";
-    let broken = src
-        .replace(check, "")
-        .replace(read, &format!("{read}{check}"));
-    assert_ne!(broken, src, "no se encontró el bloque de visibilidad");
+    let src = read_source("src/widget_placement.rs");
+    let broken = with_visibility_check_after_the_origin(&src)
+        .expect("no se encontró el bloque de visibilidad");
     assert!(
         !order_pin_holds(&broken, "widget_placement.rs"),
         "el pin de orden tiene que fallar si la visibilidad se consulta después del origen"
@@ -1178,12 +1337,8 @@ fn the_order_pin_fails_when_the_visibility_is_checked_after_the_origin() {
 /// comprobación y un lector que desempaqueta la tupla a mano pasa.
 #[test]
 fn the_seam_pin_fails_when_the_reader_unpacks_the_tuple_by_hand() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let broken = src.replace(
-        "            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);",
-        "            let (_ret, ox, oy) = gdk_window.origin();",
-    );
-    assert_ne!(broken, src, "no se encontró la llamada al seam");
+    let src = read_source("src/widget_placement.rs");
+    let broken = with_manual_unpacking(&src).expect("no se encontró la llamada al seam");
     assert!(
         !seam_pin_holds(&broken, "widget_placement.rs"),
         "un lector que no pasa la tupla al seam tiene que fallar el pin"
@@ -1194,12 +1349,8 @@ fn the_seam_pin_fails_when_the_reader_unpacks_the_tuple_by_hand() {
 /// el seam compartido es el que fija el contrato del binding.
 #[test]
 fn the_seam_pin_fails_when_the_reader_uses_a_local_copy() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let broken = src.replace(
-        "            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);",
-        "            let (ox, oy) = local_origin(gdk_window.origin(), scale);",
-    );
-    assert_ne!(broken, src, "no se encontró la llamada al seam");
+    let src = read_source("src/widget_placement.rs");
+    let broken = with_local_copy_of_the_seam(&src).expect("no se encontró la llamada al seam");
     assert!(
         !seam_pin_holds(&broken, "widget_placement.rs"),
         "un lector con una copia local del seam tiene que fallar el pin"
@@ -1212,28 +1363,132 @@ fn the_seam_pin_fails_when_the_reader_uses_a_local_copy() {
 /// tiene que caer.
 #[test]
 fn the_order_pin_fails_when_the_detail_reader_loses_the_visibility_check() {
-    let src = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
-    let broken = src.replace(
-        "            if !gdk_window.is_viewable() {\n                return Ok(None);\n            }\n",
-        "",
-    );
-    assert_ne!(broken, src, "no se encontró el bloque de visibilidad");
+    let src = read_source("src/detail_placement.rs");
+    let broken = without_visibility_check(&src).expect("no se encontró el bloque de visibilidad");
     assert!(
         !order_pin_holds(&broken, "detail_placement.rs"),
         "el pin de orden tiene que fallar si el detalle ya no consulta la visibilidad"
     );
 }
 
+/// El camino de los pines tiene que ser **independiente del final de
+/// línea**: el checkout de Windows trae los fuentes con `\r\n` y las sondas
+/// sustituyen bloques exactos escritos con `\n`. Sin normalizar, la
+/// sustitución no encuentra su bloque, la sonda no muta nada y el pin se da
+/// por cumplido con un lector roto — y sólo lo veía el CI de Windows.
+///
+/// Esta regresión es la que faltaba en Linux: las cuatro sondas del pin de
+/// orden se aplican al **mismo** texto con `\r\n` y tienen que dar lo mismo
+/// que con `\n` (el pin sigue sin cumplirse en los dos casos).
+///
+/// Las sondas y esta regresión usan **las mismas** mutaciones
+/// (`without_visibility_check` y compañía): si divergieran, la regresión no
+/// probaría lo que las sondas comprueban.
+#[test]
+fn the_order_pin_probes_see_the_same_with_crlf_line_endings() {
+    let widget = read_source("src/widget_placement.rs");
+    let detail = read_source("src/detail_placement.rs");
+    for (ending, widget_src, detail_src) in [
+        ("LF", widget.clone(), detail.clone()),
+        ("CRLF", to_crlf(&widget), to_crlf(&detail)),
+    ] {
+        // El lector de verdad cumple el pin, con los dos finales de línea.
+        assert!(
+            order_pin_holds(&widget_src, "widget_placement.rs"),
+            "{ending}: el lector de la tira tiene que cumplir el pin de orden"
+        );
+        assert!(
+            order_pin_holds(&detail_src, "detail_placement.rs"),
+            "{ending}: el lector del detalle tiene que cumplir el pin de orden"
+        );
+        // Y las cuatro sondas del pin de orden lo tienen que tumbar.
+        for (label, broken) in [
+            (
+                "sin la comprobación de visibilidad",
+                without_visibility_check(&widget_src),
+            ),
+            (
+                "con la comprobación después del origen",
+                with_visibility_check_after_the_origin(&widget_src),
+            ),
+            (
+                "con la comprobación sólo en un comentario",
+                with_visibility_check_in_a_doc_comment(&widget_src),
+            ),
+            (
+                "sin la comprobación en el detalle",
+                without_visibility_check(&detail_src),
+            ),
+        ] {
+            let broken =
+                broken.unwrap_or_else(|| panic!("{ending}: la mutación «{label}» no se aplicó"));
+            assert!(
+                !order_pin_holds(&broken, "widget_placement.rs"),
+                "{ending}: el pin de orden tiene que caer: {label}"
+            );
+        }
+    }
+}
+
+/// Lo mismo con el pin del seam: las sondas tienen que ver lo mismo con
+/// `\r\n` que con `\n`.
+#[test]
+fn the_seam_pin_probes_see_the_same_with_crlf_line_endings() {
+    let widget = read_source("src/widget_placement.rs");
+    let detail = read_source("src/detail_placement.rs");
+    for (ending, widget_src, detail_src) in [
+        ("LF", widget.clone(), detail.clone()),
+        ("CRLF", to_crlf(&widget), to_crlf(&detail)),
+    ] {
+        // El lector de verdad cumple el pin, con los dos finales de línea.
+        assert!(
+            seam_pin_holds(&widget_src, "widget_placement.rs"),
+            "{ending}: el lector de la tira tiene que cumplir el pin del seam"
+        );
+        assert!(
+            seam_pin_holds(&detail_src, "detail_placement.rs"),
+            "{ending}: el lector del detalle tiene que cumplir el pin del seam"
+        );
+        // Y las sondas del seam lo tienen que tumbar.
+        for (label, broken) in [
+            (
+                "el lector desempaqueta la tupla a mano",
+                with_manual_unpacking(&widget_src),
+            ),
+            (
+                "el lector usa una copia local del seam",
+                with_local_copy_of_the_seam(&widget_src),
+            ),
+            (
+                "la llamada al seam sólo vive en un comentario",
+                with_seam_call_in_a_doc_comment(&widget_src),
+            ),
+            (
+                "el lector define su propia copia del seam",
+                with_its_own_copy_of_the_seam(&widget_src),
+            ),
+            (
+                "el detalle desempaqueta la tupla a mano",
+                with_manual_unpacking_in_the_detail(&detail_src),
+            ),
+        ] {
+            let broken =
+                broken.unwrap_or_else(|| panic!("{ending}: la mutación «{label}» no se aplicó"));
+            assert!(
+                !seam_pin_holds(&broken, "widget_placement.rs"),
+                "{ending}: el pin del seam tiene que caer: {label}"
+            );
+        }
+    }
+}
+
 /// Y lo mismo con el seam: el detalle tiene que pasar la tupla cruda al seam
 /// de la tira, no desempaquetarla a mano.
 #[test]
 fn the_seam_pin_fails_when_the_detail_reader_unpacks_the_tuple_by_hand() {
-    let src = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
-    let broken = src.replace(
-        "            let (ox, oy) = crate::widget_placement::rooted_origin(gdk_window.origin(), scale);",
-        "            let (_ret, ox, oy) = gdk_window.origin();",
-    );
-    assert_ne!(broken, src, "no se encontró la llamada al seam");
+    let src = read_source("src/detail_placement.rs");
+    let broken =
+        with_manual_unpacking_in_the_detail(&src).expect("no se encontró la llamada al seam");
     assert!(
         !seam_pin_holds(&broken, "detail_placement.rs"),
         "un detalle que no pasa la tupla al seam tiene que fallar el pin"
@@ -1248,20 +1503,9 @@ fn the_seam_pin_fails_when_the_detail_reader_unpacks_the_tuple_by_hand() {
 /// consultaba la visibilidad.
 #[test]
 fn the_order_pin_fails_when_the_visibility_check_only_lives_in_a_doc_comment() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let broken = src
-        .replace(
-            "            if !gdk_window.is_viewable() {\n                return Ok(None);\n            }\n",
-            "",
-        )
-        .replace(
-            "    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
-            "    /// fn read_geometry consulta is_viewable() antes de .origin()\n    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
-        );
-    assert_ne!(
-        broken, src,
-        "no se encontró el bloque de visibilidad ni el lector"
-    );
+    let src = read_source("src/widget_placement.rs");
+    let broken = with_visibility_check_in_a_doc_comment(&src)
+        .expect("no se encontró el bloque de visibilidad ni el lector");
     assert!(
         !order_pin_holds(&broken, "widget_placement.rs"),
         "un lector que sólo menciona la visibilidad en un comentario tiene que fallar el pin"
@@ -1273,20 +1517,9 @@ fn the_order_pin_fails_when_the_visibility_check_only_lives_in_a_doc_comment() {
 /// con la tupla cruda del binding.
 #[test]
 fn the_seam_pin_fails_when_the_seam_call_only_lives_in_a_doc_comment() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let broken = src
-        .replace(
-            "    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
-            "    /// fn read_geometry llama rooted_origin(gdk_window.origin(), scale)\n    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
-        )
-        .replace(
-            "            let (ox, oy) = rooted_origin(gdk_window.origin(), scale);",
-            "            let (ox, oy) = gdk_window.position();",
-        );
-    assert_ne!(
-        broken, src,
-        "no se encontró el lector ni la llamada al seam"
-    );
+    let src = read_source("src/widget_placement.rs");
+    let broken = with_seam_call_in_a_doc_comment(&src)
+        .expect("no se encontró el lector ni la llamada al seam");
     assert!(
         !seam_pin_holds(&broken, "widget_placement.rs"),
         "un lector que sólo menciona el seam en un comentario tiene que fallar el pin"
@@ -1299,7 +1532,7 @@ fn the_seam_pin_fails_when_the_seam_call_only_lives_in_a_doc_comment() {
 /// del binding.
 #[test]
 fn the_seam_pin_fails_when_another_module_defines_a_copy() {
-    let reader = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
+    let reader = read_source("src/widget_placement.rs");
     // El hueco es justamente que el conteo por archivo no ve la copia del
     // otro módulo: el archivo del lector conserva su única definición.
     assert_eq!(
@@ -1325,12 +1558,8 @@ fn the_seam_pin_fails_when_another_module_defines_a_copy() {
 /// crate.
 #[test]
 fn the_seam_pin_fails_when_the_reader_defines_its_own_copy() {
-    let src = std::fs::read_to_string("src/widget_placement.rs").expect("widget_placement.rs");
-    let broken = src.replace(
-        "    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
-        "    fn rooted_origin(raw: (i32, i32, i32), scale: f64) -> (i32, i32) {\n        (raw.1, raw.2)\n    }\n\n    async fn read_geometry(&mut self) -> Result<Option<Geometry>, String> {",
-    );
-    assert_ne!(broken, src, "no se encontró el lector");
+    let src = read_source("src/widget_placement.rs");
+    let broken = with_its_own_copy_of_the_seam(&src).expect("no se encontró el lector");
     assert!(
         !seam_pin_holds(&broken, "widget_placement.rs"),
         "una segunda definición del seam tiene que fallar el pin"

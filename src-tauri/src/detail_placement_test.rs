@@ -15,7 +15,7 @@
 use super::detail_placement::*;
 use crate::detail_geometry::Bounds;
 use crate::widget_placement::{Geometry, Reason, Status, Transport, READS};
-use crate::widget_placement_test::{code_without_comments, definitions_of};
+use crate::widget_placement_test::{code_without_comments, definitions_of, read_source};
 use crate::window_fit::{fit_plan, FitOutcome};
 use crate::window_fit_test::{hyprland_profile, FakeFitSurface};
 
@@ -594,7 +594,7 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
 /// llamada canónica que este test exige —que tiene que estar **presente**—.
 #[test]
 fn the_detail_has_no_copy_of_the_origin_seam() {
-    let src = std::fs::read_to_string("src/detail_placement.rs").expect("detail_placement.rs");
+    let src = read_source("src/detail_placement.rs");
     let code = code_without_comments(&src);
     assert!(
         code.contains("crate::widget_placement::rooted_origin("),
