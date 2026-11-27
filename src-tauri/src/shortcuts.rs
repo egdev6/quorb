@@ -114,10 +114,10 @@ pub(crate) enum ProbeOutcome {
     /// El portal de atajos está disponible.
     ///
     /// `version` es la versión de la interfaz del portal: 1 = `GlobalShortcuts`
-    /// v1, 2 = v2. **La versión no alcanza para prometer `active`** (#312, S7): la
-    /// interfaz v1 no distingue GNOME 48 de GNOME 49, que es justamente el caso
-    /// que corrige `BindShortcuts`. Por eso el estado no sale de la sonda, sino
-    /// de la sonda **más** la comparación del trigger.
+    /// v1, 2 = v2. **La versión no alcanza para prometer `active`** (#312, S7):
+    /// `trigger_description` describe cómo disparar el atajo, no garantiza que
+    /// haya efecto global. Por eso el estado no sale de la sonda, sino de la
+    /// sonda **más** la comparación del trigger.
     ///
     /// La versión no decide si se puede comparar el trigger —eso depende de que
     /// la respuesta traiga `trigger_description`, que la v1 ya trae— sino qué
