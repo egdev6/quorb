@@ -28,6 +28,7 @@ jobs:
       NEXO_SIM_HUB: plugin/target/debug/examples/sim_hub.exe
       NEXO_APP: src-tauri/target/debug/quorb.exe
       NEXO_TRANSCRIPT: nexo-evidence-transcript.txt
+      NEXO_APP_LOG: nexo-evidence-app.log
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,13 +69,10 @@ jobs:
       - name: Build the frontend
         run: npm run build
 
-      - name: Seed the configuration so the first-run picker stays closed
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:APPDATA 'es.egdev.quorb'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          [System.IO.File]::WriteAllText((Join-Path $dir 'config.json'), '{"locale":"es"}')
-
+      # Sin configuración previa la app abre el selector de idioma: una sola
+      # ventana, y el hilo de UI queda libre. Con la tira, `start_main_ui` crea
+      # tres webviews y en un runner sin escritorio ese hilo no vuelve, así que
+      # el hub nunca recibe la decisión del «Salir» (expira a los 9 s).
       - name: Build Quorb
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
@@ -88,6 +86,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: nexo-evidence-transcript
-          path: nexo-evidence-transcript.txt
+          name: nexo-evidence
+          path: nexo-evidence-*
           if-no-files-found: warn

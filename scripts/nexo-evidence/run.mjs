@@ -23,6 +23,7 @@ import { createWatcher } from './watcher.mjs';
 const HUB = process.env.NEXO_SIM_HUB;
 const APP = process.env.NEXO_APP;
 const OUT = process.env.NEXO_TRANSCRIPT ?? 'nexo-evidence-transcript.txt';
+const OUT_APP = process.env.NEXO_APP_LOG ?? 'nexo-evidence-app.log';
 const TIMEOUT = (process.env.NEXO_TIMEOUT_MS ?? 120_000) | 0;
 
 if (!HUB || !APP) {
@@ -45,6 +46,10 @@ const send = (command) => {
 
 let app = null;
 let appExit = null;
+// La salida de la app se guarda aparte: si el hub no recibe respuesta a un
+// `quit`, el motivo (una ventana que no se crea, un pánico en el hilo de UI)
+// solo está aquí.
+let appLog = '';
 const cleanup = () => {
   for (const child of [app, hub]) {
     try {
@@ -56,9 +61,13 @@ const cleanup = () => {
 };
 process.on('exit', cleanup);
 
+const appTail = () => appLog.trim().split('\n').slice(-40).join('\n');
+
 const dump = (message) => {
   writeFileSync(OUT, transcript.text());
-  console.error(`${message}\nTranscripción guardada en ${OUT}`);
+  writeFileSync(OUT_APP, appLog);
+  console.error(`${message}\nTranscripción guardada en ${OUT}\nLog de la app guardado en ${OUT_APP}`);
+  if (appLog.trim()) console.error(`\n--- salida de la app ---\n${appTail()}`);
   process.exitCode = 1;
 };
 
@@ -69,7 +78,15 @@ try {
   // El cursor se toma antes de arrancar la app: así la espera del registro no
   // se satisface con nada anterior.
   let from = transcript.mark();
-  app = spawn(APP, [], { stdio: 'ignore' });
+  app = spawn(APP, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+  app.stdout.setEncoding('utf8');
+  app.stderr.setEncoding('utf8');
+  app.stdout.on('data', (chunk) => {
+    appLog += chunk;
+  });
+  app.stderr.on('data', (chunk) => {
+    appLog += chunk;
+  });
   app.on('exit', (code) => {
     appExit = code;
   });
@@ -111,6 +128,7 @@ try {
 
   const cases = evaluate(parseTranscript(transcript.text()));
   writeFileSync(OUT, transcript.text());
+  writeFileSync(OUT_APP, appLog);
   console.log(`\n${summarize(cases)}\n`);
   console.log(`Transcripción completa en ${OUT}`);
   if (cases.some((entry) => !entry.ok)) process.exitCode = 1;
