@@ -570,28 +570,6 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
     );
 }
 
-/// #314: el detalle **no** tiene una copia del seam del origen: usa el de
-/// la tira. El contrato del binding (`(retorno, x, y)`, con el retorno sin
-/// significado) tiene **una sola** implementación y **un solo** juego de
-/// regresiones (`widget_placement_test.rs`); una copia por lector divergiría
-/// con el mismo defecto.
-///
-/// Este pin no mira qué hace el lector del detalle —eso no se puede observar
-/// sin una ventana GDK—: fija, **de fuente**, que el detalle llama al seam
-/// de la tira por su ruta canónica y que no define el suyo.
-///
-/// Las comprobaciones van sobre el **código** (el archivo enmascarado: sin
-/// comentarios ni textos): un comentario que mencione la llamada canónica
-/// no puede dar el pin por cumplido, ni uno que mencione una definición
-/// puede hacer fallar el test.
-///
-/// La comparación de punteros de función que este pin tenía antes no fijaba
-/// nada: el `pub use` del módulo **es** la definición de la tira, así que
-/// comparar sus direcciones sólo podía fallar al compilar. Lo que protege de
-/// verdad es la fuente: una copia con el mismo nombre choca con el `pub use`
-/// (error de compilación) y una copia con otro nombre deja de cumplir la
-/// llamada canónica que este test exige —que tiene que estar **presente**—.
-#[test]
 #[test]
 fn the_unverified_report_carries_no_geometry_and_no_reason() {
     // No X11 (y el oculto ilegible) sólo confirman que la petición se aplicó:
