@@ -1,0 +1,93 @@
+name: Nexo evidence
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'src/**'
+      - 'scripts/nexo-evidence/**'
+      - '.github/workflows/nexo-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexo-evidence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sim-hub:
+    name: Nexo hub evidence (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # El hub simulado usa el pipe de producción del usuario actual: hay que
+      # parar antes cualquier hub real (el fixture se niega a arrancar si otro
+      # dueño tiene el pipe).
+      NEXO_SIM_HUB: plugin/target/debug/examples/sim_hub.exe
+      NEXO_APP: src-tauri/target/debug/quorb.exe
+      NEXO_TRANSCRIPT: nexo-evidence-transcript.txt
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout the pinned plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: egdev6/tauri-plugin-nexo
+          ref: v0.1.1
+          path: plugin
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            src-tauri -> target
+            plugin -> target
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      # `tauri::generate_context!` incrusta el frontend al compilar: `dist/` tiene
+      # que existir antes de `cargo build`.
+      - name: Build the frontend
+        run: npm run build
+
+      - name: Seed the configuration so the first-run picker stays closed
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:APPDATA 'es.egdev.quorb'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          [System.IO.File]::WriteAllText((Join-Path $dir 'config.json'), '{"locale":"es"}')
+
+      - name: Build Quorb
+        run: cargo build --manifest-path src-tauri/Cargo.toml
+
+      - name: Build the simulated hub
+        run: cargo build --manifest-path plugin/Cargo.toml -p tauri-plugin-nexo --example sim_hub
+
+      - name: Drive the hub and collect the evidence
+        run: node scripts/nexo-evidence/run.mjs
+
+      - name: Upload the transcript
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nexo-evidence-transcript
+          path: nexo-evidence-transcript.txt
+          if-no-files-found: warn
