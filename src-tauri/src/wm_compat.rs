@@ -422,6 +422,24 @@ const AUTOSTART_NOTE_NON_WAYLAND: &str =
     "Arranque vía XDG autostart (.desktop) sin verificar en un inicio de sesión real.";
 const AUTOSTART_NOTE_WAYLAND: &str = "Si el gestor de sesión ejecuta la entrada XDG autostart, Quorb arranca en Wayland nativo (el .desktop no lleva GDK_BACKEND): no hay posicionamiento de ventana aunque Quorb se use normalmente con GDK_BACKEND=x11.";
 
+/// Atajos globales bajo Wayland (#312): `global-hotkey` 0.8 solo tiene backend
+/// X11, así que en Wayland el registro pasa por XWayland y no hay efecto global.
+/// El grab de XWayland solo se evalúa si el foco de teclado está en una app
+/// X11: el compositor descarta los grabs pasivos de la superficie X11.
+///
+/// La nota no puede prometer un error visible: en los dos casos el registro no
+/// informa del fallo, aunque por motivos distintos. Con XWayland `register()`
+/// devuelve `Ok` y el grab pasivo puede no evaluarse nunca; sin XWayland el
+/// hilo de eventos muere y `register()` también devuelve `Ok`.
+/// `GlobalHotKeyManager::new()` (`platform_impl/x11/mod.rs:31-40`) lanza el hilo
+/// y devuelve `Ok` sin esperarlo; `RustConnection::connect(None)` falla dentro
+/// de ese hilo (`:230`), que termina sin avisar al llamador. Después
+/// `register()` (`:42-53`) ignora el envío (`let _ =`), el mensaje sin consumir
+/// se descarta con su `Sender` y `rx.recv()` da `Err`, pero `if let Ok(..)` lo
+/// saltea y la función cierra en `Ok(())`. Lo que Ajustes muestra es el aviso
+/// de capacidad de #181, no un error de registro.
+const WAYLAND_SHORTCUT_NOTE: &str = "En Wayland no hay atajo global: con XWayland el registro se hace por X11 y el atajo solo responde si el foco de teclado está en una ventana X11; sin XWayland el registro tampoco llega a funcionar. En los dos casos el registro no informa del fallo: Ajustes › Atajos muestra el aviso de capacidad, no un error de registro.";
+
 const AOT_HYPRLAND_ADVISED: &str =
     "Hyprland aplica siempre-encima de forma estricta; si la tira se oculta, usa «Auto-hide».";
 const AOT_HYPRLAND_NATIVE: &str = "Hyprland aplica siempre-encima de forma estricta; en Wayland nativo la tira puede quedar oculta tras otras ventanas.";
@@ -489,7 +507,7 @@ fn desktop_surfaces_by_session(session: &Session, tray: TrayDiagnostics) -> Desk
         return DesktopSurfaces {
             click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "limited", note: "Sin una barra que muestre AppIndicator, el icono no se ve: vuelve a abrir Quorb para recuperar la tira." },
-            global_shortcuts: SurfaceStatus { state: "limited", note: "Los atajos globales dependen del registro por portal; si falla, el error se ve en Ajustes › Atajos." },
+            global_shortcuts: SurfaceStatus { state: "limited", note: WAYLAND_SHORTCUT_NOTE },
             autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
@@ -503,7 +521,7 @@ fn desktop_surfaces_by_session(session: &Session, tray: TrayDiagnostics) -> Desk
             // (presente/ausente/desconocido); la extensión es complementaria.
             // Con host solo se acredita disponibilidad, no visibilidad del icono.
             tray_icon: SurfaceStatus { state: gnome_tray_state(tray), note: gnome_tray_note(tray) },
-            global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
+            global_shortcuts: SurfaceStatus { state: "limited", note: WAYLAND_SHORTCUT_NOTE },
             autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
@@ -514,7 +532,7 @@ fn desktop_surfaces_by_session(session: &Session, tray: TrayDiagnostics) -> Desk
         return DesktopSurfaces {
             click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
             tray_icon: SurfaceStatus { state: "ok", note: "KDE soporta bandeja AppIndicator/StatusNotifier de forma nativa." },
-            global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
+            global_shortcuts: SurfaceStatus { state: "limited", note: WAYLAND_SHORTCUT_NOTE },
             autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
             notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
             transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
@@ -526,7 +544,7 @@ fn desktop_surfaces_by_session(session: &Session, tray: TrayDiagnostics) -> Desk
     DesktopSurfaces {
         click_through: SurfaceStatus { state: "limited", note: "Click-through del widget no implementado: el ratón no atraviesa la tira; solo el overlay de efectos lo usa." },
         tray_icon: SurfaceStatus { state: "limited", note: "Solo se muestra el icono si la barra admite StatusNotifier/AppIndicator." },
-        global_shortcuts: SurfaceStatus { state: "limited", note: "El registro puede denegarse en Wayland: el error se muestra en Ajustes › Atajos." },
+        global_shortcuts: SurfaceStatus { state: "limited", note: WAYLAND_SHORTCUT_NOTE },
         autostart: SurfaceStatus { state: "limited", note: AUTOSTART_NOTE_WAYLAND },
         notifications: SurfaceStatus { state: "ok", note: "Notificaciones por org.freedesktop.Notifications (daemon del escritorio)." },
         transparency: SurfaceStatus { state: "ok", note: "El compositor aplica transparencia." },
@@ -1510,6 +1528,73 @@ mod tests {
         assert_eq!(s.tray_icon.state, "limited");
         assert_eq!(s.always_on_top.state, "limited");
         assert_eq!(s.global_shortcuts.state, "limited");
+    }
+
+    /// #312: el diagnóstico de atajos no puede afirmar que el registro depende
+    /// del portal (ni `ashpd` ni `zbus` son dependencias directas en
+    /// `Cargo.toml`; `zbus` entra transitivo en `Cargo.lock`) ni que "puede
+    /// denegarse". Tampoco puede prometer un error visible: en `global-hotkey`
+    /// 0.8 el registro no informa del fallo **con y sin XWayland** (revisión del
+    /// owner, 2026-11-26). Y no puede dar a entender que Ajustes no muestra
+    /// nada: el aviso de capacidad de #181 sí se muestra. Todas las ramas
+    /// Wayland comparten la misma nota, para que no diverjan por escritorio.
+    #[test]
+    fn wayland_shortcut_note_states_the_real_failure() {
+        let cases = [
+            (
+                "hyprland",
+                env(None, Some("wayland"), Some("hyprland"), None),
+            ),
+            ("gnome", env(None, Some("wayland"), Some("gnome"), None)),
+            ("kde", env(None, Some("wayland"), Some("plasma"), None)),
+            ("sway", env(Some("wayland-1"), None, Some("sway"), None)),
+        ];
+        let mut notes = Vec::new();
+        for (name, env) in cases {
+            let s = detect_wm_info_from_env(&env, tray()).surfaces;
+            assert_eq!(
+                s.global_shortcuts.state, "limited",
+                "{name}: los atajos quedan limitados bajo Wayland"
+            );
+            let note = s.global_shortcuts.note;
+            assert!(
+                !note.contains("portal"),
+                "{name}: la nota afirma el portal, pero no lo hay: {note}"
+            );
+            assert!(
+                !note.contains("denegarse"),
+                "{name}: la nota habla de denegación, pero el fallo es silencioso: {note}"
+            );
+            assert!(
+                note.contains("no hay atajo global"),
+                "{name}: la nota no dice que bajo Wayland no hay atajo global: {note}"
+            );
+            assert!(
+                note.contains("foco de teclado"),
+                "{name}: la nota no dice cuándo responde el atajo: {note}"
+            );
+            assert!(
+                note.contains("no informa del fallo"),
+                "{name}: la nota no dice que el registro calla el fallo: {note}"
+            );
+            assert!(
+                !note.contains("sí se ve") && !note.contains("sin error visible"),
+                "{name}: la nota promete (o insinúa) un error visible, y sin XWayland el fallo también es silencioso: {note}"
+            );
+            assert!(
+                note.contains("aviso"),
+                "{name}: la nota da a entender que Ajustes no muestra nada, pero #181 ya muestra el aviso de capacidad: {note}"
+            );
+            assert!(
+                note.contains("sin XWayland"),
+                "{name}: la nota no dice qué pasa sin XWayland: {note}"
+            );
+            notes.push(note);
+        }
+        assert!(
+            notes.windows(2).all(|w| w[0] == w[1]),
+            "todas las ramas Wayland deben compartir la misma nota: {notes:?}"
+        );
     }
 
     impl DesktopSurfaces {
