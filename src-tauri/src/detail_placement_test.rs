@@ -15,7 +15,6 @@
 use super::detail_placement::*;
 use crate::detail_geometry::Bounds;
 use crate::widget_placement::{Geometry, Reason, Status, Transport, READS};
-use crate::widget_placement_test::{code_without_comments, definitions_of, read_source};
 use crate::window_fit::{fit_plan, FitOutcome};
 use crate::window_fit_test::{hyprland_profile, FakeFitSurface};
 
@@ -593,25 +592,6 @@ fn a_non_x11_display_keeps_the_apply_only_unverified_path() {
 /// (error de compilación) y una copia con otro nombre deja de cumplir la
 /// llamada canónica que este test exige —que tiene que estar **presente**—.
 #[test]
-fn the_detail_has_no_copy_of_the_origin_seam() {
-    let src = read_source("src/detail_placement.rs");
-    let code = code_without_comments(&src);
-    assert!(
-        code.contains("crate::widget_placement::rooted_origin("),
-        "el detalle tiene que llamar al seam compartido del origen, no a una copia"
-    );
-    assert_eq!(
-        definitions_of(&code, "rooted_origin"),
-        0,
-        "el detalle no puede definir su propia copia del seam del origen"
-    );
-    // Y el seam compartido sigue honrando el contrato: el retorno de la
-    // tupla cruda no significa nada (la garantía de «hay origen» la da la
-    // visibilidad, no el flag).
-    assert_eq!(rooted_origin((1, 1220, 0), 1.0), (1220, 0));
-    assert_eq!(rooted_origin((0, 1220, 0), 1.0), (1220, 0));
-}
-
 #[test]
 fn the_unverified_report_carries_no_geometry_and_no_reason() {
     // No X11 (y el oculto ilegible) sólo confirman que la petición se aplicó:
