@@ -8,129 +8,116 @@
 //
 // What CI can see is the protocol: the registration, the menu, the unified
 // toggle, the recovery after a dropped connection and the `quit_result`.
-// Whether the icon is *visible* in the Windows tray is not observable from
-// here and stays a manual check.
+// Whether the icon is *visible* in the Windows tray is not observable from here
+// (the runner has no desktop shell, and a failed tray creation is only logged by
+// the plugin) and stays a manual check.
 //
-//   NEXO_SIM_HUB   ruta al ejecutable de sim_hub
-//   NEXO_APP       ruta al ejecutable de Quorb
+//   NEXO_SIM_HUB     ruta al ejecutable de sim_hub
+//   NEXO_APP         ruta al ejecutable de Quorb
 //   NEXO_TRANSCRIPT  fichero donde volcar la transcripción (opcional)
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { evaluate, parseTranscript, summarize } from './transcript.mjs';
+import { createWatcher } from './watcher.mjs';
 
 const HUB = process.env.NEXO_SIM_HUB;
 const APP = process.env.NEXO_APP;
 const OUT = process.env.NEXO_TRANSCRIPT ?? 'nexo-evidence-transcript.txt';
-const TIMEOUT = (process.env.NEXO_TIMEOUT_MS ?? 180_000) | 0;
+const TIMEOUT = (process.env.NEXO_TIMEOUT_MS ?? 120_000) | 0;
 
 if (!HUB || !APP) {
   console.error('Faltan NEXO_SIM_HUB y/o NEXO_APP.');
   process.exit(2);
 }
 
-let output = '';
-const waiters = [];
+const transcript = createWatcher({ timeout: TIMEOUT });
 
-const pump = (chunk) => {
-  output += chunk;
-  for (const waiter of [...waiters]) {
-    if (waiter.pattern.test(output)) {
-      waiters.splice(waiters.indexOf(waiter), 1);
-      clearTimeout(waiter.timer);
-      waiter.resolve(output);
-    }
-  }
-};
-
-/** Espera a que la transcripción case con el patrón. */
-const waitFor = (pattern, description, timeout = TIMEOUT) =>
-  new Promise((resolve, reject) => {
-    if (pattern.test(output)) {
-      resolve(output);
-      return;
-    }
-    const waiter = { pattern, resolve, timer: null };
-    waiter.timer = setTimeout(() => {
-      waiters.splice(waiters.indexOf(waiter), 1);
-      reject(new Error(`Timeout esperando ${description}. Transcripción hasta ahora:\n${output}`));
-    }, timeout);
-    waiters.push(waiter);
-  });
+const hub = spawn(HUB, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+hub.stdout.setEncoding('utf8');
+hub.stderr.setEncoding('utf8');
+hub.stdout.on('data', (chunk) => transcript.push(chunk));
+hub.stderr.on('data', (chunk) => transcript.push(chunk));
 
 const send = (command) => {
   if (!hub.stdin.writable) throw new Error('el hub ya no acepta comandos');
   hub.stdin.write(`${command}\n`);
 };
 
-const hub = spawn(HUB, [], { stdio: ['pipe', 'pipe', 'pipe'] });
-hub.stdout.setEncoding('utf8');
-hub.stderr.setEncoding('utf8');
-hub.stdout.on('data', pump);
-hub.stderr.on('data', pump);
-
 let app = null;
+let appExit = null;
 const cleanup = () => {
-  try {
-    if (app && app.exitCode === null) app.kill();
-  } catch {
-    /* nada que hacer */
-  }
-  try {
-    if (hub.exitCode === null) hub.kill();
-  } catch {
-    /* nada que hacer */
+  for (const child of [app, hub]) {
+    try {
+      if (child && child.exitCode === null) child.kill();
+    } catch {
+      /* nada que hacer */
+    }
   }
 };
 process.on('exit', cleanup);
 
+const dump = (message) => {
+  writeFileSync(OUT, transcript.text());
+  console.error(`${message}\nTranscripción guardada en ${OUT}`);
+  process.exitCode = 1;
+};
+
 try {
-  await waitFor(/^Listening on /m, 'a que el hub abra el pipe');
+  await transcript.waitFor(/^Listening on /, 'a que el hub abra el pipe');
   console.log('· hub escuchando');
 
+  // El cursor se toma antes de arrancar la app: así la espera del registro no
+  // se satisface con nada anterior.
+  let from = transcript.mark();
   app = spawn(APP, [], { stdio: 'ignore' });
-  let appExit = null;
   app.on('exit', (code) => {
     appExit = code;
   });
 
-  await waitFor(/^Registered app: /m, 'a que la app se registre');
+  await transcript.waitFor(/^Registered app: /, 'a que la app se registre', { from });
   console.log('· app registrada');
-  await waitFor(/^Menu replacement: /m, 'a que la app envíe su menú');
+  await transcript.waitFor(/^Menu replacement: /, 'a que la app envíe su menú', { from });
   console.log('· menú recibido');
 
+  from = transcript.mark();
   send('u');
-  await waitFor(/^Unified: false$/m, 'la alternancia del modo unificado');
+  await transcript.waitFor(/^Unified: false$/, 'la alternancia del modo unificado', { from });
+
+  from = transcript.mark();
   send('u');
-  await waitFor(/^Unified: true$/m, 'la vuelta al modo unificado');
+  await transcript.waitFor(/^Unified: true$/, 'la vuelta al modo unificado', { from });
   console.log('· modo unificado alternado');
 
+  // El cursor se toma ANTES de pedir la caída: el re-registro que hay que
+  // esperar es el de después, no el del arranque.
+  from = transcript.mark();
   send('d');
-  await waitFor(/^Dropping connection/m, 'la caída de la conexión');
-  await waitFor(/^Registered app: /m, 'el re-registro tras la caída', 120_000);
+  await transcript.waitFor(/^Dropping connection/, 'la caída de la conexión', { from });
+  await transcript.waitFor(/^Registered app: /, 'el re-registro tras la caída', { from });
   console.log('· la app volvió a registrarse tras la caída');
 
+  from = transcript.mark();
   send('q');
-  await waitFor(/<-\s*\{"v":1,"type":"quit_result"/m, 'el resultado del «Salir»', 60_000);
-  await waitFor(/<-\s*\{"v":1,"type":"bye"/m, 'la despedida de la app', 60_000);
+  await transcript.waitFor(/^-> .*"type":"quit"/, 'a que el hub pida el «Salir»', { from, timeout: 30_000 });
+  await transcript.waitFor(/^<- .*"type":"quit_result"/, 'el resultado del «Salir»', { from, timeout: 60_000 });
+  await transcript.waitFor(/^<- .*"type":"bye"/, 'la despedida de la app', { from, timeout: 30_000 });
   console.log('· «Salir» respondido y app despedida');
 
   const deadline = Date.now() + 60_000;
   while (appExit === null && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  console.log(`· la app terminó con código ${appExit ?? 'n/d'}`);
+  console.log(`· la app terminó con código ${appExit ?? 'no terminó a tiempo'}`);
 
-  const parsed = parseTranscript(output);
-  const cases = evaluate(parsed);
-  writeFileSync(OUT, output);
+  const cases = evaluate(parseTranscript(transcript.text()));
+  writeFileSync(OUT, transcript.text());
   console.log(`\n${summarize(cases)}\n`);
   console.log(`Transcripción completa en ${OUT}`);
   if (cases.some((entry) => !entry.ok)) process.exitCode = 1;
+  // Una app que no sale tras un «Salir» aceptado es un fallo, no un detalle.
+  if (appExit !== 0) process.exitCode = 1;
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  writeFileSync(OUT, output);
-  console.error(`Transcripción guardada en ${OUT}`);
-  process.exitCode = 1;
+  dump(error instanceof Error ? error.message : String(error));
 } finally {
   cleanup();
 }
