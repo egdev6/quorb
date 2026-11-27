@@ -638,14 +638,39 @@ fn a_non_positive_or_non_finite_scale_is_rejected_before_any_native_call() {
     assert!(p.validate("detail").is_err(), "sólo la ventana del widget");
 }
 
+/// #314: la tupla cruda del binding es `(retorno, x, y)` y el retorno no
+/// significa nada (GDK3: «not meaningful, ignore»). Los dos lectores la
+/// consumían como `(x, y, «hay origen»)`.
 #[test]
-fn the_origin_comes_from_the_root_or_there_is_no_reading_at_all() {
-    // La llamada a la raíz respondió: su origen es el que se informa.
-    assert_eq!(rooted_origin(1859, 899, true), Some((1859, 899)));
-    // Si falla, la lectura no es utilizable: el único respaldo disponible
-    // (`gdk_window_get_geometry`) es relativo al padre y mezclaría dos
-    // espacios de coordenadas.
-    assert_eq!(rooted_origin(0, 0, false), None);
+fn the_origin_is_read_from_the_raw_binding_tuple() {
+    // `y == 0`: la tira docked arriba. Es una posición válida, no «no hay
+    // origen» (el consumo anterior leía ese 0 como un fallo de lectura).
+    assert_eq!(rooted_origin((1, 1220, 0), 1.0), (1220, 0));
+    // El origen (0, 0) también es un origen.
+    assert_eq!(rooted_origin((1, 0, 0), 1.0), (0, 0));
+    // Coordenadas negativas (un monitor a la izquierda de la raíz).
+    assert_eq!(rooted_origin((1, -2560, -120), 1.0), (-2560, -120));
+    // `y` no nulo: el origen es (x, y), nunca (retorno, x).
+    assert_eq!(rooted_origin((1, 3537, 42), 1.0), (3537, 42));
+    // El retorno no es significativo: da igual lo que valga.
+    assert_eq!(rooted_origin((0, 1220, 0), 1.0), (1220, 0));
+    assert_eq!(rooted_origin((7, 3537, 42), 1.0), (3537, 42));
+}
+
+/// #314: el informe viaja en **píxeles físicos** y el seam convierte con el
+/// factor que informa el lector (el de su ventana: en DPI mixto el factor de
+/// la petición puede ser el de otro monitor). El binding de GDK devuelve
+/// píxeles de aplicación: con `GDK_SCALE=2` devolvió (2192, 141) para una
+/// posición de dispositivo de (4384, 282).
+///
+/// Lo que fija: la tupla cruda se convierte **una sola vez**, con el factor
+/// del lector, y el informe no reescala por segunda vez.
+#[test]
+fn the_origin_is_converted_to_physical_pixels_with_the_readers_factor() {
+    // Factor 2: el origen lógico (1220, 0) se informa como (2440, 0).
+    assert_eq!(rooted_origin((1, 1220, 0), 2.0), (2440, 0));
+    // Factor 1.5: la conversión redondea (1220 × 1.5 = 1830, 42 × 1.5 = 63).
+    assert_eq!(rooted_origin((1, 1220, 42), 1.5), (1830, 63));
 }
 
 #[test]
