@@ -104,7 +104,7 @@ Misma tupla cruda, misma ventana, informes opuestos. El tamaño leído (48×194)
 ## Riesgo
 
 - **item 3** — el contrato compartido que cambia es `Report.reason`, que alimenta la lógica del front (`src/detail-placement.ts:69` ramifica por `read_failed`; `src/lib/widget-placement.ts:167` reintenta por `not_viewable`). El diff cambia qué `reason` emite el camino Linux: `ReadFailed` → `Applied`/`Limited` con geometría real, y en Linux el front pasa a cachear la posición efectiva. En Windows y macOS no cambia nada.
-- Verificación: `gentle-ai-verify` independiente sobre el diff + los tests del ciclo (36 en `widget_placement_test.rs` y 23 en `detail_placement_test.rs`).
+- Verificación: `gentle-ai-verify` independiente sobre el diff + los tests del ciclo (36 en `widget_placement_test.rs` y 22 en `detail_placement_test.rs`).
 - Lo que no se cubre: Windows ni la experiencia real de compositor. Los checks de Linux no validan Windows (CONTRIBUTING, "Pull requests"), y la sonda de finales de línea que corría en Linux se retiró con los pines (`1d41503`): la ejecución en Windows sigue sin cubrirse, y con ella sus finales de línea.
 
 ## Estrategia de entrega
