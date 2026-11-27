@@ -16,6 +16,11 @@ mod model;
 mod pointer_crossing;
 mod providers;
 mod secrets;
+// El modelo de estados y la sonda del portal (#312) todavía no los consume
+// nadie: el slice 2 los enchufa con el cliente real. Cada elemento pendiente
+// lleva su propio `allow(dead_code)` dentro del módulo, para no silenciar el
+// módulo entero.
+mod shortcuts;
 mod uninstall;
 // El módulo se compila también en Windows/macOS (el comando se invoca siempre),
 // pero allí sus piezas de Linux no se usan: sin avisos de código muerto.
@@ -45,6 +50,7 @@ pub mod wsl;
 use config::{AppConfig, ConfigOrigin};
 use model::UsageReport;
 use serde::{Deserialize, Serialize};
+use shortcuts::ShortcutRegistrar;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -167,7 +173,7 @@ fn apply_shortcuts(app: &AppHandle, cfg: &config::ShortcutsConfig) {
         cfg.enabled,
         wm_compat::is_wayland_session(),
         &entries,
-        |sc| gs.register(sc.clone()).map_err(|e| e.to_string()),
+        &mut |sc: &Shortcut| gs.register(sc.clone()).map_err(|e| e.to_string()),
     );
     if let Some(state) = app.try_state::<Shortcuts>() {
         *state.map.lock().unwrap() = map;
@@ -188,11 +194,16 @@ type ShortcutEntry<'a> = (&'static str, &'static str, &'a str);
 /// X11/XWayland puede no tener efecto global aunque `register()` devuelva
 /// `Ok`). Con `enabled: false` no hay registro ni falso aviso. Pura: los
 /// tests cubren la matriz completa sin `AppHandle`.
+///
+/// El registro entra por el seam `ShortcutRegistrar` (#312) y no por un
+/// `impl FnMut` directo: así el cliente del portal entra después detrás del
+/// mismo contrato sin cambiar esta decisión. La implementación blanket del
+/// trait mantiene el caso simple — un closure — funcionando igual.
 fn compute_shortcuts(
     enabled: bool,
     wayland: bool,
     entries: &[ShortcutEntry<'_>],
-    mut register: impl FnMut(&Shortcut) -> Result<(), String>,
+    registrar: &mut impl ShortcutRegistrar,
 ) -> (Vec<(Shortcut, &'static str)>, Vec<String>, Vec<String>) {
     let mut map = vec![];
     let mut errors = vec![];
@@ -205,7 +216,7 @@ fn compute_shortcuts(
             continue;
         }
         match text.parse::<Shortcut>() {
-            Ok(sc) => match register(&sc) {
+            Ok(sc) => match registrar.register(&sc) {
                 Ok(()) => {
                     map.push((sc, action));
                     if wayland {
@@ -2370,7 +2381,8 @@ mod tests {
 
     #[test]
     fn wayland_with_ok_registration_warns_limited_scope() {
-        let (map, errors, warnings) = compute_shortcuts(true, true, &entries(), |_| Ok(()));
+        let (map, errors, warnings) =
+            compute_shortcuts(true, true, &entries(), &mut |_: &Shortcut| Ok(()));
         assert_eq!(map.len(), 2, "registro best-effort conservado");
         assert!(errors.is_empty(), "sin errores reales: {errors:?}");
         assert_eq!(warnings.len(), 2, "un aviso por atajo registrado");
@@ -2379,7 +2391,8 @@ mod tests {
 
     #[test]
     fn x11_with_ok_registration_has_no_warning() {
-        let (map, errors, warnings) = compute_shortcuts(true, false, &entries(), |_| Ok(()));
+        let (map, errors, warnings) =
+            compute_shortcuts(true, false, &entries(), &mut |_: &Shortcut| Ok(()));
         assert_eq!(map.len(), 2);
         assert!(errors.is_empty());
         assert!(warnings.is_empty(), "X11 no genera aviso de capacidad");
@@ -2387,7 +2400,8 @@ mod tests {
 
     #[test]
     fn disabled_shortcuts_produce_no_registration_nor_false_warning() {
-        let (map, errors, warnings) = compute_shortcuts(false, true, &entries(), |_| Ok(()));
+        let (map, errors, warnings) =
+            compute_shortcuts(false, true, &entries(), &mut |_: &Shortcut| Ok(()));
         assert!(map.is_empty());
         assert!(errors.is_empty());
         assert!(
@@ -2399,7 +2413,9 @@ mod tests {
     #[test]
     fn real_registration_errors_are_preserved_alongside_capacity_diagnosis() {
         let (map, errors, warnings) =
-            compute_shortcuts(true, true, &entries(), |_| Err("ya en uso".to_string()));
+            compute_shortcuts(true, true, &entries(), &mut |_: &Shortcut| {
+                Err("ya en uso".to_string())
+            });
         assert!(map.is_empty(), "fallo de registro no agrega al map");
         assert_eq!(errors.len(), 2, "errores reales intactos");
         assert!(errors.iter().all(|e| e.contains("no se pudo registrar")));
@@ -2412,7 +2428,8 @@ mod tests {
     #[test]
     fn parse_errors_do_not_become_capacity_warnings() {
         let bad = vec![("toggle", "Mostrar / ocultar", "no-es-un-atajo")];
-        let (map, errors, warnings) = compute_shortcuts(true, true, &bad, |_| Ok(()));
+        let (map, errors, warnings) =
+            compute_shortcuts(true, true, &bad, &mut |_: &Shortcut| Ok(()));
         assert!(map.is_empty());
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("combinación no válida"));
@@ -2425,7 +2442,8 @@ mod tests {
             ("toggle", "Mostrar / ocultar", ""),
             ("refresh", "Actualizar", "Ctrl+Alt+R"),
         ];
-        let (map, errors, warnings) = compute_shortcuts(true, false, &mixed, |_| Ok(()));
+        let (map, errors, warnings) =
+            compute_shortcuts(true, false, &mixed, &mut |_: &Shortcut| Ok(()));
         assert_eq!(map.len(), 1);
         assert!(errors.is_empty());
         assert!(warnings.is_empty());
