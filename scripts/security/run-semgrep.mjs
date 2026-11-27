@@ -39,8 +39,10 @@ const MAX_REPORT_BYTES = 8 * 1024 * 1024;
 const MOUNT_BREAK = /[,\r\n]/;
 const COMMIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 
-const fail = (stage) => {
-  throw new Error(`semgrep-run-failed:${stage}`);
+const fail = (stage, internalExit = null) => {
+  const error = new Error(`semgrep-run-failed:${stage}`);
+  error.internalExit = Number.isInteger(internalExit) ? internalExit : null;
+  throw error;
 };
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -174,6 +176,8 @@ export const runSemgrep = (input, deps) => runScanner(input, deps, false);
 export const runZizmor = (input, deps) => runScanner(input, deps, true);
 
 function runScanner(input, deps = {}, workflow = false) {
+  const scanner = workflow ? 'zizmor' : 'semgrep';
+  const startedAt = performance.now();
   const exportSnapshot = deps.exportSnapshot ?? defaultExportSnapshot;
   const execute = deps.execute ?? spawnSync;
   const rulesPath = deps.rulesPath ?? TRUSTED.rules;
@@ -236,21 +240,21 @@ function runScanner(input, deps = {}, workflow = false) {
 
     name = `quorb-semgrep-${randomUUID()}`;
     const create = call(execute, createArgs({ name, wheelhouse, snapshot: inventory.root, control, uid, gid }), CREATE_TIMEOUT_MS, 1024 * 1024);
-    if (!succeeded(create)) fail('docker-create');
+    if (!succeeded(create)) fail('docker-create', create.status);
     const start = call(execute, ['start', '--attach', name], SCAN_TIMEOUT_MS, MAX_REPORT_BYTES);
-    if (!succeeded(start) || typeof start.stdout !== 'string') fail('scanner');
+    if (!succeeded(start) || typeof start.stdout !== 'string') fail('scanner', start.status);
     if (controlFingerprint() !== beforeControl || snapshotFingerprint(inventory, false) !== beforeSnapshot) fail('tamper');
 
     let parsed;
     try {
       parsed = JSON.parse(start.stdout);
     } catch {
-      fail('report');
+      fail('report-parse');
     }
     try {
       report = workflow ? normalizeZizmor(parsed, inventory) : normalizeSnapshotReport(parsed, inventory);
     } catch {
-      fail('report');
+      fail('report-normalize');
     }
   } catch (error) {
     failure = error;
@@ -262,7 +266,23 @@ function runScanner(input, deps = {}, workflow = false) {
     if (control && !removeDir(control)) cleanupFailed = true;
     if (inventory && inventory.root && !removeDir(inventory.root)) cleanupFailed = true;
   }
-  if (cleanupFailed) fail('cleanup');
-  if (failure) throw failure;
+  // A cleanup failure never replaces an earlier failure: when the scanner already
+  // failed, that is the reason worth reporting. It also decides whether retrying
+  // can help, so downgrading the primary cause would give the wrong answer —
+  // `tamper` (integrity, exit 2, never retried) must not become `cleanup`
+  // (infrastructure, exit 3, retryable). Cleanup alone still fails the run.
+  if (!failure && cleanupFailed) {
+    failure = new Error('semgrep-run-failed:cleanup');
+    failure.internalExit = null;
+  }
+  if (failure) {
+    if (failure.message.startsWith('semgrep-run-failed:')) {
+      const stage = failure.message.slice('semgrep-run-failed:'.length);
+      failure.message = `${scanner}-run-failed:${stage}`;
+    }
+    failure.scanner = scanner;
+    failure.durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+    throw failure;
+  }
   return report;
 }

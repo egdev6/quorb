@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runSemgrep } from './run-semgrep.mjs';
+import { runSemgrep, runZizmor } from './run-semgrep.mjs';
 
 const IMAGE = 'docker.io/library/python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d';
 const COMMIT = 'a'.repeat(40);
@@ -34,6 +34,29 @@ function fixture(t) {
   };
   return { base, root, source, wheelhouse, parent, inventory };
 }
+
+// zizmor scans workflows, so its inventory exposes mounted `NNNNNN.yml` files that map
+// back to `.github/workflows/<name>.yml` originals instead of js/ts sources.
+function zizmorFixture(t) {
+  const base = mkdtempSync(join(tmpdir(), 'run-zizmor-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, 'snapshot');
+  mkdirSync(root);
+  const source = join(root, '000000.yml');
+  writeFileSync(source, 'on: push');
+  const wheelhouse = join(base, 'wheels');
+  mkdirSync(wheelhouse);
+  const parent = join(base, 'out');
+  mkdirSync(parent);
+  const inventory = {
+    commit: COMMIT,
+    root,
+    targets: [{ path: source, originalPath: '.github/workflows/ci.yml', sha256: sha('on: push') }],
+    excluded: [],
+  };
+  return { base, root, source, wheelhouse, parent, inventory };
+}
+const zizmorReport = () => ({ version: '1.30.1', reports: [{ path: '/inputs/000000.yml', findings: [] }] });
 
 const input = (f) => ({ repo: '/repo', commit: COMMIT, wheelhouse: f.wheelhouse, parent: f.parent });
 const deps = (f, execute, extra = {}) => ({ platform: 'linux', uid: 1000, gid: 1000, exportSnapshot: () => f.inventory, execute, ...extra });
@@ -174,13 +197,27 @@ test('docker create and scanner failures are operational with host cleanup', (t)
   assert.throws(() => runSemgrep(input(f2), deps(f2, scanFail)), /semgrep-run-failed:scanner/);
 });
 
-test('unparseable or incomplete reports are operational', (t) => {
-  for (const stdout of ['not json', JSON.stringify(report(['/inputs/other.ts']))]) {
-    const f = fixture(t);
-    const { execute } = startedReport(stdout);
-    assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:report/);
-    assert.deepEqual(readdirSync(f.parent), []);
-  }
+test('unparseable and incomplete reports fail at distinct report stages', (t) => {
+  const parseFixture = fixture(t);
+  const { execute: parseExecute } = startedReport('not json');
+  assert.throws(() => runSemgrep(input(parseFixture), deps(parseFixture, parseExecute)), /semgrep-run-failed:report-parse/);
+
+  const normalizeFixture = fixture(t);
+  const { execute: normalizeExecute } = startedReport(JSON.stringify(report(['/inputs/other.ts'])));
+  assert.throws(() => runSemgrep(input(normalizeFixture), deps(normalizeFixture, normalizeExecute)), /semgrep-run-failed:report-normalize/);
+
+  assert.deepEqual(readdirSync(parseFixture.parent), []);
+  assert.deepEqual(readdirSync(normalizeFixture.parent), []);
+});
+
+test('zizmor failures identify the zizmor scanner and retain internal exit/duration', (t) => {
+  const f = fixture(t);
+  const { execute } = capture((args) => (args[0] === 'create' ? { status: 17, stdout: '', stderr: '' } : { status: 0, stdout: '', stderr: '' }));
+  assert.throws(
+    () => runZizmor(input(f), deps(f, execute)),
+    (error) =>
+      error.message === 'zizmor-run-failed:docker-create' && error.scanner === 'zizmor' && error.internalExit === 17 && Number.isInteger(error.durationMs),
+  );
 });
 
 test('removes container and host temp dirs on success and on start timeout', (t) => {
@@ -219,16 +256,25 @@ test('uncertain create still attempts named cleanup and never returns success', 
   assert.ok(!existsSync(f.root));
 });
 
-test('cleanup failure is operational, never green', (t) => {
-  const f = fixture(t);
-  const { execute } = capture((args) =>
-    args[0] === 'create'
-      ? { status: 0, stdout: '', stderr: '' }
-      : args[0] === 'start'
-        ? { status: 0, stdout: JSON.stringify(report()), stderr: '' }
-        : { status: 1, stdout: '', stderr: 'permission denied' },
-  );
-  assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:cleanup/);
+test('cleanup failure is operational, never green, and names the scanner that ran', (t) => {
+  for (const [run, scanner, fixtureFor, stdout] of [
+    [runSemgrep, 'semgrep', fixture, JSON.stringify(report())],
+    [runZizmor, 'zizmor', zizmorFixture, JSON.stringify(zizmorReport())],
+  ]) {
+    const f = fixtureFor(t);
+    const { execute } = capture((args) =>
+      args[0] === 'create'
+        ? { status: 0, stdout: '', stderr: '' }
+        : args[0] === 'start'
+          ? { status: 0, stdout, stderr: '' }
+          : { status: 1, stdout: '', stderr: 'permission denied' },
+    );
+    assert.throws(
+      () => run(input(f), deps(f, execute)),
+      (error) => error.message === `${scanner}-run-failed:cleanup` && error.scanner === scanner && Number.isInteger(error.durationMs),
+      scanner,
+    );
+  }
 });
 
 test('never echoes raw scanner output or secrets in errors', (t) => {
@@ -272,4 +318,27 @@ test('detects snapshot and control mutation around the scanner', (t) => {
     });
     assert.throws(() => runSemgrep(input(f), deps(f, execute)), /semgrep-run-failed:tamper/, which);
   }
+});
+
+test('a cleanup failure does not mask the integrity failure', (t) => {
+  // El snapshot se modifica (integridad) y además el contenedor no se puede
+  // eliminar (limpieza). Lo que hay que reportar es `tamper`: si la limpieza
+  // lo tapara, el fallo de integridad passaría a ser infraestructura
+  // reintentable, que es justo lo que no debe pasar.
+  const f = fixture(t);
+  const { execute } = capture((args) => {
+    if (args[0] === 'create') return { status: 0, stdout: '', stderr: '' };
+    if (args[0] === 'start') {
+      chmodSync(f.source, 0o600);
+      writeFileSync(f.source, 'tampered');
+      return { status: 0, stdout: JSON.stringify(report()), stderr: '' };
+    }
+    // La limpieza falla: el contenedor se queda.
+    return { status: 1, stdout: '', stderr: 'permission denied' };
+  });
+  assert.throws(
+    () => runSemgrep(input(f), deps(f, execute)),
+    (error) => error.message === 'semgrep-run-failed:tamper' && error.scanner === 'semgrep',
+    'la limpieza no debe sustituir al fallo de integridad',
+  );
 });
