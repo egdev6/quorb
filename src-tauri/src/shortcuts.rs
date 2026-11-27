@@ -1,7 +1,7 @@
 //! Atajos globales: seams por capacidad y modelo de estados (#312, slice 1).
 //!
 //! Este módulo no tiene portal, ni D-Bus, ni cliente: sólo los seams por los
-//! que el slice 2 enchufa la implementación real. La idea es que **la canería
+//! que el slice 2 enchufa la implementación real. La idea es que **la cañería
 //! no cambie** cuando cambia la implementación: el registro pasa por un trait, la
 //! detección por otro, y el estado final sale de una función pura que sólo
 //! consume observaciones.
