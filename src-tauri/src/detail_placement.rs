@@ -46,11 +46,6 @@ use crate::widget_placement::{
 // read-back, así que estos símbolos no se importan ahí.
 #[cfg(target_os = "linux")]
 use crate::widget_placement::{to_physical, SETTLE};
-// El seam del origen es **compartido** con la tira (#314): el detalle no
-// lleva una copia (una copia divergiría con el mismo defecto). Sólo se
-// reexporta para que los tests alcancen el mismo contrato desde aquí.
-#[cfg(test)]
-pub use crate::widget_placement::rooted_origin;
 // El informe es el espejo de `set_widget_bounds`: viajan los mismos tipos,
 // así el frontend trata con un solo contrato.
 pub use crate::widget_placement::{Report, Status};
