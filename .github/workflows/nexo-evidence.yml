@@ -39,7 +39,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: egdev6/tauri-plugin-nexo
-          ref: v0.1.1
+          # SHA del tag v0.1.1, el mismo que fija Cargo.lock: un tag puede
+          # moverse, un commit no.
+          ref: 81663e61efeaf9f7b83d34d814cfdcc9d2d9449a
           path: plugin
           persist-credentials: false
 
@@ -74,10 +76,10 @@ jobs:
       # tres webviews y en un runner sin escritorio ese hilo no vuelve, así que
       # el hub nunca recibe la decisión del «Salir» (expira a los 9 s).
       - name: Build Quorb
-        run: cargo build --manifest-path src-tauri/Cargo.toml
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Build the simulated hub
-        run: cargo build --manifest-path plugin/Cargo.toml -p tauri-plugin-nexo --example sim_hub
+        run: cargo build --locked --manifest-path plugin/Cargo.toml -p tauri-plugin-nexo --example sim_hub
 
       - name: Drive the hub and collect the evidence
         run: node scripts/nexo-evidence/run.mjs

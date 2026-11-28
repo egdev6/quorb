@@ -103,6 +103,9 @@ const TRAY_ID: &str = "main";
 /// cuando el hub pide un «Salir» (#281). El payload es el token de la petición.
 #[cfg(windows)]
 const NEXO_QUIT_EVENT: &str = "nexo-quit-request";
+/// Rechazo de `nexo_quit_answer` cuando no lo invoca la ventana de Ajustes.
+#[cfg(windows)]
+const WRONG_QUIT_WINDOW: &str = "Solo Ajustes puede responder a un «Salir» del hub.";
 
 #[tauri::command]
 async fn set_surface_clip(
@@ -1652,16 +1655,26 @@ fn nexo_answer_quit(app: &AppHandle, token: u64, allow: bool, block_reason: i18n
 ///
 /// El frontend reporta si hay cambios sin guardar o un guardado en curso; la
 /// decisión final vive en `nexo_policy`, que es lo que se testea.
+///
+/// Solo la ventana de Ajustes puede responder: es la única que conoce el estado
+/// real. Otra webview de Quorb podría contestar «no hay nada pendiente» y dejar
+/// salir la app con trabajo sin guardar, así que se valida el origen igual que
+/// `install_codex`.
 #[cfg(windows)]
 #[tauri::command]
 fn nexo_quit_answer(
     app: AppHandle,
+    window: WebviewWindow,
     token: u64,
     dirty: bool,
     saving: bool,
     failed: bool,
     apply_failed: bool,
 ) -> Result<(), String> {
+    let label = window.label().to_string();
+    if !nexo_policy::quit_answer_window_ok(&label) {
+        return Err(WRONG_QUIT_WINDOW.into());
+    }
     let state = nexo_policy::settings_state(dirty, saving, failed, apply_failed);
     let block = nexo_policy::quit_block(state);
     let reason = match block {
@@ -1679,6 +1692,7 @@ fn nexo_quit_answer(
 #[tauri::command]
 fn nexo_quit_answer(
     _app: AppHandle,
+    _window: WebviewWindow,
     _token: u64,
     _dirty: bool,
     _saving: bool,

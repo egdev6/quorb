@@ -108,6 +108,17 @@ pub fn quit_plan(settings_open: bool) -> QuitPlan {
     }
 }
 
+/// Única ventana que puede responder a una petición de «Salir» del hub.
+///
+/// El frontend de Ajustes es quien sabe si hay cambios sin guardar, así que es
+/// el único que puede responder con el estado real. Cualquier otra webview de
+/// Quorb que invoque el comando podría contestar «no hay nada pendiente» y
+/// dejar salir a la app con trabajo sin guardar, así que se usa el mismo
+/// patrón que `install_codex` con `settings_window_ok`.
+pub fn quit_answer_window_ok(label: &str) -> bool {
+    label == crate::SETTINGS
+}
+
 /// Estado de Ajustes a partir de lo que reporta el frontend.
 ///
 /// Un guardado en curso tiene prioridad sobre un fallo previo, y ambos sobre un
@@ -196,6 +207,24 @@ mod tests {
         // Sin Ajustes abierta no hay nada que perder: el hub no espera.
         assert_eq!(quit_plan(false), QuitPlan::Accept);
         assert_eq!(quit_plan(true), QuitPlan::Ask);
+    }
+
+    #[test]
+    fn only_the_settings_window_may_answer_a_quit() {
+        // Solo Ajustes conoce el estado real; otra webview podría responder
+        // «no hay nada pendiente» y dejar salir la app con trabajo sin guardar.
+        assert!(quit_answer_window_ok("settings"));
+        for label in [
+            "widget",
+            "detail",
+            "overlay",
+            "locale",
+            "",
+            "Settings",
+            "settings ",
+        ] {
+            assert!(!quit_answer_window_ok(label), "label {label:?}");
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DRAFT — evidence runner for the Nexo hub integration (#281).
+// Evidence runner for the Nexo hub integration (#281).
 //
 // Starts the plugin's `sim_hub` fixture and the built app, drives the hub with
 // the commands of the fixture and turns the transcript into the cases that can
