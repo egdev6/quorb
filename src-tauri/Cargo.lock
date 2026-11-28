@@ -2509,6 +2509,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
+name = "nexo-protocol"
+version = "0.1.0"
+source = "git+https://github.com/egdev6/tauri-plugin-nexo?tag=v0.1.1#81663e61efeaf9f7b83d34d814cfdcc9d2d9449a"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3320,6 +3330,7 @@ dependencies = [
  "gtk",
  "keyring",
  "libc",
+ "nexo-protocol",
  "regex",
  "reqwest 0.12.28",
  "rusqlite",
@@ -3330,6 +3341,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
+ "tauri-plugin-nexo",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-process",
@@ -4660,6 +4672,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-nexo"
+version = "0.1.1"
+source = "git+https://github.com/egdev6/tauri-plugin-nexo?tag=v0.1.1#81663e61efeaf9f7b83d34d814cfdcc9d2d9449a"
+dependencies = [
+ "log",
+ "nexo-protocol",
+ "tauri",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "tauri-plugin-notification"
 version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4990,7 +5014,19 @@ dependencies = [
  "mio",
  "pin-project-lite",
  "socket2",
+ "tokio-macros",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]

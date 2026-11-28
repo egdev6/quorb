@@ -17,6 +17,9 @@ export interface LiveSaveOutcome {
 
 export type LiveSave = (patch: Partial<AppConfig>) => Promise<LiveSaveOutcome>;
 
+/** De qué tipo es un fallo sin resolver del saver. */
+type FailureKind = 'save' | 'native';
+
 export interface LiveState {
   /** Hay un envío en vuelo. */
   saving: boolean;
@@ -24,6 +27,12 @@ export interface LiveState {
   error: string | null;
   /** Queda trabajo por enviar (pendiente o en vuelo). */
   pending: boolean;
+  /**
+   * Fallo de escritura sin resolver: el cambio NO está persistido. Distingue
+   * un guardado rechazado de un efecto nativo que falló tras persistir, que sí
+   * dejó el dato guardado y solo no pudo aplicarse.
+   */
+  saveError: string | null;
 }
 
 export interface LiveSaverOptions {
@@ -95,24 +104,33 @@ export function createLiveSaver(options: LiveSaverOptions): LiveSaver {
   let chain: Promise<void> = Promise.resolve();
   let inFlight = 0;
   // Fallo por campo: un error de «siempre encima» no se borra porque otro campo
-  // viva guarde bien; cada campo se reintenta con su último valor fallido.
-  const failures = new Map<keyof AppConfig, { value: unknown; message: string }>();
+  // viva guarde bien; cada campo se reintenta con su último valor fallido. El
+  // tipo distingue un rechazo de escritura (el dato no se guardó) de un efecto
+  // nativo que falló tras persistir (el dato sí quedó guardado).
+  const failures = new Map<keyof AppConfig, { value: unknown; message: string; kind: FailureKind }>();
   // Canónico confirmado por el backend, para no reenviar valores viejos de otros
   // campos en un guardado completo posterior.
   const canonical: Partial<AppConfig> = {};
   let disposed = false;
   const listeners = new Set<(state: LiveState) => void>();
-  let state: LiveState = { saving: false, error: null, pending: false };
+  let state: LiveState = { saving: false, error: null, pending: false, saveError: null };
 
   const hasPending = () => Object.keys(pending).length > 0 || inFlight > 0;
-  const firstFailureMessage = () => {
-    for (const failure of failures.values()) return failure.message;
+  const firstFailureMessage = (kind?: FailureKind) => {
+    for (const failure of failures.values()) {
+      if (kind === undefined || failure.kind === kind) return failure.message;
+    }
     return null;
   };
 
   const syncState = () => {
     if (disposed) return;
-    state = { saving: inFlight > 0, pending: hasPending(), error: firstFailureMessage() };
+    state = {
+      saving: inFlight > 0,
+      pending: hasPending(),
+      error: firstFailureMessage(),
+      saveError: firstFailureMessage('save'),
+    };
     for (const listener of listeners) listener(state);
   };
 
@@ -138,13 +156,13 @@ export function createLiveSaver(options: LiveSaverOptions): LiveSaver {
         for (const key of keys) canonical[key] = outcome.config[key] as never;
         for (const key of keys) {
           // Solo el efecto nativo de «siempre encima» puede fallar tras persistir.
-          if (key === 'alwaysOnTop' && outcome.nativeError) failures.set(key, { value: patch[key], message: outcome.nativeError });
+          if (key === 'alwaysOnTop' && outcome.nativeError) failures.set(key, { value: patch[key], message: outcome.nativeError, kind: 'native' });
           else failures.delete(key);
         }
         options.onSaved?.(outcome.config, patch);
       } catch (e) {
         const message = errorText(e);
-        for (const key of Object.keys(patch) as (keyof AppConfig)[]) failures.set(key, { value: patch[key], message });
+        for (const key of Object.keys(patch) as (keyof AppConfig)[]) failures.set(key, { value: patch[key], message, kind: 'save' });
         throw e;
       } finally {
         inFlight--;

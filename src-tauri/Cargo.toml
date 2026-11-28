@@ -38,8 +38,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Windows Credential Manager (y Keychain / Secret Service en otros SO)
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent", "crypto-rust"] }
 
-# Solo Windows: registro (PATH fresco) y Job Objects (contención del árbol de procesos).
+# Solo Windows: registro (PATH fresco), Job Objects (contención del árbol de
+# procesos) y el plugin de la bandeja unificada de Nexo (#281). El plugin se
+# fija por tag (no por main); v0.1.1 verifica que el pipe del hub pertenezca
+# al mismo usuario de Windows.
 [target.'cfg(windows)'.dependencies]
+tauri-plugin-nexo = { git = "https://github.com/egdev6/tauri-plugin-nexo", tag = "v0.1.1" }
 winreg = "0.56"
 windows-numerics = "=0.3.1"
 windows-core = "=0.62.2"
@@ -77,6 +81,12 @@ gtk = "0.18"
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 # Solo Linux: comprueba la regla de KWin documentada en build-linux.md (#227).
 regex = "1"
+
+[dev-dependencies]
+# El protocolo de Nexo, solo para los tests: permite validar el menú real de
+# cada idioma contra el mismo codificador que usa el host (#281). Mismo repo y
+# mismo tag fijado que el plugin, así que no introduce una versión nueva.
+nexo-protocol = { git = "https://github.com/egdev6/tauri-plugin-nexo", tag = "v0.1.1" }
 
 [profile.release]
 codegen-units = 1

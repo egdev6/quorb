@@ -30,6 +30,7 @@ import {
 import { ACCOUNT_SECRETS, CLI_INSTALL, SESSION_DIR, accountReady, accountsOf, defaultSessionDir, newAccount, secretKey } from './lib/accounts';
 import { ACCENT_PRESETS, DEFAULT_ACCENT, derivePalette, normalizeHex } from './lib/palette';
 import { isDirty, isSettingsDirty, reconcileLive, reconcileSaved, withCanonicalLive } from './lib/settings-dirty';
+import { quitStateFrom, registerNexoQuitState, type NexoQuitState } from './lib/nexo-quit';
 import { createLiveCloseHandler, createLiveSaver, type LiveSaver, type LiveState } from './lib/settings-live';
 import { createAutostartController } from './lib/autostart-controller';
 import {
@@ -3336,12 +3337,25 @@ export function Settings() {
   const savedTimer = useRef<number | undefined>(undefined);
   // Ciclo de vida: en `false` no se actualiza la UI ni se recrean timers.
   const aliveRef = useRef(true);
-  const [liveState, setLiveState] = useState<LiveState>({ saving: false, error: null, pending: false });
+  const [liveState, setLiveState] = useState<LiveState>({ saving: false, error: null, pending: false, saveError: null });
   const liveRef = useRef<LiveSaver | null>(null);
   // Cola única de escrituras de Ajustes: guardado manual, patch vivo y
   // relecturas se serializan para no pisarse (B5).
   const queueRef = useRef<WriteQueue | null>(null);
   if (!queueRef.current) queueRef.current = createWriteQueue();
+
+  // Estado que consulta el hub de Nexo antes de dejar salir (#281): si hay
+  // cambios sin guardar, un guardado en curso o un autoguardado fallido, la
+  // salida se rechaza. Se recalcula en cada render para que la respuesta sea la
+  // del momento, no la de un render viejo. Va antes del `return` temprano: los
+  // hooks no pueden ser condicionales.
+  const nexoQuitRef = useRef<NexoQuitState>({ dirty: false, saving: false, failed: false, applyFailed: false });
+  nexoQuitRef.current = quitStateFrom({
+    dirty: isSettingsDirty(baseline, cfg, autostartState.confirmed, autostartDraft),
+    manualSaving: saving,
+    live: liveState,
+  });
+  useEffect(() => registerNexoQuitState(() => nexoQuitRef.current), []);
 
   // Cola de escrituras de config de Ajustes: el guardado inmediato y el completo
   // no se pisan a medias y la base solo avanza con lo que confirma el backend.
